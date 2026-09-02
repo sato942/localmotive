@@ -1,13 +1,16 @@
 {
   "name": "gguf-pilot",
   "private": true,
-  "version": "0.2.4",
+  "version": "0.2.5",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "catalog:validate": "node scripts/validate_catalog.mjs catalog/catalog.json",
+    "catalog:refresh": "node scripts/build_catalog.mjs --write",
+    "check": "tsc --noEmit -p tsconfig.json && npm test && npm run catalog:validate && npm run build",
     "tauri": "tauri"
   },
   "dependencies": {

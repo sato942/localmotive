@@ -1,12 +1,19 @@
 name: CI
 
-# Every push and PR to main: the same checks the release workflow runs, minus
-# the packaging step, so a broken commit is caught before it is ever tagged.
+# Every push and PR to main: logic, schema, dependency, documentation and
+# packaged-binary smoke gates run before a commit can become a release tag.
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check:
@@ -29,15 +36,65 @@ jobs:
 
       - run: npm ci
 
+      - name: Verify manifest versions agree
+        shell: bash
+        run: |
+          pkg=$(node -p "require('./package.json').version")
+          lock=$(node -p "require('./package-lock.json').version")
+          conf=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          cargo=$(grep -m1 '^version = ' src-tauri/Cargo.toml | cut -d'"' -f2)
+          echo "package.json=$pkg package-lock.json=$lock tauri.conf.json=$conf Cargo.toml=$cargo"
+          test "$pkg" = "$lock" && test "$pkg" = "$conf" && test "$pkg" = "$cargo" \
+            || { echo "::error::Version mismatch between manifests"; exit 1; }
+
       - name: Frontend checks
         run: |
-          npx tsc --noEmit -p tsconfig.json
-          npm test
-          npm run build
+          npm run check
+          npm audit --omit=dev --audit-level=high
 
       - name: Rust checks
         working-directory: src-tauri
         run: |
           cargo fmt --check
-          cargo clippy --all-targets -- -D warnings
-          cargo test
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+          $env:RUSTDOCFLAGS = "-D warnings"
+          cargo test --locked --doc
+
+      - name: Rust dependency advisory audit
+        uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          working-directory: src-tauri
+
+  package-smoke:
+    needs: check
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - name: Build the installable application
+        run: npm run tauri build
+      - name: Verify all Windows artifacts and launch the portable build
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $portable = "src-tauri/target/release/gguf-pilot.exe"
+          $msi = "src-tauri/target/release/bundle/msi/GGUF Pilot_${version}_x64_en-US.msi"
+          $setup = "src-tauri/target/release/bundle/nsis/GGUF Pilot_${version}_x64-setup.exe"
+          foreach ($path in @($portable, $msi, $setup)) {
+            if (-not (Test-Path $path)) { throw "Missing packaged artifact: $path" }
+            if ((Get-Item $path).Length -le 0) { throw "Empty packaged artifact: $path" }
+          }
+          $process = Start-Process $portable -PassThru
+          Start-Sleep -Seconds 8
+          if ($process.HasExited) { throw "Packaged app exited during startup with code $($process.ExitCode)" }
+          Stop-Process -Id $process.Id -Force

@@ -411,7 +411,7 @@ Spacing follows a coarse rhythm: 1 px structural lines, 4–8 px inside a contro
 Responsive behavior has two breakpoints, and both are layout changes rather than a scaled-down desktop:
 
 - **≤ 980 px:** the rail narrows to 72 px, the instrument strip becomes 2×2 with internal borders rebalanced, and every asymmetric two-column view collapses to a single column. Sticky evidence panels become static — a sticky panel in a single column is a scroll trap.
-- **≤ 680 px:** the shell stops being a grid. The rail becomes a fixed 64 px bottom bar with six equal-width items (`repeat(6, minmax(0, 1fr))`), the brand mark and rail footer are dropped, the runtime plate is dropped from the header, `body` regains scroll, and the screen pads to `22px 16px 110px` so content always clears the navigation bar. Controls grow: buttons 46 px, inputs and toggles 44 px, path actions 42 px. Settings collapse to one column and `.wide` stops spanning.
+- **≤ 680 px:** the shell stops being a grid. The rail becomes a fixed 64 px bottom bar with eight equal-width items (`repeat(8, minmax(0, 1fr))`), the brand mark and rail footer are dropped, the runtime plate is dropped from the header, `body` regains scroll, and the screen pads to `22px 16px 110px` so content always clears the navigation bar. Controls grow: buttons 46 px, inputs and toggles 44 px, path actions 42 px. Settings collapse to one column and `.wide` stops spanning.
 
 ### Named Rules
 
@@ -483,7 +483,11 @@ Disclosure uses typographic markers, not chevrons: `+` when closed, `−` when o
 
 - **Desktop rail:** 88 px wide, `#1d2122`, right-bordered. Items are 58 px icon-over-label stacks with 9 px/700 uppercase labels in `#858e8b`. Hover fills `#252a2b` and lifts the label to ink. Active is signal green on `#252b28` with a `#465048` border — the lit button on a panel.
 - **Rail footer:** a status dot plus a condensed 11 px legend, dropped entirely on mobile.
-- **Mobile:** the rail becomes a fixed bottom bar, 64 px tall, six equal columns, items 52 px minimum. All six destinations (Control, Inventory, Runtime, Profile, AI Tune, Benchmark) stay visible; nothing collapses into a menu.
+- **Mobile:** the rail becomes a fixed bottom bar, 64 px tall, eight equal columns, items 52 px minimum. All eight destinations (Control, Inventory, HF Catalog, Runtime, Profile, AI Tune, Benchmark, About) stay visible; nothing collapses into a menu.
+
+### HF Catalog Rows
+
+The catalog is an operator list rather than a gallery. A six-field filter bank sits above an asymmetric list/sidebar layout. Each model is one bordered horizontal unit: verified repository identity and task tags lead, factual likes/downloads/parameter figures support, and one exact GGUF selector plus its Download/Cancel action closes the row. Download state is a linear recessed track with words, transferred bytes, rate, and ETA; color never carries state alone. The sidebar holds the Hugging Face token input and download-engine facts, keeping credentials and transport behavior visible without interrupting browsing. At ≤ 980 px the sidebar becomes static and the filter bank becomes three columns; at ≤ 680 px filters and file controls become one column while every action remains at least 44 px.
 
 ### Instrument Strip
 

@@ -229,6 +229,50 @@ label input:disabled { color: #8d9491; }
 
 .benchmark-grid { display: grid; grid-template-columns: minmax(300px, .65fr) minmax(440px, 1.35fr); gap: 16px; }
 
+/* ---- HF Catalog ------------------------------------------------------------
+   A parts-bin browser: filters across the top, curated model drawers on the
+   left, transfer/auth instrumentation fixed beside them. */
+.catalog-filters { margin-bottom: 16px; padding: 13px; display: grid; grid-template-columns: minmax(220px, 1.7fr) repeat(4, minmax(120px, .7fr)) minmax(120px, .65fr); gap: 10px; align-items: end; }
+.catalog-toggle { margin-top: 6px; }
+.catalog-layout { display: grid; grid-template-columns: minmax(560px, 1.45fr) minmax(300px, .55fr); gap: 16px; align-items: start; }
+.catalog-results { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.catalog-result-count { min-height: 35px; display: flex; align-items: baseline; gap: 7px; color: var(--muted); }
+.catalog-result-count strong { color: var(--paper); font: 700 22px "Bahnschrift Condensed", "Arial Narrow", sans-serif; }
+.catalog-result-count span { font-size: 10px; }
+.catalog-result-count small { margin-left: auto; font: 9px Consolas, monospace; }
+.catalog-empty { min-height: 180px; display: grid; place-content: center; justify-items: center; gap: 9px; color: #858e8b; }
+.catalog-empty strong { color: #bbc0bd; font-size: 12px; }
+.catalog-empty span { font-size: 10px; }
+.catalog-model { padding: 15px; }
+.catalog-model-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; }
+.catalog-model-head > div { min-width: 0; }
+.catalog-model-head strong { display: block; margin-top: 5px; color: var(--paper); font: 700 20px "Bahnschrift Condensed", "Arial Narrow", sans-serif; }
+.catalog-model-head > div > span { display: block; margin-top: 3px; color: #89918e; font: 9px "Bahnschrift Condensed", "Arial Narrow", sans-serif; letter-spacing: .07em; }
+.catalog-repo { max-width: 100%; padding: 0; border: 0; background: transparent; color: var(--green); display: inline-flex; align-items: center; gap: 5px; font: 10px Consolas, monospace; cursor: pointer; overflow-wrap: anywhere; text-align: left; }
+.catalog-summary { margin: 10px 0 0; color: #a3aba8; font-size: 10px; line-height: 1.5; }
+.catalog-meta { min-height: 30px; margin-top: 10px; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; color: #8f9794; font-size: 9px; }
+.catalog-meta span { padding-right: 8px; border-right: 1px solid var(--line-soft); }
+.catalog-meta i { padding: 3px 5px; border: 1px solid #4b5253; color: #aab2af; background: #1d2122; font: normal 700 8px "Bahnschrift Condensed", "Arial Narrow", sans-serif; letter-spacing: .06em; }
+.catalog-file-row { margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--line-soft); display: grid; grid-template-columns: minmax(140px, .55fr) minmax(220px, 1fr) auto; gap: 12px; align-items: end; }
+.catalog-file-row label select { margin-top: 5px; }
+.catalog-filename { min-width: 0; min-height: 37px; display: flex; flex-direction: column; justify-content: center; }
+.catalog-filename span { color: #bac0bd; font: 9px Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.catalog-filename small { margin-top: 5px; color: #78817e; font: 8px "Bahnschrift Condensed", "Arial Narrow", sans-serif; letter-spacing: .06em; }
+.catalog-file-row .button { min-width: 112px; }
+.download-progress { margin-top: 11px; display: grid; grid-template-columns: 1fr auto auto; gap: 7px 12px; align-items: center; }
+.download-progress > div { grid-column: 1 / -1; height: 6px; background: #161a1b; border: 1px solid #343a3b; overflow: hidden; }
+.download-progress > div b { display: block; height: 100%; min-width: 1px; background: var(--green); }
+.download-progress.error > div b { background: var(--red); }
+.download-progress span, .download-progress small { color: #8f9794; font: 9px "Bahnschrift Condensed", "Arial Narrow", sans-serif; font-variant-numeric: tabular-nums; }
+.download-progress small { text-align: right; }
+.download-progress p { grid-column: 1 / -1; margin: 0; color: var(--red); font: 9px/1.45 Consolas, monospace; overflow-wrap: anywhere; }
+.catalog-blocker { margin: 9px 0 0; color: var(--amber); font-size: 9px; }
+.catalog-sidebar { position: sticky; top: 0; }
+.catalog-token-body { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.catalog-token-body p { margin: 0; color: #a3aba8; font-size: 10px; line-height: 1.55; }
+.catalog-token-body .text-link { width: fit-content; text-align: left; }
+.catalog-transfer-facts { border-top: 1px solid var(--line); }
+
 /* ---- About -----------------------------------------------------------------
    Same cabinet: an engraved identity plate, then fact rows. Nothing decorative. */
 .about-layout { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
@@ -310,7 +354,10 @@ label input:disabled { color: #8d9491; }
   .instrument-strip { grid-template-columns: repeat(2, 1fr); }
   .instrument:nth-child(2) { border-right: 0; }
   .instrument:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
-  .control-grid, .profile-layout, .benchmark-grid, .runtime-layout, .tune-layout, .about-layout { grid-template-columns: 1fr; }
+  .control-grid, .profile-layout, .benchmark-grid, .runtime-layout, .tune-layout, .about-layout, .catalog-layout { grid-template-columns: 1fr; }
+  .catalog-sidebar { position: static; }
+  .catalog-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .catalog-search { grid-column: 1 / -1; }
   .command-preview { position: static; }
 }
 
@@ -359,8 +406,17 @@ label input:disabled { color: #8d9491; }
   label.wide, .option-grid .wide { grid-column: auto; }
   .advanced-zone > summary { padding-right: 42px; }
   .inventory-screen { overflow-x: auto; }
-  .rail nav { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); min-width: 0; width: 100%; gap: 0; }
-  .nav-item { min-width: 0; width: 100%; padding-left: 1px; padding-right: 1px; font-size: 8px; }
+  .rail nav { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); min-width: 0; width: 100%; gap: 0; }
+  .nav-item { min-width: 0; width: 100%; padding-left: 0; padding-right: 0; font-size: 8px; }
+  .catalog-filters, .catalog-file-row { grid-template-columns: 1fr; }
+  .catalog-search { grid-column: auto; }
+  .catalog-model-head { flex-direction: column; }
+  .catalog-file-row .button { width: 100%; }
+  .catalog-filename span { white-space: normal; overflow-wrap: anywhere; }
+  .download-progress { grid-template-columns: 1fr; }
+  .download-progress small { text-align: left; }
+  .catalog-result-count { flex-wrap: wrap; }
+  .catalog-result-count small { flex-basis: 100%; margin-left: 0; }
   .about-layout, .credit-list { grid-template-columns: 1fr; }
   .about-identity { grid-template-columns: 56px minmax(0, 1fr); gap: 13px; padding: 15px; }
   .about-mark { width: 56px; height: 56px; font-size: 23px; }

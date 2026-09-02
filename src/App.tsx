@@ -13,6 +13,7 @@ import {
   Cpu,
   Database,
   Download,
+  ExternalLink,
   FolderOpen,
   Gauge,
   HardDrive,
@@ -37,9 +38,18 @@ import {
 import "./App.css";
 import {
   bytesLabel,
+  catalogRevision,
   contextChoices,
   describeChanges,
+  downloadKey,
+  downloadPercent,
+  downloadReadiness,
+  etaLabel,
+  keepLatestRequest,
   normalizeProfile,
+  originLabel,
+  rateLabel,
+  retainOrDisposeListener,
   runtimeOptionState,
   suggestedProfile,
   type BenchmarkSummary,
@@ -61,9 +71,15 @@ import {
   type TuningReport,
   type TuningTrial,
   type AboutInfo,
+  type CatalogFile,
+  type CatalogModel,
+  type CatalogQuery,
+  type CatalogSnapshot,
+  type DownloadEvent,
+  type TokenStatus,
 } from "./model";
 
-type View = "dashboard" | "models" | "runtime" | "profile" | "tune" | "benchmark" | "about";
+type View = "dashboard" | "models" | "catalog" | "runtime" | "profile" | "tune" | "benchmark" | "about";
 
 const MODEL_ROOT = localStorage.getItem("gguf-pilot:model-root") ?? "";
 const RUNTIME = localStorage.getItem("gguf-pilot:runtime") ?? "";
@@ -147,6 +163,23 @@ function App() {
   const [cloudCheck, setCloudCheck] = useState("");
   const [gguf, setGguf] = useState<GgufSummary | null>(null);
   const [about, setAbout] = useState<AboutInfo | null>(null);
+  const [catalogSnapshot, setCatalogSnapshot] = useState<CatalogSnapshot | null>(null);
+  const [catalogRows, setCatalogRows] = useState<CatalogModel[]>([]);
+  const [catalogTags, setCatalogTags] = useState<string[]>([]);
+  const [catalogQuants, setCatalogQuants] = useState<string[]>([]);
+  const [catalogSearch, setCatalogSearch] = useState("");
+  const [catalogTag, setCatalogTag] = useState("");
+  const [catalogQuant, setCatalogQuant] = useState("");
+  const [catalogMaxGiB, setCatalogMaxGiB] = useState(0);
+  const [catalogHideGated, setCatalogHideGated] = useState(false);
+  const [catalogSort, setCatalogSort] = useState<CatalogQuery["sort"]>("downloads");
+  const [catalogBusy, setCatalogBusy] = useState(false);
+  const [hfToken, setHfToken] = useState<TokenStatus>({ configured: false, masked: "" });
+  const [hfTokenDraft, setHfTokenDraft] = useState("");
+  const [catalogFiles, setCatalogFiles] = useState<Record<string, string>>({});
+  const [downloads, setDownloads] = useState<Record<string, DownloadEvent>>({});
+  const catalogFilterSeq = useRef(0);
+  const catalogLoadSeq = useRef(0);
   const [tuneContext, setTuneContext] = useState(8192);
   const [tuneTrials, setTuneTrials] = useState(6);
   const [tuneTokens, setTuneTokens] = useState(256);
@@ -334,6 +367,112 @@ function App() {
       setModelRoot(selected);
       localStorage.setItem("gguf-pilot:model-root", selected);
     }
+  }
+
+  async function loadModelCatalog() {
+    const sequence = ++catalogLoadSeq.current;
+    setCatalogBusy(true);
+    try {
+      const snapshot = await invoke<CatalogSnapshot>("fetch_model_catalog");
+      const [tags, quants] = await invoke<[string[], string[]]>("catalog_facets", {
+        models: snapshot.catalog.models,
+      });
+      const token = await invoke<TokenStatus>("hf_token_status");
+      if (!keepLatestRequest(sequence, catalogLoadSeq.current)) return;
+      setCatalogSnapshot(snapshot);
+      setCatalogRows(snapshot.catalog.models);
+      setCatalogTags(tags);
+      setCatalogQuants(quants);
+      setHfToken(token);
+      setNotice(`${snapshot.catalog.models.length} curated Hugging Face models loaded from ${snapshot.origin}.`);
+    } catch (error) {
+      if (keepLatestRequest(sequence, catalogLoadSeq.current)) setNotice(String(error));
+    } finally {
+      if (keepLatestRequest(sequence, catalogLoadSeq.current)) setCatalogBusy(false);
+    }
+  }
+
+  async function saveHfToken() {
+    if (!hfTokenDraft.trim()) return;
+    setCatalogBusy(true);
+    try {
+      const status = await invoke<TokenStatus>("save_hf_token", { token: hfTokenDraft });
+      setHfTokenDraft("");
+      setHfToken(status);
+      setNotice(`Hugging Face token ${status.masked} stored in Windows Credential Manager.`);
+    } catch (error) {
+      setNotice(String(error));
+    } finally {
+      setCatalogBusy(false);
+    }
+  }
+
+  async function removeHfToken() {
+    setCatalogBusy(true);
+    try {
+      setHfToken(await invoke<TokenStatus>("clear_hf_token"));
+      setHfTokenDraft("");
+      setNotice("Hugging Face token removed from Windows Credential Manager.");
+    } catch (error) {
+      setNotice(String(error));
+    } finally {
+      setCatalogBusy(false);
+    }
+  }
+
+  function inventoryHasFile(filename: string): boolean {
+    const wanted = filename.replace(/\//g, "\\").toLocaleLowerCase();
+    return models.some((model) =>
+      model.firstShard.toLocaleLowerCase().endsWith(wanted)
+      || model.companions.some((entry) => entry.path.toLocaleLowerCase().endsWith(wanted)),
+    );
+  }
+
+  async function startCatalogDownload(model: CatalogModel, file: CatalogFile) {
+    const key = downloadKey(model.repo, file.filename);
+    setDownloads((current) => ({
+      ...current,
+      [key]: {
+        key,
+        downloaded: 0,
+        total: file.sizeBytes,
+        bytesPerSecond: 0,
+        state: "downloading",
+        message: "Connecting to Hugging Face…",
+        path: "",
+      },
+    }));
+    try {
+      const path = await invoke<string>("download_catalog_file", {
+        repo: model.repo,
+        filename: file.filename,
+        revision: catalogRevision(file),
+        destination: modelRoot,
+        connections: 4,
+      });
+      setNotice(`Downloaded and verified ${file.filename} to ${path}`);
+    } catch (error) {
+      setDownloads((current) => ({
+        ...current,
+        [key]: {
+          ...(current[key] ?? {
+            key,
+            downloaded: 0,
+            total: file.sizeBytes,
+            bytesPerSecond: 0,
+            path: "",
+          }),
+          state: "error",
+          message: String(error),
+        },
+      }));
+      setNotice(String(error));
+    }
+  }
+
+  async function cancelCatalogDownload(file: CatalogFile) {
+    await invoke<boolean>("cancel_download", { destination: modelRoot, filename: file.filename });
+    setNotice(`Stopping ${file.filename}; downloaded chunks will be kept for resume.`);
   }
 
   async function chooseExistingRuntime() {
@@ -615,6 +754,44 @@ function App() {
   }
 
   useEffect(() => {
+    if (view === "catalog" && !catalogSnapshot && !catalogBusy) loadModelCatalog();
+  }, [view]);
+
+  useEffect(() => {
+    if (!catalogSnapshot) return;
+    const sequence = ++catalogFilterSeq.current;
+    const query: CatalogQuery = {
+      text: catalogSearch,
+      tag: catalogTag,
+      quant: catalogQuant,
+      maxBytes: catalogMaxGiB > 0 ? catalogMaxGiB * 1024 ** 3 : 0,
+      hideGated: catalogHideGated,
+      sort: catalogSort,
+    };
+    invoke<CatalogModel[]>("filter_catalog", {
+      models: catalogSnapshot.catalog.models,
+      query,
+    })
+      .then((rows) => {
+        if (keepLatestRequest(sequence, catalogFilterSeq.current)) setCatalogRows(rows);
+      })
+      .catch((error) => {
+        if (keepLatestRequest(sequence, catalogFilterSeq.current)) setNotice(String(error));
+      });
+  }, [catalogSnapshot, catalogSearch, catalogTag, catalogQuant, catalogMaxGiB, catalogHideGated, catalogSort]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let disposed = false;
+    listen<DownloadEvent>("download:progress", (event) => {
+      setDownloads((current) => ({ ...current, [event.payload.key]: event.payload }));
+    })
+      .then((stop) => { unlisten = retainOrDisposeListener(disposed, stop); })
+      .catch(() => { /* Browser preview has no Tauri bridge. */ });
+    return () => { disposed = true; unlisten?.(); };
+  }, []);
+
+  useEffect(() => {
     loadRuntimeSetup();
     loadCloud();
     invoke<AboutInfo>("about_info").then(setAbout).catch(() => {
@@ -643,13 +820,14 @@ function App() {
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
+    let disposed = false;
     listen<TuningProgress>("tuning-progress", (event) => {
       setTuneProgress(event.payload);
       if (event.payload.trial) setTuneLive((prev) => [...prev.filter((t) => t.index !== event.payload.trial!.index), event.payload.trial!]);
     })
-      .then((stop) => { unlisten = stop; })
+      .then((stop) => { unlisten = retainOrDisposeListener(disposed, stop); })
       .catch(() => { /* Browser preview has no Tauri bridge. */ });
-    return () => { unlisten?.(); };
+    return () => { disposed = true; unlisten?.(); };
   }, []);
 
   useEffect(() => {
@@ -672,6 +850,7 @@ function App() {
   const nav: Array<{ id: View; label: string; icon: typeof Gauge }> = [
     { id: "dashboard", label: "Control", icon: Gauge },
     { id: "models", label: "Inventory", icon: Database },
+    { id: "catalog", label: "HF Catalog", icon: Download },
     { id: "runtime", label: "Runtime", icon: MonitorCog },
     { id: "profile", label: "Profile", icon: Settings2 },
     { id: "tune", label: "AI Tune", icon: Sparkles },
@@ -864,6 +1043,119 @@ function App() {
             {invalidCount > 0 && (
               <div className="warning-band"><TriangleAlert size={17} /><strong>{invalidCount} target blocked</strong><span>Missing shards must be restored before launch.</span></div>
             )}
+          </section>
+        )}
+
+        {view === "catalog" && (
+          <section className="screen catalog-screen">
+            <div className="section-heading">
+              <div>
+                <h1>HF Catalog</h1>
+                <p>A developer-curated list. Model bytes travel directly from Hugging Face to this machine.</p>
+              </div>
+              <div className="actions">
+                {catalogSnapshot && (() => {
+                  const origin = originLabel(catalogSnapshot.origin);
+                  return <span className={origin.tone === "ok" ? "state-tag good" : "state-tag warning"}>{origin.label}</span>;
+                })()}
+                <button className="button secondary" onClick={loadModelCatalog} disabled={catalogBusy}>
+                  <RefreshCw size={16} className={catalogBusy ? "spin" : ""} /> Refresh list
+                </button>
+              </div>
+            </div>
+
+            <div className="path-bar catalog-destination">
+              <HardDrive size={16} />
+              <input value={modelRoot} onChange={(event) => setModelRoot(event.target.value)} aria-label="Download destination" placeholder="Choose where downloaded GGUF files should go" />
+              <button className="path-action" onClick={chooseModelFolder}><FolderOpen size={15} /> Choose</button>
+              <span>DIRECT TO MODEL FOLDER</span>
+            </div>
+
+            <div className="catalog-filters machine-panel" aria-label="Catalog filters">
+              <label className="catalog-search">Search<input value={catalogSearch} onChange={(event) => setCatalogSearch(event.target.value)} placeholder="Family, publisher, tag, repository…" /></label>
+              <label>Use<select value={catalogTag} onChange={(event) => setCatalogTag(event.target.value)}><option value="">Any use</option>{catalogTags.map((tag) => <option key={tag}>{tag}</option>)}</select></label>
+              <label>Quant<select value={catalogQuant} onChange={(event) => setCatalogQuant(event.target.value)}><option value="">Any quant</option>{catalogQuants.map((quant) => <option key={quant}>{quant}</option>)}</select></label>
+              <label>Available under<select value={catalogMaxGiB} onChange={(event) => setCatalogMaxGiB(Number(event.target.value))}><option value={0}>Any size</option>{[2, 4, 8, 16, 32, 64].map((size) => <option key={size} value={size}>≤ {size} GiB</option>)}</select></label>
+              <label>Order<select value={catalogSort} onChange={(event) => setCatalogSort(event.target.value as CatalogQuery["sort"])}><option value="downloads">Downloads</option><option value="likes">Likes</option><option value="name">Name</option><option value="size">Smallest file</option></select></label>
+              <label className="toggle-line catalog-toggle"><input type="checkbox" checked={catalogHideGated} onChange={(event) => setCatalogHideGated(event.target.checked)} /> Hide gated</label>
+            </div>
+
+            <div className="catalog-layout">
+              <div className="catalog-results">
+                <div className="catalog-result-count">
+                  <strong>{catalogRows.length}</strong>
+                  <span>of {catalogSnapshot?.catalog.models.length ?? 0} curated models</span>
+                  {catalogSnapshot && <small>LIST UPDATED {catalogSnapshot.catalog.updated || "UNKNOWN"}</small>}
+                </div>
+                {catalogBusy && !catalogSnapshot && <div className="catalog-empty machine-panel"><RefreshCw size={24} className="spin" /><strong>Fetching curated catalog</strong></div>}
+                {!catalogBusy && catalogSnapshot && catalogRows.length === 0 && <div className="catalog-empty machine-panel"><Database size={24} /><strong>No curated model matches these filters</strong><span>Clear one or more filters.</span></div>}
+                {catalogRows.map((model) => {
+                  const filename = catalogFiles[model.id] ?? model.files[0]?.filename ?? "";
+                  const file = model.files.find((entry) => entry.filename === filename) ?? model.files[0];
+                  if (!file) return null;
+                  const key = downloadKey(model.repo, file.filename);
+                  const progress = downloads[key];
+                  const running = progress?.state === "downloading" || progress?.state === "verifying";
+                  const alreadyOnDisk = inventoryHasFile(file.filename) || progress?.state === "done";
+                  const readiness = downloadReadiness({ destination: modelRoot, running, alreadyOnDisk, gated: model.gated, hasToken: hfToken.configured });
+                  return (
+                    <article className="machine-panel catalog-model" key={model.id}>
+                      <div className="catalog-model-head">
+                        <div>
+                          <button className="catalog-repo" onClick={() => openUrl(`https://huggingface.co/${model.repo}`)}>{model.repo}<ExternalLink size={12} /></button>
+                          <strong>{model.family || model.repo.split("/")[1]}</strong>
+                          <span>{model.parameters || "PARAMETERS UNKNOWN"} · BY {model.publisher || model.repo.split("/")[0]}</span>
+                        </div>
+                        {model.gated && <span className="state-tag warning">GATED · TOKEN + LICENCE</span>}
+                      </div>
+                      {model.summary && <p className="catalog-summary">{model.summary}</p>}
+                      <div className="catalog-meta">
+                        <span>{model.downloads.toLocaleString()} downloads</span>
+                        <span>{model.likes.toLocaleString()} likes</span>
+                        {model.tags.map((tag) => <i key={tag}>{tag.toUpperCase()}</i>)}
+                      </div>
+                      <div className="catalog-file-row">
+                        <label>Build<select value={file.filename} onChange={(event) => setCatalogFiles((current) => ({ ...current, [model.id]: event.target.value }))}>{model.files.map((entry) => <option key={entry.filename} value={entry.filename}>{entry.quant} · {bytesLabel(entry.sizeBytes)}</option>)}</select></label>
+                        <div className="catalog-filename"><span>{file.filename}</span><small>{bytesLabel(file.sizeBytes)} · 4 PARALLEL RANGES</small></div>
+                        {running ? (
+                          <button className="button danger" onClick={() => cancelCatalogDownload(file)}><CircleStop size={15} /> Keep & stop</button>
+                        ) : (
+                          <button className={alreadyOnDisk ? "button is-current" : "button primary"} disabled={!readiness.canStart} title={readiness.reason} onClick={() => startCatalogDownload(model, file)}>
+                            {alreadyOnDisk ? <><BadgeCheck size={15} /> Verify file</> : <><Download size={15} /> {progress?.state === "error" ? "Resume" : "Download"}</>}
+                          </button>
+                        )}
+                      </div>
+                      {progress && (
+                        <div className={`download-progress ${progress.state}`}>
+                          <div><b style={{ width: `${downloadPercent(progress.downloaded, progress.total)}%` }} /></div>
+                          <span>{progress.state.toUpperCase()} · {bytesLabel(progress.downloaded)} / {bytesLabel(progress.total)}</span>
+                          <small>{rateLabel(progress.bytesPerSecond)} {etaLabel(progress.downloaded, progress.total, progress.bytesPerSecond)}</small>
+                          {progress.message && <p>{progress.message}</p>}
+                        </div>
+                      )}
+                      {!readiness.canStart && !running && !alreadyOnDisk && <p className="catalog-blocker">{readiness.reason}</p>}
+                    </article>
+                  );
+                })}
+              </div>
+
+              <aside className="machine-panel catalog-sidebar">
+                <div className="panel-title"><KeyRound size={17} /><h2>Hugging Face access</h2><span className={hfToken.configured ? "state-tag good" : "state-tag warning"}>{hfToken.configured ? `TOKEN ${hfToken.masked}` : "ANONYMOUS"}</span></div>
+                <div className="catalog-token-body">
+                  <p>A token is still useful: it enables gated repositories after you accept their licence and applies your account’s higher resolver rate limits. It does not guarantee higher raw bandwidth.</p>
+                  <label>Read token<div className="key-row"><input type="password" autoComplete="off" value={hfTokenDraft} onChange={(event) => setHfTokenDraft(event.target.value)} placeholder={hfToken.configured ? `Stored ${hfToken.masked}` : "hf_…"} /><button className="button secondary" disabled={!hfTokenDraft.trim() || catalogBusy} onClick={saveHfToken}>Store</button></div></label>
+                  {hfToken.configured && <button className="text-link" onClick={removeHfToken}>Remove stored token</button>}
+                  <button className="text-link" onClick={() => openUrl("https://huggingface.co/settings/tokens")}>Create a read token on Hugging Face ↗</button>
+                </div>
+                <dl className="runtime-facts catalog-transfer-facts">
+                  <div><dt>Data route</dt><dd>Hugging Face → this PC. GGUF Pilot never proxies model bytes.</dd></div>
+                  <div><dt>Resume</dt><dd>Per-chunk progress survives interruption in .part metadata.</dd></div>
+                  <div><dt>Parallelism</dt><dd>Four ranged HTTPS connections; one when the CDN does not support ranges.</dd></div>
+                  <div><dt>Integrity</dt><dd>Final size always checked; SHA-256 verified when Hugging Face publishes it as the object ETag.</dd></div>
+                  <div><dt>Secret storage</dt><dd>Windows Credential Manager service “GGUF Pilot HF”; never local storage or logs.</dd></div>
+                </dl>
+              </aside>
+            </div>
           </section>
         )}
 

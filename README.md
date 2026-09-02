@@ -1,6 +1,6 @@
 # GGUF Pilot
 
-A public Windows desktop control plane for local GGUF inference. GGUF Pilot manages official `llama.cpp` binaries, discovers local models, builds exact launch profiles, supervises the server process, and measures generation throughput.
+A public Windows desktop control plane for local GGUF inference. GGUF Pilot manages official `llama.cpp` binaries, discovers and downloads curated GGUF models, builds exact launch profiles, supervises the server process, and measures generation throughput.
 
 ## Public features
 
@@ -35,6 +35,15 @@ A public Windows desktop control plane for local GGUF inference. GGUF Pilot mana
 - Starts, monitors, logs, benchmarks, and stops only the process owned by the app.
 - Opens llama.cpp's built-in WebUI.
 
+## HF Catalog and downloads
+
+- **HF Catalog** is a browsable, searchable and filterable list controlled by the GGUF Pilot maintainers. The catalog only names repositories and files; model bytes travel directly from `huggingface.co` to the selected model folder.
+- Filter by text, task tag, quantization and maximum file size; sort by downloads, likes, name or size.
+- Downloads use parallel HTTP range requests for large files, retry transient failures, persist a sidecar resume map, and continue verified chunks after a restart. Every completed file is checked against the exact Hugging Face LFS SHA-256 published in the validated catalog.
+- An optional Hugging Face read token is stored in Windows Credential Manager under `GGUF Pilot HF`. It is still useful: authenticated requests receive account-based Hub rate limits and can access gated models the account has accepted. It does **not** guarantee higher raw bandwidth.
+- The app ships an embedded catalog for first-run/offline use, caches the last signed network copy, and refreshes the public manifest with HTTP ETags. Network catalogs require a detached Ed25519 maintainer signature before they can authorize a download.
+- There is no application database or model-file proxy. The static manifest is CDN-served from `raw.githubusercontent.com`; see `catalog/README.md` for the private-control/public-delivery rationale and the optional private-admin-repository pattern.
+
 ## AI tuning
 
 - **AI Tune** tab: a cloud model proposes llama-server settings, this PC measures each one, and the best measured configuration wins. Pick the context length to tune for (powers of two up to the model's native maximum from the GGUF header), the number of AI trials, and the measurement size.
@@ -54,6 +63,8 @@ Each official build in the Runtime tab reports its true relationship to the runt
 3. Open **Inventory** and choose the folder containing GGUF models.
 4. Select a model, review its profile, and start the server.
 
+Alternatively, choose the folder first and use **HF Catalog** to download a curated GGUF directly into it.
+
 Defaults after setup:
 
 - Host: `127.0.0.1`
@@ -71,12 +82,12 @@ npm run tauri dev
 ## Test and verify
 
 ```bash
-npm test
-npm run build
+npm run check
 cd src-tauri
 cargo fmt --check
 cargo test
 cargo clippy --all-targets -- -D warnings
+RUSTDOCFLAGS='-D warnings' cargo test --doc
 ```
 
 ## Build installers
@@ -88,14 +99,16 @@ npm run tauri build
 Artifacts currently produced on this workstation are Windows x64:
 
 - Portable executable: `src-tauri/target/release/gguf-pilot.exe`
-- MSI: `src-tauri/target/release/bundle/msi/GGUF Pilot_0.2.4_x64_en-US.msi`
-- Setup executable: `src-tauri/target/release/bundle/nsis/GGUF Pilot_0.2.4_x64-setup.exe`
+- MSI: `src-tauri/target/release/bundle/msi/GGUF Pilot_0.2.5_x64_en-US.msi`
+- Setup executable: `src-tauri/target/release/bundle/nsis/GGUF Pilot_0.2.5_x64-setup.exe`
 
 The source and runtime catalog support Windows ARM64, but producing the ARM64 application installer requires an ARM64 MSVC cross-toolchain or ARM64 CI runner. No ARM64 installer is claimed in this handoff.
 
 ## Security and integrity
 
 - GitHub release downloads use HTTPS and the official repository API.
+- Hugging Face model downloads use HTTPS directly to the Hub; GGUF Pilot never receives or proxies model bytes.
+- Hugging Face tokens stay in Windows Credential Manager and are sent only as an authorization header to Hub requests, never in URLs, logs, catalog files, or local storage.
 - Asset byte size is checked when supplied.
 - Asset SHA-256 is checked when GitHub publishes a digest.
 - ZIP entries must remain inside the staging directory.
@@ -122,6 +135,8 @@ The source and runtime catalog support Windows ARM64, but producing the ARM64 ap
 - `.impeccable/design.json` — design sidecar: tonal ramps, shadow/motion/focus tokens, component snippets
 - `docs/theme.css`, `docs/tokens.json` — Tailwind v4 and W3C DTCG exports of the token layer
 - `CHANGELOG.md` — release notes
+- `AGENTS.md` — architecture, development rules and mandatory testing workflow for coding agents and contributors
+- `catalog/catalog.json`, `catalog/README.md` — curated manifest and owner-only curation/publishing procedure
 - `LLAMA-SERVER-README.md` — imported llama-server reference
 - `docs/OPTION_MAP.md` — option categorization rationale
 - `scripts/` — verification harness: console-window watcher and negative control, CDP drivers (`drive_console_check.mjs`, `live_verify_022.mjs`, `capture_022.mjs`)

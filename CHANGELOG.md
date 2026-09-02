@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.2.5
+
+### Curated Hugging Face catalog
+
+- Added an eighth destination, **HF Catalog**, with full-text search, task/quantization/size filters, sorting by downloads, likes, name or file size, exact GGUF selection, repository links and model-folder-aware download readiness.
+- The catalog is maintainer-controlled but model bytes go directly from Hugging Face to the user's selected folder. A validated, Ed25519-signed static JSON manifest on `raw.githubusercontent.com` replaces a hosted database: it is CDN-served, ETag-cacheable, versioned and auditable. The app rejects unsigned network changes, embeds the release's catalog, and caches the last signed copy so first-run and offline browsing still work.
+- Added an optional Hugging Face read token stored under `GGUF Pilot HF` in Windows Credential Manager. Authentication still matters for account-based Hub rate limits and gated repositories, but the interface no longer promises that a token increases raw transfer bandwidth.
+
+### Resumable direct downloads
+
+- Large GGUF files use bounded parallel HTTP range requests with retry/backoff, a persisted per-chunk resume map and cancellation. Restarting the app keeps completed byte ranges instead of restarting the whole file.
+- Completed downloads verify exact byte length and the curator-published Hugging Face LFS SHA-256. Existing files are reused only after the same digest check; range responses are bound to the probed remote identity so changed objects cannot be spliced into one file.
+- Hardened path handling, URL encoding, chunk boundaries, duplicate-download rejection and failure cleanup. A range response can never write into the next chunk, and an ETag appearing or disappearing forces a clean restart.
+
+### Contributor and release gates
+
+- Added `AGENTS.md` with architecture, development workflow, security rules, release procedure and a mandatory test-first regression policy.
+- Added catalog schema validation plus focused Rust and TypeScript coverage for catalog parsing/filtering, token masking, download readiness/progress, range planning, resume identity, cancellation, checksums and path safety.
+- CI now runs the catalog validator, production frontend, dependency audit, strict Clippy, Rust tests and warning-free rustdoc, then builds all Windows artifacts and launches the packaged executable. Release tags must point to `main`, match every manifest, contain non-empty release notes and pass the same packaged smoke test.
+
 ## 0.2.4
 
 ### The runtime you chose is the runtime that is used

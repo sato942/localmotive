@@ -1,6 +1,6 @@
 name: Release
 
-# Tag-driven: pushing v0.2.4 builds the Windows artifacts and publishes a
+# Tag-driven: pushing a version tag builds the Windows artifacts and publishes a
 # release titled with that version whose body is the matching CHANGELOG section.
 on:
   push:
@@ -22,12 +22,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
 
       - name: Resolve version
         id: version
         shell: bash
+        env:
+          RAW_TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          raw="${{ github.event.inputs.tag || github.ref_name }}"
+          raw="$RAW_TAG"
+          [[ "$raw" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+            || { echo "::error::Release tag must match vMAJOR.MINOR.PATCH"; exit 1; }
           version="${raw#v}"
           echo "tag=v${version}" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
@@ -37,11 +42,20 @@ jobs:
         run: |
           version="${{ steps.version.outputs.version }}"
           pkg=$(node -p "require('./package.json').version")
+          lock=$(node -p "require('./package-lock.json').version")
           conf=$(node -p "require('./src-tauri/tauri.conf.json').version")
           cargo=$(grep -m1 '^version = ' src-tauri/Cargo.toml | cut -d'"' -f2)
-          echo "tag=$version package.json=$pkg tauri.conf.json=$conf Cargo.toml=$cargo"
-          test "$pkg" = "$version" && test "$conf" = "$version" && test "$cargo" = "$version" \
+          echo "tag=$version package.json=$pkg package-lock.json=$lock tauri.conf.json=$conf Cargo.toml=$cargo"
+          test "$pkg" = "$version" && test "$lock" = "$version" && test "$conf" = "$version" && test "$cargo" = "$version" \
             || { echo "::error::Version mismatch between the tag and the manifests"; exit 1; }
+
+      - name: Verify release commit is on main
+        shell: bash
+        run: |
+          git fetch origin main
+          release_commit=$(git rev-parse HEAD)
+          git merge-base --is-ancestor "$release_commit" origin/main \
+            || { echo "::error::Release tags must point to a commit on main"; exit 1; }
 
       - uses: actions/setup-node@v4
         with:
@@ -60,19 +74,36 @@ jobs:
 
       - name: Frontend checks
         run: |
-          npx tsc --noEmit -p tsconfig.json
-          npm test
-          npm run build
+          npm run check
+          npm audit --omit=dev --audit-level=high
 
       - name: Rust checks
         working-directory: src-tauri
         run: |
           cargo fmt --check
-          cargo clippy --all-targets -- -D warnings
-          cargo test
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+          $env:RUSTDOCFLAGS = "-D warnings"
+          cargo test --locked --doc
+
+      - name: Rust dependency advisory audit
+        uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          working-directory: src-tauri
 
       - name: Build installers and portable executable
         run: npm run tauri build
+
+      - name: Smoke-test the packaged executable
+        shell: pwsh
+        run: |
+          $portable = "src-tauri/target/release/gguf-pilot.exe"
+          if (-not (Test-Path $portable)) { throw "Portable executable was not built" }
+          $process = Start-Process $portable -PassThru
+          Start-Sleep -Seconds 8
+          if ($process.HasExited) { throw "Packaged app exited during startup with code $($process.ExitCode)" }
+          Stop-Process -Id $process.Id -Force
 
       - name: Stage release artifacts
         id: stage
@@ -86,23 +117,34 @@ jobs:
              "artifacts/GGUF-Pilot_${version}_x64-setup.exe"
           cp "src-tauri/target/release/gguf-pilot.exe" \
              "artifacts/GGUF-Pilot_${version}_x64-portable.exe"
+          for required in \
+            "artifacts/GGUF-Pilot_${version}_x64.msi" \
+            "artifacts/GGUF-Pilot_${version}_x64-setup.exe" \
+            "artifacts/GGUF-Pilot_${version}_x64-portable.exe"; do
+            test -s "$required" || { echo "::error::Missing or empty release artifact: $required"; exit 1; }
+          done
           ls -l artifacts
           # Publish checksums so downloads can be verified.
           (cd artifacts && sha256sum * > "SHA256SUMS-${version}.txt" && cat "SHA256SUMS-${version}.txt")
+          test "$(wc -l < "artifacts/SHA256SUMS-${version}.txt")" -eq 3 \
+            || { echo "::error::Checksums must cover exactly the MSI, NSIS, and portable artifacts"; exit 1; }
 
       - name: Extract this version's changelog section
         id: notes
         shell: bash
         run: |
           version="${{ steps.version.outputs.version }}"
+          section=$(awk -v v="## ${version}" '
+            $0 == v {found=1; next}
+            found && /^## / {exit}
+            found {print}
+          ' CHANGELOG.md)
+          test -n "$(printf '%s' "$section" | tr -d '[:space:]')" \
+            || { echo "::error::CHANGELOG.md has no section for ${version}"; exit 1; }
           {
             echo "## GGUF Pilot ${version}"
             echo
-            awk -v v="## ${version}" '
-              $0 == v {found=1; next}
-              found && /^## / {exit}
-              found {print}
-            ' CHANGELOG.md
+            printf '%s\n' "$section"
             echo
             echo "### Downloads"
             echo

@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  catalogRevision,
+  downloadKey,
+  downloadPercent,
+  downloadReadiness,
+  keepLatestRequest,
+  retainOrDisposeListener,
+  etaLabel,
   normalizeProfile,
+  originLabel,
+  rateLabel,
   runtimeOptionState,
   suggestedProfile,
   type GithubAsset,
@@ -9,6 +18,29 @@ import {
   type RuntimeIdentity,
   type RuntimeOption,
 } from "./model";
+
+describe("asynchronous UI race guards", () => {
+  it("accepts only the newest request result", () => {
+    expect(keepLatestRequest(3, 3)).toBe(true);
+    expect(keepLatestRequest(2, 3)).toBe(false);
+  });
+
+  it("immediately disposes a listener that resolves after unmount", () => {
+    let stopped = 0;
+    expect(retainOrDisposeListener(true, () => { stopped += 1; })).toBeNull();
+    expect(stopped).toBe(1);
+    const stop = () => { stopped += 1; };
+    expect(retainOrDisposeListener(false, stop)).toBe(stop);
+  });
+});
+
+describe("catalog revisions", () => {
+  it("preserves a pinned revision and defaults only omitted values", () => {
+    const base = { quant: "Q4", filename: "x.gguf", sizeBytes: 1, sha256: "a".repeat(64) };
+    expect(catalogRevision({ ...base, revision: "refs/pr/7" })).toBe("refs/pr/7");
+    expect(catalogRevision(base)).toBe("main");
+  });
+});
 
 const model: LogicalModel = {
   id: "target",
@@ -141,5 +173,108 @@ describe("runtimeOptionState", () => {
 
   it("still offers install when the active build cannot be identified", () => {
     expect(runtimeOptionState(cpu, "b10752", [], identity({ source: "none" }), "10752")).toEqual({ kind: "install" });
+  });
+});
+
+
+describe("HF catalog download rules", () => {
+  const base = {
+    destination: "C:/models",
+    running: false,
+    alreadyOnDisk: false,
+    gated: false,
+    hasToken: false,
+  };
+
+  it("refuses to start without a destination folder and says so", () => {
+    const result = downloadReadiness({ ...base, destination: "" });
+    expect(result.canStart).toBe(false);
+    expect(result.reason).toMatch(/model folder/i);
+    expect(downloadReadiness({ ...base, destination: "   " }).canStart).toBe(false);
+  });
+
+  it("refuses a second download of a file already in flight", () => {
+    const result = downloadReadiness({ ...base, running: true });
+    expect(result.canStart).toBe(false);
+    expect(result.reason).toMatch(/already downloading/i);
+  });
+
+  it("lets the backend verify and reuse a file that is already on disk", () => {
+    // A same-named local file may be stale or corrupt. The backend checks size
+    // and a Hugging Face SHA-256 ETag instead of trusting the filename alone.
+    expect(downloadReadiness({ ...base, alreadyOnDisk: true }).canStart).toBe(true);
+  });
+
+  it("blocks a gated repo until a token exists, then allows it", () => {
+    // Gated repos return 401/403 without a token; catching it here gives a
+    // better message than letting the download fail after it starts.
+    const blocked = downloadReadiness({ ...base, gated: true, hasToken: false });
+    expect(blocked.canStart).toBe(false);
+    expect(blocked.reason).toMatch(/token/i);
+    expect(downloadReadiness({ ...base, gated: true, hasToken: true }).canStart).toBe(true);
+  });
+
+  it("allows a normal download and gives no reason text", () => {
+    const result = downloadReadiness(base);
+    expect(result.canStart).toBe(true);
+    expect(result.reason).toBe("");
+  });
+
+  it("builds a stable key per repo and file", () => {
+    expect(downloadKey("unsloth/Qwen3.8-27B-GGUF", "a.gguf")).toBe(
+      "unsloth/Qwen3.8-27B-GGUF/a.gguf",
+    );
+    expect(downloadKey("a/b", "x.gguf")).not.toBe(downloadKey("a/b", "y.gguf"));
+  });
+});
+
+describe("download progress display", () => {
+  it("clamps the percentage instead of overflowing the bar", () => {
+    expect(downloadPercent(0, 100)).toBe(0);
+    expect(downloadPercent(50, 100)).toBe(50);
+    expect(downloadPercent(100, 100)).toBe(100);
+    expect(downloadPercent(500, 100)).toBe(100);
+    expect(downloadPercent(-5, 100)).toBe(0);
+  });
+
+  it("returns zero rather than NaN when the total is unknown", () => {
+    // A NaN width silently breaks the progress bar, so guard every bad input.
+    expect(downloadPercent(10, 0)).toBe(0);
+    expect(downloadPercent(10, Number.NaN)).toBe(0);
+    expect(downloadPercent(Number.NaN, 100)).toBe(0);
+    expect(downloadPercent(10, Number.POSITIVE_INFINITY)).toBe(0);
+  });
+
+  it("formats the remaining time in units a person reads", () => {
+    expect(etaLabel(0, 1000, 100)).toBe("10s left");
+    expect(etaLabel(0, 100_000, 100)).toBe("16m 40s left");
+    expect(etaLabel(0, 10_000_000, 1000)).toBe("2h 46m left");
+  });
+
+  it("shows no estimate when there is nothing to estimate from", () => {
+    expect(etaLabel(0, 1000, 0)).toBe("");
+    expect(etaLabel(1000, 1000, 100)).toBe("");
+    expect(etaLabel(0, 0, 100)).toBe("");
+  });
+
+  it("labels transfer rate only when it is known", () => {
+    expect(rateLabel(0)).toBe("");
+    expect(rateLabel(1024 ** 3)).toBe("1.00 GiB/s");
+  });
+});
+
+describe("catalog origin honesty", () => {
+  it("marks a cached list as possibly stale rather than live", () => {
+    // Showing an offline cache as live would misrepresent the catalog.
+    expect(originLabel("cache").tone).toBe("warn");
+    expect(originLabel("cache").label).toMatch(/OFFLINE/);
+    expect(originLabel("network").tone).toBe("ok");
+    expect(originLabel("not-modified").tone).toBe("ok");
+  });
+
+  it("always includes words, never colour alone", () => {
+    for (const origin of ["network", "not-modified", "cache", "bundled"] as const) {
+      expect(originLabel(origin).label.trim().length).toBeGreaterThan(3);
+    }
   });
 });

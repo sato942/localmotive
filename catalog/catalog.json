@@ -1,0 +1,237 @@
+{
+  "schemaVersion": 1,
+  "updated": "2026-09-02",
+  "source": "https://github.com/sato942/gguf-pilot/blob/main/catalog/catalog.json",
+  "note": "Curated list of GGUF builds. GGUF Pilot downloads directly from Hugging Face; this file only decides what is offered.",
+  "models": [
+    {
+      "id": "unsloth-qwen3-coder-30b-a3b-instruct-gguf",
+      "repo": "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF",
+      "family": "Qwen3 Coder",
+      "parameters": "30B-A3B",
+      "publisher": "unsloth",
+      "summary": "",
+      "tags": [
+        "code",
+        "moe"
+      ],
+      "gated": false,
+      "downloads": 12706054,
+      "likes": 946,
+      "files": [
+        {
+          "quant": "Q4_K_M",
+          "filename": "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf",
+          "sizeBytes": 18556689568,
+          "sha256": "fadc3e5f8d42bf7e894a785b05082e47daee4df26680389817e2093056f088ad"
+        },
+        {
+          "quant": "Q6_K",
+          "filename": "Qwen3-Coder-30B-A3B-Instruct-Q6_K.gguf",
+          "sizeBytes": 25092535456,
+          "sha256": "100b5121d09553fb1af3b873b21fb3ec3da5c306fc5cb09bd338c48e21b10875"
+        }
+      ]
+    },
+    {
+      "id": "unsloth-qwen3-8-27b-gguf",
+      "repo": "unsloth/Qwen3.8-27B-GGUF",
+      "family": "Qwen3.8",
+      "parameters": "27B",
+      "publisher": "unsloth",
+      "summary": "",
+      "tags": [
+        "general",
+        "reasoning"
+      ],
+      "gated": false,
+      "downloads": 9354057,
+      "likes": 3365,
+      "files": [
+        {
+          "quant": "Q4_K_M",
+          "filename": "Qwen3.8-27B-UD-Q4_K_M.gguf",
+          "sizeBytes": 16464440224,
+          "sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482"
+        },
+        {
+          "quant": "Q5_K_M",
+          "filename": "Qwen3.8-27B-UD-Q5_K_M.gguf",
+          "sizeBytes": 19771509664,
+          "sha256": "2de73110cb254cbf09b54b717578dadff12ef1194e7271527e68202f39ba4bfd"
+        },
+        {
+          "quant": "Q8_0",
+          "filename": "Qwen3.8-27B-Q8_0.gguf",
+          "sizeBytes": 29047086048,
+          "sha256": "a680f44a06920e5d689774823782006aa3acc8db95750323373b24139b67e348"
+        }
+      ]
+    },
+    {
+      "id": "lmstudio-community-qwen3-8-27b-gguf",
+      "repo": "lmstudio-community/Qwen3.8-27B-GGUF",
+      "family": "Qwen3.8",
+      "parameters": "27B",
+      "publisher": "lmstudio-community",
+      "summary": "",
+      "tags": [
+        "general"
+      ],
+      "gated": false,
+      "downloads": 2414047,
+      "likes": 37,
+      "files": [
+        {
+          "quant": "Q4_K_M",
+          "filename": "Qwen3.8-27B-Q4_K_M.gguf",
+          "sizeBytes": 16810714336,
+          "sha256": "e00082f779fa385cee8c68a3ec8833a75778cc87272240b942f74e0b8243e520"
+        }
+      ]
+    },
+    {
+      "id": "unsloth-gemma-4-31b-it-gguf",
+      "repo": "unsloth/gemma-4-31B-it-GGUF",
+      "family": "Gemma 4",
+      "parameters": "31B",
+      "publisher": "unsloth",
+      "summary": "",
+      "tags": [
+        "general"
+      ],
+      "gated": false,
+      "downloads": 481657,
+      "likes": 597,
+      "files": [
+        {
+          "quant": "Q4_K_M",
+          "filename": "gemma-4-31B-it-Q4_K_M.gguf",
+          "sizeBytes": 18323733440,
+          "sha256": "38bd64c852c4b460434cc7162fa9bdcf242faf86502581a754cb72956bb17f84"
+        },
+        {
+          "quant": "Q6_K",
+          "filename": "gemma-4-31B-it-Q6_K.gguf",
+          "sizeBytes": 25201486784,
+          "sha256": "4660692bca96f1d9d19c550641088789c8c0c25bb07965a1e2798e3cb16885fb"
+        }
+      ]
+    },
+    {
+      "id": "unsloth-llama-3-2-3b-instruct-gguf",
+      "repo": "unsloth/Llama-3.2-3B-Instruct-GGUF",
+      "family": "Llama 3.2",
+      "parameters": "3B",
+      "publisher": "unsloth",
+      "summary": "",
+      "tags": [
+        "small",
+        "general"
+      ],
+      "gated": false,
+      "downloads": 169083,
+      "likes": 75,
+      "files": [
+        {
+          "quant": "Q4_K_M",
+          "filename": "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+          "sizeBytes": 2019377600,
+          "sha256": "6c99cc00ae910f6a532a80022cb4bc1939094527a089c29294b841c0bd87f74d"
+        },
+        {
+          "quant": "Q8_0",
+          "filename": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+          "sizeBytes": 3421898816,
+          "sha256": "f34112a11b7dad74ab517dedf6dcf00d624c9adac2dc0c72c719ca0478554ef2"
+        }
+      ]
+    },
+    {
+      "id": "maziyarpanahi-phi-4-gguf",
+      "repo": "MaziyarPanahi/phi-4-GGUF",
+      "family": "Phi-4",
+      "parameters": "14B",
+      "publisher": "MaziyarPanahi",
+      "summary": "",
+      "tags": [
+        "general"
+      ],
+      "gated": false,
+      "downloads": 155945,
+      "likes": 10,
+      "files": [
+        {
+          "quant": "Q4_K_M",
+          "filename": "phi-4.Q4_K_M.gguf",
+          "sizeBytes": 9053114464,
+          "sha256": "c7b128cc57818df7c60adce25269f16116a03cc92dea7fcd51afcaa9be4df7cf"
+        },
+        {
+          "quant": "Q6_K",
+          "filename": "phi-4.Q6_K.gguf",
+          "sizeBytes": 12030251104,
+          "sha256": "88b29ce7151a0dc5de7e5c627837051fc1738824db5a27d661b9c5e90d5e2a36"
+        }
+      ]
+    },
+    {
+      "id": "bartowski-llama-3-2-1b-instruct-gguf",
+      "repo": "bartowski/Llama-3.2-1B-Instruct-GGUF",
+      "family": "Llama 3.2",
+      "parameters": "1B",
+      "publisher": "bartowski",
+      "summary": "",
+      "tags": [
+        "small",
+        "general"
+      ],
+      "gated": false,
+      "downloads": 147312,
+      "likes": 176,
+      "files": [
+        {
+          "quant": "Q4_K_M",
+          "filename": "Llama-3.2-1B-Instruct-Q4_K_M.gguf",
+          "sizeBytes": 807694464,
+          "sha256": "6f85a640a97cf2bf5b8e764087b1e83da0fdb51d7c9fab7d0fece9385611df83"
+        },
+        {
+          "quant": "Q8_0",
+          "filename": "Llama-3.2-1B-Instruct-Q8_0.gguf",
+          "sizeBytes": 1321083008,
+          "sha256": "432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3"
+        }
+      ]
+    },
+    {
+      "id": "unsloth-phi-4-mini-instruct-gguf",
+      "repo": "unsloth/Phi-4-mini-instruct-GGUF",
+      "family": "Phi-4",
+      "parameters": "mini",
+      "publisher": "unsloth",
+      "summary": "",
+      "tags": [
+        "small",
+        "general"
+      ],
+      "gated": false,
+      "downloads": 87234,
+      "likes": 139,
+      "files": [
+        {
+          "quant": "Q4_K_M",
+          "filename": "Phi-4-mini-instruct-Q4_K_M.gguf",
+          "sizeBytes": 2491874272,
+          "sha256": "88c00229914083cd112853aab84ed51b87bdf6b9ce42f532d8c85c7c63b1730a"
+        },
+        {
+          "quant": "Q8_0",
+          "filename": "Phi-4-mini-instruct.Q8_0.gguf",
+          "sizeBytes": 4084611040,
+          "sha256": "26188c6050d525376a88b04514c236c5e28a36730f1e936f2a00314212b7ba42"
+        }
+      ]
+    }
+  ]
+}

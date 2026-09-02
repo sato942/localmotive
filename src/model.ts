@@ -483,3 +483,157 @@ export function bytesLabel(bytes: number): string {
   if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GiB`;
   return `${(bytes / 1024 ** 2).toFixed(0)} MiB`;
 }
+
+// ---------------------------------------------------------------------------
+// HF catalog
+// ---------------------------------------------------------------------------
+
+export type CatalogFile = {
+  quant: string;
+  filename: string;
+  sizeBytes: number;
+  sha256: string;
+  revision?: string;
+};
+
+export function catalogRevision(file: CatalogFile): string {
+  return file.revision || "main";
+}
+
+export function keepLatestRequest(sequence: number, current: number): boolean {
+  return sequence === current;
+}
+
+export function retainOrDisposeListener(disposed: boolean, stop: () => void): (() => void) | null {
+  if (disposed) {
+    stop();
+    return null;
+  }
+  return stop;
+}
+
+export type CatalogModel = {
+  id: string;
+  repo: string;
+  family: string;
+  parameters: string;
+  publisher: string;
+  summary: string;
+  tags: string[];
+  gated: boolean;
+  downloads: number;
+  likes: number;
+  files: CatalogFile[];
+};
+
+export type Catalog = {
+  schemaVersion: number;
+  updated: string;
+  source: string;
+  note: string;
+  models: CatalogModel[];
+};
+
+export type CatalogSort = "downloads" | "likes" | "name" | "size";
+
+export type CatalogQuery = {
+  text: string;
+  tag: string;
+  quant: string;
+  maxBytes: number;
+  hideGated: boolean;
+  sort: CatalogSort;
+};
+
+export type CatalogSnapshot = {
+  catalog: Catalog;
+  origin: "network" | "not-modified" | "cache" | "bundled";
+  fetchedAt: string;
+  url: string;
+};
+
+export type TokenStatus = {
+  configured: boolean;
+  masked: string;
+};
+
+export type DownloadEvent = {
+  key: string;
+  downloaded: number;
+  total: number;
+  bytesPerSecond: number;
+  state: "downloading" | "verifying" | "done" | "error";
+  message: string;
+  path: string;
+};
+
+/** Key identifying one downloadable file across the catalog. */
+export function downloadKey(repo: string, filename: string): string {
+  return `${repo}/${filename}`;
+}
+
+/**
+ * What the catalog origin means for the user. A cached list may be stale, and
+ * saying so is more honest than showing it as if it were live.
+ */
+export function originLabel(origin: CatalogSnapshot["origin"]): {
+  label: string;
+  tone: "ok" | "warn";
+} {
+  switch (origin) {
+    case "network":
+      return { label: "LIVE · JUST FETCHED", tone: "ok" };
+    case "not-modified":
+      return { label: "LIVE · UNCHANGED", tone: "ok" };
+    case "cache":
+      return { label: "OFFLINE · SHOWING LAST SAVED LIST", tone: "warn" };
+    default:
+      return { label: "BUILT-IN LIST", tone: "warn" };
+  }
+}
+
+/**
+ * Whether a download may start, and why not when it may not. Kept pure so the
+ * rule is tested rather than scattered through JSX.
+ */
+export function downloadReadiness(input: {
+  destination: string;
+  running: boolean;
+  alreadyOnDisk: boolean;
+  gated: boolean;
+  hasToken: boolean;
+}): { canStart: boolean; reason: string } {
+  if (!input.destination.trim()) {
+    return { canStart: false, reason: "Choose a model folder first." };
+  }
+  if (input.running) {
+    return { canStart: false, reason: "This file is already downloading." };
+  }
+  if (input.gated && !input.hasToken) {
+    return {
+      canStart: false,
+      reason: "This repository is gated. Add a Hugging Face token below.",
+    };
+  }
+  return { canStart: true, reason: "" };
+}
+
+/** Percentage complete, clamped so a bad total can never break the bar. */
+export function downloadPercent(downloaded: number, total: number): number {
+  if (!Number.isFinite(downloaded) || !Number.isFinite(total) || total <= 0) return 0;
+  return Math.max(0, Math.min(100, (downloaded / total) * 100));
+}
+
+/** "4m 20s" / "1h 05m" / "" when the rate is not yet known. */
+export function etaLabel(downloaded: number, total: number, bytesPerSecond: number): string {
+  if (bytesPerSecond <= 0 || total <= 0 || downloaded >= total) return "";
+  const seconds = Math.round((total - downloaded) / bytesPerSecond);
+  if (seconds < 60) return `${seconds}s left`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s left`;
+  return `${Math.floor(seconds / 3600)}h ${String(Math.floor((seconds % 3600) / 60)).padStart(2, "0")}m left`;
+}
+
+export function rateLabel(bytesPerSecond: number): string {
+  if (bytesPerSecond <= 0) return "";
+  return `${bytesLabel(bytesPerSecond)}/s`;
+}

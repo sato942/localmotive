@@ -128,7 +128,7 @@ Respond with ONLY a JSON object: {\"changes\": {\"field\": value, ...}, \"ration
 No prose before or after it, no code fence, and never restate this schema or quote earlier trials in your reply.";
 
 /// Extract the proposal from a model reply that may be wrapped in prose, a
-/// ```json fence, or sit beside other brace-bearing text (schema echoes,
+/// JSON code fence, or sit beside other brace-bearing text (schema echoes,
 /// quoted earlier trials). Every balanced `{…}` span is tried, last first,
 /// because the answer is normally the final object the model writes.
 pub fn parse_proposal(reply: &str) -> Result<Proposal, String> {
