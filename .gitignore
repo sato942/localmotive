@@ -1,0 +1,26 @@
+# Build artifacts
+/dist
+/src-tauri/target
+node_modules
+/gguf-pilot.exe
+
+# Python bytecode from the verification scripts
+__pycache__/
+*.pyc
+
+# Local verification output (machine-specific screenshots and metrics)
+/.impeccable/review
+/.impeccable/detect.json
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.swp
+.idea
+.vscode
+
+# Secrets — never commit
+.env
+.env.*
+*.key
+*.pem

@@ -1,0 +1,127 @@
+name: Release
+
+# Tag-driven: pushing v0.2.4 builds the Windows artifacts and publishes a
+# release titled with that version whose body is the matching CHANGELOG section.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build and release (e.g. v0.2.4)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          raw="${{ github.event.inputs.tag || github.ref_name }}"
+          version="${raw#v}"
+          echo "tag=v${version}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the tag matches the manifests
+        shell: bash
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          pkg=$(node -p "require('./package.json').version")
+          conf=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          cargo=$(grep -m1 '^version = ' src-tauri/Cargo.toml | cut -d'"' -f2)
+          echo "tag=$version package.json=$pkg tauri.conf.json=$conf Cargo.toml=$cargo"
+          test "$pkg" = "$version" && test "$conf" = "$version" && test "$cargo" = "$version" \
+            || { echo "::error::Version mismatch between the tag and the manifests"; exit 1; }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - name: Frontend checks
+        run: |
+          npx tsc --noEmit -p tsconfig.json
+          npm test
+          npm run build
+
+      - name: Rust checks
+        working-directory: src-tauri
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test
+
+      - name: Build installers and portable executable
+        run: npm run tauri build
+
+      - name: Stage release artifacts
+        id: stage
+        shell: bash
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          mkdir -p artifacts
+          cp "src-tauri/target/release/bundle/msi/GGUF Pilot_${version}_x64_en-US.msi" \
+             "artifacts/GGUF-Pilot_${version}_x64.msi"
+          cp "src-tauri/target/release/bundle/nsis/GGUF Pilot_${version}_x64-setup.exe" \
+             "artifacts/GGUF-Pilot_${version}_x64-setup.exe"
+          cp "src-tauri/target/release/gguf-pilot.exe" \
+             "artifacts/GGUF-Pilot_${version}_x64-portable.exe"
+          ls -l artifacts
+          # Publish checksums so downloads can be verified.
+          (cd artifacts && sha256sum * > "SHA256SUMS-${version}.txt" && cat "SHA256SUMS-${version}.txt")
+
+      - name: Extract this version's changelog section
+        id: notes
+        shell: bash
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          {
+            echo "## GGUF Pilot ${version}"
+            echo
+            awk -v v="## ${version}" '
+              $0 == v {found=1; next}
+              found && /^## / {exit}
+              found {print}
+            ' CHANGELOG.md
+            echo
+            echo "### Downloads"
+            echo
+            echo "| File | Use |"
+            echo "|---|---|"
+            echo "| \`GGUF-Pilot_${version}_x64-setup.exe\` | Recommended installer (NSIS) |"
+            echo "| \`GGUF-Pilot_${version}_x64.msi\` | MSI installer for managed deployment |"
+            echo "| \`GGUF-Pilot_${version}_x64-portable.exe\` | Portable executable, no installation |"
+            echo "| \`SHA256SUMS-${version}.txt\` | Checksums for the files above |"
+            echo
+            echo "Windows 10/11 x64. The installers are not Authenticode-signed, so SmartScreen may warn on first run."
+          } > release-notes.md
+          cat release-notes.md
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: GGUF Pilot ${{ steps.version.outputs.version }}
+          body_path: release-notes.md
+          files: artifacts/*
+          fail_on_unmatched_files: true

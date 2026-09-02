@@ -1,0 +1,420 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-02T00:00:00Z",
+  "title": "Design System: GGUF Pilot",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "Signal Green",
+        "canonical": "#9edc72",
+        "tonalRamp": ["#19351e", "#1c291d", "#202a23", "#252b28", "#35413a", "#425945", "#426243", "#44534a", "#465048", "#46504b", "#4c5952", "#4d6849", "#52704e", "#53605a", "#536558", "#56625c", "#91a29a", "#9eb89d", "#a8b4ad", "#aab6af", "#b8d7aa", "#b8eaa0", "#b9c4bd", "#9edc72", "#b1eb88", "#b9ef93"],
+        "note": "This ramp is the project's actual in-use green family rather than a synthesized scale: recessed green fields (#19351e, #1c291d, #202a23, #252b28), hue-matched borders and green-tinted neutrals for text on green-adjacent surfaces, the signal itself (#9edc72), and the primary button's hover face and border."
+      },
+      "primary-deep": {
+        "role": "primary",
+        "displayName": "Signal Green Deep",
+        "canonical": "#19351e",
+        "tonalRamp": ["#0b170d", "#122413", "#19351e", "#224828", "#2d5c33", "#3a7240", "#48884e", "#579e5c"]
+      },
+      "secondary": {
+        "role": "secondary",
+        "displayName": "Caution Amber",
+        "canonical": "#f0b95c",
+        "tonalRamp": ["#2d2618", "#302817", "#322816", "#3a2b13", "#5f4a24", "#684f23", "#6c5429", "#6f5425", "#c5ad84", "#e5c68d", "#f0b95c", "#f3c97f"],
+        "note": "The project's actual amber family: recessed caution fields, warning-band and trust-badge borders, warning body text, and the signal itself."
+      },
+      "secondary-deep": {
+        "role": "secondary",
+        "displayName": "Caution Amber Deep",
+        "canonical": "#3a2b13",
+        "tonalRamp": ["#150f06", "#261b0c", "#3a2b13", "#4f3a1a", "#664b22", "#7e5d2b", "#977034", "#b0843e"]
+      },
+      "tertiary": {
+        "role": "tertiary",
+        "displayName": "Stop Red",
+        "canonical": "#ef7b72",
+        "tonalRamp": ["#46211f", "#542825", "#824a46", "#8b3b34", "#ab4d45", "#cc6259", "#ef7b72", "#ffb1aa"],
+        "note": "Stop only: the danger button's field, hover face, and border, plus the lit label."
+      },
+      "tertiary-deep": {
+        "role": "tertiary",
+        "displayName": "Stop Red Deep",
+        "canonical": "#46211f",
+        "tonalRamp": ["#180b0a", "#2c1412", "#46211f", "#5d2d2a", "#763b37", "#8f4a45", "#a95a54", "#c46b64"]
+      },
+      "tertiary-lit": {
+        "role": "tertiary",
+        "displayName": "Stop Red Lit",
+        "canonical": "#ffb1aa",
+        "tonalRamp": ["#2b120f", "#45201c", "#5f2f2a", "#7b403a", "#98524b", "#b6675f", "#d68b83", "#ffb1aa"]
+      },
+      "workbench": {
+        "role": "neutral",
+        "displayName": "Workbench",
+        "canonical": "#171a1b",
+        "tonalRamp": ["#0c0e0e", "#171a1b", "#222627", "#2e3334", "#3b4142", "#4a5051", "#5a6162", "#6b7374"]
+      },
+      "rail": {
+        "role": "neutral",
+        "displayName": "Rail",
+        "canonical": "#1d2122",
+        "tonalRamp": ["#0e1011", "#1d2122", "#282d2e", "#343a3b", "#414849", "#4f5758", "#5e6768", "#6f7879"]
+      },
+      "shell": {
+        "role": "neutral",
+        "displayName": "Shell",
+        "canonical": "#202425",
+        "tonalRamp": ["#101213", "#202425", "#2b3031", "#373d3e", "#444b4c", "#525a5b", "#61696a", "#71797a"]
+      },
+      "panel": {
+        "role": "neutral",
+        "displayName": "Cabinet Panel",
+        "canonical": "#222627",
+        "tonalRamp": ["#111314", "#222627", "#2d3233", "#393f40", "#464d4e", "#545c5d", "#636b6c", "#737b7c"]
+      },
+      "panel-raised": {
+        "role": "neutral",
+        "displayName": "Raised Panel Band",
+        "canonical": "#292e2f",
+        "tonalRamp": ["#141717", "#292e2f", "#343a3b", "#404748", "#4d5455", "#5b6363", "#6a7272", "#7a8282"]
+      },
+      "well": {
+        "role": "neutral",
+        "displayName": "Sunk Well",
+        "canonical": "#111514",
+        "tonalRamp": ["#080a0a", "#111514", "#1b2120", "#262d2c", "#323a39", "#3f4847", "#4d5756", "#5c6665"]
+      },
+      "field": {
+        "role": "neutral",
+        "displayName": "Machined Field",
+        "canonical": "#191d1e",
+        "tonalRamp": ["#0c0e0f", "#191d1e", "#242a2b", "#303738", "#3d4545", "#4b5353", "#5a6262", "#6a7272"]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Structural Line",
+        "canonical": "#424849",
+        "tonalRamp": ["#1f2324", "#2b3031", "#363c3d", "#424849", "#4f5556", "#5c6364", "#6a7172", "#798081"]
+      },
+      "line-soft": {
+        "role": "neutral",
+        "displayName": "Row Divider",
+        "canonical": "#34393a",
+        "tonalRamp": ["#191c1d", "#232728", "#2c3132", "#34393a", "#414748", "#4f5556", "#5d6465", "#6c7374"]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Primary Ink",
+        "canonical": "#e8e9e4",
+        "tonalRamp": ["#25261f", "#3c3e35", "#54574c", "#6d7064", "#888b7e", "#a4a79a", "#c5c8b9", "#e8e9e4"]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Supporting Grey",
+        "canonical": "#9ca3a0",
+        "tonalRamp": ["#6f7974", "#737b78", "#77817c", "#7d8583", "#7e8684", "#7f8784", "#818986", "#828a87", "#858e8b", "#878f8d", "#89918e", "#8d9592", "#929a97", "#929b97", "#9ca3a0", "#a6adaa", "#a9b0ad", "#bac0bd", "#bbc0bd", "#c1c6c3", "#c2c6c3", "#c6cbc8", "#cbd2ce", "#d0d5d2", "#d8d8cd", "#b7bcb9"],
+        "note": "One continuous graphite text ramp. Every step is a real supporting-text or secondary-border value in App.css, from the dimmest caption (#6f7974) through the standard muted grey (#9ca3a0) to near-plate command text (#d8d8cd)."
+      },
+      "plate": {
+        "role": "neutral",
+        "displayName": "Engraved Plate",
+        "canonical": "#d5d1c5",
+        "tonalRamp": ["#22211c", "#37352d", "#4d4a40", "#646054", "#7d7869", "#989280", "#b5af9d", "#d5d1c5"]
+      },
+      "plate-ink": {
+        "role": "neutral",
+        "displayName": "Plate Ink",
+        "canonical": "#151718",
+        "tonalRamp": ["#0a0b0c", "#151718", "#1f2223", "#2a2e2f", "#363b3c", "#434849", "#515757", "#606666"]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "One per screen: the view name. Rendered clamp(30px, 3vw, 44px), uppercase."
+      },
+      "readout": {
+        "displayName": "Readout",
+        "purpose": "The single most important measured number on a screen (benchmark result). Rendered clamp(48px, 7vw, 82px), tabular."
+      },
+      "instrument": {
+        "displayName": "Instrument Value",
+        "purpose": "Status instrument figures and panel-level measured values. Plate-colored, tabular."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Panel headers, fieldset legends, runtime section titles. Uppercase, 15-18px."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "The only prose role: descriptions, group notes, help text. Public Sans, sentence case."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Field labels, instrument captions, table heads. Condensed uppercase 10px."
+      },
+      "plate": {
+        "displayName": "Plate",
+        "purpose": "State tags, capability chips, trust badges, provenance lines. Reads as stamped metal."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "Paths, exact commands, digests, logs. Always selectable in full, never ellipsised."
+      }
+    },
+    "shadows": [
+      {
+        "name": "signal-live",
+        "value": "0 0 10px rgba(158, 220, 114, .35)",
+        "purpose": "The only glow in the product: the rail status dot while a server is actually running. A lamp that is on."
+      },
+      {
+        "name": "signal-idle-inset",
+        "value": "inset 0 0 0 1px #787f7d",
+        "purpose": "The same dot when idle: a dark bulb behind a metal ring."
+      }
+    ],
+    "motion": [
+      {
+        "name": "work-spin",
+        "value": "spin .9s linear infinite",
+        "purpose": "Rotates an icon only while real work is in progress (runtime inspection, rescan, install). The single permitted animation."
+      },
+      {
+        "name": "reduced-motion-collapse",
+        "value": "animation-duration: .01ms; animation-iteration-count: 1; scroll-behavior: auto",
+        "purpose": "prefers-reduced-motion collapses every animation and smooth scroll."
+      }
+    ],
+    "breakpoints": [
+      { "name": "tablet", "value": "980px" },
+      { "name": "mobile", "value": "680px" },
+      { "name": "mobile-reference", "value": "390px" }
+    ],
+    "focus": [
+      {
+        "name": "focus-ring",
+        "value": "outline: 2px solid #f0b95c; outline-offset: 2px",
+        "purpose": "Global :focus-visible ring. Never removed for aesthetics."
+      },
+      {
+        "name": "input-focus-border",
+        "value": "border-color: #9edc72",
+        "purpose": "A focused field's border turns signal green in addition to the amber ring."
+      }
+    ],
+    "layout": [
+      { "name": "rail-desktop", "value": "88px" },
+      { "name": "rail-tablet", "value": "72px" },
+      { "name": "nav-bar-mobile", "value": "64px" },
+      { "name": "topbar", "value": "74px" },
+      { "name": "notice-strip", "value": "35px" },
+      { "name": "screen-padding-desktop", "value": "26px 28px 34px" },
+      { "name": "screen-padding-mobile", "value": "22px 16px 110px" },
+      { "name": "panel-gutter", "value": "16px" },
+      { "name": "instrument-height", "value": "112px" },
+      { "name": "inventory-min-width", "value": "850px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button (Start)",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The Start switch. One per screen, never used for a secondary action.",
+      "html": "<button class=\"ds-btn-primary\"><svg width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M8 5v14l11-7z\"/></svg>START SERVER</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 38px; padding: 0 14px; background: #9edc72; color: #152012; border: 1px solid #b9ef93; border-radius: 0; font: 700 12px \"Public Sans\", \"Segoe UI\", sans-serif; cursor: pointer; } .ds-btn-primary:hover { background: #b1eb88; } .ds-btn-primary:focus-visible { outline: 2px solid #f0b95c; outline-offset: 2px; } .ds-btn-primary:disabled { opacity: .42; cursor: not-allowed; }"
+    },
+    {
+      "name": "Default Button",
+      "kind": "button",
+      "refersTo": "button",
+      "description": "The standard panel control. Hover lightens the face; nothing lifts or casts a shadow.",
+      "html": "<button class=\"ds-btn\"><svg width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" aria-hidden=\"true\"><path d=\"M21 12a9 9 0 1 1-3-6.7\"/><path d=\"M21 3v6h-6\"/></svg>RESCAN</button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 38px; padding: 0 14px; background: #303637; color: #e8e9e4; border: 1px solid #596061; border-radius: 0; font: 700 12px \"Public Sans\", \"Segoe UI\", sans-serif; cursor: pointer; } .ds-btn:hover { background: #3a4142; border-color: #707879; } .ds-btn:focus-visible { outline: 2px solid #f0b95c; outline-offset: 2px; } .ds-btn:disabled { opacity: .42; cursor: not-allowed; }"
+    },
+    {
+      "name": "Danger Button (Stop)",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Stop and destructive actions only. Red never appears anywhere else.",
+      "html": "<button class=\"ds-btn-danger\"><svg width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" fill=\"currentColor\" aria-hidden=\"true\"><rect x=\"6\" y=\"6\" width=\"12\" height=\"12\"/></svg>STOP</button>",
+      "css": ".ds-btn-danger { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 38px; padding: 0 14px; background: #46211f; color: #ffb1aa; border: 1px solid #824a46; border-radius: 0; font: 700 12px \"Public Sans\", \"Segoe UI\", sans-serif; cursor: pointer; } .ds-btn-danger:hover { background: #542825; } .ds-btn-danger:focus-visible { outline: 2px solid #f0b95c; outline-offset: 2px; }"
+    },
+    {
+      "name": "Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "A machined recess with the label above and help text inline below. Never a tooltip.",
+      "html": "<label class=\"ds-field\">PORT<input value=\"8080\" /><small>Loopback ports below 1024 require elevation.</small></label>",
+      "css": ".ds-field { display: block; color: #a9b0ad; font: 600 10px \"Bahnschrift Condensed\", \"Arial Narrow\", sans-serif; letter-spacing: .12em; text-transform: uppercase; } .ds-field input { display: block; width: 100%; height: 37px; margin-top: 6px; padding: 0 10px; color: #e8e9e4; background: #191d1e; border: 1px solid #4b5253; border-radius: 0; outline: 0; font: 400 11px \"Public Sans\", \"Segoe UI\", sans-serif; font-variant-numeric: tabular-nums; } .ds-field input:focus { border-color: #9edc72; } .ds-field input:focus-visible { outline: 2px solid #f0b95c; outline-offset: 2px; } .ds-field small { display: block; margin-top: 5px; color: #7f8885; font: 400 9px/1.35 \"Public Sans\", \"Segoe UI\", sans-serif; letter-spacing: normal; text-transform: none; }"
+    },
+    {
+      "name": "Toggle Line",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "A switch mounted on a panel: a bordered row, not a floating checkbox.",
+      "html": "<label class=\"ds-toggle\"><input type=\"checkbox\" checked /><span>FLASH ATTENTION</span></label>",
+      "css": ".ds-toggle { display: flex; align-items: center; gap: 9px; min-height: 37px; padding: 0 10px; background: #1d2122; border: 1px solid #424849; border-radius: 0; cursor: pointer; } .ds-toggle input { width: 15px; height: 15px; margin: 0; accent-color: #9edc72; } .ds-toggle span { color: #a9b0ad; font: 600 10px \"Bahnschrift Condensed\", \"Arial Narrow\", sans-serif; letter-spacing: .12em; text-transform: uppercase; } .ds-toggle:focus-within { outline: 2px solid #f0b95c; outline-offset: 2px; }"
+    },
+    {
+      "name": "Rail Navigation Item",
+      "kind": "nav",
+      "refersTo": "nav-item",
+      "description": "Icon-over-label stack in the 88px control rail. Active reads as the lit button on a panel.",
+      "html": "<nav class=\"ds-rail\"><button class=\"ds-nav-item ds-nav-item--active\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" aria-hidden=\"true\"><rect x=\"3\" y=\"4\" width=\"18\" height=\"12\"/><path d=\"M8 20h8\"/></svg>CONTROL</button><button class=\"ds-nav-item\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" aria-hidden=\"true\"><path d=\"M4 6h16M4 12h16M4 18h16\"/></svg>MODELS</button></nav>",
+      "css": ".ds-rail { display: flex; flex-direction: column; gap: 5px; width: 88px; padding: 10px; background: #1d2122; border-right: 1px solid #3e4445; } .ds-nav-item { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; min-height: 58px; background: transparent; color: #858e8b; border: 1px solid transparent; border-radius: 0; font: 700 9px \"Bahnschrift Condensed\", \"Arial Narrow\", sans-serif; letter-spacing: .03em; text-transform: uppercase; cursor: pointer; } .ds-nav-item:hover { background: #252a2b; color: #e8e9e4; } .ds-nav-item--active { background: #252b28; color: #9edc72; border-color: #465048; } .ds-nav-item:focus-visible { outline: 2px solid #f0b95c; outline-offset: 2px; }"
+    },
+    {
+      "name": "Instrument Strip",
+      "kind": "custom",
+      "refersTo": "instrument",
+      "description": "The signature component: one bordered strip divided by hairlines into a wide primary readout plus supporting cells. The running state shifts the primary cell green.",
+      "html": "<div class=\"ds-strip\"><div class=\"ds-instrument ds-instrument--primary\"><span class=\"ds-instrument-label\">SERVER STATE</span><strong>RUNNING</strong><small>PID 24188 · 127.0.0.1:8080</small></div><div class=\"ds-instrument\"><span class=\"ds-instrument-label\">THROUGHPUT</span><strong>439.76</strong><small>generation tok/s mean</small></div><div class=\"ds-instrument\"><span class=\"ds-instrument-label\">CONTEXT</span><strong>8192</strong><small>4 slots</small></div></div>",
+      "css": ".ds-strip { display: grid; grid-template-columns: 1.2fr 1fr 1fr; background: #1e2223; border: 1px solid #424849; } .ds-instrument { display: flex; flex-direction: column; justify-content: space-between; min-height: 112px; padding: 16px 18px; border-right: 1px solid #424849; } .ds-instrument:last-child { border-right: 0; } .ds-instrument-label { color: #878f8d; font: 600 10px \"Bahnschrift Condensed\", \"Arial Narrow\", sans-serif; letter-spacing: .12em; text-transform: uppercase; } .ds-instrument strong { color: #d5d1c5; font: 700 26px \"Bahnschrift Condensed\", \"Arial Narrow\", sans-serif; letter-spacing: .025em; font-variant-numeric: tabular-nums; } .ds-instrument small { color: #9ca3a0; font: 400 10px \"Public Sans\", \"Segoe UI\", sans-serif; } .ds-instrument--primary { background: #202a23; } .ds-instrument--primary strong { color: #9edc72; }"
+    },
+    {
+      "name": "Machine Panel",
+      "kind": "card",
+      "refersTo": "machine-panel",
+      "description": "The standard cabinet face: a hairline-bordered body under a raised header band, with hairline-divided spec rows.",
+      "html": "<section class=\"ds-panel\"><header class=\"ds-panel-title\"><h2>ACTIVE PROFILE</h2><span class=\"ds-tag ds-tag--good\">VALID</span></header><dl class=\"ds-spec\"><div><dt>Runtime</dt><dd>B10751 · CUDA 13.3</dd></div><div><dt>Alias</dt><dd>LFM2.5-2.6B</dd></div><div><dt>Speculation</dt><dd>DRAFT-DSPARK</dd></div></dl></section>",
+      "css": ".ds-panel { background: #222627; border: 1px solid #424849; border-radius: 0; } .ds-panel-title { display: flex; align-items: center; gap: 9px; min-height: 42px; padding: 0 14px; background: #292e2f; border-bottom: 1px solid #424849; } .ds-panel-title h2 { margin: 0; color: #e8e9e4; font: 700 15px \"Bahnschrift Condensed\", \"Arial Narrow\", sans-serif; letter-spacing: .06em; text-transform: uppercase; } .ds-panel-title .ds-tag { margin-left: auto; } .ds-spec { margin: 0; } .ds-spec div { display: flex; align-items: center; justify-content: space-between; min-height: 38px; padding: 0 18px; border-bottom: 1px solid #34393a; } .ds-spec dt { color: #9ca3a0; font: 400 11px \"Public Sans\", \"Segoe UI\", sans-serif; } .ds-spec dd { margin: 0; color: #e8e9e4; font: 600 12px \"Bahnschrift Condensed\", \"Arial Narrow\", sans-serif; letter-spacing: .05em; font-variant-numeric: tabular-nums; }"
+    },
+    {
+      "name": "State Tag",
+      "kind": "chip",
+      "refersTo": "state-tag-good",
+      "description": "A recessed lamp: colored text on its matching deep field inside a hue-matched hairline. Always contains words.",
+      "html": "<span class=\"ds-tag ds-tag--good\">RUNNING</span> <span class=\"ds-tag ds-tag--warning\">SHARD MISSING</span>",
+      "css": ".ds-tag { display: inline-block; width: fit-content; padding: 4px 6px; border-radius: 0; font: 700 9px \"Bahnschrift Condensed\", \"Arial Narrow\", sans-serif; letter-spacing: .08em; text-transform: uppercase; } .ds-tag--good { color: #9edc72; background: #19351e; border: 1px solid #426243; } .ds-tag--warning { color: #f0b95c; background: #3a2b13; border: 1px solid #6f5425; }"
+    },
+    {
+      "name": "Terminal Well",
+      "kind": "custom",
+      "refersTo": "terminal-well",
+      "description": "The sunk surface text is poured into: logs and exact commands. Wraps rather than truncates, because the text is evidence.",
+      "html": "<pre class=\"ds-well\">\"C:\\llama\\llama-server.exe\" --model \"D:\\models\\LFM2.5-2.6B-Q8_0.gguf\" --alias LFM2.5-2.6B --host 127.0.0.1 --port 8080 --ctx-size 8192 --n-gpu-layers 99 --flash-attn on --draft-dspark</pre>",
+      "css": ".ds-well { margin: 0; padding: 16px; min-height: 120px; max-height: 390px; overflow: auto; color: #b8eaa0; background: #111514; border-radius: 0; font: 400 11px/1.55 Consolas, \"Cascadia Mono\", monospace; white-space: pre-wrap; overflow-wrap: anywhere; }"
+    },
+    {
+      "name": "Advanced Disclosure Group",
+      "kind": "custom",
+      "refersTo": "panel-title",
+      "description": "Engraved +/- disclosure. Native markers are removed so the symbol reads as stamped on the panel band; nesting stops at two levels.",
+      "html": "<details class=\"ds-group\" open><summary>CPU, BATCHING, AND THROUGHPUT</summary><div class=\"ds-group-body\">Threads, batch sizes, and continuous batching.</div></details>",
+      "css": ".ds-group { background: #222728; border: 1px solid #34393a; border-radius: 0; } .ds-group > summary { display: flex; align-items: center; justify-content: space-between; min-height: 42px; padding: 0 13px; color: #c6cbc8; font: 600 12px \"Public Sans\", \"Segoe UI\", sans-serif; list-style: none; cursor: pointer; } .ds-group > summary::-webkit-details-marker { display: none; } .ds-group > summary::after { content: \"+\"; color: #818a87; font: 700 16px \"Bahnschrift Condensed\", \"Arial Narrow\", sans-serif; } .ds-group[open] > summary::after { content: \"\\2212\"; color: #9edc72; } .ds-group[open] > summary { border-bottom: 1px solid #34393a; } .ds-group > summary:focus-visible { outline: 2px solid #f0b95c; outline-offset: 2px; } .ds-group-body { padding: 14px; color: #9ca3a0; font: 400 11px/1.5 \"Public Sans\", \"Segoe UI\", sans-serif; }"
+    },
+    {
+      "name": "Setup Steps",
+      "kind": "custom",
+      "refersTo": "instrument",
+      "description": "First-run progress as structure rather than a modal: three bordered cells with square number badges.",
+      "html": "<div class=\"ds-steps\"><div class=\"ds-step ds-step--done\"><span>1</span><strong>Runtime</strong><small>Installed b10751 CUDA 13.3</small></div><div class=\"ds-step ds-step--active\"><span>2</span><strong>Model folder</strong><small>Choose a folder of GGUF files</small></div><div class=\"ds-step\"><span>3</span><strong>Start</strong><small>Review the profile and serve</small></div></div>",
+      "css": ".ds-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid #424849; } .ds-step { display: grid; grid-template-columns: 28px 1fr; grid-template-rows: auto auto; align-items: center; min-height: 60px; padding: 10px 13px; background: #202425; color: #818986; border-right: 1px solid #424849; } .ds-step:last-child { border-right: 0; } .ds-step > span { grid-row: 1 / 3; display: grid; place-items: center; width: 22px; height: 22px; border: 1px solid #59605e; border-radius: 0; font: 700 11px \"Bahnschrift Condensed\", \"Arial Narrow\", sans-serif; } .ds-step strong { color: #bbc0bd; font: 700 11px \"Public Sans\", \"Segoe UI\", sans-serif; } .ds-step small { font: 400 9px \"Public Sans\", \"Segoe UI\", sans-serif; } .ds-step--active { background: #292d25; } .ds-step--active > span { color: #172015; background: #9edc72; border-color: #9edc72; } .ds-step--done > span { color: #9edc72; border-color: #52704e; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Machine-Room Control Cabinet",
+    "overview": "GGUF Pilot looks like the front face of a rack-mounted control cabinet in a machine room: matte graphite steel, engraved label plates, hard-edged panels butted against each other with a single hairline of separation, and a small number of lamps that mean exactly one thing each. The interface is a physical instrument for a physical job — a 30 GB model is about to occupy real memory on real silicon, and the screen should feel as consequential as that.\n\nDensity is a feature, not a compromise. Values live next to the controls that produce them, exact commands are shown rather than summarized, and every number is set in tabular figures so a column of measurements reads as a column. The palette is nearly monochrome so that the three signal colors — green, amber, red — carry real information instead of decoration. Nothing floats: depth comes from tonal steps between regions (#171a1b workbench to #1d2122 rail to #222627 panel to #292e2f raised header), never from drop shadows.\n\nTwo worlds are explicitly rejected. It is not a rounded-card SaaS dashboard: no pill buttons, no soft shadows, no pastel status chips, no 24 px radii. It is also not a decorative sci-fi terminal: no scanlines, no glow text, no ambient animation, no fictional telemetry. Every lamp, plate, and readout corresponds to a fact the control plane actually knows.",
+    "keyCharacteristics": [
+      "Zero border radius on every rectangular surface; corners are cut, not eased.",
+      "Condensed uppercase (Bahnschrift Condensed) for structure and measurement; Public Sans for prose; Consolas for paths, commands, and logs.",
+      "Three signal colors, each with one meaning, on an otherwise graphite field.",
+      "1 px structural lines and tonal region contrast instead of elevation.",
+      "Tabular numerics everywhere a value can change."
+    ],
+    "rules": [
+      {
+        "name": "The One Meaning Rule",
+        "body": "Each signal color carries exactly one meaning across the entire application: green = running/valid/installed, amber = incomplete/unverified/needs attention, red = stop/destructive. A color is never borrowed for emphasis, decoration, or brand flourish.",
+        "section": "colors"
+      },
+      {
+        "name": "The Graphite Majority Rule",
+        "body": "Signal colors occupy under 10% of any screen. If a view reads as colorful, the color has stopped being information.",
+        "section": "colors"
+      },
+      {
+        "name": "The Recessed Lamp Rule",
+        "body": "A colored foreground always sits on its matching deep field with a 1 px border of the same hue family (#426243 for green, #6f5425 for amber). Colored text on bare panel is never used for state.",
+        "section": "colors"
+      },
+      {
+        "name": "The Uppercase-Is-Structure Rule",
+        "body": "Condensed uppercase names, labels, and measures. It is never used for a sentence the user has to read for meaning; prose is always Public Sans in sentence case.",
+        "section": "typography"
+      },
+      {
+        "name": "The Tabular Rule",
+        "body": "Anything that can change while the user watches — throughput, sizes, ports, counts, sample bars — is set font-variant-numeric: tabular-nums so digits do not shift under the eye.",
+        "section": "typography"
+      },
+      {
+        "name": "The Evidence-Is-Mono Rule",
+        "body": "Paths, commands, digests, and log output are always mono and always selectable in full. Truncating a SHA-256 or an exact command would destroy the thing that makes the panel trustworthy.",
+        "section": "typography"
+      },
+      {
+        "name": "The Butted-Panel Rule",
+        "body": "Panels touch their neighbours across a 16 px gutter with 1 px borders. No panel gets a radius, a shadow, or a margin that makes it look detachable.",
+        "section": "layout"
+      },
+      {
+        "name": "The Clearance Rule",
+        "body": "On mobile, the bottom navigation is fixed, so the screen carries 110 px of bottom padding. At maximum scroll the last content sits clear of the bar rather than under it.",
+        "section": "layout"
+      },
+      {
+        "name": "The No-Reflow-Table Rule",
+        "body": "Dense comparison tables scroll horizontally at min-width: 850px. They are never reflowed into stacked cards, because losing column alignment loses the table's only purpose.",
+        "section": "layout"
+      },
+      {
+        "name": "The Flat-Cabinet Rule",
+        "body": "No box-shadow on any panel, button, input, dialog, or hovered surface. If something needs to feel closer, move it one tonal step lighter and give it a 1 px line border.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Lamps-Only Rule",
+        "body": "Glow is permitted only on a state indicator that is genuinely on. It is never used for hover, emphasis, or ambience.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Zero-Radius Rule",
+        "body": "No radius on anything rectangular, including inputs and selects. The only round things in GGUF Pilot are indicator lamps.",
+        "section": "shapes"
+      },
+      {
+        "name": "The Border-Is-Structure Rule",
+        "body": "Separation is always a 1 px line in line or line-soft. Gaps alone never imply a boundary, and a boundary is never implied by a shadow.",
+        "section": "shapes"
+      }
+    ],
+    "dos": [
+      "Do set border-radius: 0 on every new rectangular surface, including inputs and selects.",
+      "Do convey state with a bordered text tag on a deep field, so it survives grayscale and colorblind viewing.",
+      "Do give measured values font-variant-numeric: tabular-nums and the condensed display face.",
+      "Do separate regions with 1px solid var(--line) (between panels) or var(--line-soft) (within a panel).",
+      "Do step tone to signal depth: #111514 well to #171a1b ground to #1d2122 rail to #222627 panel to #292e2f header.",
+      "Do print paths, exact commands, and digests in full mono text the user can select.",
+      "Do keep exactly one primary green action per screen, and reserve red for Stop.",
+      "Do put explanatory help inline under the control at 9 px, not in a hover tooltip.",
+      "Do keep mobile targets at 44 px or more, and hold 110 px of bottom clearance above the fixed navigation bar.",
+      "Do write empty states that name the reason and the recovery action."
+    ],
+    "donts": [
+      "Don't add box-shadow to a panel, button, input, or hover state; the cabinet is flat.",
+      "Don't introduce a fourth signal color, or reuse green, amber, or red for decoration or emphasis.",
+      "Don't set body prose in condensed uppercase, or set labels and readouts in Public Sans.",
+      "Don't hide a disabled control; drop it to opacity: .42 and leave it readable.",
+      "Don't truncate a digest, path, or exact command with an ellipsis — wrap it with overflow-wrap: anywhere.",
+      "Don't reflow the inventory table into stacked cards; let it scroll at min-width: 850px.",
+      "Don't keep a sticky evidence panel once the layout is single-column; make it static at <= 980 px.",
+      "Don't animate for ambience. Motion is limited to a 0.9 s linear spin on an icon representing work actually in progress, and prefers-reduced-motion collapses it.",
+      "Don't rely on a chevron or icon-only affordance for disclosure; use the engraved + / -.",
+      "Don't remove the amber :focus-visible ring."
+    ]
+  }
+}
