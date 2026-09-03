@@ -1,4 +1,6 @@
+use crate::artifact::{is_reparse_point, parse_shard_name, ArtifactFileFact};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io::{Read, Write};
@@ -27,12 +29,12 @@ pub struct LogicalModel {
     pub expected_shards: usize,
     pub complete: bool,
     pub quant: String,
+    pub shards: Vec<ArtifactFileFact>,
     pub companions: Vec<Companion>,
 }
 
-/// First free TCP port at or above `preferred` on `host`, scanning a bounded
-/// window. Used so the default 8080 does not collide with anything already
-/// listening (another llama-server, a dev server, a proxy).
+/// Suggest a TCP port from a bounded scan of the current socket state.
+/// The child bind and health check remain authoritative because this probe releases its socket.
 pub fn pick_free_port(host: &str, preferred: u16) -> Result<u16, String> {
     let bind_host = if host == "0.0.0.0" { "127.0.0.1" } else { host };
     let start = preferred.max(1);
@@ -42,9 +44,18 @@ pub fn pick_free_port(host: &str, preferred: u16) -> Result<u16, String> {
         }
     }
     Err(format!(
-        "No free port found between {start} and {} on {host}",
-        start.saturating_add(200)
+        "Could not find a free port in the bounded range {start}..{}",
+        start.saturating_add(199)
     ))
+}
+
+/// Probe whether a configured TCP endpoint is available immediately before launch.
+/// The post-health listener-owner check remains authoritative because this probe releases its socket.
+pub fn probe_port_available(host: &str, port: u16) -> Result<(), String> {
+    let listener = TcpListener::bind((host, port))
+        .map_err(|error| format!("TCP port {host}:{port} is not available: {error}"))?;
+    drop(listener);
+    Ok(())
 }
 
 /// Rough bits-per-weight for a GGUF quantisation label, used only to order
@@ -117,6 +128,9 @@ fn role_for(name: &str) -> Option<&'static str> {
 }
 
 fn shard_key(name: &str) -> (String, usize) {
+    if let Ok(shard) = parse_shard_name(name) {
+        return (shard.logical_name, shard.count);
+    }
     let stem = name.strip_suffix(".gguf").unwrap_or(name);
     if let Some(of_pos) = stem.rfind("-of-") {
         let expected = stem[of_pos + 4..].parse::<usize>().unwrap_or(1);
@@ -135,11 +149,17 @@ fn shard_key(name: &str) -> (String, usize) {
 fn collect_gguf(root: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
     for entry in fs::read_dir(root).map_err(|e| e.to_string())? {
         let path = entry.map_err(|e| e.to_string())?.path();
-        if path.is_dir() {
+        let metadata = fs::symlink_metadata(&path)
+            .map_err(|error| format!("Could not inspect {}: {error}", path.display()))?;
+        if metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
+            continue;
+        }
+        if metadata.is_dir() {
             collect_gguf(&path, out)?;
-        } else if path
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("gguf"))
+        } else if metadata.is_file()
+            && path
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("gguf"))
         {
             out.push(path);
         }
@@ -148,7 +168,12 @@ fn collect_gguf(root: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
 }
 
 pub fn scan_models(root: &Path) -> Result<Vec<LogicalModel>, String> {
-    if !root.is_dir() {
+    let root_metadata = fs::symlink_metadata(root)
+        .map_err(|error| format!("Could not inspect model root {}: {error}", root.display()))?;
+    if root_metadata.file_type().is_symlink()
+        || is_reparse_point(&root_metadata)
+        || !root_metadata.is_dir()
+    {
         return Err(format!("Model root does not exist: {}", root.display()));
     }
     let mut files = Vec::new();
@@ -174,13 +199,55 @@ pub fn scan_models(root: &Path) -> Result<Vec<LogicalModel>, String> {
 
     let mut models = Vec::new();
     for ((directory, key), mut shards) in targets {
-        shards.sort();
+        shards.sort_by(|left, right| {
+            let identity = |path: &PathBuf| {
+                path.file_name()
+                    .and_then(|name| parse_shard_name(&name.to_string_lossy()).ok())
+                    .map(|shard| shard.index)
+                    .unwrap_or(1)
+            };
+            identity(left)
+                .cmp(&identity(right))
+                .then_with(|| left.cmp(right))
+        });
         let first = shards.first().unwrap();
-        let (_, expected) = shard_key(&first.file_name().unwrap().to_string_lossy());
+        let shard_identities: Vec<_> = shards
+            .iter()
+            .filter_map(|path| {
+                path.file_name()
+                    .and_then(|name| parse_shard_name(&name.to_string_lossy()).ok())
+            })
+            .collect();
+        let expected = shard_identities
+            .iter()
+            .map(|shard| shard.count)
+            .max()
+            .unwrap_or(1);
+        let expected_consistent = shard_identities.iter().all(|shard| shard.count == expected);
+        let indices: HashSet<_> = shard_identities.iter().map(|shard| shard.index).collect();
+        let complete = expected_consistent
+            && indices.len() == expected
+            && (1..=expected).all(|index| indices.contains(&index));
         let size_bytes = shards
             .iter()
             .map(|p| p.metadata().map(|m| m.len()).unwrap_or(0))
             .sum();
+        let shard_facts = shards
+            .iter()
+            .map(|path| {
+                let name = path.file_name().unwrap().to_string_lossy().to_string();
+                let identity = parse_shard_name(&name).ok();
+                Ok(ArtifactFileFact {
+                    path: path.to_string_lossy().to_string(),
+                    name,
+                    size_bytes: path.metadata().map_err(|error| error.to_string())?.len(),
+                    sha256: None,
+                    header_sha256: None,
+                    shard_index: identity.as_ref().map(|shard| shard.index),
+                    expected_shards: identity.as_ref().map(|shard| shard.count),
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
         let quant = key
             .split('-')
             .rev()
@@ -209,8 +276,9 @@ pub fn scan_models(root: &Path) -> Result<Vec<LogicalModel>, String> {
             size_bytes,
             shard_count: shards.len(),
             expected_shards: expected,
-            complete: shards.len() == expected,
+            complete,
             quant,
+            shards: shard_facts,
             companions: model_companions,
         });
     }
@@ -410,11 +478,33 @@ impl LaunchProfile {
         if self.alias.trim().is_empty() {
             return Err("Model alias is required".into());
         }
+        if self.port == 0 {
+            return Err("Port must be between 1 and 65535".into());
+        }
         if self.context == 0 || self.parallel == 0 || self.batch == 0 || self.ubatch == 0 {
             return Err("Context, slots, batch, and uBatch must be greater than zero".into());
         }
         if self.ubatch > self.batch {
             return Err("Physical uBatch cannot exceed logical batch size".into());
+        }
+        let gpu_layers = self.gpu_layers.trim();
+        if !matches!(gpu_layers, "auto" | "all") && gpu_layers.parse::<u32>().is_err() {
+            return Err("GPU layers must be a nonnegative number, auto, or all".into());
+        }
+        if !self.tensor_split.trim().is_empty() {
+            let mut has_positive_fraction = false;
+            for fraction in self.tensor_split.split(',') {
+                let value = fraction
+                    .trim()
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|value| value.is_finite() && *value >= 0.0)
+                    .ok_or("Tensor split requires comma-separated finite nonnegative values")?;
+                has_positive_fraction |= value > 0.0;
+            }
+            if !has_positive_fraction {
+                return Err("Tensor split requires at least one positive value".into());
+            }
         }
         if self.spec_type.starts_with("draft-") && self.draft_min > self.draft_max {
             return Err("Speculative draft minimum cannot exceed maximum".into());
@@ -428,7 +518,29 @@ impl LaunchProfile {
         if self.ssl_key_file.is_empty() != self.ssl_cert_file.is_empty() {
             return Err("SSL private key and certificate must be configured together".into());
         }
-        let loopback = matches!(self.host.as_str(), "127.0.0.1" | "localhost" | "::1");
+        let host = self.host.trim();
+        if host.is_empty() {
+            return Err("Host is required".into());
+        }
+        let ip_host = host
+            .strip_prefix('[')
+            .and_then(|value| value.strip_suffix(']'))
+            .unwrap_or(host);
+        let parsed_host = if ip_host.eq_ignore_ascii_case("localhost") {
+            None
+        } else {
+            Some(ip_host.parse::<std::net::IpAddr>().map_err(|_| {
+                "Host must be an IP address or localhost; DNS names are not safe bind targets"
+            })?)
+        };
+        let loopback = ip_host.eq_ignore_ascii_case("localhost")
+            || parsed_host.is_some_and(|address| address.is_loopback());
+        if loopback
+            && self.api_key_file.trim().is_empty()
+            && matches!(self.cors_origins.trim(), "" | "*")
+        {
+            return Err("Wildcard CORS requires an API key file".into());
+        }
         if !loopback && self.api_key_file.trim().is_empty() {
             return Err("A non-loopback host requires an API key file".into());
         }
@@ -733,6 +845,7 @@ impl LaunchProfile {
             }
             .into(),
         );
+        validate_raw_extra_arguments(&args, &self.extra_args)?;
         args.extend(self.extra_args.clone());
         Ok(args)
     }
@@ -752,6 +865,96 @@ impl LaunchProfile {
     }
 }
 
+fn argument_flag(token: &str) -> Option<&str> {
+    let flag = token.split_once('=').map_or(token, |(flag, _)| flag);
+    let bytes = flag.as_bytes();
+    (flag.starts_with('-')
+        && flag.len() > 1
+        && bytes.get(1).is_some_and(|byte| !byte.is_ascii_digit()))
+    .then_some(flag)
+}
+
+fn validate_raw_extra_arguments(
+    managed_args: &[String],
+    extra_args: &[String],
+) -> Result<(), String> {
+    const MAX_EXTRA_ARGUMENTS: usize = 32;
+    if extra_args.len() > MAX_EXTRA_ARGUMENTS {
+        return Err(format!(
+            "Raw extra arguments are limited to {MAX_EXTRA_ARGUMENTS} tokens"
+        ));
+    }
+    const RESTRICTED_FLAGS: &[&str] = &[
+        "--path",
+        "--slot-save-path",
+        "--webui-mcp-proxy",
+        "-ag",
+        "-dr",
+        "-hf",
+        "-hff",
+        "-hfr",
+        "-hft",
+        "-mmu",
+        "-mu",
+    ];
+    const RESTRICTED_PREFIXES: &[&str] = &[
+        "--agent",
+        "--api-key",
+        "--docker-",
+        "--hf-",
+        "--mcp-",
+        "--mmproj-url",
+        "--model-url",
+        "--models-",
+        "--rpc",
+        "--tools",
+    ];
+    const MANAGED_FLAG_ALIASES: &[&str] = &[
+        "--batch-size",
+        "--cache-type-k",
+        "--cache-type-v",
+        "--ctx-size",
+        "--gpu-layers",
+        "--model",
+        "--n-gpu-layers",
+        "--parallel",
+        "--threads",
+        "--threads-batch",
+        "--ubatch-size",
+    ];
+    let managed_flags = managed_args
+        .iter()
+        .filter_map(|argument| argument_flag(argument))
+        .collect::<HashSet<_>>();
+
+    for argument in extra_args {
+        const MAX_EXTRA_ARGUMENT_BYTES: usize = 1_024;
+        if argument.len() > MAX_EXTRA_ARGUMENT_BYTES {
+            return Err(format!(
+                "Each raw extra argument is limited to {MAX_EXTRA_ARGUMENT_BYTES} bytes"
+            ));
+        }
+        let Some(flag) = argument_flag(argument) else {
+            return Err("Each raw extra argument must be one --flag or --flag=value token".into());
+        };
+        if managed_flags.contains(flag) || MANAGED_FLAG_ALIASES.contains(&flag) {
+            return Err(format!(
+                "Raw extra argument {flag} cannot override a managed profile flag"
+            ));
+        }
+        if RESTRICTED_FLAGS.contains(&flag)
+            || RESTRICTED_PREFIXES
+                .iter()
+                .any(|prefix| flag.starts_with(prefix))
+        {
+            return Err(format!(
+                "Raw extra argument {flag} is not allowed at this trust boundary"
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeCapabilities {
@@ -759,6 +962,7 @@ pub struct RuntimeCapabilities {
     pub version: String,
     pub build: String,
     pub commit: String,
+    pub help_sha256: String,
     pub spec_types: Vec<String>,
     pub supported_flags: Vec<String>,
     pub metrics: bool,
@@ -788,6 +992,54 @@ pub fn parse_supported_flags(help: &str) -> Vec<String> {
     flags
 }
 
+pub fn manifest_safe_args(args: &[String]) -> Vec<String> {
+    const SECRET_VALUE_FLAGS: &[&str] = &["--api-key"];
+    const SENSITIVE_VALUE_FLAGS: &[&str] = &[
+        "-m",
+        "--model-draft",
+        "--mmproj",
+        "--api-key-file",
+        "--ssl-key-file",
+        "--ssl-cert-file",
+        "--chat-template-file",
+    ];
+
+    let fingerprint = |value: &str| {
+        let mut hasher = Sha256::new();
+        hasher.update(value.as_bytes());
+        format!("sha256:{}", hex::encode(hasher.finalize()))
+    };
+    let mut safe = Vec::with_capacity(args.len());
+    let mut redact_secret_next = false;
+    let mut redact_next = false;
+    for argument in args {
+        if redact_secret_next {
+            safe.push("[REDACTED]".into());
+            redact_secret_next = false;
+            continue;
+        }
+        if redact_next {
+            safe.push(fingerprint(argument));
+            redact_next = false;
+            continue;
+        }
+        if let Some((flag, value)) = argument.split_once('=') {
+            if SECRET_VALUE_FLAGS.contains(&flag) {
+                safe.push(format!("{flag}=[REDACTED]"));
+                continue;
+            }
+            if SENSITIVE_VALUE_FLAGS.contains(&flag) {
+                safe.push(format!("{flag}={}", fingerprint(value)));
+                continue;
+            }
+        }
+        safe.push(argument.clone());
+        redact_secret_next = SECRET_VALUE_FLAGS.contains(&argument.as_str());
+        redact_next = SENSITIVE_VALUE_FLAGS.contains(&argument.as_str());
+    }
+    safe
+}
+
 pub fn filter_supported_args(
     args: &[String],
     supported_flags: &[String],
@@ -796,23 +1048,15 @@ pub fn filter_supported_args(
         .iter()
         .map(String::as_str)
         .collect::<HashSet<_>>();
-    let is_flag = |token: &str| {
-        token.starts_with('-')
-            && token.len() > 1
-            && token
-                .as_bytes()
-                .get(1)
-                .is_some_and(|byte| !byte.is_ascii_digit())
-    };
     let mut filtered = Vec::new();
     let mut omitted = Vec::new();
     let mut index = 0;
     while index < args.len() {
         let token = &args[index];
-        if is_flag(token) && !supported.contains(token.as_str()) {
-            omitted.push(token.clone());
+        if let Some(flag) = argument_flag(token).filter(|flag| !supported.contains(*flag)) {
+            omitted.push(flag.to_string());
             index += 1;
-            if index < args.len() && !is_flag(&args[index]) {
+            if !token.contains('=') && index < args.len() && argument_flag(&args[index]).is_none() {
                 index += 1;
             }
             continue;
@@ -821,6 +1065,61 @@ pub fn filter_supported_args(
         index += 1;
     }
     (filtered, omitted)
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RejectedLaunchArgument {
+    pub flag: String,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchArgumentValidation {
+    pub effective_args: Vec<String>,
+    pub rejected: Vec<RejectedLaunchArgument>,
+    pub command: String,
+}
+
+pub fn validate_launch_arguments(
+    profile: &LaunchProfile,
+    capabilities: &RuntimeCapabilities,
+) -> Result<LaunchArgumentValidation, String> {
+    let raw_args = profile.build_args()?;
+    let managed_end = raw_args
+        .len()
+        .checked_sub(profile.extra_args.len())
+        .ok_or_else(|| "Raw launch argument accounting is inconsistent".to_string())?;
+    let managed_flags = raw_args[..managed_end]
+        .iter()
+        .filter_map(|argument| argument_flag(argument))
+        .collect::<HashSet<_>>();
+    let (effective_args, omitted) = filter_supported_args(&raw_args, &capabilities.supported_flags);
+    let unsupported_required = omitted
+        .iter()
+        .filter(|flag| managed_flags.contains(flag.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !unsupported_required.is_empty() {
+        return Err(format!(
+            "Runtime help does not advertise required launch flags: {}",
+            unsupported_required.join(", ")
+        ));
+    }
+    let rejected = omitted
+        .into_iter()
+        .map(|flag| RejectedLaunchArgument {
+            reason: format!("Runtime help does not advertise {flag}"),
+            flag,
+        })
+        .collect();
+    let command = profile.display_command_with_args(&effective_args);
+    Ok(LaunchArgumentValidation {
+        effective_args,
+        rejected,
+        command,
+    })
 }
 
 pub fn parse_capabilities(version: &str, help: &str) -> RuntimeCapabilities {
@@ -848,6 +1147,7 @@ pub fn parse_capabilities(version: &str, help: &str) -> RuntimeCapabilities {
         version: version.trim().to_string(),
         build: extract("build "),
         commit: extract("commit "),
+        help_sha256: hex::encode(Sha256::digest(help.as_bytes())),
         spec_types,
         supported_flags: parse_supported_flags(help),
         metrics: help.contains("--metrics"),
@@ -856,19 +1156,106 @@ pub fn parse_capabilities(version: &str, help: &str) -> RuntimeCapabilities {
     }
 }
 
-pub fn inspect_runtime(path: &Path) -> Result<RuntimeCapabilities, String> {
-    if !path.is_file() {
-        return Err(format!("Runtime does not exist: {}", path.display()));
+#[cfg(test)]
+const RUNTIME_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
+#[cfg(not(test))]
+const RUNTIME_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+const RUNTIME_PROBE_STREAM_LIMIT: usize = 2 * 1024 * 1024;
+
+fn read_runtime_probe_stream(stream: &mut impl Read) -> std::io::Result<(Vec<u8>, bool)> {
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 8 * 1024];
+    let mut exceeded = false;
+    loop {
+        let read = stream.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        let remaining = RUNTIME_PROBE_STREAM_LIMIT.saturating_sub(bytes.len());
+        bytes.extend_from_slice(&buffer[..read.min(remaining)]);
+        exceeded |= read > remaining;
     }
-    let run = |arg: &str| {
-        crate::proc::hidden_command(path)
-            .arg(arg)
-            .output()
-            .map_err(|e| e.to_string())
-            .map(|o| String::from_utf8_lossy(&[o.stdout, o.stderr].concat()).to_string())
+    Ok((bytes, exceeded))
+}
+
+fn run_runtime_probe(path: &Path, arg: &str) -> Result<String, String> {
+    let mut child = crate::proc::hidden_command(path)
+        .arg(arg)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("Could not run runtime {arg} probe: {error}"))?;
+    let Some(mut stdout) = child.stdout.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(format!("Runtime {arg} probe did not expose stdout"));
     };
-    let version = run("--version")?;
-    let help = run("--help")?;
+    let Some(mut stderr) = child.stderr.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(format!("Runtime {arg} probe did not expose stderr"));
+    };
+    let stdout_reader = std::thread::spawn(move || read_runtime_probe_stream(&mut stdout));
+    let stderr_reader = std::thread::spawn(move || read_runtime_probe_stream(&mut stderr));
+    let started = std::time::Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if started.elapsed() < RUNTIME_PROBE_TIMEOUT => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stdout_reader.join();
+                let _ = stderr_reader.join();
+                return Err(format!(
+                    "Runtime {arg} probe timed out after {} seconds",
+                    RUNTIME_PROBE_TIMEOUT.as_secs_f32()
+                ));
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stdout_reader.join();
+                let _ = stderr_reader.join();
+                return Err(format!("Could not inspect runtime {arg} probe: {error}"));
+            }
+        }
+    };
+    let (stdout, stdout_exceeded) = stdout_reader
+        .join()
+        .map_err(|_| format!("Runtime {arg} stdout reader failed"))?
+        .map_err(|error| format!("Could not read runtime {arg} stdout: {error}"))?;
+    let (stderr, stderr_exceeded) = stderr_reader
+        .join()
+        .map_err(|_| format!("Runtime {arg} stderr reader failed"))?
+        .map_err(|error| format!("Could not read runtime {arg} stderr: {error}"))?;
+    if stdout_exceeded || stderr_exceeded {
+        return Err(format!(
+            "Runtime {arg} probe exceeded the {} byte output limit",
+            RUNTIME_PROBE_STREAM_LIMIT
+        ));
+    }
+    let text = String::from_utf8_lossy(&[stdout, stderr].concat()).to_string();
+    if !status.success() {
+        let status = status
+            .code()
+            .map(|code| format!("code {code}"))
+            .unwrap_or_else(|| "a signal".into());
+        return Err(format!(
+            "Runtime {arg} probe exited with {status}: {}",
+            text.trim()
+        ));
+    }
+    Ok(text)
+}
+
+pub fn inspect_runtime(path: &Path) -> Result<RuntimeCapabilities, String> {
+    crate::artifact::validate_regular_non_reparse_file("Runtime", path)?;
+    let version = run_runtime_probe(path, "--version")?;
+    let help = run_runtime_probe(path, "--help")?;
     let mut caps = parse_capabilities(&version, &help);
     caps.path = path.to_string_lossy().to_string();
     Ok(caps)
@@ -987,6 +1374,291 @@ mod tests {
     use std::fs;
 
     #[test]
+    fn launch_profile_rejects_port_zero() {
+        let profile = LaunchProfile {
+            alias: "fixture".into(),
+            model: "fixture.gguf".into(),
+            port: 0,
+            ..LaunchProfile::default()
+        };
+
+        assert!(profile.build_args().unwrap_err().contains("Port"));
+    }
+
+    #[test]
+    fn launch_profile_recognizes_the_ip_loopback_ranges() {
+        for host in ["127.0.0.2", "::1", "[::1]"] {
+            let profile = LaunchProfile {
+                alias: "fixture".into(),
+                model: "fixture.gguf".into(),
+                host: host.into(),
+                api_key_file: String::new(),
+                ..LaunchProfile::default()
+            };
+
+            assert!(
+                profile.build_args().is_ok(),
+                "loopback host {host} required network credentials"
+            );
+        }
+    }
+
+    #[test]
+    fn launch_profile_rejects_wildcard_cors_without_authentication() {
+        let profile = LaunchProfile {
+            alias: "fixture".into(),
+            model: "fixture.gguf".into(),
+            host: "127.0.0.1".into(),
+            cors_origins: "*".into(),
+            api_key_file: String::new(),
+            ..LaunchProfile::default()
+        };
+
+        let error = profile.build_args().unwrap_err();
+
+        assert!(error.contains("Wildcard CORS requires an API key file"));
+    }
+
+    #[test]
+    fn launch_profile_rejects_dns_hosts_that_could_resolve_off_machine() {
+        let profile = LaunchProfile {
+            alias: "fixture".into(),
+            model: "fixture.gguf".into(),
+            host: "example.com".into(),
+            api_key_file: "key.txt".into(),
+            cors_origins: "https://example.com".into(),
+            ..LaunchProfile::default()
+        };
+
+        let error = profile.build_args().unwrap_err();
+
+        assert!(error.contains("IP address"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn raw_extra_arguments_cannot_override_managed_profile_flags() {
+        let profile = LaunchProfile {
+            alias: "fixture".into(),
+            model: "fixture.gguf".into(),
+            extra_args: vec!["--host=0.0.0.0".into()],
+            ..LaunchProfile::default()
+        };
+
+        let error = profile.build_args().unwrap_err();
+
+        assert!(error.contains("--host"), "unexpected error: {error}");
+        assert!(error.contains("managed"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn raw_extra_arguments_cannot_override_managed_long_aliases() {
+        for argument in [
+            "--model=other.gguf",
+            "--ctx-size=1",
+            "--n-gpu-layers=0",
+            "--threads=1",
+            "--batch-size=1",
+        ] {
+            let profile = LaunchProfile {
+                alias: "fixture".into(),
+                model: "fixture.gguf".into(),
+                extra_args: vec![argument.into()],
+                ..LaunchProfile::default()
+            };
+
+            let error = profile.build_args().unwrap_err();
+
+            assert!(
+                error.contains("managed"),
+                "{argument} produced unexpected error: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn raw_extra_arguments_reject_inline_secrets_without_echoing_values() {
+        let profile = LaunchProfile {
+            alias: "fixture".into(),
+            model: "fixture.gguf".into(),
+            extra_args: vec!["--api-key=[REDACTED]".into()],
+            ..LaunchProfile::default()
+        };
+
+        let error = profile.build_args().unwrap_err();
+
+        assert!(error.contains("--api-key"), "unexpected error: {error}");
+        assert!(!error.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn raw_extra_arguments_require_one_self_contained_option_per_token() {
+        let profile = LaunchProfile {
+            alias: "fixture".into(),
+            model: "fixture.gguf".into(),
+            extra_args: vec!["--check-tensors".into(), "unexpected-value".into()],
+            ..LaunchProfile::default()
+        };
+
+        let error = profile.build_args().unwrap_err();
+
+        assert!(error.contains("--flag=value"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn raw_extra_arguments_reject_privilege_expanding_runtime_flags() {
+        for argument in [
+            "--model-url=https://example.invalid/model.gguf",
+            "--tools-invoke",
+            "--webui-mcp-proxy",
+        ] {
+            let profile = LaunchProfile {
+                alias: "fixture".into(),
+                model: "fixture.gguf".into(),
+                extra_args: vec![argument.into()],
+                ..LaunchProfile::default()
+            };
+
+            let error = profile.build_args().unwrap_err();
+
+            assert!(
+                error.contains("trust boundary"),
+                "{argument} produced unexpected error: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn raw_extra_argument_count_is_bounded() {
+        let profile = LaunchProfile {
+            alias: "fixture".into(),
+            model: "fixture.gguf".into(),
+            extra_args: (0..33).map(|index| format!("--safe-{index}")).collect(),
+            ..LaunchProfile::default()
+        };
+
+        let error = profile.build_args().unwrap_err();
+
+        assert!(error.contains("32"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn raw_extra_argument_length_is_bounded() {
+        let profile = LaunchProfile {
+            alias: "fixture".into(),
+            model: "fixture.gguf".into(),
+            extra_args: vec![format!("--safe={}", "x".repeat(1_025))],
+            ..LaunchProfile::default()
+        };
+
+        let error = profile.build_args().unwrap_err();
+
+        assert!(error.contains("1024"), "unexpected error: {error}");
+        assert!(!error.contains(&"x".repeat(1_025)));
+    }
+
+    #[test]
+    fn runtime_filter_accepts_a_supported_equals_form_option() {
+        let args = vec!["--safe-experimental=value".into()];
+        let supported = vec!["--safe-experimental".into()];
+
+        let (effective, rejected) = filter_supported_args(&args, &supported);
+
+        assert_eq!(effective, args);
+        assert!(rejected.is_empty());
+    }
+
+    #[test]
+    fn runtime_inspection_rejects_a_failed_version_probe() {
+        let error = inspect_runtime(&std::env::current_exe().unwrap()).unwrap_err();
+
+        assert!(error.contains("--version"), "unexpected error: {error}");
+        assert!(error.contains("exited"), "unexpected error: {error}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn runtime_inspection_times_out_a_stalled_probe() {
+        let root = std::env::temp_dir().join(format!(
+            "gguf-pilot-runtime-probe-timeout-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let source = root.join("probe.rs");
+        let executable = root.join("probe.exe");
+        fs::write(
+            &source,
+            r#"
+use std::{env, thread, time::Duration};
+
+fn main() {
+    match env::args().nth(1).as_deref() {
+        Some("--version") => {
+            thread::sleep(Duration::from_secs(2));
+            println!("fixture runtime");
+        }
+        Some("--help") => println!("-m, --model FNAME"),
+        _ => {}
+    }
+}
+"#,
+        )
+        .unwrap();
+        let status = crate::proc::hidden_command("rustc")
+            .arg(&source)
+            .arg("-o")
+            .arg(&executable)
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        let error = inspect_runtime(&executable).unwrap_err();
+
+        assert!(error.contains("timed out"), "unexpected error: {error}");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn runtime_inspection_rejects_excessive_probe_output() {
+        let root = std::env::temp_dir().join(format!(
+            "gguf-pilot-runtime-probe-output-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let source = root.join("probe.rs");
+        let executable = root.join("probe.exe");
+        fs::write(
+            &source,
+            r#"
+use std::{env, io::{self, Write}};
+
+fn main() {
+    match env::args().nth(1).as_deref() {
+        Some("--version") => println!("fixture runtime"),
+        Some("--help") => io::stdout().write_all(&vec![b'x'; 5 * 1024 * 1024]).unwrap(),
+        _ => {}
+    }
+}
+"#,
+        )
+        .unwrap();
+        let status = crate::proc::hidden_command("rustc")
+            .arg(&source)
+            .arg("-o")
+            .arg(&executable)
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        let error = inspect_runtime(&executable).unwrap_err();
+
+        assert!(error.contains("output limit"), "unexpected error: {error}");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn free_port_prefers_the_requested_one_then_walks_upward() {
         // Requested port free -> use it.
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
@@ -1003,6 +1675,20 @@ mod tests {
             "returned port {next} was not actually free"
         );
         drop(held);
+    }
+
+    #[test]
+    fn port_probe_rejects_an_occupied_port() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let error = probe_port_available("127.0.0.1", port).unwrap_err();
+
+        assert!(
+            error.contains(&port.to_string()),
+            "unexpected error: {error}"
+        );
+        assert!(error.contains("not available"), "unexpected error: {error}");
     }
 
     #[test]
@@ -1123,10 +1809,78 @@ mod tests {
         assert_eq!(model.shard_count, 2);
         assert_eq!(model.expected_shards, 2);
         assert!(model.complete);
+        assert_eq!(
+            model
+                .shards
+                .iter()
+                .map(|shard| shard.shard_index)
+                .collect::<Vec<_>>(),
+            vec![Some(1), Some(2)]
+        );
+        assert_eq!(
+            model
+                .shards
+                .iter()
+                .map(|shard| shard.size_bytes)
+                .sum::<u64>(),
+            model.size_bytes
+        );
         assert_eq!(model.companions.len(), 2);
         assert!(model.companions.iter().any(|c| c.role == "mmproj"));
         assert!(model.companions.iter().any(|c| c.role == "dspark"));
 
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn scan_does_not_follow_a_directory_reparse_point() {
+        use std::os::windows::fs::symlink_dir;
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("gguf-pilot-scan-root-{nonce}"));
+        let outside = std::env::temp_dir().join(format!("gguf-pilot-scan-outside-{nonce}"));
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("private-Q4_K_M.gguf"), b"outside").unwrap();
+        let junction = root.join("junction");
+        if symlink_dir(&outside, &junction).is_err() {
+            let status = crate::proc::hidden_command("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(&junction)
+                .arg(&outside)
+                .status()
+                .unwrap();
+            assert!(status.success());
+        }
+
+        let models = scan_models(&root).unwrap();
+
+        assert!(models.is_empty());
+        fs::remove_dir(junction).unwrap();
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[test]
+    fn scan_rejects_conflicting_expected_shard_counts() {
+        let root = std::env::temp_dir().join(format!(
+            "gguf-pilot-conflicting-shards-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("ModelA")).unwrap();
+        fs::write(root.join("ModelA/ModelA-Q4-00001-of-00002.gguf"), b"a").unwrap();
+        fs::write(root.join("ModelA/ModelA-Q4-00002-of-00003.gguf"), b"b").unwrap();
+
+        let models = scan_models(&root).unwrap();
+
+        assert_eq!(models.len(), 1);
+        assert!(!models[0].complete);
+        assert_eq!(models[0].expected_shards, 3);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1186,7 +1940,6 @@ mod tests {
             fit: false,
             spec_type: "draft-dspark".into(),
             draft_max: 5,
-            extra_args: vec!["--jinja".into()],
             ..LaunchProfile::default()
         };
 
@@ -1282,6 +2035,112 @@ mod tests {
     }
 
     #[test]
+    fn launch_argument_validation_explains_each_rejected_flag() {
+        let profile = LaunchProfile {
+            alias: "fixture".into(),
+            extra_args: vec!["--experimental-fixture".into()],
+            ..LaunchProfile::default()
+        };
+        let raw = profile.build_args().unwrap();
+        let supported_flags = raw
+            .iter()
+            .filter(|token| token.starts_with('-'))
+            .filter(|token| token.as_str() != "--experimental-fixture")
+            .cloned()
+            .collect::<Vec<_>>();
+        let capabilities = RuntimeCapabilities {
+            path: profile.runtime.clone(),
+            version: "fixture".into(),
+            build: "fixture".into(),
+            commit: "fixture".into(),
+            help_sha256: "a".repeat(64),
+            spec_types: Vec::new(),
+            supported_flags,
+            metrics: false,
+            multimodal: true,
+            fit: true,
+        };
+
+        let validation = validate_launch_arguments(&profile, &capabilities).unwrap();
+
+        assert_eq!(validation.rejected.len(), 1);
+        assert_eq!(validation.rejected[0].flag, "--experimental-fixture");
+        assert!(validation.rejected[0].reason.contains("does not advertise"));
+        assert!(!validation.command.contains("--experimental-fixture"));
+    }
+
+    #[test]
+    fn launch_argument_validation_rejects_an_unsupported_required_model_flag() {
+        let profile = LaunchProfile {
+            alias: "fixture".into(),
+            ..LaunchProfile::default()
+        };
+        let supported_flags = profile
+            .build_args()
+            .unwrap()
+            .into_iter()
+            .filter(|token| token.starts_with('-') && token != "-m")
+            .collect();
+        let capabilities = RuntimeCapabilities {
+            path: profile.runtime.clone(),
+            version: "fixture".into(),
+            build: "fixture".into(),
+            commit: "fixture".into(),
+            help_sha256: "a".repeat(64),
+            spec_types: Vec::new(),
+            supported_flags,
+            metrics: true,
+            multimodal: true,
+            fit: true,
+        };
+
+        let error = validate_launch_arguments(&profile, &capabilities).unwrap_err();
+
+        assert!(error.contains("-m"), "unexpected error: {error}");
+        assert!(error.contains("required"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn manifest_arguments_fingerprint_sensitive_path_values() {
+        let first = vec![
+            "--api-key-file".into(),
+            r"C:\private\keys.txt".into(),
+            "--ctx-size".into(),
+            "4096".into(),
+        ];
+        let second = vec![
+            "--api-key-file".into(),
+            r"C:\other\keys.txt".into(),
+            "--ctx-size".into(),
+            "4096".into(),
+        ];
+
+        let first_safe = manifest_safe_args(&first);
+        let second_safe = manifest_safe_args(&second);
+
+        assert!(!first_safe.join(" ").contains("private"));
+        assert!(!first_safe.join(" ").contains("keys.txt"));
+        assert_ne!(first_safe, second_safe);
+        assert_eq!(first_safe[2..], ["--ctx-size", "4096"]);
+    }
+
+    #[test]
+    fn manifest_arguments_redact_direct_api_keys() {
+        let secret = "super-secret-benchmark-key";
+        let args = vec![
+            "--api-key".into(),
+            secret.into(),
+            format!("--api-key={secret}"),
+        ];
+
+        let safe = manifest_safe_args(&args);
+
+        assert!(!safe.iter().any(|value| value.contains(secret)));
+        assert_eq!(safe[1], "[REDACTED]");
+        assert_eq!(safe[2], "--api-key=[REDACTED]");
+    }
+
+    #[test]
     fn profile_rejects_inconsistent_advanced_ranges() {
         let mut profile = LaunchProfile {
             model: r"C:\models\target.gguf".into(),
@@ -1300,6 +2159,29 @@ mod tests {
     }
 
     #[test]
+    fn profile_rejects_malformed_gpu_placement_values() {
+        for (gpu_layers, tensor_split) in [
+            ("not-a-layer-count", ""),
+            ("all", "0.5,,0.5"),
+            ("all", "0,0"),
+            ("all", "0.5,not-a-fraction"),
+        ] {
+            let profile = LaunchProfile {
+                alias: "fixture".into(),
+                model: "fixture.gguf".into(),
+                gpu_layers: gpu_layers.into(),
+                tensor_split: tensor_split.into(),
+                ..LaunchProfile::default()
+            };
+
+            assert!(
+                profile.build_args().is_err(),
+                "accepted gpu_layers={gpu_layers:?}, tensor_split={tensor_split:?}"
+            );
+        }
+    }
+
+    #[test]
     fn capability_parser_uses_runtime_help_as_truth() {
         let help = "--spec-type none,draft-mtp,draft-dspark,ngram-mod\n--metrics enable metrics\n--mmproj FILE";
         let caps = parse_capabilities("version: build 10679, commit abc123", help);
@@ -1312,6 +2194,15 @@ mod tests {
         assert!(caps.metrics);
         assert!(caps.multimodal);
         assert!(!caps.spec_types.iter().any(|x| x == "draft-dspark2"));
+    }
+
+    #[test]
+    fn runtime_help_digest_preserves_exact_probe_bytes() {
+        let compact = parse_capabilities("version: test", "--model FILE\n--metrics");
+        let spaced = parse_capabilities("version: test", "--model FILE  \n--metrics");
+
+        assert_eq!(compact.supported_flags, spaced.supported_flags);
+        assert_ne!(compact.help_sha256, spaced.help_sha256);
     }
 
     #[test]

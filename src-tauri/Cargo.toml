@@ -1,6 +1,6 @@
 [package]
 name = "gguf-pilot"
-version = "0.2.5"
+version = "0.3.0"
 description = "A public Windows desktop control plane for local GGUF inference"
 authors = ["GGUF Pilot contributors"]
 edition = "2021"
@@ -34,5 +34,8 @@ base64 = "0.22"
 rand = "0.8"
 cap-std = "4.0.3"
 ed25519-dalek = { version = "2.2", features = ["std"] }
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_Storage_FileSystem", "Win32_System_ProcessStatus", "Win32_System_SystemInformation", "Win32_System_Threading"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common"] }
 

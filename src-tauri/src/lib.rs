@@ -1,27 +1,37 @@
+pub mod artifact;
+pub mod calibration;
 mod catalog;
 mod cloud;
 mod core;
 mod download;
+pub mod evidence;
 mod gguf;
+pub mod measurement;
+pub mod preflight;
 mod proc;
+pub mod recommend;
 mod runtime;
+pub mod sharing;
 mod tune;
 
 use core::{BenchmarkSummary, LaunchProfile, LogicalModel, RuntimeCapabilities};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
-use std::net::{TcpListener, TcpStream};
-use std::path::Path;
+#[cfg(test)]
+use std::net::TcpListener;
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 struct ManagedServer {
     child: Child,
     profile: LaunchProfile,
     command: String,
+    validation: LaunchValidation,
     log_path: String,
     started_at: u64,
 }
@@ -30,6 +40,7 @@ struct ManagedServer {
 struct AppState {
     server: Mutex<Option<ManagedServer>>,
     tuning: Mutex<Option<Arc<AtomicBool>>>,
+    benchmark: Mutex<Option<Arc<AtomicBool>>>,
     /// Last validated catalog shown to the frontend. `None` means use bundled.
     catalog: Mutex<Option<catalog::Catalog>>,
     /// Cancel flags for in-flight downloads, keyed by normalized target path.
@@ -48,12 +59,35 @@ struct ServerStatus {
     log_path: Option<String>,
     started_at: Option<u64>,
     exit_code: Option<i32>,
+    result_class: evidence::FitClass,
+    validation: Option<LaunchValidation>,
+    failure: Option<LaunchFailureEvidence>,
+}
+
+impl Default for ServerStatus {
+    fn default() -> Self {
+        Self {
+            running: false,
+            pid: None,
+            profile_name: None,
+            alias: None,
+            port: None,
+            command: None,
+            log_path: None,
+            started_at: None,
+            exit_code: None,
+            result_class: evidence::FitClass::Unknown,
+            validation: None,
+            failure: None,
+        }
+    }
 }
 
 fn status_from(slot: &mut Option<ManagedServer>) -> ServerStatus {
     if let Some(server) = slot.as_mut() {
         match server.child.try_wait() {
             Ok(Some(code)) => {
+                let exit_code = code.code();
                 let status = ServerStatus {
                     running: false,
                     pid: None,
@@ -63,7 +97,21 @@ fn status_from(slot: &mut Option<ManagedServer>) -> ServerStatus {
                     command: Some(server.command.clone()),
                     log_path: Some(server.log_path.clone()),
                     started_at: Some(server.started_at),
-                    exit_code: code.code(),
+                    exit_code,
+                    result_class: evidence::FitClass::Failed,
+                    validation: None,
+                    failure: Some(launch_failure_evidence(
+                        "runtime_exit",
+                        format!(
+                            "llama-server exited after health validation with {}",
+                            exit_code
+                                .map(|value| format!("code {value}"))
+                                .unwrap_or_else(|| "a signal".into())
+                        ),
+                        &server.log_path,
+                        exit_code,
+                        false,
+                    )),
                 };
                 *slot = None;
                 status
@@ -78,8 +126,11 @@ fn status_from(slot: &mut Option<ManagedServer>) -> ServerStatus {
                 log_path: Some(server.log_path.clone()),
                 started_at: Some(server.started_at),
                 exit_code: None,
+                result_class: evidence::FitClass::LaunchValidated,
+                validation: Some(server.validation.clone()),
+                failure: None,
             },
-            Err(_) => ServerStatus {
+            Err(error) => ServerStatus {
                 running: false,
                 pid: None,
                 profile_name: Some(server.profile.name.clone()),
@@ -89,45 +140,325 @@ fn status_from(slot: &mut Option<ManagedServer>) -> ServerStatus {
                 log_path: Some(server.log_path.clone()),
                 started_at: Some(server.started_at),
                 exit_code: None,
+                result_class: evidence::FitClass::Failed,
+                validation: None,
+                failure: Some(launch_failure_evidence(
+                    "runtime_status",
+                    format!("Could not read llama-server exit status: {error}"),
+                    &server.log_path,
+                    None,
+                    false,
+                )),
             },
         }
     } else {
-        ServerStatus {
-            running: false,
-            pid: None,
-            profile_name: None,
-            alias: None,
-            port: None,
-            command: None,
-            log_path: None,
-            started_at: None,
-            exit_code: None,
+        ServerStatus::default()
+    }
+}
+
+fn require_launchable_artifact(
+    label: &str,
+    path: &Path,
+) -> Result<artifact::ArtifactInspection, String> {
+    require_regular_non_reparse_file(label, path)?;
+    let inspection = artifact::inspect_artifact(path, &[], false)?;
+    if inspection.complete && inspection.header_consistent && inspection.problems.is_empty() {
+        return Ok(inspection);
+    }
+    let details = inspection
+        .problems
+        .iter()
+        .map(|problem| problem.message.as_str())
+        .collect::<Vec<_>>()
+        .join("; ");
+    Err(format!(
+        "{label} cannot be launched because its artifact is incomplete or inconsistent{}{}",
+        if details.is_empty() { "" } else { ": " },
+        details
+    ))
+}
+
+fn validate_profile_artifacts(
+    profile: &LaunchProfile,
+) -> Result<Vec<artifact::ArtifactInspection>, String> {
+    let mut artifacts = vec![require_launchable_artifact(
+        "Model",
+        Path::new(&profile.model),
+    )?];
+    if let Some(path) = profile.draft_model.as_ref().filter(|path| !path.is_empty()) {
+        let draft = require_launchable_artifact("Draft model", Path::new(path))?;
+        for key in ["tokenizer.ggml.model", "tokenizer.ggml.pre"] {
+            if let (Some(model_value), Some(draft_value)) = (
+                artifact_metadata_string(&artifacts[0], key),
+                artifact_metadata_string(&draft, key),
+            ) {
+                if model_value != draft_value {
+                    return Err(format!(
+                        "Draft model tokenizer identity {key} conflicts with the target model"
+                    ));
+                }
+            }
         }
+        let model_vocab = artifacts[0]
+            .summary
+            .as_ref()
+            .and_then(|summary| summary.vocab_size);
+        let draft_vocab = draft
+            .summary
+            .as_ref()
+            .and_then(|summary| summary.vocab_size);
+        if model_vocab
+            .zip(draft_vocab)
+            .is_some_and(|(model, draft)| model != draft)
+        {
+            return Err("Draft model vocabulary size conflicts with the target model".into());
+        }
+        artifacts.push(draft);
+    }
+    if let Some(path) = profile.mmproj.as_ref().filter(|path| !path.is_empty()) {
+        let projector = require_launchable_artifact("Vision projector", Path::new(path))?;
+        let architecture = projector
+            .summary
+            .as_ref()
+            .map(|summary| summary.architecture.as_str())
+            .unwrap_or_default();
+        if architecture != "clip" {
+            return Err(format!(
+                "Vision projector GGUF must use the clip architecture; found {architecture}"
+            ));
+        }
+        let model_embedding = artifacts[0]
+            .summary
+            .as_ref()
+            .and_then(|summary| summary.embedding_length);
+        let projector_embedding = artifact_metadata_u64(&projector, "clip.vision.projection_dim");
+        if let Some((model_embedding, projector_embedding)) =
+            model_embedding.zip(projector_embedding)
+        {
+            if model_embedding != projector_embedding {
+                return Err(format!(
+                    "Vision projector embedding size {projector_embedding} does not match model embedding size {model_embedding}"
+                ));
+            }
+        }
+        artifacts.push(projector);
+    }
+    let main_architecture = artifacts
+        .first()
+        .and_then(|artifact| artifact.summary.as_ref())
+        .map(|summary| summary.architecture.as_str())
+        .unwrap_or_default()
+        .to_string();
+    for (label, path) in lora_references(profile)? {
+        let lora = require_launchable_artifact(&label, &path)?;
+        let lora_type = artifact_metadata_string(&lora, "general.type").unwrap_or_default();
+        let adapter_type = artifact_metadata_string(&lora, "adapter.type").unwrap_or_default();
+        let lora_architecture = lora
+            .summary
+            .as_ref()
+            .map(|summary| summary.architecture.as_str())
+            .unwrap_or_default();
+        if !lora_type.eq_ignore_ascii_case("adapter") || !adapter_type.eq_ignore_ascii_case("lora")
+        {
+            return Err(format!(
+                "{label} must declare general.type=adapter and adapter.type=lora"
+            ));
+        }
+        if main_architecture.is_empty()
+            || lora_architecture.is_empty()
+            || lora_architecture != main_architecture
+        {
+            return Err(format!(
+                "{label} architecture {lora_architecture} does not match model architecture {main_architecture}"
+            ));
+        }
+        artifacts.push(lora);
+    }
+    Ok(artifacts)
+}
+
+fn artifact_metadata_string<'a>(
+    artifact: &'a artifact::ArtifactInspection,
+    key: &str,
+) -> Option<&'a str> {
+    artifact
+        .summary
+        .as_ref()?
+        .metadata_facts
+        .iter()
+        .find(|fact| fact.key == key)
+        .and_then(|fact| match &fact.value {
+            gguf::MetadataValue::Scalar {
+                value: gguf::MetadataScalar::String(value),
+            } => Some(value.as_str()),
+            _ => None,
+        })
+}
+
+fn artifact_metadata_u64(artifact: &artifact::ArtifactInspection, key: &str) -> Option<u64> {
+    artifact
+        .summary
+        .as_ref()?
+        .metadata_facts
+        .iter()
+        .find(|fact| fact.key == key)
+        .and_then(|fact| match fact.value {
+            gguf::MetadataValue::Scalar {
+                value: gguf::MetadataScalar::Unsigned(value),
+            } => Some(value),
+            gguf::MetadataValue::Scalar {
+                value: gguf::MetadataScalar::Signed(value),
+            } => u64::try_from(value).ok(),
+            _ => None,
+        })
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LaunchValidation {
+    runtime: RuntimeCapabilities,
+    artifacts: Vec<artifact::ArtifactInspection>,
+    arguments: core::LaunchArgumentValidation,
+    effective_context: evidence::Evidence<u32>,
+    unverified_requirements: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LaunchFailureEvidence {
+    schema: u16,
+    phase: String,
+    exit_code: Option<i32>,
+    timed_out: bool,
+    cancelled: bool,
+    message: String,
+    log_tail: String,
+}
+
+const LAUNCH_FAILURE_SERIALIZATION_FALLBACK: &str = r#"{"schema":1,"phase":"serialization","exitCode":null,"timedOut":false,"cancelled":false,"message":"Could not serialize launch failure","logTail":""}"#;
+
+fn unverified_companion_requirements(profile: &LaunchProfile) -> Vec<String> {
+    let mut requirements = Vec::new();
+    if profile
+        .draft_model
+        .as_ref()
+        .is_some_and(|path| !path.is_empty())
+    {
+        requirements
+            .push("Draft model token-sequence compatibility requires runtime validation.".into());
+    }
+    if profile.mmproj.as_ref().is_some_and(|path| !path.is_empty()) {
+        requirements.push("Projector-to-model compatibility requires runtime validation.".into());
+    }
+    if !profile.lora.trim().is_empty() || !profile.lora_scaled.trim().is_empty() {
+        requirements.push("LoRA base-model compatibility requires runtime validation.".into());
+    }
+    requirements
+}
+
+fn prepare_launch(profile: &LaunchProfile) -> Result<LaunchValidation, String> {
+    validate_profile_paths(profile)?;
+    let artifacts = validate_profile_artifacts(profile)?;
+    let runtime = core::inspect_runtime(Path::new(&profile.runtime))?;
+    let arguments = core::validate_launch_arguments(profile, &runtime)?;
+    let observed_at_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_millis()
+        .try_into()
+        .map_err(|_| "System time is outside the supported range")?;
+    Ok(LaunchValidation {
+        runtime,
+        artifacts,
+        arguments,
+        effective_context: unobserved_effective_context(observed_at_ms),
+        unverified_requirements: unverified_companion_requirements(profile),
+    })
+}
+
+fn execution_path_for(
+    profile: &LaunchProfile,
+    selected_adapter_ids: &[String],
+) -> evidence::ExecutionPath {
+    if profile.gpu_layers.trim() == "0" {
+        return evidence::ExecutionPath::Cpu;
+    }
+    if !profile.tensor_split.trim().is_empty() {
+        return if selected_adapter_ids.len() > 1 {
+            evidence::ExecutionPath::MultiGpu
+        } else {
+            evidence::ExecutionPath::Unknown
+        };
+    }
+    if profile.gpu_layers.trim() == "auto" {
+        return evidence::ExecutionPath::Unknown;
+    }
+    match selected_adapter_ids.len() {
+        0 => evidence::ExecutionPath::Unknown,
+        1 if profile.gpu_layers.eq_ignore_ascii_case("all") => evidence::ExecutionPath::FullGpu,
+        1 => evidence::ExecutionPath::LayerOffload,
+        _ => evidence::ExecutionPath::MultiGpu,
     }
 }
 
 /// Validate every path the profile references, then spawn llama-server with
 /// output redirected to a per-port log file. Shared by the Start button and
 /// the tuner so both launch exactly the same way.
-fn spawn_server(
-    profile: &LaunchProfile,
-    log_name: &str,
-) -> Result<(Child, String, String), String> {
-    if !Path::new(&profile.runtime).is_file() {
-        return Err(format!("Runtime does not exist: {}", profile.runtime));
-    }
-    if !Path::new(&profile.model).is_file() {
-        return Err(format!("Model does not exist: {}", profile.model));
-    }
-    if let Some(path) = profile.draft_model.as_ref().filter(|p| !p.is_empty()) {
-        if !Path::new(path).is_file() {
-            return Err(format!("Draft model does not exist: {path}"));
+fn require_regular_non_reparse_file(label: &str, path: &Path) -> Result<(), String> {
+    artifact::validate_regular_non_reparse_file(label, path)
+}
+
+fn lora_references(profile: &LaunchProfile) -> Result<Vec<(String, PathBuf)>, String> {
+    let mut references = Vec::new();
+    if !profile.lora.trim().is_empty() {
+        for (index, value) in profile.lora.split(',').enumerate() {
+            let path = value.trim();
+            if path.is_empty() {
+                return Err(format!("LoRA entry {} has an empty path", index + 1));
+            }
+            references.push((format!("LoRA entry {}", index + 1), PathBuf::from(path)));
         }
     }
-    if let Some(path) = profile.mmproj.as_ref().filter(|p| !p.is_empty()) {
-        if !Path::new(path).is_file() {
-            return Err(format!("Vision projector does not exist: {path}"));
+    if !profile.lora_scaled.trim().is_empty() {
+        for (index, value) in profile.lora_scaled.split(',').enumerate() {
+            let entry = index + 1;
+            let (path, scale) = value
+                .trim()
+                .rsplit_once(':')
+                .ok_or_else(|| format!("Scaled LoRA entry {entry} must use path:scale syntax"))?;
+            scale
+                .trim()
+                .parse::<f32>()
+                .ok()
+                .filter(|value| value.is_finite())
+                .ok_or_else(|| format!("Scaled LoRA entry {entry} has an invalid scale"))?;
+            if path.trim().is_empty() {
+                return Err(format!("Scaled LoRA entry {entry} has an empty path"));
+            }
+            references.push((
+                format!("Scaled LoRA entry {entry}"),
+                PathBuf::from(path.trim()),
+            ));
         }
+    }
+    Ok(references)
+}
+
+fn validate_lora_paths(profile: &LaunchProfile) -> Result<(), String> {
+    for (label, path) in lora_references(profile)? {
+        require_regular_non_reparse_file(&label, &path)?;
+    }
+    Ok(())
+}
+
+fn validate_profile_paths(profile: &LaunchProfile) -> Result<(), String> {
+    require_regular_non_reparse_file("Runtime", Path::new(&profile.runtime))?;
+    require_regular_non_reparse_file("Model", Path::new(&profile.model))?;
+    if let Some(path) = profile.draft_model.as_ref().filter(|path| !path.is_empty()) {
+        require_regular_non_reparse_file("Draft model", Path::new(path))?;
+    }
+    if let Some(path) = profile.mmproj.as_ref().filter(|path| !path.is_empty()) {
+        require_regular_non_reparse_file("Vision projector", Path::new(path))?;
     }
     for (label, path) in [
         ("API key file", profile.api_key_file.as_str()),
@@ -135,41 +466,469 @@ fn spawn_server(
         ("SSL certificate", profile.ssl_cert_file.as_str()),
         ("Chat template", profile.chat_template_file.as_str()),
     ] {
-        if !path.is_empty() && !Path::new(path).is_file() {
-            return Err(format!("{label} does not exist: {path}"));
+        if !path.is_empty() {
+            require_regular_non_reparse_file(label, Path::new(path))?;
         }
     }
-    TcpListener::bind((profile.host.as_str(), profile.port)).map_err(|_| {
-        format!(
-            "Port {} is already in use on {}",
-            profile.port, profile.host
+    validate_lora_paths(profile)?;
+    Ok(())
+}
+
+fn spawn_server(
+    profile: &LaunchProfile,
+    log_name: &str,
+) -> Result<(Child, LaunchValidation, String), String> {
+    let validation = prepare_launch(profile)
+        .map_err(|message| launch_failure("validation", message, "", None, false))?;
+
+    let log_dir = std::env::temp_dir().join("gguf-pilot");
+    fs::create_dir_all(&log_dir).map_err(|error| {
+        launch_failure(
+            "log_setup",
+            format!("Could not create the launch log directory: {error}"),
+            "",
+            None,
+            false,
         )
     })?;
-
-    let capabilities = core::inspect_runtime(Path::new(&profile.runtime))?;
-    let raw_args = profile.build_args()?;
-    let (args, _) = core::filter_supported_args(&raw_args, &capabilities.supported_flags);
-    let command = profile.display_command_with_args(&args);
-    let log_dir = std::env::temp_dir().join("gguf-pilot");
-    fs::create_dir_all(&log_dir).map_err(|e| e.to_string())?;
     let log_path = log_dir.join(format!("{log_name}.log"));
-    let stdout = File::create(&log_path).map_err(|e| e.to_string())?;
-    let stderr = stdout.try_clone().map_err(|e| e.to_string())?;
+    let log_path_text = log_path.to_string_lossy().to_string();
+    core::probe_port_available(&profile.host, profile.port)
+        .map_err(|error| launch_failure("port_probe", error, &log_path_text, None, false))?;
+    let stdout = File::create(&log_path).map_err(|error| {
+        launch_failure(
+            "log_setup",
+            format!("Could not create the launch log: {error}"),
+            &log_path_text,
+            None,
+            false,
+        )
+    })?;
+    let stderr = stdout.try_clone().map_err(|error| {
+        launch_failure(
+            "log_setup",
+            format!("Could not prepare the launch log: {error}"),
+            &log_path_text,
+            None,
+            false,
+        )
+    })?;
     let child = proc::hidden_command(&profile.runtime)
-        .args(args)
+        .args(&validation.arguments.effective_args)
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr))
         .spawn()
-        .map_err(|e| e.to_string())?;
-    Ok((child, command, log_path.to_string_lossy().to_string()))
+        .map_err(|error| {
+            launch_failure(
+                "spawn",
+                format!("Could not start llama-server: {error}"),
+                &log_path_text,
+                None,
+                false,
+            )
+        })?;
+    Ok((child, validation, log_path_text))
 }
 
 fn connect_host(host: &str) -> &str {
+    let host = host.trim();
+    let host = host
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(host);
     match host {
         "0.0.0.0" => "127.0.0.1",
-        "::" | "[::]" => "::1",
+        "::" => "::1",
         value => value,
+    }
+}
+
+fn health_socket_addresses(host: &str, port: u16) -> Result<Vec<SocketAddr>, String> {
+    let addresses = (connect_host(host), port)
+        .to_socket_addrs()
+        .map_err(|error| format!("Could not resolve health endpoint {host}:{port}: {error}"))?
+        .collect::<Vec<_>>();
+    if addresses.is_empty() {
+        return Err(format!(
+            "Health endpoint {host}:{port} did not resolve to an address"
+        ));
+    }
+    Ok(addresses)
+}
+
+#[cfg(windows)]
+fn listener_owners_for_family(
+    port: u16,
+    address_family: u32,
+) -> Result<Vec<(std::net::IpAddr, u32)>, String> {
+    use std::mem::size_of;
+    use windows_sys::Win32::Foundation::{ERROR_INSUFFICIENT_BUFFER, NO_ERROR};
+    use windows_sys::Win32::NetworkManagement::IpHelper::{
+        GetExtendedTcpTable, MIB_TCP6ROW_OWNER_PID, MIB_TCPROW_OWNER_PID,
+        TCP_TABLE_OWNER_PID_LISTENER,
+    };
+    use windows_sys::Win32::Networking::WinSock::{AF_INET, AF_INET6};
+
+    let mut byte_count = 0_u32;
+    // SAFETY: The first call supplies a null table only to obtain the required size.
+    let first_status = unsafe {
+        GetExtendedTcpTable(
+            std::ptr::null_mut(),
+            &mut byte_count,
+            0,
+            address_family,
+            TCP_TABLE_OWNER_PID_LISTENER,
+            0,
+        )
+    };
+    if first_status != ERROR_INSUFFICIENT_BUFFER && first_status != NO_ERROR {
+        return Err(format!(
+            "Could not size the Windows TCP listener table: {}",
+            std::io::Error::from_raw_os_error(first_status as i32)
+        ));
+    }
+    if byte_count == 0 {
+        return Ok(Vec::new());
+    }
+
+    let requested_bytes = usize::try_from(byte_count)
+        .map_err(|_| "Windows TCP listener table size does not fit this process")?;
+    let word_count = requested_bytes
+        .checked_add(size_of::<u32>() - 1)
+        .ok_or("Windows TCP listener table size overflowed")?
+        / size_of::<u32>();
+    let mut table = vec![0_u32; word_count];
+    let mut actual_bytes = byte_count;
+    // SAFETY: `table` is aligned and writable for at least `actual_bytes` bytes.
+    let status = unsafe {
+        GetExtendedTcpTable(
+            table.as_mut_ptr().cast(),
+            &mut actual_bytes,
+            0,
+            address_family,
+            TCP_TABLE_OWNER_PID_LISTENER,
+            0,
+        )
+    };
+    if status != NO_ERROR {
+        return Err(format!(
+            "Could not read the Windows TCP listener table: {}",
+            std::io::Error::from_raw_os_error(status as i32)
+        ));
+    }
+    let actual_bytes = usize::try_from(actual_bytes)
+        .map_err(|_| "Windows TCP listener table result does not fit this process")?;
+    if actual_bytes < size_of::<u32>() || actual_bytes > table.len() * size_of::<u32>() {
+        return Err("Windows returned an invalid TCP listener table size".into());
+    }
+
+    let row_count = table[0] as usize;
+    let rows = unsafe { table.as_ptr().cast::<u8>().add(size_of::<u32>()) };
+    let mut owners = Vec::new();
+    if address_family == u32::from(AF_INET) {
+        let required = row_count
+            .checked_mul(size_of::<MIB_TCPROW_OWNER_PID>())
+            .and_then(|bytes| bytes.checked_add(size_of::<u32>()))
+            .ok_or("Windows IPv4 TCP listener table length overflowed")?;
+        if required > actual_bytes {
+            return Err("Windows returned a truncated IPv4 TCP listener table".into());
+        }
+        for index in 0..row_count {
+            // SAFETY: The validated table contains `row_count` complete IPv4 rows.
+            let row = unsafe {
+                std::ptr::read_unaligned(
+                    rows.add(index * size_of::<MIB_TCPROW_OWNER_PID>())
+                        .cast::<MIB_TCPROW_OWNER_PID>(),
+                )
+            };
+            if u16::from_be(row.dwLocalPort as u16) == port {
+                owners.push((
+                    std::net::Ipv4Addr::from(row.dwLocalAddr.to_ne_bytes()).into(),
+                    row.dwOwningPid,
+                ));
+            }
+        }
+    } else if address_family == u32::from(AF_INET6) {
+        let required = row_count
+            .checked_mul(size_of::<MIB_TCP6ROW_OWNER_PID>())
+            .and_then(|bytes| bytes.checked_add(size_of::<u32>()))
+            .ok_or("Windows IPv6 TCP listener table length overflowed")?;
+        if required > actual_bytes {
+            return Err("Windows returned a truncated IPv6 TCP listener table".into());
+        }
+        for index in 0..row_count {
+            // SAFETY: The validated table contains `row_count` complete IPv6 rows.
+            let row = unsafe {
+                std::ptr::read_unaligned(
+                    rows.add(index * size_of::<MIB_TCP6ROW_OWNER_PID>())
+                        .cast::<MIB_TCP6ROW_OWNER_PID>(),
+                )
+            };
+            if u16::from_be(row.dwLocalPort as u16) == port {
+                owners.push((
+                    std::net::Ipv6Addr::from(row.ucLocalAddr).into(),
+                    row.dwOwningPid,
+                ));
+            }
+        }
+    } else {
+        return Err(format!(
+            "Unsupported TCP listener address family {address_family}"
+        ));
+    }
+    Ok(owners)
+}
+
+#[cfg(windows)]
+fn listener_is_owned_by_at(address: SocketAddr, expected_pid: u32) -> Result<bool, String> {
+    use windows_sys::Win32::Networking::WinSock::{AF_INET, AF_INET6};
+
+    let address_family = if address.is_ipv4() {
+        u32::from(AF_INET)
+    } else {
+        u32::from(AF_INET6)
+    };
+    let owners = listener_owners_for_family(address.port(), address_family)?;
+    Ok(owners.iter().any(|(listener_address, pid)| {
+        *pid == expected_pid
+            && (*listener_address == address.ip() || listener_address.is_unspecified())
+    }))
+}
+
+#[cfg(not(windows))]
+fn listener_is_owned_by_at(_address: SocketAddr, _expected_pid: u32) -> Result<bool, String> {
+    Err("TCP listener ownership verification is available only on Windows".into())
+}
+
+fn is_healthy_response(response: &[u8]) -> bool {
+    response.starts_with(b"HTTP/1.1 200 ") || response.starts_with(b"HTTP/1.0 200 ")
+}
+
+fn parse_server_effective_context(response: &[u8]) -> Result<u32, String> {
+    if !is_healthy_response(response) {
+        return Err("llama-server /props did not return HTTP 200".into());
+    }
+    let response = std::str::from_utf8(response)
+        .map_err(|_| "llama-server /props returned invalid UTF-8".to_string())?;
+    let (_, payload) = response
+        .split_once("\r\n\r\n")
+        .ok_or("llama-server /props response did not contain an HTTP body")?;
+    let value: serde_json::Value = serde_json::from_str(payload)
+        .map_err(|error| format!("Could not parse llama-server /props: {error}"))?;
+    value
+        .get("default_generation_settings")
+        .and_then(|settings| settings.get("n_ctx"))
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| "llama-server /props did not contain a positive effective context".into())
+}
+
+fn read_health_response(reader: &mut impl std::io::Read) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+
+    const MAX_HEALTH_RESPONSE_BYTES: usize = 16 * 1024;
+    let mut response = Vec::with_capacity(MAX_HEALTH_RESPONSE_BYTES);
+    reader
+        .take((MAX_HEALTH_RESPONSE_BYTES + 1) as u64)
+        .read_to_end(&mut response)?;
+    if response.len() > MAX_HEALTH_RESPONSE_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Health response exceeded 16384 bytes",
+        ));
+    }
+    Ok(response)
+}
+
+fn read_props_response(reader: &mut impl std::io::Read) -> std::io::Result<Vec<u8>> {
+    const MAX_PROPS_RESPONSE_BYTES: usize = 1_048_576;
+    let mut response = Vec::with_capacity(16 * 1024);
+    let mut buffer = [0_u8; 4_096];
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        if response.len().saturating_add(read) > MAX_PROPS_RESPONSE_BYTES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "llama-server /props response exceeded the 1 MiB limit",
+            ));
+        }
+        response.extend_from_slice(&buffer[..read]);
+    }
+    Ok(response)
+}
+
+fn query_server_effective_context(host: &str, port: u16, timeout: Duration) -> Result<u32, String> {
+    use std::io::Write;
+
+    let addresses = health_socket_addresses(host, port)?;
+    let deadline = Instant::now() + timeout;
+    let mut last_error = "No address accepted the /props request".to_string();
+    for address in addresses {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        let mut stream = match TcpStream::connect_timeout(&address, remaining) {
+            Ok(stream) => stream,
+            Err(error) => {
+                last_error = error.to_string();
+                continue;
+            }
+        };
+        stream
+            .set_read_timeout(Some(remaining))
+            .map_err(|error| error.to_string())?;
+        stream
+            .set_write_timeout(Some(remaining))
+            .map_err(|error| error.to_string())?;
+        let request =
+            format!("GET /props HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n");
+        if let Err(error) = stream.write_all(request.as_bytes()) {
+            last_error = error.to_string();
+            continue;
+        }
+        match read_props_response(&mut stream)
+            .map_err(|error| error.to_string())
+            .and_then(|response| parse_server_effective_context(&response))
+        {
+            Ok(context) => return Ok(context),
+            Err(error) => last_error = error,
+        }
+    }
+    Err(format!(
+        "Could not observe llama-server effective context: {last_error}"
+    ))
+}
+
+fn observe_server_effective_context(
+    host: &str,
+    port: u16,
+    timeout: Duration,
+    observed_at_ms: u64,
+) -> evidence::Evidence<u32> {
+    match query_server_effective_context(host, port, timeout) {
+        Ok(context) => evidence::Evidence {
+            value: Some(context),
+            level: evidence::EvidenceLevel::Observed,
+            source: evidence::EvidenceSource {
+                kind: evidence::EvidenceSourceKind::Runtime,
+                detail: "llama-server GET /props default_generation_settings.n_ctx".into(),
+            },
+            observed_at_ms,
+            notes: vec![
+                "The value is the effective per-slot context reported after health validation."
+                    .into(),
+            ],
+        },
+        Err(error) => evidence::Evidence {
+            value: None,
+            level: evidence::EvidenceLevel::Unknown,
+            source: evidence::EvidenceSource {
+                kind: evidence::EvidenceSourceKind::Runtime,
+                detail: "llama-server GET /props default_generation_settings.n_ctx".into(),
+            },
+            observed_at_ms,
+            notes: vec![error],
+        },
+    }
+}
+
+fn unobserved_effective_context(observed_at_ms: u64) -> evidence::Evidence<u32> {
+    evidence::Evidence {
+        value: None,
+        level: evidence::EvidenceLevel::Unknown,
+        source: evidence::EvidenceSource {
+            kind: evidence::EvidenceSourceKind::Runtime,
+            detail: "llama-server GET /props default_generation_settings.n_ctx".into(),
+        },
+        observed_at_ms,
+        notes: vec![
+            "Effective context is unknown until llama-server passes health validation.".into(),
+        ],
+    }
+}
+
+fn update_launch_effective_context(
+    validation: &mut LaunchValidation,
+    host: &str,
+    port: u16,
+    timeout: Duration,
+    observed_at_ms: u64,
+) {
+    validation.effective_context =
+        observe_server_effective_context(host, port, timeout, observed_at_ms);
+}
+
+fn bounded_log_tail(log_path: &str) -> String {
+    use std::io::{Read, Seek, SeekFrom};
+
+    const MAX_TAIL_BYTES: u64 = 16 * 1024;
+    const MAX_TAIL_LINES: usize = 12;
+
+    let Ok(mut file) = File::open(log_path) else {
+        return String::new();
+    };
+    let Ok(length) = file.metadata().map(|metadata| metadata.len()) else {
+        return String::new();
+    };
+    let start = length.saturating_sub(MAX_TAIL_BYTES);
+    if file.seek(SeekFrom::Start(start)).is_err() {
+        return String::new();
+    }
+    let mut bytes = Vec::with_capacity((length - start) as usize);
+    if file.take(MAX_TAIL_BYTES).read_to_end(&mut bytes).is_err() {
+        return String::new();
+    }
+    let text = String::from_utf8_lossy(&bytes);
+    text.lines()
+        .rev()
+        .take(MAX_TAIL_LINES)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn launch_failure(
+    phase: &str,
+    message: String,
+    log_path: &str,
+    exit_code: Option<i32>,
+    timed_out: bool,
+) -> String {
+    let evidence = launch_failure_evidence(phase, message, log_path, exit_code, timed_out);
+    serde_json::to_string(&evidence)
+        .unwrap_or_else(|_| LAUNCH_FAILURE_SERIALIZATION_FALLBACK.into())
+}
+
+fn cancelled_launch_failure(message: String, log_path: &str) -> String {
+    let mut evidence = launch_failure_evidence("health_cancelled", message, log_path, None, false);
+    evidence.cancelled = true;
+    serde_json::to_string(&evidence)
+        .unwrap_or_else(|_| LAUNCH_FAILURE_SERIALIZATION_FALLBACK.into())
+}
+
+fn launch_failure_evidence(
+    phase: &str,
+    message: String,
+    log_path: &str,
+    exit_code: Option<i32>,
+    timed_out: bool,
+) -> LaunchFailureEvidence {
+    LaunchFailureEvidence {
+        schema: 1,
+        phase: phase.into(),
+        exit_code,
+        timed_out,
+        cancelled: false,
+        message,
+        log_tail: bounded_log_tail(log_path),
     }
 }
 
@@ -181,51 +940,133 @@ fn wait_until_healthy(
     log_path: &str,
     timeout: Duration,
 ) -> Result<(), String> {
+    wait_until_healthy_inner(child, host, port, log_path, timeout, None)
+}
+
+fn wait_until_healthy_cancellable(
+    child: &mut Child,
+    host: &str,
+    port: u16,
+    log_path: &str,
+    timeout: Duration,
+    cancelled: &AtomicBool,
+) -> Result<(), String> {
+    wait_until_healthy_inner(child, host, port, log_path, timeout, Some(cancelled))
+}
+
+fn wait_until_healthy_inner(
+    child: &mut Child,
+    host: &str,
+    port: u16,
+    log_path: &str,
+    timeout: Duration,
+    cancelled: Option<&AtomicBool>,
+) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
-    let host = connect_host(host);
+    let mut last_health_error = None;
+    let connect_host = connect_host(host);
+    let addresses = health_socket_addresses(host, port)
+        .map_err(|message| launch_failure("health_connect", message, log_path, None, false))?;
+    let authority = if connect_host.contains(':') {
+        format!("[{connect_host}]:{port}")
+    } else {
+        format!("{connect_host}:{port}")
+    };
     loop {
-        if let Ok(Some(code)) = child.try_wait() {
-            let tail = fs::read_to_string(log_path)
-                .map(|text| {
-                    text.lines()
-                        .rev()
-                        .take(12)
-                        .collect::<Vec<_>>()
-                        .into_iter()
-                        .rev()
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                })
-                .unwrap_or_default();
-            return Err(format!(
-                "llama-server exited with {} before becoming healthy\n{tail}",
-                code.code()
-                    .map(|c| format!("code {c}"))
-                    .unwrap_or_else(|| "a signal".into())
+        if cancelled.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+            return Err(cancelled_launch_failure(
+                "Benchmark cancelled while waiting for a fresh runtime".into(),
+                log_path,
             ));
         }
-        if let Ok(mut stream) = TcpStream::connect_timeout(
-            &format!("{host}:{port}")
-                .parse()
-                .map_err(|e: std::net::AddrParseError| e.to_string())?,
-            Duration::from_millis(500),
-        ) {
-            use std::io::{Read, Write};
-            let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-            let request =
-                format!("GET /health HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n");
-            if stream.write_all(request.as_bytes()).is_ok() {
-                let mut response = String::new();
-                let _ = stream.read_to_string(&mut response);
-                if response.starts_with("HTTP/1.1 200") || response.starts_with("HTTP/1.0 200") {
-                    return Ok(());
+        if let Ok(Some(code)) = child.try_wait() {
+            return Err(launch_failure(
+                "health_exit",
+                format!(
+                    "llama-server exited with {} before becoming healthy",
+                    code.code()
+                        .map(|c| format!("code {c}"))
+                        .unwrap_or_else(|| "a signal".into())
+                ),
+                log_path,
+                code.code(),
+                false,
+            ));
+        }
+        for address in &addresses {
+            if let Ok(mut stream) = TcpStream::connect_timeout(address, Duration::from_millis(500))
+            {
+                use std::io::Write;
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+                let request = format!(
+                    "GET /health HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\n\r\n"
+                );
+                if stream.write_all(request.as_bytes()).is_ok()
+                    && read_health_response(&mut stream)
+                        .is_ok_and(|response| is_healthy_response(&response))
+                {
+                    match listener_is_owned_by_at(*address, child.id()) {
+                        Ok(true) => match child.try_wait() {
+                            Ok(None) => return Ok(()),
+                            Ok(Some(code)) => {
+                                return Err(launch_failure(
+                                    "health_exit",
+                                    format!(
+                                        "llama-server exited with {} while health was being validated",
+                                        code.code()
+                                            .map(|value| format!("code {value}"))
+                                            .unwrap_or_else(|| "a signal".into())
+                                    ),
+                                    log_path,
+                                    code.code(),
+                                    false,
+                                ));
+                            }
+                            Err(error) => {
+                                return Err(launch_failure(
+                                    "health_owner",
+                                    format!(
+                                        "Could not confirm llama-server process state after health validation: {error}"
+                                    ),
+                                    log_path,
+                                    None,
+                                    false,
+                                ));
+                            }
+                        },
+                        Ok(false) => {
+                            last_health_error = Some(format!(
+                                "llama-server process {} does not own TCP port {port}",
+                                child.id()
+                            ));
+                        }
+                        Err(error) => {
+                            return Err(launch_failure(
+                                "health_owner",
+                                error,
+                                log_path,
+                                None,
+                                false,
+                            ));
+                        }
+                    }
                 }
             }
         }
         if Instant::now() >= deadline {
-            return Err(format!(
-                "llama-server did not become healthy within {} s",
-                timeout.as_secs()
+            let detail = last_health_error
+                .as_deref()
+                .map(|error| format!("; last validation error: {error}"))
+                .unwrap_or_default();
+            return Err(launch_failure(
+                "health_timeout",
+                format!(
+                    "llama-server did not become healthy within {} ms{detail}",
+                    timeout.as_millis()
+                ),
+                log_path,
+                None,
+                true,
             ));
         }
         std::thread::sleep(Duration::from_millis(400));
@@ -258,11 +1099,237 @@ fn read_gguf_summary(path: String) -> Result<gguf::GgufSummary, String> {
 }
 
 #[tauri::command]
+async fn inspect_model_artifact(
+    first_shard: String,
+    companions: Vec<String>,
+    hash_files: bool,
+) -> Result<artifact::ArtifactInspection, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let companion_paths = companions
+            .into_iter()
+            .map(std::path::PathBuf::from)
+            .collect::<Vec<_>>();
+        artifact::inspect_artifact(Path::new(&first_shard), &companion_paths, hash_files)
+    })
+    .await
+    .map_err(|error| format!("Artifact inspection task failed: {error}"))?
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PreflightRequest {
+    profile: LaunchProfile,
+    #[serde(default)]
+    selected_adapter_ids: Vec<String>,
+    #[serde(default)]
+    manual_overrides: Vec<runtime::HardwareOverride>,
+    reserve_bytes: Option<u64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreflightResult {
+    report: preflight::PreflightReport,
+    device_plan: Vec<preflight::DeviceAllocationPlan>,
+    launch: LaunchValidation,
+    hardware: runtime::HardwareInfo,
+    selected_adapter_ids: Vec<String>,
+}
+
+fn unknown_memory(detail: &str, observed_at_ms: u64) -> evidence::Evidence<u64> {
+    evidence::Evidence {
+        value: None,
+        level: evidence::EvidenceLevel::Unknown,
+        source: evidence::EvidenceSource {
+            kind: evidence::EvidenceSourceKind::Policy,
+            detail: detail.into(),
+        },
+        observed_at_ms,
+        notes: vec![detail.into()],
+    }
+}
+
+#[tauri::command]
+fn preflight_model(request: PreflightRequest) -> Result<PreflightResult, String> {
+    let launch = prepare_launch(&request.profile)?;
+    let mut hardware = runtime::detect_hardware();
+    hardware.manual_overrides = request.manual_overrides.clone();
+    let observed_at_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_millis()
+        .try_into()
+        .map_err(|_| "System time is outside the supported range")?;
+    let execution_path = execution_path_for(&request.profile, &request.selected_adapter_ids);
+    let manual_capacity = runtime::manual_override_capacity(
+        &request.manual_overrides,
+        request
+            .selected_adapter_ids
+            .first()
+            .map(String::as_str)
+            .unwrap_or(""),
+        observed_at_ms,
+    )?;
+    let device_capacities = if matches!(execution_path, evidence::ExecutionPath::Cpu) {
+        vec![(
+            "system-memory".into(),
+            hardware.system_memory.available_physical_bytes.clone(),
+        )]
+    } else {
+        request
+            .selected_adapter_ids
+            .iter()
+            .enumerate()
+            .map(|(index, adapter_id)| {
+                let manual = if index == 0 {
+                    manual_capacity.clone()
+                } else {
+                    runtime::manual_override_capacity(
+                        &request.manual_overrides,
+                        adapter_id,
+                        observed_at_ms,
+                    )?
+                };
+                let capacity = manual
+                    .or_else(|| {
+                        hardware
+                            .adapters
+                            .iter()
+                            .find(|adapter| adapter.adapter_id == *adapter_id)
+                            .map(|adapter| adapter.available_budget_bytes.clone())
+                    })
+                    .unwrap_or_else(|| {
+                        unknown_memory(
+                            "The selected adapter was not present in the current hardware observation.",
+                            observed_at_ms,
+                        )
+                    });
+                Ok((adapter_id.clone(), capacity))
+            })
+            .collect::<Result<Vec<_>, String>>()?
+    };
+    let available_memory = match execution_path {
+        evidence::ExecutionPath::Cpu => hardware.system_memory.available_physical_bytes.clone(),
+        evidence::ExecutionPath::FullGpu | evidence::ExecutionPath::LayerOffload => {
+            if device_capacities.len() != 1 {
+                unknown_memory(
+                    "Select exactly one adapter for this execution path.",
+                    observed_at_ms,
+                )
+            } else {
+                device_capacities[0].1.clone()
+            }
+        }
+        evidence::ExecutionPath::MultiGpu => unknown_memory(
+            "Per-device placement is required; GGUF Pilot does not aggregate adapter memory.",
+            observed_at_ms,
+        ),
+        _ => unknown_memory(
+            "Select an explicit CPU, single-adapter, or multi-adapter execution path.",
+            observed_at_ms,
+        ),
+    };
+    let main_artifact = launch
+        .artifacts
+        .first()
+        .ok_or("Launch validation did not return a model artifact")?;
+    let summary = main_artifact
+        .summary
+        .as_ref()
+        .ok_or("The model GGUF summary is unavailable")?;
+    let companion_bytes = launch.artifacts.iter().enumerate().try_fold(
+        main_artifact.companion_bytes,
+        |total, (index, artifact)| {
+            if index == 0 {
+                Ok(total)
+            } else {
+                total
+                    .checked_add(artifact.shard_bytes)
+                    .and_then(|value| value.checked_add(artifact.companion_bytes))
+                    .ok_or("Companion storage size overflowed")
+            }
+        },
+    )?;
+    let recurrent_or_hybrid = summary.metadata_facts.iter().any(|fact| {
+        fact.key.contains(".recurrent.")
+            || fact.key.contains(".ssm.")
+            || fact.key.contains(".state_space.")
+    });
+    let mut assumptions = vec![
+        "Artifact file bytes are a weight-allocation proxy, not observed device memory.".into(),
+        "The named reserve covers runtime allocations that GGUF metadata cannot describe.".into(),
+    ];
+    assumptions.extend(
+        launch
+            .arguments
+            .rejected
+            .iter()
+            .map(|rejected| format!("{}: {}", rejected.flag, rejected.reason)),
+    );
+    let storage_files = launch
+        .artifacts
+        .iter()
+        .flat_map(|artifact| artifact.shards.iter().chain(&artifact.companions))
+        .map(|file| (PathBuf::from(&file.path), file.size_bytes))
+        .collect::<Vec<_>>();
+    let report = preflight::build_preflight_report(preflight::PreflightFacts {
+        execution_path,
+        runtime_topology_known: matches!(execution_path, evidence::ExecutionPath::Cpu),
+        unverified_requirements: launch.unverified_requirements.clone(),
+        requested_context: u64::from(request.profile.context),
+        native_context: summary.context_length,
+        runtime_fit_enabled: request.profile.fit && launch.runtime.fit,
+        weight_bytes: main_artifact.shard_bytes,
+        companion_bytes,
+        kv: preflight::KvCacheInputs {
+            architecture: summary.architecture.clone(),
+            block_count: summary.block_count,
+            head_count_kv: summary.head_count_kv,
+            key_length: summary.key_length,
+            value_length: summary.value_length,
+            context: u64::from(request.profile.context),
+            cache_type_k: request.profile.cache_type_k.clone(),
+            cache_type_v: request.profile.cache_type_v.clone(),
+            recurrent_or_hybrid,
+            observed_at_ms,
+        },
+        available_memory,
+        available_disk: preflight::available_disk_bytes(
+            Path::new(&request.profile.model),
+            observed_at_ms,
+        ),
+        storage_volumes: preflight::storage_volume_evidence(&storage_files, observed_at_ms),
+        reserve_bytes: request.reserve_bytes.unwrap_or(1_073_741_824),
+        offload_possible: !matches!(execution_path, evidence::ExecutionPath::Cpu),
+        assumptions,
+    });
+    let device_weight_bytes = report
+        .weight_bytes
+        .value
+        .ok_or("Loaded artifact size overflowed before device planning")?;
+    let device_plan = preflight::build_device_plan(
+        &device_capacities,
+        device_weight_bytes,
+        &report.kv_cache_bytes,
+        report.requested_context.observed_at_ms,
+    );
+    Ok(PreflightResult {
+        report,
+        device_plan,
+        launch,
+        hardware,
+        selected_adapter_ids: request.selected_adapter_ids,
+    })
+}
+
+#[tauri::command]
 fn preview_command(profile: LaunchProfile) -> Result<String, String> {
-    let capabilities = core::inspect_runtime(Path::new(&profile.runtime))?;
-    let raw_args = profile.build_args()?;
-    let (args, _) = core::filter_supported_args(&raw_args, &capabilities.supported_flags);
-    Ok(profile.display_command_with_args(&args))
+    Ok(prepare_launch(&profile)?.arguments.command)
+}
+
+#[tauri::command]
+fn validate_launch_profile(profile: LaunchProfile) -> Result<LaunchValidation, String> {
+    prepare_launch(&profile)
 }
 
 #[tauri::command]
@@ -285,7 +1352,32 @@ fn start_server(
     {
         return Err("A tuning session is running; stop it before starting a server".into());
     }
-    let (child, command, log_path) = spawn_server(&profile, &format!("server-{}", profile.port))?;
+    let (mut child, mut validation, log_path) =
+        spawn_server(&profile, &format!("server-{}", profile.port))?;
+    if let Err(error) = wait_until_healthy(
+        &mut child,
+        &profile.host,
+        profile.port,
+        &log_path,
+        Duration::from_secs(600),
+    ) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error);
+    }
+    let observed_at_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| duration.as_millis().try_into().ok())
+        .unwrap_or(validation.effective_context.observed_at_ms);
+    update_launch_effective_context(
+        &mut validation,
+        &profile.host,
+        profile.port,
+        Duration::from_secs(5),
+        observed_at_ms,
+    );
+    let command = validation.arguments.command.clone();
     let started_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e| e.to_string())?
@@ -294,6 +1386,7 @@ fn start_server(
         child,
         profile,
         command,
+        validation,
         log_path,
         started_at,
     });
@@ -323,6 +1416,38 @@ fn server_status(state: tauri::State<AppState>) -> Result<ServerStatus, String> 
     Ok(status_from(&mut slot))
 }
 
+#[derive(Clone)]
+struct ValidatedServerSnapshot {
+    pid: u32,
+    profile: LaunchProfile,
+    validation: LaunchValidation,
+}
+
+fn validated_server_snapshot(
+    slot: &mut Option<ManagedServer>,
+    action: &str,
+) -> Result<ValidatedServerSnapshot, String> {
+    let status = status_from(slot);
+    if !status.running {
+        return Err(format!(
+            "Start and validate a GGUF Pilot server before {action}"
+        ));
+    }
+    if status.result_class != evidence::FitClass::LaunchValidated {
+        return Err(format!(
+            "{action} requires a successful launch health proof"
+        ));
+    }
+    let server = slot
+        .as_ref()
+        .ok_or("Validated server state is unavailable")?;
+    Ok(ValidatedServerSnapshot {
+        pid: server.child.id(),
+        profile: server.profile.clone(),
+        validation: server.validation.clone(),
+    })
+}
+
 #[tauri::command]
 fn read_server_log(state: tauri::State<AppState>) -> Result<String, String> {
     let slot = state
@@ -332,19 +1457,646 @@ fn read_server_log(state: tauri::State<AppState>) -> Result<String, String> {
     let Some(server) = slot.as_ref() else {
         return Ok("No server is running.".into());
     };
-    let text = fs::read_to_string(&server.log_path).map_err(|e| e.to_string())?;
-    let lines = text.lines().rev().take(250).collect::<Vec<_>>();
-    Ok(lines.into_iter().rev().collect::<Vec<_>>().join("\n"))
+    Ok(bounded_log_tail(&server.log_path))
 }
 
 #[tauri::command]
 fn benchmark_server(
-    host: String,
-    port: u16,
     tokens: u32,
     repeats: u16,
+    state: tauri::State<'_, AppState>,
 ) -> Result<BenchmarkSummary, String> {
-    core::benchmark_server(&host, port, tokens, repeats)
+    let mut slot = state
+        .server
+        .lock()
+        .map_err(|_| "Server state is unavailable")?;
+    let server = validated_server_snapshot(&mut slot, "benchmarking")?;
+    core::benchmark_server(&server.profile.host, server.profile.port, tokens, repeats)
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BenchmarkRunResult {
+    manifest: evidence::BenchmarkManifest,
+    summary: Option<measurement::BenchmarkSummaryV2>,
+    manifest_path: String,
+    compatibility_key: String,
+    result_class: evidence::FitClass,
+    failure: Option<String>,
+}
+
+fn benchmark_file_fact(file: &artifact::ArtifactFileFact) -> evidence::FileFact {
+    evidence::FileFact {
+        path: file.path.clone(),
+        bytes: file.size_bytes,
+        sha256: file.sha256.clone(),
+    }
+}
+
+fn benchmark_compatibility_key_from_snapshot(
+    profile: &LaunchProfile,
+    validation: &LaunchValidation,
+    artifacts: &[artifact::ArtifactInspection],
+    runtime_identity: &runtime::RuntimeIdentity,
+    executable_sha256: &str,
+    hardware: &runtime::HardwareInfo,
+    workload: &evidence::Workload,
+) -> Result<String, String> {
+    let main = artifacts
+        .first()
+        .ok_or("Benchmark snapshot did not contain a model artifact")?;
+    let model_architecture = main
+        .summary
+        .as_ref()
+        .map(|summary| summary.architecture.clone())
+        .ok_or("Benchmark model architecture is unavailable")?;
+    let content_ids = artifacts
+        .iter()
+        .map(|artifact| {
+            artifact
+                .content_id
+                .clone()
+                .ok_or("Benchmark selected artifact content digest is unavailable")
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let model_content_sha256 = calibration::selected_artifact_set_sha256(&content_ids)?;
+    let mut adapters = hardware
+        .adapters
+        .iter()
+        .map(|adapter| {
+            (
+                adapter.adapter_id.clone(),
+                adapter
+                    .driver
+                    .value
+                    .clone()
+                    .unwrap_or_else(|| "unknown".into()),
+            )
+        })
+        .collect::<Vec<_>>();
+    adapters.sort_by(|left, right| left.0.cmp(&right.0));
+    let (adapter_ids, driver_versions) = adapters.into_iter().unzip();
+    calibration::compatibility_key(&calibration::CompatibilityIdentity {
+        model_content_sha256,
+        model_architecture,
+        runtime_sha256: executable_sha256.into(),
+        runtime_help_sha256: validation.runtime.help_sha256.clone(),
+        runtime_backend: runtime_identity.backend.clone(),
+        runtime_version: validation.runtime.version.clone(),
+        runtime_build: validation.runtime.build.clone(),
+        adapter_ids,
+        driver_versions,
+        context: profile.context,
+        parallel: profile.parallel,
+        batch: profile.batch,
+        ubatch: profile.ubatch,
+        main_gpu: profile.main_gpu,
+        cache_type_k: profile.cache_type_k.clone(),
+        cache_type_v: profile.cache_type_v.clone(),
+        gpu_layers: profile.gpu_layers.clone(),
+        split_mode: profile.split_mode.clone(),
+        tensor_split: profile.tensor_split.clone(),
+        workload_sha256: calibration::workload_sha256(workload)?,
+        harness_version: env!("CARGO_PKG_VERSION").into(),
+    })
+}
+
+fn terminate_child(child: &mut Child) -> Result<(), String> {
+    match child.try_wait().map_err(|error| error.to_string())? {
+        Some(_) => Ok(()),
+        None => {
+            child.kill().map_err(|error| error.to_string())?;
+            child.wait().map_err(|error| error.to_string())?;
+            Ok(())
+        }
+    }
+}
+
+fn run_benchmark_snapshot(
+    server_pid: u32,
+    profile: LaunchProfile,
+    validation: LaunchValidation,
+    workload: evidence::Workload,
+    prepared_prompt_tokens: Option<Vec<i32>>,
+    cancelled: &AtomicBool,
+    directory: &Path,
+) -> Result<BenchmarkRunResult, String> {
+    let mut artifacts = Vec::new();
+    for artifact in &validation.artifacts {
+        artifacts.push(artifact::inspect_artifact(
+            Path::new(&artifact.first_shard),
+            &[],
+            true,
+        )?);
+    }
+    let main = artifacts
+        .first()
+        .ok_or("Benchmark snapshot did not contain a model artifact")?;
+    let mut companion_files = main
+        .companions
+        .iter()
+        .map(benchmark_file_fact)
+        .collect::<Vec<_>>();
+    for artifact in artifacts.iter().skip(1) {
+        companion_files.extend(artifact.shards.iter().map(benchmark_file_fact));
+        companion_files.extend(artifact.companions.iter().map(benchmark_file_fact));
+    }
+    let header_sha256 = main
+        .shards
+        .first()
+        .and_then(|file| file.header_sha256.clone())
+        .ok_or("Benchmark model header digest is unavailable")?;
+    let runtime_identity = runtime::describe_runtime(Path::new(&profile.runtime));
+    let executable_sha256 = artifact::sha256_path(Path::new(&profile.runtime))?;
+    let help_sha256 = validation.runtime.help_sha256.clone();
+    let model_architecture = main
+        .summary
+        .as_ref()
+        .map(|summary| summary.architecture.clone())
+        .ok_or("Benchmark model architecture is unavailable")?;
+    let harness_version = env!("CARGO_PKG_VERSION").to_string();
+    let hardware = runtime::detect_hardware();
+    let hardware_facts = hardware
+        .adapters
+        .iter()
+        .map(|adapter| evidence::HardwareFact {
+            adapter_id: adapter.adapter_id.clone(),
+            name: adapter.name.clone(),
+            vendor: adapter.vendor.clone(),
+            driver: adapter.driver.value.clone(),
+            backend: adapter.backend.value.clone(),
+            dedicated_bytes: adapter.dedicated_bytes.clone(),
+            shared_bytes: adapter.shared_bytes.clone(),
+            budget_bytes: adapter.budget_bytes.clone(),
+            current_usage_bytes: adapter.current_usage_bytes.clone(),
+        })
+        .collect();
+    let compatibility_key = benchmark_compatibility_key_from_snapshot(
+        &profile,
+        &validation,
+        &artifacts,
+        &runtime_identity,
+        &executable_sha256,
+        &hardware,
+        &workload,
+    )?;
+    let launch_fact = evidence::LaunchFact {
+        requested_context: profile.context,
+        effective_context: validation.effective_context.clone(),
+        parallel: profile.parallel,
+        gpu_layers: profile.gpu_layers.clone(),
+        batch: profile.batch,
+        ubatch: profile.ubatch,
+        cache_type_k: profile.cache_type_k.clone(),
+        cache_type_v: profile.cache_type_v.clone(),
+        split_mode: profile.split_mode.clone(),
+        tensor_split: profile.tensor_split.clone(),
+        main_gpu: profile.main_gpu,
+        command_args: core::manifest_safe_args(&validation.arguments.effective_args),
+        rejected_flags: validation
+            .arguments
+            .rejected
+            .iter()
+            .map(|item| item.flag.clone())
+            .collect(),
+    };
+    launch_fact.validate().map_err(|error| error.to_string())?;
+    let prompt_tokens = match (workload.cache_mode, prepared_prompt_tokens) {
+        (evidence::CacheMode::Cold, None) => {
+            return Err("Cold-cache benchmarking requires prepared prompt tokens".into());
+        }
+        (_, Some(prompt_tokens)) => prompt_tokens,
+        (evidence::CacheMode::Warm, None) => measurement::prepare_exact_prompt_tokens_cancellable(
+            &profile.host,
+            profile.port,
+            &workload,
+            cancelled,
+        )?,
+    };
+    let workload_run = if workload.cache_mode == evidence::CacheMode::Cold {
+        measurement::run_cold_workload_with(&workload, cancelled, || {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err("Benchmark cancelled before fresh runtime launch".into());
+            }
+            let (mut child, _, log_path) = spawn_server(&profile, "benchmark-cold")?;
+            let attempt = wait_until_healthy_cancellable(
+                &mut child,
+                &profile.host,
+                profile.port,
+                &log_path,
+                Duration::from_secs(120),
+                cancelled,
+            )
+            .and_then(|_| {
+                let mut timing = measurement::completion_request_with_prompt_tokens_cancellable(
+                    &profile.host,
+                    profile.port,
+                    &workload,
+                    &prompt_tokens,
+                    cancelled,
+                )?;
+                timing.peak_process_rss_bytes = runtime::process_peak_working_set(child.id());
+                Ok(timing)
+            });
+            let cleanup = terminate_child(&mut child);
+            match (attempt, cleanup) {
+                (Ok(timing), Ok(())) => Ok(timing),
+                (Err(error), Ok(())) => Err(error),
+                (Ok(_), Err(error)) => Err(format!(
+                    "Could not stop the fresh benchmark runtime: {error}"
+                )),
+                (Err(error), Err(cleanup_error)) => Err(format!(
+                    "{error}; fresh runtime cleanup also failed: {cleanup_error}"
+                )),
+            }
+        })?
+    } else {
+        measurement::run_workload_with(&workload, cancelled, || {
+            let mut timing = measurement::completion_request_with_prompt_tokens_cancellable(
+                &profile.host,
+                profile.port,
+                &workload,
+                &prompt_tokens,
+                cancelled,
+            )?;
+            timing.peak_process_rss_bytes = runtime::process_peak_working_set(server_pid);
+            Ok(timing)
+        })?
+    };
+    let mut manifest = evidence::BenchmarkManifest {
+        schema: evidence::BENCHMARK_SCHEMA_VERSION,
+        harness_version,
+        compatibility_key: Some(compatibility_key.clone()),
+        runtime: Some(evidence::RuntimeFact {
+            path: profile.runtime.clone(),
+            version: validation.runtime.version.clone(),
+            build: validation.runtime.build.clone(),
+            executable_sha256: Some(executable_sha256),
+            help_sha256,
+            backend: runtime_identity.backend,
+        }),
+        hardware: hardware_facts,
+        model: Some(evidence::ModelFact {
+            logical_id: main.logical_id.clone(),
+            architecture: model_architecture,
+            shards: main.shards.iter().map(benchmark_file_fact).collect(),
+            companions: companion_files,
+            gguf_header_sha256: header_sha256,
+        }),
+        launch: Some(launch_fact),
+        workload,
+        warmups: workload_run.warmups,
+        observations: workload_run.observations,
+        terminal_outcome: workload_run.terminal_outcome,
+    };
+    manifest
+        .validate_complete()
+        .map_err(|error| error.to_string())?;
+    let summary_result = measurement::summarize_observations(&manifest.observations);
+    let (summary, result_class, failure) = match (summary_result, manifest.terminal_outcome) {
+        (Ok(summary), None) => (Some(summary), evidence::FitClass::Measured, None),
+        (Ok(summary), Some(outcome)) => (
+            Some(summary),
+            evidence::FitClass::Failed,
+            Some(format!("Benchmark terminated with {outcome:?}")),
+        ),
+        (Err(error), _) => (None, evidence::FitClass::Failed, Some(error)),
+    };
+    let manifest_path = measurement::persist_manifest(directory, &manifest)?;
+    Ok(BenchmarkRunResult {
+        manifest: std::mem::take(&mut manifest),
+        summary,
+        manifest_path: manifest_path.to_string_lossy().to_string(),
+        compatibility_key,
+        result_class,
+        failure,
+    })
+}
+
+#[tauri::command]
+async fn benchmark_v2(
+    workload: evidence::Workload,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<BenchmarkRunResult, String> {
+    workload.validate().map_err(|error| error.to_string())?;
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("benchmarks");
+    let server = {
+        let mut slot = state
+            .server
+            .lock()
+            .map_err(|_| "Server state is unavailable")?;
+        validated_server_snapshot(&mut slot, "benchmarking")?
+    };
+    let cancelled = Arc::new(AtomicBool::new(false));
+    {
+        let mut active = state
+            .benchmark
+            .lock()
+            .map_err(|_| "Benchmark state is unavailable")?;
+        if active.is_some() {
+            return Err("A benchmark is already running".into());
+        }
+        *active = Some(cancelled.clone());
+    }
+    let benchmark_result: Result<BenchmarkRunResult, String> = async {
+        let prepared_prompt_tokens = if workload.cache_mode == evidence::CacheMode::Cold {
+            let profile = server.profile.clone();
+            let workload = workload.clone();
+            let preparation_cancelled = cancelled.clone();
+            Some(
+                tauri::async_runtime::spawn_blocking(move || {
+                    measurement::prepare_exact_prompt_tokens_cancellable(
+                        &profile.host,
+                        profile.port,
+                        &workload,
+                        preparation_cancelled.as_ref(),
+                    )
+                })
+                .await
+                .map_err(|error| format!("Benchmark prompt preparation task failed: {error}"))??,
+            )
+        } else {
+            None
+        };
+        if workload.cache_mode == evidence::CacheMode::Cold {
+            let mut managed = {
+                let mut slot = state
+                    .server
+                    .lock()
+                    .map_err(|_| "Server state is unavailable")?;
+                let current = slot
+                    .as_ref()
+                    .ok_or("Validated server stopped during cold benchmark preparation")?;
+                if current.child.id() != server.pid {
+                    return Err("Validated server changed during cold benchmark preparation".into());
+                }
+                slot.take().expect("validated server was present")
+            };
+            if let Err(error) = terminate_child(&mut managed.child) {
+                let mut slot = state
+                    .server
+                    .lock()
+                    .map_err(|_| "Server state is unavailable")?;
+                *slot = Some(managed);
+                return Err(format!(
+                    "Could not stop the validated server for cold benchmarking: {error}"
+                ));
+            }
+        }
+        let task_cancelled = cancelled.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            run_benchmark_snapshot(
+                server.pid,
+                server.profile,
+                server.validation,
+                workload,
+                prepared_prompt_tokens,
+                task_cancelled.as_ref(),
+                &directory,
+            )
+        })
+        .await
+        .map_err(|error| format!("Benchmark task failed: {error}"))?
+    }
+    .await;
+    let mut active = state
+        .benchmark
+        .lock()
+        .map_err(|_| "Benchmark state is unavailable")?;
+    *active = None;
+    benchmark_result
+}
+
+#[tauri::command]
+fn cancel_benchmark(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let active = state
+        .benchmark
+        .lock()
+        .map_err(|_| "Benchmark state is unavailable")?;
+    let cancel = active.as_ref().ok_or("No benchmark is running")?;
+    cancel.store(true, Ordering::Relaxed);
+    Ok(())
+}
+
+#[tauri::command]
+fn replay_benchmark_manifest(
+    manifest: evidence::BenchmarkManifest,
+    state: tauri::State<'_, AppState>,
+) -> Result<evidence::Workload, String> {
+    manifest
+        .validate_complete()
+        .map_err(|error| error.to_string())?;
+    let mut slot = state
+        .server
+        .lock()
+        .map_err(|_| "Server state is unavailable")?;
+    let server = validated_server_snapshot(&mut slot, "replaying a benchmark manifest")?;
+    drop(slot);
+    let logical_id = server
+        .validation
+        .artifacts
+        .first()
+        .map(|artifact| artifact.logical_id.as_str())
+        .ok_or("Running server model identity is unavailable")?;
+    let artifacts = server
+        .validation
+        .artifacts
+        .iter()
+        .map(|artifact| artifact::inspect_artifact(Path::new(&artifact.first_shard), &[], true))
+        .collect::<Result<Vec<_>, _>>()?;
+    let runtime_identity = runtime::describe_runtime(Path::new(&server.profile.runtime));
+    let executable_sha256 = artifact::sha256_path(Path::new(&server.profile.runtime))?;
+    let hardware = runtime::detect_hardware();
+    let current_compatibility_key = benchmark_compatibility_key_from_snapshot(
+        &server.profile,
+        &server.validation,
+        &artifacts,
+        &runtime_identity,
+        &executable_sha256,
+        &hardware,
+        &manifest.workload,
+    )?;
+    measurement::validate_replay_compatibility(
+        &manifest,
+        logical_id,
+        &core::manifest_safe_args(&server.validation.arguments.effective_args),
+        &current_compatibility_key,
+    )?;
+    Ok(manifest.workload)
+}
+
+#[tauri::command]
+async fn run_quality_suite(
+    state: tauri::State<'_, AppState>,
+) -> Result<recommend::QualitySuiteResult, String> {
+    let (host, port, runtime_path, model_logical_id) = {
+        let mut slot = state
+            .server
+            .lock()
+            .map_err(|_| "Server state is unavailable")?;
+        let server = validated_server_snapshot(&mut slot, "quality checks")?;
+        let model_logical_id = server
+            .validation
+            .artifacts
+            .first()
+            .map(|artifact| artifact.logical_id.clone())
+            .ok_or("Validated model identity is unavailable")?;
+        (
+            server.profile.host.clone(),
+            server.profile.port,
+            server.profile.runtime.clone(),
+            model_logical_id,
+        )
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut result = recommend::run_quality_suite_with(|_, prompt| {
+            measurement::quality_completion_request(&host, port, prompt)
+        });
+        result.observed_at_ms = Some(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_millis()
+                .try_into()
+                .map_err(|_| "System time is outside the supported range")?,
+        );
+        result.model_logical_id = Some(model_logical_id);
+        result.runtime_sha256 = Some(artifact::sha256_path(Path::new(&runtime_path))?);
+        Ok(result)
+    })
+    .await
+    .map_err(|error| format!("Quality task failed: {error}"))?
+}
+
+#[tauri::command]
+fn rank_candidates(
+    candidates: Vec<recommend::CandidateEvidence>,
+    constraints: recommend::RecommendationConstraints,
+    weights: recommend::ObjectiveWeights,
+) -> Result<Vec<recommend::RankedCandidate>, String> {
+    recommend::rank_candidates(&candidates, &constraints, &weights)
+}
+
+#[tauri::command]
+fn build_compatibility_key(identity: calibration::CompatibilityIdentity) -> Result<String, String> {
+    calibration::compatibility_key(&identity)
+}
+
+#[tauri::command]
+fn build_calibration_model(
+    anchors: Vec<calibration::CalibrationAnchor>,
+    created_at_ms: u64,
+    ttl_ms: u64,
+) -> Result<calibration::CalibrationModel, String> {
+    calibration::build_calibration(&anchors, created_at_ms, ttl_ms)
+}
+
+#[tauri::command]
+fn apply_calibration_model(
+    model: calibration::CalibrationModel,
+    compatibility_key: String,
+    estimated_value: f64,
+    now_ms: u64,
+) -> Result<calibration::CalibratedEstimate, String> {
+    calibration::apply_calibration(&model, &compatibility_key, estimated_value, now_ms)
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CalibrationRecords {
+    anchors: Vec<calibration::CalibrationAnchor>,
+    models: Vec<calibration::CalibrationModel>,
+}
+
+fn calibration_storage_root(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("calibration"))
+}
+
+#[tauri::command]
+fn store_calibration_anchor(
+    app: tauri::AppHandle,
+    anchor: calibration::CalibrationAnchor,
+) -> Result<CalibrationRecords, String> {
+    let root = calibration_storage_root(&app)?;
+    calibration::persist_calibration_anchor(&root, &anchor)?;
+    load_calibration_records(app, anchor.compatibility_key)
+}
+
+#[tauri::command]
+fn store_calibration_model(
+    app: tauri::AppHandle,
+    model: calibration::CalibrationModel,
+) -> Result<CalibrationRecords, String> {
+    let root = calibration_storage_root(&app)?;
+    calibration::persist_calibration_model(&root, &model)?;
+    load_calibration_records(app, model.compatibility_key)
+}
+
+#[tauri::command]
+fn load_calibration_records(
+    app: tauri::AppHandle,
+    compatibility_key: String,
+) -> Result<CalibrationRecords, String> {
+    let root = calibration_storage_root(&app)?;
+    Ok(CalibrationRecords {
+        anchors: calibration::load_calibration_anchors(&root, &compatibility_key)?,
+        models: calibration::load_calibration_models(&root, &compatibility_key)?,
+    })
+}
+
+#[tauri::command]
+fn import_external_evidence(
+    bundle: calibration::ExternalEvidenceBundle,
+) -> Result<calibration::ExternalEvidenceBundle, String> {
+    calibration::validate_external_evidence(bundle)
+}
+
+#[tauri::command]
+fn review_external_evidence(
+    bundle: calibration::ExternalEvidenceBundle,
+    state: calibration::ExternalEvidenceState,
+    confirmed: bool,
+) -> Result<calibration::ExternalEvidenceBundle, String> {
+    calibration::review_external_evidence(bundle, state, confirmed)
+}
+
+#[tauri::command]
+fn build_share_export(
+    manifest: evidence::BenchmarkManifest,
+    summary: Option<measurement::BenchmarkSummaryV2>,
+    quality: Option<recommend::QualitySuiteResult>,
+    compatibility_key: String,
+    created_at_ms: u64,
+    confirmed: bool,
+) -> Result<sharing::ShareBundle, String> {
+    sharing::require_export_confirmation(confirmed)?;
+    sharing::build_share_bundle(
+        &manifest,
+        summary.as_ref(),
+        quality.as_ref(),
+        compatibility_key,
+        created_at_ms,
+    )
+}
+
+#[tauri::command]
+fn write_share_export(
+    path: String,
+    bundle: sharing::ShareBundle,
+    confirmed: bool,
+) -> Result<String, String> {
+    sharing::require_export_confirmation(confirmed)?;
+    let written = sharing::persist_share_bundle(Path::new(&path), &bundle)?;
+    Ok(written.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -477,7 +2229,8 @@ impl tune::Bench for LiveBench<'_> {
                 trial: None,
             },
         );
-        let (mut child, command, log_path) = spawn_server(profile, "tuning")?;
+        let (mut child, mut validation, log_path) = spawn_server(profile, "tuning")?;
+        let command = validation.arguments.command.clone();
         let result = (|| {
             wait_until_healthy(
                 &mut child,
@@ -486,6 +2239,18 @@ impl tune::Bench for LiveBench<'_> {
                 &log_path,
                 Duration::from_secs(600),
             )?;
+            let observed_at_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .ok()
+                .and_then(|duration| duration.as_millis().try_into().ok())
+                .unwrap_or(validation.effective_context.observed_at_ms);
+            update_launch_effective_context(
+                &mut validation,
+                &profile.host,
+                profile.port,
+                Duration::from_secs(5),
+                observed_at_ms,
+            );
             let _ = self.app.emit(
                 "tuning-progress",
                 TuningProgress {
@@ -986,12 +2751,30 @@ pub fn run() {
             describe_runtime,
             list_managed_runtimes,
             read_gguf_summary,
+            inspect_model_artifact,
+            preflight_model,
             preview_command,
+            validate_launch_profile,
             start_server,
             stop_server,
             server_status,
             read_server_log,
             benchmark_server,
+            benchmark_v2,
+            cancel_benchmark,
+            replay_benchmark_manifest,
+            run_quality_suite,
+            rank_candidates,
+            build_compatibility_key,
+            build_calibration_model,
+            apply_calibration_model,
+            store_calibration_anchor,
+            store_calibration_model,
+            load_calibration_records,
+            import_external_evidence,
+            review_external_evidence,
+            build_share_export,
+            write_share_export,
             detect_hardware,
             fetch_runtime_catalog,
             managed_runtime_root,
@@ -1026,6 +2809,576 @@ pub fn run() {
 mod release_security_tests {
     use super::*;
 
+    fn put_test_string(bytes: &mut Vec<u8>, value: &str) {
+        bytes.extend((value.len() as u64).to_le_bytes());
+        bytes.extend(value.as_bytes());
+    }
+
+    fn put_test_string_fact(bytes: &mut Vec<u8>, key: &str, value: &str) {
+        put_test_string(bytes, key);
+        bytes.extend(8_u32.to_le_bytes());
+        put_test_string(bytes, value);
+    }
+
+    fn put_test_u32_fact(bytes: &mut Vec<u8>, key: &str, value: u32) {
+        put_test_string(bytes, key);
+        bytes.extend(4_u32.to_le_bytes());
+        bytes.extend(value.to_le_bytes());
+    }
+
+    fn write_test_gguf_with_typed_identity(
+        path: &Path,
+        architecture: &str,
+        extra_string_facts: &[(&str, &str)],
+        extra_u32_facts: &[(&str, u32)],
+    ) {
+        let mut bytes = Vec::new();
+        bytes.extend(b"GGUF");
+        bytes.extend(3_u32.to_le_bytes());
+        bytes.extend(0_u64.to_le_bytes());
+        bytes.extend(
+            (6_u64 + extra_string_facts.len() as u64 + extra_u32_facts.len() as u64).to_le_bytes(),
+        );
+        put_test_string_fact(&mut bytes, "general.architecture", architecture);
+        put_test_string_fact(&mut bytes, "general.name", "Fixture");
+        put_test_u32_fact(&mut bytes, "general.file_type", 7);
+        put_test_u32_fact(&mut bytes, &format!("{architecture}.block_count"), 2);
+        put_test_u32_fact(&mut bytes, "split.no", 0);
+        put_test_u32_fact(&mut bytes, "split.count", 1);
+        for (key, value) in extra_string_facts {
+            put_test_string_fact(&mut bytes, key, value);
+        }
+        for (key, value) in extra_u32_facts {
+            put_test_u32_fact(&mut bytes, key, *value);
+        }
+        std::fs::write(path, bytes).unwrap();
+    }
+
+    fn write_test_gguf_with_identity(
+        path: &Path,
+        architecture: &str,
+        extra_string_facts: &[(&str, &str)],
+    ) {
+        write_test_gguf_with_typed_identity(path, architecture, extra_string_facts, &[]);
+    }
+
+    fn write_test_gguf(path: &Path) {
+        write_test_gguf_with_identity(path, "llama", &[]);
+    }
+
+    fn launch_validation_fixture() -> LaunchValidation {
+        LaunchValidation {
+            runtime: RuntimeCapabilities {
+                path: "llama-server.exe".into(),
+                version: "test".into(),
+                build: "1".into(),
+                commit: "abc".into(),
+                help_sha256: "a".repeat(64),
+                spec_types: Vec::new(),
+                supported_flags: Vec::new(),
+                metrics: false,
+                multimodal: false,
+                fit: true,
+            },
+            artifacts: Vec::new(),
+            arguments: core::LaunchArgumentValidation {
+                effective_args: Vec::new(),
+                rejected: Vec::new(),
+                command: "llama-server.exe".into(),
+            },
+            effective_context: unobserved_effective_context(42),
+            unverified_requirements: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn idle_server_status_does_not_claim_launch_validation() {
+        let status = ServerStatus::default();
+
+        assert_eq!(status.result_class, evidence::FitClass::Unknown);
+        assert!(status.validation.is_none());
+    }
+
+    #[test]
+    fn health_validation_accepts_only_an_http_success_status() {
+        assert!(is_healthy_response(b"HTTP/1.1 200 OK\r\n\r\n"));
+        assert!(!is_healthy_response(
+            b"HTTP/1.1 503 Service Unavailable\r\n\r\n"
+        ));
+        assert!(!is_healthy_response(b"HTTP/1.1 2000 Invalid\r\n\r\n"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn listener_ownership_proves_the_process_that_bound_the_port() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+
+        assert!(listener_is_owned_by_at(address, std::process::id()).unwrap());
+        assert!(!listener_is_owned_by_at(address, std::process::id().wrapping_add(1)).unwrap());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn listener_ownership_is_bound_to_the_connected_address() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let other_address = SocketAddr::from(([127, 0, 0, 2], address.port()));
+
+        assert!(listener_is_owned_by_at(address, std::process::id()).unwrap());
+        assert!(!listener_is_owned_by_at(other_address, std::process::id()).unwrap());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn health_from_an_unrelated_process_cannot_validate_the_spawned_child() {
+        use std::io::{Read, Write};
+        use std::process::Stdio;
+
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 1_024];
+            let _ = stream.read(&mut request);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .unwrap();
+        });
+        let mut child = proc::hidden_command("ping.exe")
+            .args(["127.0.0.1", "-n", "10"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+
+        let error = wait_until_healthy(
+            &mut child,
+            "127.0.0.1",
+            port,
+            "",
+            Duration::from_millis(500),
+        )
+        .unwrap_err();
+
+        let _ = child.kill();
+        let _ = child.wait();
+        server.join().unwrap();
+        assert!(error.contains("does not own"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn server_props_parser_reads_the_effective_slot_context() {
+        let response = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"default_generation_settings\":{\"n_ctx\":4096}}";
+
+        assert_eq!(parse_server_effective_context(response).unwrap(), 4_096);
+    }
+
+    #[test]
+    fn server_props_probe_records_effective_context_evidence() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            use std::io::{Read, Write};
+
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 1_024];
+            let read = stream.read(&mut request).unwrap();
+            assert!(String::from_utf8_lossy(&request[..read]).starts_with("GET /props "));
+            let body = r#"{"default_generation_settings":{"n_ctx":8192}}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+        });
+
+        let context =
+            observe_server_effective_context("127.0.0.1", port, Duration::from_secs(1), 42);
+
+        assert_eq!(context.value, Some(8_192));
+        assert_eq!(context.level, evidence::EvidenceLevel::Observed);
+        assert_eq!(context.observed_at_ms, 42);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn post_health_probe_updates_launch_effective_context() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            use std::io::{Read, Write};
+
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 1_024];
+            let _ = stream.read(&mut request).unwrap();
+            let body = r#"{"default_generation_settings":{"n_ctx":16384}}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+        });
+        let mut validation = launch_validation_fixture();
+
+        update_launch_effective_context(
+            &mut validation,
+            "127.0.0.1",
+            port,
+            Duration::from_secs(1),
+            42,
+        );
+
+        assert_eq!(validation.effective_context.value, Some(16_384));
+        assert_eq!(
+            validation.effective_context.level,
+            evidence::EvidenceLevel::Observed
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn unavailable_server_props_produces_unknown_context_evidence() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let context =
+            observe_server_effective_context("127.0.0.1", port, Duration::from_millis(100), 42);
+
+        assert_eq!(context.value, None);
+        assert_eq!(context.level, evidence::EvidenceLevel::Unknown);
+        assert!(context.notes[0].contains("Could not observe"));
+    }
+
+    #[test]
+    fn effective_context_is_unknown_before_runtime_health() {
+        let context = unobserved_effective_context(42);
+
+        assert_eq!(context.value, None);
+        assert_eq!(context.level, evidence::EvidenceLevel::Unknown);
+        assert_eq!(context.observed_at_ms, 42);
+    }
+
+    #[test]
+    fn launch_validation_serializes_effective_context_evidence() {
+        let validation = launch_validation_fixture();
+
+        let serialized = serde_json::to_value(validation).unwrap();
+        assert_eq!(
+            serialized["effectiveContext"]["value"],
+            serde_json::Value::Null
+        );
+        assert_eq!(serialized["effectiveContext"]["level"], "unknown");
+    }
+
+    #[test]
+    fn server_props_response_read_is_bounded() {
+        let mut response = std::io::Cursor::new(vec![b'x'; 2 * 1_048_576]);
+
+        let error = read_props_response(&mut response).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(response.position() <= 1_048_576 + 4_096);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn health_address_resolution_failure_is_structured() {
+        let mut child = proc::hidden_command("cmd.exe")
+            .args(["/C", "ping -n 5 127.0.0.1 >NUL"])
+            .spawn()
+            .expect("spawn test process");
+
+        let error = wait_until_healthy(
+            &mut child,
+            "host name with spaces",
+            30_144,
+            "",
+            Duration::from_millis(10),
+        )
+        .expect_err("invalid host should fail resolution");
+        let _ = child.kill();
+        let _ = child.wait();
+        let evidence: LaunchFailureEvidence =
+            serde_json::from_str(&error).expect("structured launch evidence");
+
+        assert_eq!(evidence.phase, "health_connect");
+        assert!(evidence.message.contains("resolve health endpoint"));
+    }
+
+    #[test]
+    fn health_response_read_is_bounded() {
+        let mut response = std::io::Cursor::new(vec![b'x'; 32 * 1024]);
+
+        let error = read_health_response(&mut response).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(response.position() <= (16 * 1024 + 1));
+    }
+
+    #[test]
+    fn health_endpoint_resolution_supports_ipv6_loopback() {
+        let addresses = health_socket_addresses("::1", 8080).unwrap();
+
+        assert!(addresses.iter().any(SocketAddr::is_ipv6));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn health_timeout_preserves_a_bounded_log_tail() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let log_path = std::env::temp_dir().join(format!(
+            "gguf-pilot-health-timeout-{}.log",
+            std::process::id()
+        ));
+        std::fs::write(&log_path, "initial line\nuseful timeout detail\n").unwrap();
+        let mut child = crate::proc::hidden_command("cmd")
+            .args(["/C", "ping", "-n", "6", "127.0.0.1"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+
+        let error = wait_until_healthy(
+            &mut child,
+            "127.0.0.1",
+            port,
+            log_path.to_string_lossy().as_ref(),
+            Duration::from_millis(1),
+        )
+        .unwrap_err();
+
+        let _ = child.kill();
+        let _ = child.wait();
+        std::fs::remove_file(log_path).unwrap();
+        let evidence: LaunchFailureEvidence =
+            serde_json::from_str(&error).expect("launch failure must be structured JSON");
+        assert_eq!(evidence.phase, "health_timeout");
+        assert!(evidence.timed_out);
+        assert_eq!(evidence.exit_code, None);
+        assert!(evidence.log_tail.contains("useful timeout detail"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cancelled_health_wait_returns_before_the_launch_timeout() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let log_path = std::env::temp_dir().join(format!(
+            "gguf-pilot-health-cancelled-{}.log",
+            std::process::id()
+        ));
+        std::fs::write(&log_path, "cancelled health detail\n").unwrap();
+        let mut child = proc::hidden_command("ping.exe")
+            .args(["127.0.0.1", "-n", "30"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let cancelled = AtomicBool::new(true);
+        let started = Instant::now();
+
+        let error = wait_until_healthy_cancellable(
+            &mut child,
+            "127.0.0.1",
+            port,
+            &log_path.to_string_lossy(),
+            Duration::from_secs(120),
+            &cancelled,
+        )
+        .unwrap_err();
+
+        assert!(started.elapsed() < Duration::from_secs(2));
+        let _ = child.kill();
+        let _ = child.wait();
+        std::fs::remove_file(log_path).unwrap();
+        let evidence: LaunchFailureEvidence =
+            serde_json::from_str(&error).expect("launch failure must be structured JSON");
+        assert_eq!(evidence.phase, "health_cancelled");
+        assert!(!evidence.timed_out);
+        assert!(evidence.cancelled);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn health_exit_preserves_structured_exit_evidence() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let log_path =
+            std::env::temp_dir().join(format!("gguf-pilot-health-exit-{}.log", std::process::id()));
+        std::fs::write(&log_path, "useful exit detail\n").unwrap();
+        let mut child = crate::proc::hidden_command("cmd")
+            .args(["/C", "exit", "7"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+
+        let error = wait_until_healthy(
+            &mut child,
+            "127.0.0.1",
+            port,
+            log_path.to_string_lossy().as_ref(),
+            Duration::from_secs(2),
+        )
+        .unwrap_err();
+
+        let _ = child.wait();
+        std::fs::remove_file(log_path).unwrap();
+        let evidence: LaunchFailureEvidence =
+            serde_json::from_str(&error).expect("launch failure must be structured JSON");
+        assert_eq!(evidence.phase, "health_exit");
+        assert_eq!(evidence.exit_code, Some(7));
+        assert!(!evidence.timed_out);
+        assert!(evidence.log_tail.contains("useful exit detail"));
+    }
+
+    #[test]
+    fn post_health_exit_evidence_preserves_status_with_a_byte_bounded_tail() {
+        let log_path = std::env::temp_dir().join(format!(
+            "gguf-pilot-runtime-exit-{}.log",
+            std::process::id()
+        ));
+        let mut log = vec![b'x'; 32 * 1024];
+        log.extend_from_slice(b"\nuseful runtime exit detail\n");
+        std::fs::write(&log_path, log).unwrap();
+
+        let evidence = launch_failure_evidence(
+            "runtime_exit",
+            "llama-server exited after health validation".into(),
+            log_path.to_string_lossy().as_ref(),
+            Some(7),
+            false,
+        );
+
+        std::fs::remove_file(log_path).unwrap();
+        assert_eq!(evidence.exit_code, Some(7));
+        assert!(evidence.log_tail.ends_with("useful runtime exit detail"));
+        assert!(evidence.log_tail.len() <= 16 * 1024);
+    }
+
+    #[test]
+    fn spawn_does_not_claim_port_availability_from_a_released_probe() {
+        let source = include_str!("lib.rs");
+        let spawn_start = source.find("fn spawn_server(").unwrap();
+        let spawn_end = source[spawn_start..]
+            .find("fn connect_host(")
+            .map(|offset| spawn_start + offset)
+            .unwrap();
+        let spawn_source = &source[spawn_start..spawn_end];
+
+        assert!(!spawn_source.contains("TcpListener::bind"));
+    }
+
+    #[test]
+    fn spawn_failures_use_structured_launch_evidence() {
+        let source = include_str!("lib.rs");
+        let spawn_source = source
+            .split_once("fn spawn_server(")
+            .and_then(|(_, rest)| rest.split_once("fn connect_host(").map(|(body, _)| body))
+            .unwrap();
+
+        assert!(spawn_source.contains("launch_failure(\"validation\""));
+        assert!(spawn_source.contains("\"log_setup\""));
+        assert!(spawn_source.contains("\"spawn\""));
+        assert!(spawn_source.matches("launch_failure(").count() >= 3);
+    }
+
+    #[test]
+    fn every_measurement_entry_point_requires_a_validated_server_snapshot() {
+        let source = include_str!("lib.rs");
+        for (start, end) in [
+            ("fn benchmark_server(", "struct BenchmarkRunResult"),
+            ("async fn benchmark_v2(", "fn cancel_benchmark("),
+            (
+                "fn replay_benchmark_manifest(",
+                "async fn run_quality_suite(",
+            ),
+            ("async fn run_quality_suite(", "fn rank_candidates("),
+        ] {
+            let body = source
+                .split_once(start)
+                .and_then(|(_, rest)| rest.split_once(end).map(|(body, _)| body))
+                .unwrap();
+            assert!(
+                body.contains("validated_server_snapshot"),
+                "{start} bypasses the shared validated-server gate"
+            );
+        }
+    }
+
+    #[test]
+    fn cold_benchmark_uses_a_fresh_runtime_for_each_attempt() {
+        let source = include_str!("lib.rs");
+        let body = source
+            .split_once("fn run_benchmark_snapshot(")
+            .and_then(|(_, rest)| {
+                rest.split_once("async fn benchmark_v2(")
+                    .map(|(body, _)| body)
+            })
+            .unwrap();
+
+        assert!(body.contains("CacheMode::Cold"));
+        assert!(body.contains("run_cold_workload_with"));
+        assert!(body.contains("spawn_server("));
+    }
+
+    #[test]
+    fn benchmark_memory_samples_the_process_that_served_each_request() {
+        let source = include_str!("lib.rs");
+        let start = source.find("fn run_benchmark_snapshot(").unwrap();
+        let end = source[start..]
+            .find("async fn benchmark_v2(")
+            .map(|offset| start + offset)
+            .unwrap();
+        let body = &source[start..end];
+
+        assert!(body.contains("process_peak_working_set(server_pid)"));
+        assert!(body.contains("process_peak_working_set(child.id())"));
+    }
+
+    #[test]
+    fn multi_gpu_path_requires_explicit_adapter_selection() {
+        let profile = LaunchProfile {
+            tensor_split: "1,1".into(),
+            ..LaunchProfile::default()
+        };
+
+        assert_eq!(
+            execution_path_for(&profile, &["gpu-a".into(), "gpu-b".into()]),
+            evidence::ExecutionPath::MultiGpu
+        );
+        assert_eq!(
+            execution_path_for(&profile, &[]),
+            evidence::ExecutionPath::Unknown
+        );
+    }
+
+    #[test]
+    fn automatic_gpu_placement_remains_unknown_before_launch() {
+        let profile = LaunchProfile {
+            gpu_layers: "auto".into(),
+            ..LaunchProfile::default()
+        };
+
+        let path = execution_path_for(&profile, &["gpu-0".into()]);
+
+        assert_eq!(path, evidence::ExecutionPath::Unknown);
+    }
+
     #[test]
     fn a_download_destination_must_already_exist() {
         // Folder creation before reparse-point validation could change an
@@ -1038,5 +3391,396 @@ mod release_security_tests {
         let result = download_target(root.to_string_lossy().as_ref(), "model.gguf");
         assert!(result.is_err());
         assert!(!root.exists(), "validation created the missing destination");
+    }
+
+    #[test]
+    fn launch_validation_rejects_an_invalid_model_artifact() {
+        let path = std::env::temp_dir().join(format!(
+            "gguf-pilot-invalid-launch-artifact-{}.gguf",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"not a GGUF file").unwrap();
+
+        let error = require_launchable_artifact("Model", &path).unwrap_err();
+
+        assert!(error.contains("cannot be launched"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn profile_artifact_validation_uses_the_main_model_gate() {
+        let path = std::env::temp_dir().join(format!(
+            "gguf-pilot-invalid-profile-artifact-{}.gguf",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"not a GGUF file").unwrap();
+        let profile = LaunchProfile {
+            model: path.to_string_lossy().to_string(),
+            ..LaunchProfile::default()
+        };
+
+        let error = validate_profile_artifacts(&profile).unwrap_err();
+
+        assert!(error.contains("Model cannot be launched"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn shared_launch_path_validation_checks_lora_files() {
+        let root =
+            std::env::temp_dir().join(format!("gguf-pilot-missing-lora-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let model = root.join("fixture.gguf");
+        write_test_gguf(&model);
+        let profile = LaunchProfile {
+            runtime: std::env::current_exe()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+            model: model.to_string_lossy().to_string(),
+            lora: root.join("missing-lora.gguf").to_string_lossy().to_string(),
+            ..LaunchProfile::default()
+        };
+
+        let error = validate_profile_paths(&profile).unwrap_err();
+
+        assert!(error.contains("LoRA"), "unexpected error: {error}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn launch_artifact_validation_includes_lora_identity_and_bytes() {
+        let root =
+            std::env::temp_dir().join(format!("gguf-pilot-lora-artifact-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let model = root.join("model.gguf");
+        let lora = root.join("adapter.gguf");
+        write_test_gguf(&model);
+        write_test_gguf_with_identity(
+            &lora,
+            "llama",
+            &[("general.type", "adapter"), ("adapter.type", "lora")],
+        );
+        let profile = LaunchProfile {
+            model: model.to_string_lossy().to_string(),
+            lora: lora.to_string_lossy().to_string(),
+            ..LaunchProfile::default()
+        };
+
+        let artifacts = validate_profile_artifacts(&profile).unwrap();
+
+        assert_eq!(artifacts.len(), 2);
+        assert_eq!(artifacts[1].first_shard, lora.to_string_lossy());
+        assert!(artifacts[1].shard_bytes > 0);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn launch_artifact_validation_rejects_a_model_in_the_lora_slot() {
+        let root =
+            std::env::temp_dir().join(format!("gguf-pilot-lora-role-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let model = root.join("model.gguf");
+        let unrelated = root.join("not-an-adapter.gguf");
+        write_test_gguf(&model);
+        write_test_gguf(&unrelated);
+        let profile = LaunchProfile {
+            model: model.to_string_lossy().into_owned(),
+            lora: unrelated.to_string_lossy().into_owned(),
+            ..LaunchProfile::default()
+        };
+
+        let error = validate_profile_artifacts(&profile).unwrap_err();
+
+        assert!(error.contains("LoRA"), "unexpected error: {error}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn launch_artifact_validation_rejects_a_text_model_as_projector() {
+        let root =
+            std::env::temp_dir().join(format!("gguf-pilot-projector-role-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let model = root.join("model.gguf");
+        let unrelated = root.join("mmproj-unrelated.gguf");
+        write_test_gguf(&model);
+        write_test_gguf(&unrelated);
+        let profile = LaunchProfile {
+            model: model.to_string_lossy().into_owned(),
+            mmproj: Some(unrelated.to_string_lossy().into_owned()),
+            ..LaunchProfile::default()
+        };
+
+        let error = validate_profile_artifacts(&profile).unwrap_err();
+
+        assert!(error.contains("projector"), "unexpected error: {error}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn launch_artifact_validation_accepts_a_clip_projector_role() {
+        let root =
+            std::env::temp_dir().join(format!("gguf-pilot-projector-valid-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let model = root.join("model.gguf");
+        let projector = root.join("mmproj.gguf");
+        write_test_gguf(&model);
+        write_test_gguf_with_identity(&projector, "clip", &[]);
+        let profile = LaunchProfile {
+            model: model.to_string_lossy().into_owned(),
+            mmproj: Some(projector.to_string_lossy().into_owned()),
+            ..LaunchProfile::default()
+        };
+
+        let artifacts = validate_profile_artifacts(&profile).unwrap();
+
+        assert_eq!(artifacts.len(), 2);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn launch_artifact_validation_rejects_a_projector_embedding_mismatch() {
+        let root = std::env::temp_dir().join(format!(
+            "gguf-pilot-projector-dimension-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let model = root.join("model.gguf");
+        let projector = root.join("mmproj.gguf");
+        write_test_gguf_with_typed_identity(
+            &model,
+            "llama",
+            &[],
+            &[("llama.embedding_length", 4_096)],
+        );
+        write_test_gguf_with_typed_identity(
+            &projector,
+            "clip",
+            &[],
+            &[("clip.vision.projection_dim", 2_048)],
+        );
+        let profile = LaunchProfile {
+            model: model.to_string_lossy().into_owned(),
+            mmproj: Some(projector.to_string_lossy().into_owned()),
+            ..LaunchProfile::default()
+        };
+
+        let error = validate_profile_artifacts(&profile).unwrap_err();
+
+        assert!(error.contains("embedding"), "unexpected error: {error}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn companion_requirements_are_visible_without_raw_paths() {
+        let profile = LaunchProfile {
+            draft_model: Some(r"C:\private\draft.gguf".into()),
+            mmproj: Some(r"C:\private\projector.gguf".into()),
+            lora: r"C:\private\adapter.gguf".into(),
+            ..LaunchProfile::default()
+        };
+
+        let requirements = unverified_companion_requirements(&profile);
+
+        assert_eq!(requirements.len(), 3);
+        assert!(!requirements.join(" ").contains("C:\\private"));
+    }
+
+    #[test]
+    fn launch_artifact_validation_rejects_conflicting_draft_tokenizer_identity() {
+        let root =
+            std::env::temp_dir().join(format!("gguf-pilot-draft-identity-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let model = root.join("model.gguf");
+        let draft = root.join("draft.gguf");
+        write_test_gguf_with_identity(&model, "llama", &[("tokenizer.ggml.model", "bpe")]);
+        write_test_gguf_with_identity(
+            &draft,
+            "llama",
+            &[("tokenizer.ggml.model", "sentencepiece")],
+        );
+        let profile = LaunchProfile {
+            model: model.to_string_lossy().into_owned(),
+            draft_model: Some(draft.to_string_lossy().into_owned()),
+            ..LaunchProfile::default()
+        };
+
+        let error = validate_profile_artifacts(&profile).unwrap_err();
+
+        assert!(error.contains("tokenizer"), "unexpected error: {error}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn shared_launch_path_validation_rejects_malformed_scaled_lora_entries() {
+        let profile = LaunchProfile {
+            runtime: std::env::current_exe()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+            model: std::env::current_exe()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+            lora_scaled: "missing-scale.gguf:not-a-number".into(),
+            ..LaunchProfile::default()
+        };
+
+        let error = validate_profile_paths(&profile).unwrap_err();
+
+        assert!(error.contains("scale"), "unexpected error: {error}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn scaled_lora_validation_preserves_the_windows_drive_prefix() {
+        let root =
+            std::env::temp_dir().join(format!("gguf-pilot-scaled-lora-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let lora = root.join("adapter with spaces.gguf");
+        std::fs::write(&lora, b"fixture").unwrap();
+        let profile = LaunchProfile {
+            runtime: std::env::current_exe()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+            model: std::env::current_exe()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+            lora_scaled: format!("{}:0.5", lora.display()),
+            ..LaunchProfile::default()
+        };
+
+        validate_profile_paths(&profile).unwrap();
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn shared_launch_validation_rejects_an_invalid_artifact_before_spawn() {
+        let path = std::env::temp_dir().join(format!(
+            "gguf-pilot-invalid-shared-{}.gguf",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"not a GGUF").unwrap();
+        let profile = LaunchProfile {
+            alias: "fixture".into(),
+            runtime: std::env::current_exe()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+            model: path.to_string_lossy().to_string(),
+            ..LaunchProfile::default()
+        };
+
+        let error = prepare_launch(&profile).unwrap_err();
+
+        assert!(error.contains("incomplete or inconsistent"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn preflight_command_rejects_an_invalid_artifact() {
+        let path = std::env::temp_dir().join(format!(
+            "gguf-pilot-invalid-preflight-{}.gguf",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"not a GGUF").unwrap();
+        let profile = LaunchProfile {
+            alias: "fixture".into(),
+            runtime: std::env::current_exe()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+            model: path.to_string_lossy().to_string(),
+            ..LaunchProfile::default()
+        };
+
+        let result = preflight_model(PreflightRequest {
+            profile,
+            selected_adapter_ids: Vec::new(),
+            manual_overrides: Vec::new(),
+            reserve_bytes: Some(536_870_912),
+        });
+
+        assert!(result.unwrap_err().contains("incomplete or inconsistent"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn executable_validation_rejects_a_parent_directory_reparse_point() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("gguf-pilot-launch-root-{nonce}"));
+        let outside = std::env::temp_dir().join(format!("gguf-pilot-launch-outside-{nonce}"));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("llama-server.exe"), b"outside").unwrap();
+        let junction = root.join("runtime");
+        let status = crate::proc::hidden_command("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&outside)
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        let error = require_regular_non_reparse_file("Runtime", &junction.join("llama-server.exe"))
+            .unwrap_err();
+
+        assert!(error.contains("reparse point"));
+        std::fs::remove_dir(junction).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn shared_launch_preparation_rejects_a_runtime_parent_reparse_before_execution() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("gguf-pilot-prepare-root-{nonce}"));
+        std::fs::create_dir_all(&root).unwrap();
+        let model = root.join("fixture.gguf");
+        write_test_gguf(&model);
+        let current_exe = std::env::current_exe().unwrap();
+        let runtime_parent = current_exe.parent().unwrap();
+        let junction = root.join("runtime");
+        let status = crate::proc::hidden_command("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&junction)
+            .arg(runtime_parent)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let profile = LaunchProfile {
+            alias: "fixture".into(),
+            runtime: junction
+                .join(current_exe.file_name().unwrap())
+                .to_string_lossy()
+                .to_string(),
+            model: model.to_string_lossy().to_string(),
+            ..LaunchProfile::default()
+        };
+
+        let error = prepare_launch(&profile).unwrap_err();
+
+        assert!(error.contains("reparse point"), "unexpected error: {error}");
+        std::fs::remove_dir(junction).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -68,7 +68,7 @@ Projector offload/device and image token budgets.
 
 ### Network and security
 
-CORS origins, API key file, and TLS key/certificate. LAN binding is rejected unless authentication and restricted CORS are configured. Secrets are referenced by file and are not placed directly in the process command.
+CORS origins, API key file, and TLS key/certificate. LAN binding is rejected unless authentication and restricted CORS are configured. Loopback-only wildcard CORS is rejected without an API key file. DNS hostnames are rejected as bind targets; use an IP literal or `localhost`. Secrets are referenced by file and are not placed directly in the process command.
 
 ### Templates, adapters, and low-level overrides
 
@@ -76,17 +76,19 @@ Reasoning budget/history, custom chat template, LoRAs, tensor/model-metadata ove
 
 ## Deliberately kept out of dedicated controls
 
-The raw-extra-arguments field remains the supported path for options that are deprecated, router-only, highly experimental, download-oriented, or dangerous without a larger permissions design:
+The raw-extra-arguments field accepts only self-contained `--flag` or
+`--flag=value` tokens. GGUF Pilot checks each token against the selected
+runtime's current `--help` output before process creation.
 
-- Deprecated mmap/mlock/direct-I/O aliases; `--load-mode` replaces them.
-- CPU affinity masks, realtime priorities, and polling.
-- RPC workers and arbitrary remote tensor placement.
-- Hugging Face/Docker download shortcuts; GGUF Pilot manages existing local files.
-- Router mode (`--models-dir`, presets, autoload, max models); the MVP supervises one explicit server.
-- Built-in shell/file tools, agent mode, MCP process definitions, and WebUI MCP proxy; these grant host capabilities and require a separate trust/permissions workflow.
-- Inline API keys and inline MCP JSON; file-based secrets/configuration are safer.
-- Grammar, JSON schema, logit bias, and most request-level sampling controls; clients should send them per request.
-- Embedding/reranking-only modes and pooling; these need purpose-specific model validation and endpoint UX.
-- Synthetic speculative benchmark flags and built-in models that download weights.
+The backend rejects positional values and overrides of typed profile fields.
+The backend also rejects these privileged capability families:
 
-This boundary keeps the everyday profile readable while preserving access to new llama.cpp features through exact raw arguments.
+- inline credentials;
+- model and projector downloads;
+- RPC workers and router directories;
+- built-in tools and agent mode;
+- MCP process definitions and the WebUI MCP proxy;
+- arbitrary static, UI-configuration, and slot-save paths.
+
+Other advertised experimental options can use the raw field. Use dedicated
+typed fields whenever GGUF Pilot provides them.

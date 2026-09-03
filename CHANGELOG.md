@@ -1,6 +1,19 @@
 # Changelog
 
-## 0.2.5
+## 0.3.0
+
+### Evidence-first model fit, measurement, and sharing
+
+- Added typed v0.3 evidence contracts in `src-tauri/src/evidence.rs`: `Evidence<T>` with level, source, observation time, and notes; `FitClass`; `ExecutionPath`; bounded `Workload`; and a versioned `BenchmarkManifest`. The frontend mirrors these contracts in `src/model.ts`.
+- Added artifact truth in `src-tauri/src/artifact.rs`: exact per-shard and companion records, streamed SHA-256, shard gap/duplicate/conflicting-header rejection, and shard/companion byte separation. GGUF parsing remains metadata-only in `src-tauri/src/gguf.rs` with bounded tensor descriptors.
+- Added conservative preflight in `src-tauri/src/preflight.rs`: exact per-volume storage facts, volume-aware disk capacity, dense KV-cache arithmetic only from complete terms, named policy reserves, per-device allocation plans, and `Unknown` for unverified topology or companion compatibility.
+- Launch validation uses one validator for preview, Start, benchmarks, quality runs, and tuning: current `--help`/`--version` capability parsing, argument filtering with preserved rejections, loopback/IP-literal host policy, port probing with post-`/health` Windows listener-ownership proof, effective `/props` context evidence, and structured exit/log-tail failure evidence.
+- Benchmark v2 records schema-versioned manifests with runtime, hardware, model, launch, workload, warmup, trial, failure, timeout, and cancellation evidence; tokenizer-exact prompt-token preparation through `/tokenize`; fixed `/completion` protocol; raw prefill/decode observations; directly observed `firstTokenMs` only; derived TTFT kept separate; per-attempt `GetProcessMemoryInfo(PeakWorkingSetSize)` evidence; cold-cache fresh-runtime trials; and replay through typed inputs with compatibility-key comparison.
+- Added a deterministic structural quality suite plus Pareto ranking over launch-validated or measured candidates with explicit constraints, preference components, dominance explanations, and rejected-candidate reasons.
+- Added local calibration with compatibility-keyed anchors/models, TTL/expiry handling, bounded local persistence, plus imported external evidence that stays pending until explicit review. Imported evidence never upgrades automatically.
+- Added privacy-reviewed local sharing exports: versioned JSON bundles with purpose-specific digests instead of paths/prompts/credentials/bytes, explicit user confirmation, bounded collections, and local-file writes that never overwrite.
+- Added the v0.3 evidence workbench in `src/V03EvidencePanel.tsx`: artifact and preflight cards, launch proof with effective context, benchmark v2 controls and summaries, quality/Pareto ranking, calibration/imported evidence, and a confirmed local privacy export. 43 Vitest cases cover these decisions.
+- Verification: Rust 267 passed with 1 ignored; frontend 43 passed; `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, TypeScript check, catalog validation, production frontend build, and research verification pass. Packaged Windows build verified: `GGUF Pilot_0.3.0_x64_en-US.msi` (`37503709e6ef51e92181a79969efd04039336d45b43bde63907a218b65315202`), `GGUF Pilot_0.3.0_x64-setup.exe` (`ec2139891d545d2c3ffbf673c2f3d2907380ef9edb68ae184cdafbc7d44b03e2`), portable `gguf-pilot.exe` (`ff8629d98770ff8bf671fbe9fe0dc28b73de8a66ba47c2ddbd0759e254ce7e41`), and packaged CDP verification (`scripts/verify_030.mjs`) passes: hardware 1 adapter, replay rejection, Measured-only ranking, calibration/external guards, share confirmation, DNS rejection, and evidence-panel render.
 
 ### Curated Hugging Face catalog
 

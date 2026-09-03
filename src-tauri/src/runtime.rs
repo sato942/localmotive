@@ -1,11 +1,117 @@
+use crate::artifact::is_reparse_point;
+use crate::evidence::{Evidence, EvidenceLevel, EvidenceSource, EvidenceSourceKind};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::fs::{self, File};
+use std::collections::HashSet;
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const RELEASES_URL: &str = "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=20";
+
+fn observed_at_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0)
+}
+
+fn observed_value<T>(value: T, source: EvidenceSource, observed_at_ms: u64) -> Evidence<T> {
+    Evidence {
+        value: Some(value),
+        level: EvidenceLevel::Observed,
+        source,
+        observed_at_ms,
+        notes: Vec::new(),
+    }
+}
+
+fn unknown_value<T>(
+    kind: EvidenceSourceKind,
+    detail: &str,
+    note: String,
+    observed_at_ms: u64,
+) -> Evidence<T> {
+    Evidence {
+        value: None,
+        level: EvidenceLevel::Unknown,
+        source: EvidenceSource {
+            kind,
+            detail: detail.into(),
+        },
+        observed_at_ms,
+        notes: vec![note],
+    }
+}
+
+#[cfg(windows)]
+pub fn process_peak_working_set(process_id: u32) -> Evidence<u64> {
+    use std::mem::{size_of, zeroed};
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::ProcessStatus::{
+        GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+    };
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION};
+
+    let observed_at_ms = observed_at_ms();
+    // SAFETY: `OpenProcess` receives a concrete PID and no inheritable handle request.
+    let process = unsafe { OpenProcess(PROCESS_QUERY_INFORMATION, 0, process_id) };
+    if process.is_null() || process == INVALID_HANDLE_VALUE {
+        return unknown_value(
+            EvidenceSourceKind::WindowsApi,
+            "GetProcessMemoryInfo(PeakWorkingSetSize)",
+            format!(
+                "OpenProcess failed for PID {process_id}: {}",
+                io::Error::last_os_error()
+            ),
+            observed_at_ms,
+        );
+    }
+    // SAFETY: `counters` is zero-initialized and its size is passed to the API.
+    let mut counters: PROCESS_MEMORY_COUNTERS = unsafe { zeroed() };
+    counters.cb = size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+    // SAFETY: `process` stays valid until `CloseHandle`; `counters` is writable for `cb` bytes.
+    let measured = unsafe {
+        GetProcessMemoryInfo(
+            process,
+            &mut counters,
+            size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
+        )
+    };
+    // SAFETY: `process` is an owned handle returned by `OpenProcess`.
+    unsafe { CloseHandle(process) };
+    if measured != 0 {
+        observed_value(
+            counters.PeakWorkingSetSize as u64,
+            EvidenceSource {
+                kind: EvidenceSourceKind::WindowsApi,
+                detail: "GetProcessMemoryInfo(PeakWorkingSetSize)".into(),
+            },
+            observed_at_ms,
+        )
+    } else {
+        unknown_value(
+            EvidenceSourceKind::WindowsApi,
+            "GetProcessMemoryInfo(PeakWorkingSetSize)",
+            format!(
+                "GetProcessMemoryInfo failed for PID {process_id}: {}",
+                io::Error::last_os_error()
+            ),
+            observed_at_ms,
+        )
+    }
+}
+
+#[cfg(not(windows))]
+pub fn process_peak_working_set(_process_id: u32) -> Evidence<u64> {
+    unknown_value(
+        EvidenceSourceKind::Unknown,
+        "process peak working set",
+        "Process peak working-set collection is implemented only on Windows.".into(),
+        observed_at_ms(),
+    )
+}
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct GithubRelease {
@@ -50,6 +156,401 @@ pub struct HardwareInfo {
     pub driver_version: String,
     pub detection_status: String,
     pub recommendation: String,
+    pub system_memory: SystemMemoryInfo,
+    pub adapters: Vec<GpuAdapterInfo>,
+    pub manual_overrides: Vec<HardwareOverride>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HardwareOverride {
+    pub adapter_id: String,
+    pub dedicated_bytes: Option<u64>,
+    pub shared_bytes: Option<u64>,
+    pub note: String,
+}
+
+pub fn manual_override_capacity(
+    overrides: &[HardwareOverride],
+    adapter_id: &str,
+    observed_at_ms: u64,
+) -> Result<Option<Evidence<u64>>, String> {
+    if overrides.len() > 64 {
+        return Err("Manual hardware overrides cannot contain more than 64 adapters".into());
+    }
+    let mut seen = HashSet::new();
+    for override_value in overrides {
+        if override_value.adapter_id.trim().is_empty() || override_value.adapter_id.len() > 256 {
+            return Err("Each manual hardware override requires a bounded adapter ID".into());
+        }
+        if !seen.insert(override_value.adapter_id.as_str()) {
+            return Err(format!(
+                "Manual hardware override {} appears more than once",
+                override_value.adapter_id
+            ));
+        }
+        if override_value.note.len() > 1_024 {
+            return Err("Manual hardware override notes cannot exceed 1024 bytes".into());
+        }
+        if override_value.dedicated_bytes == Some(0) || override_value.shared_bytes == Some(0) {
+            return Err("Manual hardware override capacities must be greater than zero".into());
+        }
+        if override_value.dedicated_bytes.is_none() && override_value.shared_bytes.is_none() {
+            return Err("Each manual hardware override requires one capacity metric".into());
+        }
+    }
+
+    let Some(override_value) = overrides.iter().find(|item| item.adapter_id == adapter_id) else {
+        return Ok(None);
+    };
+    let (value, metric, mut notes) = if let Some(value) = override_value.dedicated_bytes {
+        (
+            value,
+            "dedicated memory",
+            vec!["Dedicated and shared memory are not aggregated".into()],
+        )
+    } else {
+        (
+            override_value
+                .shared_bytes
+                .expect("validated shared capacity"),
+            "shared memory",
+            vec!["Shared memory is a user override, not an observed GPU budget".into()],
+        )
+    };
+    if !override_value.note.trim().is_empty() {
+        notes.push(override_value.note.trim().to_string());
+    }
+    Evidence::known(
+        value,
+        EvidenceLevel::UserOverride,
+        EvidenceSource {
+            kind: EvidenceSourceKind::User,
+            detail: format!("Manual {metric} override"),
+        },
+        observed_at_ms,
+        notes,
+    )
+    .map(Some)
+    .map_err(|error| error.to_string())
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemMemoryInfo {
+    pub total_physical_bytes: Evidence<u64>,
+    pub available_physical_bytes: Evidence<u64>,
+    pub memory_load_percent: Evidence<u32>,
+}
+
+#[cfg(windows)]
+pub fn detect_system_memory() -> SystemMemoryInfo {
+    use std::mem::{size_of, zeroed};
+    use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+
+    let observed_at_ms = observed_at_ms();
+    // SAFETY: `MEMORYSTATUSEX` is zero-initialized, and `dwLength` names its exact size.
+    let mut status: MEMORYSTATUSEX = unsafe { zeroed() };
+    status.dwLength = size_of::<MEMORYSTATUSEX>() as u32;
+    // SAFETY: `status` is writable for the full `MEMORYSTATUSEX` size during this call.
+    if unsafe { GlobalMemoryStatusEx(&mut status) } != 0 {
+        let source = EvidenceSource {
+            kind: EvidenceSourceKind::WindowsApi,
+            detail: "GlobalMemoryStatusEx".into(),
+        };
+        return SystemMemoryInfo {
+            total_physical_bytes: observed_value(
+                status.ullTotalPhys,
+                source.clone(),
+                observed_at_ms,
+            ),
+            available_physical_bytes: observed_value(
+                status.ullAvailPhys,
+                source.clone(),
+                observed_at_ms,
+            ),
+            memory_load_percent: observed_value(status.dwMemoryLoad, source, observed_at_ms),
+        };
+    }
+    let error = format!(
+        "GlobalMemoryStatusEx failed: {}",
+        io::Error::last_os_error()
+    );
+    SystemMemoryInfo {
+        total_physical_bytes: unknown_value(
+            EvidenceSourceKind::WindowsApi,
+            "GlobalMemoryStatusEx",
+            error.clone(),
+            observed_at_ms,
+        ),
+        available_physical_bytes: unknown_value(
+            EvidenceSourceKind::WindowsApi,
+            "GlobalMemoryStatusEx",
+            error.clone(),
+            observed_at_ms,
+        ),
+        memory_load_percent: unknown_value(
+            EvidenceSourceKind::WindowsApi,
+            "GlobalMemoryStatusEx",
+            error,
+            observed_at_ms,
+        ),
+    }
+}
+
+#[cfg(not(windows))]
+pub fn detect_system_memory() -> SystemMemoryInfo {
+    let observed_at_ms = observed_at_ms();
+    let note = "GlobalMemoryStatusEx is available only on Windows".to_string();
+    SystemMemoryInfo {
+        total_physical_bytes: unknown_value(
+            EvidenceSourceKind::Unknown,
+            "GlobalMemoryStatusEx",
+            note.clone(),
+            observed_at_ms,
+        ),
+        available_physical_bytes: unknown_value(
+            EvidenceSourceKind::Unknown,
+            "GlobalMemoryStatusEx",
+            note.clone(),
+            observed_at_ms,
+        ),
+        memory_load_percent: unknown_value(
+            EvidenceSourceKind::Unknown,
+            "GlobalMemoryStatusEx",
+            note,
+            observed_at_ms,
+        ),
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum MemoryMetric {
+    Dedicated,
+    Shared,
+    Budget,
+    CurrentUsage,
+    AvailableBudget,
+    AvailableForReservation,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CapacityObservation {
+    pub metric: MemoryMetric,
+    pub evidence: Evidence<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GpuAdapterInfo {
+    pub adapter_id: String,
+    pub name: String,
+    pub vendor: String,
+    pub driver: Evidence<String>,
+    pub backend: Evidence<String>,
+    pub dedicated_bytes: Evidence<u64>,
+    pub shared_bytes: Evidence<u64>,
+    pub budget_bytes: Evidence<u64>,
+    pub current_usage_bytes: Evidence<u64>,
+    pub available_budget_bytes: Evidence<u64>,
+    pub available_for_reservation_bytes: Evidence<u64>,
+    pub capacity_observations: Vec<CapacityObservation>,
+}
+
+fn vendor_name(vendor_id: u32) -> String {
+    match vendor_id {
+        0x10de => "nvidia",
+        0x1002 | 0x1022 => "amd",
+        0x8086 => "intel",
+        0x1414 => "microsoft",
+        _ => "other",
+    }
+    .into()
+}
+
+fn backend_for_vendor(vendor: &str, observed_at_ms: u64) -> Evidence<String> {
+    let value = match vendor {
+        "nvidia" => "cuda",
+        "amd" => "rocm",
+        "intel" => "sycl",
+        _ => "vulkan",
+    };
+    Evidence {
+        value: Some(value.into()),
+        level: EvidenceLevel::Heuristic,
+        source: EvidenceSource {
+            kind: EvidenceSourceKind::Policy,
+            detail: "vendor-to-runtime compatibility policy".into(),
+        },
+        observed_at_ms,
+        notes: vec!["Runtime inspection must confirm the active inference backend.".into()],
+    }
+}
+
+#[cfg(windows)]
+pub fn detect_dxgi_adapters() -> Result<Vec<GpuAdapterInfo>, String> {
+    use windows::core::Interface;
+    use windows::Win32::Graphics::Dxgi::{
+        CreateDXGIFactory1, IDXGIAdapter1, IDXGIAdapter3, IDXGIFactory6,
+        DXGI_ADAPTER_FLAG_SOFTWARE, DXGI_ERROR_NOT_FOUND, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
+        DXGI_MEMORY_SEGMENT_GROUP_LOCAL, DXGI_QUERY_VIDEO_MEMORY_INFO,
+    };
+
+    // SAFETY: `CreateDXGIFactory1` returns a reference-counted COM interface.
+    let factory: IDXGIFactory6 = unsafe { CreateDXGIFactory1() }
+        .map_err(|error| format!("CreateDXGIFactory1 failed: {error}"))?;
+    let observed_at_ms = observed_at_ms();
+    let description_source = EvidenceSource {
+        kind: EvidenceSourceKind::WindowsApi,
+        detail: "IDXGIAdapter1::GetDesc1".into(),
+    };
+    let memory_source = EvidenceSource {
+        kind: EvidenceSourceKind::WindowsApi,
+        detail: "IDXGIAdapter3::QueryVideoMemoryInfo(local)".into(),
+    };
+    let mut adapters = Vec::new();
+    for index in 0..64_u32 {
+        // SAFETY: The factory owns each returned COM interface.
+        let adapter: IDXGIAdapter1 = match unsafe {
+            factory.EnumAdapterByGpuPreference(index, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE)
+        } {
+            Ok(adapter) => adapter,
+            Err(error) if error.code() == DXGI_ERROR_NOT_FOUND => break,
+            Err(error) => return Err(format!("DXGI adapter enumeration failed: {error}")),
+        };
+        // SAFETY: `adapter` is a valid `IDXGIAdapter1` interface.
+        let description = unsafe { adapter.GetDesc1() }
+            .map_err(|error| format!("IDXGIAdapter1::GetDesc1 failed: {error}"))?;
+        if description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0 {
+            continue;
+        }
+        let description_length = description
+            .Description
+            .iter()
+            .position(|unit| *unit == 0)
+            .unwrap_or(description.Description.len());
+        let name = String::from_utf16_lossy(&description.Description[..description_length]);
+        let vendor = vendor_name(description.VendorId);
+        let adapter_id = format!(
+            "luid:{:08x}{:08x}",
+            description.AdapterLuid.HighPart as u32, description.AdapterLuid.LowPart
+        );
+        let dedicated_bytes = observed_value(
+            description.DedicatedVideoMemory as u64,
+            description_source.clone(),
+            observed_at_ms,
+        );
+        let shared_bytes = observed_value(
+            description.SharedSystemMemory as u64,
+            description_source.clone(),
+            observed_at_ms,
+        );
+        let query = adapter.cast::<IDXGIAdapter3>().and_then(|adapter| {
+            let mut memory = DXGI_QUERY_VIDEO_MEMORY_INFO::default();
+            // SAFETY: `memory` is writable and node zero is the documented single-node default.
+            unsafe { adapter.QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &mut memory) }
+                .map(|()| memory)
+        });
+        let (budget_bytes, current_usage_bytes, available_budget_bytes, reservation_bytes) =
+            match query {
+                Ok(memory) => (
+                    observed_value(memory.Budget, memory_source.clone(), observed_at_ms),
+                    observed_value(memory.CurrentUsage, memory_source.clone(), observed_at_ms),
+                    observed_value(
+                        memory.Budget.saturating_sub(memory.CurrentUsage),
+                        memory_source.clone(),
+                        observed_at_ms,
+                    ),
+                    observed_value(
+                        memory.AvailableForReservation,
+                        memory_source.clone(),
+                        observed_at_ms,
+                    ),
+                ),
+                Err(error) => {
+                    let note = format!("QueryVideoMemoryInfo failed: {error}");
+                    (
+                        unknown_value(
+                            EvidenceSourceKind::WindowsApi,
+                            &memory_source.detail,
+                            note.clone(),
+                            observed_at_ms,
+                        ),
+                        unknown_value(
+                            EvidenceSourceKind::WindowsApi,
+                            &memory_source.detail,
+                            note.clone(),
+                            observed_at_ms,
+                        ),
+                        unknown_value(
+                            EvidenceSourceKind::WindowsApi,
+                            &memory_source.detail,
+                            note.clone(),
+                            observed_at_ms,
+                        ),
+                        unknown_value(
+                            EvidenceSourceKind::WindowsApi,
+                            &memory_source.detail,
+                            note,
+                            observed_at_ms,
+                        ),
+                    )
+                }
+            };
+        let capacity_observations = vec![
+            CapacityObservation {
+                metric: MemoryMetric::Dedicated,
+                evidence: dedicated_bytes.clone(),
+            },
+            CapacityObservation {
+                metric: MemoryMetric::Shared,
+                evidence: shared_bytes.clone(),
+            },
+            CapacityObservation {
+                metric: MemoryMetric::Budget,
+                evidence: budget_bytes.clone(),
+            },
+            CapacityObservation {
+                metric: MemoryMetric::CurrentUsage,
+                evidence: current_usage_bytes.clone(),
+            },
+            CapacityObservation {
+                metric: MemoryMetric::AvailableBudget,
+                evidence: available_budget_bytes.clone(),
+            },
+            CapacityObservation {
+                metric: MemoryMetric::AvailableForReservation,
+                evidence: reservation_bytes.clone(),
+            },
+        ];
+        adapters.push(GpuAdapterInfo {
+            adapter_id,
+            name,
+            vendor: vendor.clone(),
+            driver: unknown_value(
+                EvidenceSourceKind::WindowsApi,
+                "DXGI adapter description",
+                "DXGI does not expose the installed driver version.".into(),
+                observed_at_ms,
+            ),
+            backend: backend_for_vendor(&vendor, observed_at_ms),
+            dedicated_bytes,
+            shared_bytes,
+            budget_bytes,
+            current_usage_bytes,
+            available_budget_bytes,
+            available_for_reservation_bytes: reservation_bytes,
+            capacity_observations,
+        });
+    }
+    Ok(adapters)
+}
+
+#[cfg(not(windows))]
+pub fn detect_dxgi_adapters() -> Result<Vec<GpuAdapterInfo>, String> {
+    Err("DXGI adapter evidence is available only on Windows".into())
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -138,8 +639,55 @@ fn cuda_major_from_install_key(install_key: &str) -> Option<u16> {
 }
 
 fn read_manifest(dir: &Path) -> Option<RuntimeManifest> {
-    let text = fs::read_to_string(dir.join("runtime.json")).ok()?;
-    serde_json::from_str(&text).ok()
+    const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
+    let path = dir.join("runtime.json");
+    let metadata = fs::symlink_metadata(&path).ok()?;
+    if metadata.file_type().is_symlink()
+        || is_reparse_point(&metadata)
+        || !metadata.is_file()
+        || metadata.len() > MAX_MANIFEST_BYTES
+    {
+        return None;
+    }
+    let bytes = fs::read(path).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+fn safe_directory(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|metadata| {
+        metadata.is_dir() && !metadata.file_type().is_symlink() && !is_reparse_point(&metadata)
+    })
+}
+
+fn manifest_runtime_path(dir: &Path, runtime: &str) -> Option<PathBuf> {
+    use std::path::Component;
+
+    if !safe_directory(dir) {
+        return None;
+    }
+    let relative = Path::new(runtime);
+    if relative.as_os_str().is_empty()
+        || relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return None;
+    }
+    let mut path = dir.to_path_buf();
+    for component in relative.components() {
+        let Component::Normal(name) = component else {
+            return None;
+        };
+        path.push(name);
+        let metadata = fs::symlink_metadata(&path).ok()?;
+        if metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
+            return None;
+        }
+    }
+    fs::symlink_metadata(&path)
+        .ok()
+        .filter(|metadata| metadata.is_file())
+        .map(|_| path)
 }
 
 pub fn describe_runtime(path: &Path) -> RuntimeIdentity {
@@ -155,7 +703,9 @@ pub fn describe_runtime(path: &Path) -> RuntimeIdentity {
         };
     };
 
-    if let Some(manifest) = read_manifest(dir) {
+    if let Some(manifest) = read_manifest(dir)
+        .filter(|manifest| manifest_runtime_path(dir, &manifest.runtime).as_deref() == Some(path))
+    {
         let install_key = manifest.install_key.clone();
         return RuntimeIdentity {
             path: display,
@@ -216,7 +766,7 @@ pub fn list_managed_runtimes_in(root: &Path) -> Vec<ManagedRuntimeRecord> {
         return records;
     };
     for tag_dir in tags.filter_map(Result::ok).map(|entry| entry.path()) {
-        if !tag_dir.is_dir()
+        if !safe_directory(&tag_dir)
             || tag_dir
                 .file_name()
                 .is_some_and(|name| name.to_string_lossy().starts_with('.'))
@@ -227,13 +777,15 @@ pub fn list_managed_runtimes_in(root: &Path) -> Vec<ManagedRuntimeRecord> {
             continue;
         };
         for install_dir in installs.filter_map(Result::ok).map(|entry| entry.path()) {
+            if !safe_directory(&install_dir) {
+                continue;
+            }
             let Some(manifest) = read_manifest(&install_dir) else {
                 continue;
             };
-            let runtime_path = install_dir.join(&manifest.runtime);
-            if !runtime_path.is_file() {
+            let Some(runtime_path) = manifest_runtime_path(&install_dir, &manifest.runtime) else {
                 continue;
-            }
+            };
             records.push(ManagedRuntimeRecord {
                 tag: manifest.tag,
                 backend: manifest.backend.clone(),
@@ -271,29 +823,94 @@ fn cuda_major_from_smi(text: &str) -> Option<u16> {
     rest.split('.').next()?.trim().parse().ok()
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct NvidiaProbeRow {
+    name: String,
+    driver: String,
+    total_bytes: Option<u64>,
+    used_bytes: Option<u64>,
+}
+
+fn parse_nvidia_probe_rows(output: &str) -> Vec<NvidiaProbeRow> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let fields = line.split(',').map(str::trim).collect::<Vec<_>>();
+            if fields.len() != 4 || fields[0].is_empty() {
+                return None;
+            }
+            let mib = |value: &str| {
+                value
+                    .parse::<u64>()
+                    .ok()
+                    .and_then(|value| value.checked_mul(1024 * 1024))
+            };
+            Some(NvidiaProbeRow {
+                name: fields[0].to_string(),
+                driver: fields[1].to_string(),
+                total_bytes: mib(fields[2]),
+                used_bytes: mib(fields[3]),
+            })
+        })
+        .collect()
+}
+
+fn merge_nvidia_probe_observations(
+    adapters: &mut [GpuAdapterInfo],
+    rows: &[NvidiaProbeRow],
+    observed_at_ms: u64,
+) {
+    let mut matched = vec![false; adapters.len()];
+    for row in rows {
+        let Some((index, adapter)) = adapters.iter_mut().enumerate().find(|(index, adapter)| {
+            !matched[*index] && adapter.name.eq_ignore_ascii_case(&row.name)
+        }) else {
+            continue;
+        };
+        matched[index] = true;
+        let source = EvidenceSource {
+            kind: EvidenceSourceKind::NvidiaSmi,
+            detail: "nvidia-smi --query-gpu".into(),
+        };
+        if !row.driver.is_empty() {
+            adapter.driver = observed_value(row.driver.clone(), source.clone(), observed_at_ms);
+        }
+        if let Some(value) = row.total_bytes {
+            adapter.capacity_observations.push(CapacityObservation {
+                metric: MemoryMetric::Dedicated,
+                evidence: observed_value(value, source.clone(), observed_at_ms),
+            });
+        }
+        if let Some(value) = row.used_bytes {
+            adapter.capacity_observations.push(CapacityObservation {
+                metric: MemoryMetric::CurrentUsage,
+                evidence: observed_value(value, source.clone(), observed_at_ms),
+            });
+        }
+    }
+}
+
 pub fn detect_hardware() -> HardwareInfo {
     let architecture = architecture();
+    let system_memory = detect_system_memory();
+    let mut adapters = detect_dxgi_adapters().unwrap_or_default();
+    let hardware_observed_at_ms = observed_at_ms();
     let nvidia_query = crate::proc::hidden_command("nvidia-smi.exe")
-        .args(["--query-gpu=name,driver_version", "--format=csv,noheader"])
+        .args([
+            "--query-gpu=name,driver_version,memory.total,memory.used",
+            "--format=csv,noheader,nounits",
+        ])
         .output();
     if let Ok(output) = nvidia_query {
         if output.status.success() {
-            let rows = String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .map(str::trim)
-                .filter(|line| !line.is_empty())
-                .map(|line| line.split_once(',').unwrap_or((line, "")))
-                .map(|(name, driver)| (name.trim().to_string(), driver.trim().to_string()))
-                .collect::<Vec<_>>();
-            let gpu_names = rows
-                .iter()
-                .map(|(name, _)| name.clone())
-                .collect::<Vec<_>>();
+            let rows = parse_nvidia_probe_rows(&String::from_utf8_lossy(&output.stdout));
+            let gpu_names = rows.iter().map(|row| row.name.clone()).collect::<Vec<_>>();
             let driver_version = rows
                 .first()
-                .map(|(_, driver)| driver.clone())
+                .map(|row| row.driver.clone())
                 .unwrap_or_default();
             if !gpu_names.is_empty() {
+                merge_nvidia_probe_observations(&mut adapters, &rows, hardware_observed_at_ms);
                 let smi = crate::proc::hidden_command("nvidia-smi.exe")
                     .output()
                     .ok()
@@ -311,6 +928,9 @@ pub fn detect_hardware() -> HardwareInfo {
                         Some(major) if major >= 13 => "CUDA 13 is the best match for this NVIDIA driver".into(),
                         _ => "CUDA 12 is the compatible NVIDIA choice; Vulkan remains available as a fallback".into(),
                     },
+                    system_memory,
+                    adapters,
+                    manual_overrides: Vec::new(),
                 };
             }
         }
@@ -375,6 +995,9 @@ pub fn detect_hardware() -> HardwareInfo {
         driver_version,
         detection_status: detection_status.into(),
         recommendation: recommendation.into(),
+        system_memory,
+        adapters,
+        manual_overrides: Vec::new(),
     }
 }
 
@@ -617,54 +1240,153 @@ fn expected_sha256(asset: &GithubAsset) -> Option<&str> {
     asset.digest.as_deref()?.strip_prefix("sha256:")
 }
 
-fn download_asset(
-    client: &reqwest::blocking::Client,
-    asset: &GithubAsset,
-    destination: &Path,
-) -> Result<(), String> {
-    let mut response = client
-        .get(&asset.browser_download_url)
-        .send()
-        .and_then(reqwest::blocking::Response::error_for_status)
-        .map_err(|error| format!("Download failed for {}: {error}", asset.name))?;
-    let mut file = File::create(destination).map_err(|error| error.to_string())?;
+const MAX_RUNTIME_DOWNLOAD_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+
+fn copy_download_with_limit<R: Read, W: io::Write>(
+    reader: &mut R,
+    writer: &mut W,
+    max_bytes: u64,
+) -> Result<(u64, String), String> {
     let mut hasher = Sha256::new();
     let mut written = 0_u64;
     let mut buffer = vec![0_u8; 1024 * 1024];
     loop {
-        let count = response
+        let count = reader
             .read(&mut buffer)
             .map_err(|error| error.to_string())?;
         if count == 0 {
             break;
         }
-        io::Write::write_all(&mut file, &buffer[..count]).map_err(|error| error.to_string())?;
+        written = written
+            .checked_add(count as u64)
+            .ok_or("Runtime download size overflowed")?;
+        if written > max_bytes {
+            return Err(format!(
+                "Runtime download byte limit exceeded: maximum {max_bytes}"
+            ));
+        }
+        writer
+            .write_all(&buffer[..count])
+            .map_err(|error| error.to_string())?;
         hasher.update(&buffer[..count]);
-        written += count as u64;
     }
+    Ok((written, hex::encode(hasher.finalize())))
+}
+
+fn download_asset(
+    client: &reqwest::blocking::Client,
+    asset: &GithubAsset,
+    destination: &Path,
+) -> Result<(), String> {
+    if asset.size > MAX_RUNTIME_DOWNLOAD_BYTES {
+        return Err(format!("Runtime asset is too large: {}", asset.name));
+    }
+    let mut response = client
+        .get(&asset.browser_download_url)
+        .send()
+        .and_then(reqwest::blocking::Response::error_for_status)
+        .map_err(|error| format!("Download failed for {}: {error}", asset.name))?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)
+        .map_err(|error| error.to_string())?;
+    let copy_result = copy_download_with_limit(
+        &mut response,
+        &mut file,
+        if asset.size > 0 {
+            asset.size
+        } else {
+            MAX_RUNTIME_DOWNLOAD_BYTES
+        },
+    );
+    let (written, actual_sha256) = match copy_result {
+        Ok(result) => result,
+        Err(error) => {
+            drop(file);
+            let _ = fs::remove_file(destination);
+            return Err(error);
+        }
+    };
+    file.sync_all().map_err(|error| error.to_string())?;
     if asset.size > 0 && written != asset.size {
+        drop(file);
+        let _ = fs::remove_file(destination);
         return Err(format!(
             "Download size mismatch for {}: expected {}, received {}",
             asset.name, asset.size, written
         ));
     }
     if let Some(expected) = expected_sha256(asset) {
-        let actual = hex::encode(hasher.finalize());
-        if !actual.eq_ignore_ascii_case(expected) {
+        if !actual_sha256.eq_ignore_ascii_case(expected) {
+            drop(file);
+            let _ = fs::remove_file(destination);
             return Err(format!("SHA-256 mismatch for {}", asset.name));
         }
     }
     Ok(())
 }
 
-fn extract_zip(archive_path: &Path, destination: &Path) -> Result<(), String> {
+#[derive(Clone, Copy)]
+struct ArchiveLimits {
+    max_entries: usize,
+    max_entry_bytes: u64,
+    max_total_bytes: u64,
+    max_path_bytes: usize,
+}
+
+const RUNTIME_ARCHIVE_LIMITS: ArchiveLimits = ArchiveLimits {
+    max_entries: 20_000,
+    max_entry_bytes: 4 * 1024 * 1024 * 1024,
+    max_total_bytes: 16 * 1024 * 1024 * 1024,
+    max_path_bytes: 1_024,
+};
+
+fn extract_zip_with_limits(
+    archive_path: &Path,
+    destination: &Path,
+    limits: ArchiveLimits,
+) -> Result<(), String> {
     let file = File::open(archive_path).map_err(|error| error.to_string())?;
     let mut archive = zip::ZipArchive::new(file).map_err(|error| error.to_string())?;
+    if archive.len() > limits.max_entries {
+        return Err(format!(
+            "Archive entry count {} exceeds the limit {}",
+            archive.len(),
+            limits.max_entries
+        ));
+    }
+    let mut paths = HashSet::new();
+    let mut total_bytes = 0_u64;
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index).map_err(|error| error.to_string())?;
         let relative = entry
             .enclosed_name()
             .ok_or_else(|| format!("Unsafe path in archive: {}", entry.name()))?;
+        if entry.name().len() > limits.max_path_bytes {
+            return Err(format!("Archive path is too long: {}", entry.name()));
+        }
+        if !paths.insert(relative.clone()) {
+            return Err(format!("Duplicate path in archive: {}", entry.name()));
+        }
+        if entry
+            .unix_mode()
+            .is_some_and(|mode| mode & 0o170000 == 0o120000)
+        {
+            return Err(format!(
+                "Archive symlink entries are not allowed: {}",
+                entry.name()
+            ));
+        }
+        if entry.size() > limits.max_entry_bytes {
+            return Err(format!("Archive entry is too large: {}", entry.name()));
+        }
+        if total_bytes
+            .checked_add(entry.size())
+            .is_none_or(|total| total > limits.max_total_bytes)
+        {
+            return Err("Archive decompressed size exceeds the configured limit".into());
+        }
         let output = destination.join(relative);
         if entry.is_dir() {
             fs::create_dir_all(&output).map_err(|error| error.to_string())?;
@@ -673,10 +1395,44 @@ fn extract_zip(archive_path: &Path, destination: &Path) -> Result<(), String> {
         if let Some(parent) = output.parent() {
             fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
-        let mut target = File::create(&output).map_err(|error| error.to_string())?;
-        io::copy(&mut entry, &mut target).map_err(|error| error.to_string())?;
+        let mut target = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&output)
+            .map_err(|error| error.to_string())?;
+        let mut entry_bytes = 0_u64;
+        let mut buffer = [0_u8; 64 * 1024];
+        let copy_result = (|| -> Result<(), String> {
+            loop {
+                let count = entry.read(&mut buffer).map_err(|error| error.to_string())?;
+                if count == 0 {
+                    break;
+                }
+                entry_bytes = entry_bytes
+                    .checked_add(count as u64)
+                    .ok_or("Archive entry size overflowed")?;
+                total_bytes = total_bytes
+                    .checked_add(count as u64)
+                    .ok_or("Archive total size overflowed")?;
+                if entry_bytes > limits.max_entry_bytes || total_bytes > limits.max_total_bytes {
+                    return Err("Archive decompressed size exceeds the configured limit".into());
+                }
+                io::Write::write_all(&mut target, &buffer[..count])
+                    .map_err(|error| error.to_string())?;
+            }
+            target.sync_all().map_err(|error| error.to_string())
+        })();
+        if let Err(error) = copy_result {
+            drop(target);
+            let _ = fs::remove_file(&output);
+            return Err(error);
+        }
     }
     Ok(())
+}
+
+fn extract_zip(archive_path: &Path, destination: &Path) -> Result<(), String> {
+    extract_zip_with_limits(archive_path, destination, RUNTIME_ARCHIVE_LIMITS)
 }
 
 fn find_runtime(path: &Path) -> Option<PathBuf> {
@@ -774,6 +1530,165 @@ pub fn install_runtime(tag: &str, option: &RuntimeOption) -> Result<InstalledRun
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
+    #[test]
+    fn system_memory_uses_global_memory_status_evidence() {
+        let memory = detect_system_memory();
+
+        assert!(memory.total_physical_bytes.value.unwrap_or(0) > 0);
+        assert!(memory.available_physical_bytes.value.unwrap_or(0) > 0);
+        assert!(memory.memory_load_percent.value.unwrap_or(101) <= 100);
+        assert_eq!(
+            memory.available_physical_bytes.source.kind,
+            crate::evidence::EvidenceSourceKind::WindowsApi
+        );
+        assert!(memory
+            .available_physical_bytes
+            .source
+            .detail
+            .contains("GlobalMemoryStatusEx"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn process_peak_working_set_uses_process_status_evidence() {
+        let memory = process_peak_working_set(std::process::id());
+
+        assert!(memory.value.unwrap_or(0) > 0);
+        assert_eq!(
+            memory.source.kind,
+            crate::evidence::EvidenceSourceKind::WindowsApi
+        );
+        assert!(memory.source.detail.contains("PeakWorkingSetSize"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn dxgi_reports_each_adapter_without_aggregating_memory() {
+        let adapters = detect_dxgi_adapters().unwrap();
+
+        assert!(!adapters.is_empty());
+        let mut adapter_ids = std::collections::HashSet::new();
+        for adapter in adapters {
+            assert!(adapter_ids.insert(adapter.adapter_id.clone()));
+            assert!(!adapter.name.is_empty());
+            assert_eq!(
+                adapter.dedicated_bytes.source.kind,
+                crate::evidence::EvidenceSourceKind::WindowsApi
+            );
+            assert!(adapter
+                .dedicated_bytes
+                .source
+                .detail
+                .contains("IDXGIAdapter"));
+            if let (Some(budget), Some(usage), Some(available)) = (
+                adapter.budget_bytes.value,
+                adapter.current_usage_bytes.value,
+                adapter.available_budget_bytes.value,
+            ) {
+                assert_eq!(available, budget.saturating_sub(usage));
+                assert!(adapter
+                    .budget_bytes
+                    .source
+                    .detail
+                    .contains("QueryVideoMemoryInfo"));
+            }
+        }
+    }
+
+    #[test]
+    fn manual_gpu_capacity_uses_one_explicit_metric_without_aggregation() {
+        let overrides = vec![HardwareOverride {
+            adapter_id: "gpu-0".into(),
+            dedicated_bytes: Some(8_000),
+            shared_bytes: Some(16_000),
+            note: "Firmware reservation".into(),
+        }];
+
+        let capacity = manual_override_capacity(&overrides, "gpu-0", 42)
+            .unwrap()
+            .unwrap();
+        assert_eq!(capacity.value, Some(8_000));
+        assert_eq!(capacity.level, EvidenceLevel::UserOverride);
+        assert!(capacity
+            .notes
+            .iter()
+            .any(|note| note.contains("not aggregated")));
+    }
+
+    #[test]
+    fn manual_gpu_capacity_rejects_zero_and_duplicate_overrides() {
+        let invalid = vec![HardwareOverride {
+            adapter_id: "gpu-0".into(),
+            dedicated_bytes: Some(0),
+            shared_bytes: None,
+            note: String::new(),
+        }];
+        assert!(manual_override_capacity(&invalid, "gpu-0", 42).is_err());
+
+        let duplicate = vec![
+            HardwareOverride {
+                adapter_id: "gpu-0".into(),
+                dedicated_bytes: Some(1),
+                shared_bytes: None,
+                note: String::new(),
+            },
+            HardwareOverride {
+                adapter_id: "gpu-0".into(),
+                dedicated_bytes: Some(2),
+                shared_bytes: None,
+                note: String::new(),
+            },
+        ];
+        assert!(manual_override_capacity(&duplicate, "gpu-0", 42).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn hardware_report_contains_system_and_per_adapter_evidence() {
+        let hardware = detect_hardware();
+
+        assert!(hardware.system_memory.total_physical_bytes.value.is_some());
+        assert!(!hardware.adapters.is_empty());
+        assert!(hardware.manual_overrides.is_empty());
+    }
+
+    #[test]
+    fn nvidia_probe_parser_keeps_adapter_memory_separate() {
+        let rows = parse_nvidia_probe_rows(
+            "NVIDIA RTX 4090, 560.1, 24564, 1024\nNVIDIA RTX 4060, 560.1, 8188, 512\n",
+        );
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].name, "NVIDIA RTX 4090");
+        assert_eq!(rows[0].total_bytes, Some(24_564 * 1024 * 1024));
+        assert_eq!(rows[0].used_bytes, Some(1_024 * 1024 * 1024));
+        assert_eq!(rows[1].total_bytes, Some(8_188 * 1024 * 1024));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn nvidia_probe_values_remain_separate_from_dxgi_capacity() {
+        let mut adapters = detect_dxgi_adapters().unwrap();
+        adapters.truncate(1);
+        let original_dedicated = adapters[0].dedicated_bytes.clone();
+        let rows = vec![NvidiaProbeRow {
+            name: adapters[0].name.clone(),
+            driver: "fixture-driver".into(),
+            total_bytes: Some(12_345),
+            used_bytes: Some(678),
+        }];
+
+        merge_nvidia_probe_observations(&mut adapters, &rows, 42);
+
+        assert_eq!(adapters[0].dedicated_bytes, original_dedicated);
+        assert_eq!(adapters[0].driver.value.as_deref(), Some("fixture-driver"));
+        assert!(adapters[0]
+            .capacity_observations
+            .iter()
+            .any(|item| item.evidence.source.kind == EvidenceSourceKind::NvidiaSmi));
+    }
+
     fn release() -> GithubRelease {
         GithubRelease {
             tag_name: "b10736".into(),
@@ -802,6 +1717,9 @@ mod tests {
             driver_version: "test".into(),
             detection_status: "test fixture".into(),
             recommendation: String::new(),
+            system_memory: detect_system_memory(),
+            adapters: Vec::new(),
+            manual_overrides: Vec::new(),
         };
         let catalog = build_catalog(&release(), &hardware);
         let recommended = catalog
@@ -841,6 +1759,9 @@ mod tests {
             driver_version: "test".into(),
             detection_status: "test fixture".into(),
             recommendation: String::new(),
+            system_memory: detect_system_memory(),
+            adapters: Vec::new(),
+            manual_overrides: Vec::new(),
         };
         let catalog = build_catalog(&release(), &hardware);
         assert_eq!(
@@ -880,6 +1801,9 @@ mod tests {
             driver_version: "test".into(),
             detection_status: "test fixture".into(),
             recommendation: String::new(),
+            system_memory: detect_system_memory(),
+            adapters: Vec::new(),
+            manual_overrides: Vec::new(),
         };
         let catalog = build_catalog(&release(), &hardware);
         assert_eq!(catalog.options.len(), 1);
@@ -891,6 +1815,49 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn archive_extraction_rejects_an_entry_count_over_the_limit() {
+        use std::io::Write;
+
+        let root = scratch("archive-entry-limit");
+        let archive_path = root.join("runtime.zip");
+        let destination = root.join("output");
+        fs::create_dir_all(&destination).unwrap();
+        let file = File::create(&archive_path).unwrap();
+        let mut archive = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        archive.start_file("one.dll", options).unwrap();
+        archive.write_all(b"one").unwrap();
+        archive.start_file("two.dll", options).unwrap();
+        archive.write_all(b"two").unwrap();
+        archive.finish().unwrap();
+
+        let error = extract_zip_with_limits(
+            &archive_path,
+            &destination,
+            ArchiveLimits {
+                max_entries: 1,
+                max_entry_bytes: 16,
+                max_total_bytes: 32,
+                max_path_bytes: 128,
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.contains("entry count"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn download_copy_rejects_bytes_past_the_hard_limit() {
+        let mut source = std::io::Cursor::new(b"12345".to_vec());
+        let mut destination = Vec::new();
+
+        let error = copy_download_with_limit(&mut source, &mut destination, 4).unwrap_err();
+
+        assert!(error.contains("download byte limit"));
     }
 
     #[test]
@@ -962,6 +1929,41 @@ mod tests {
         assert_eq!(records[0].backend, "cuda");
         assert!(records[0].runtime_path.ends_with("llama-server.exe"));
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn managed_runtime_manifest_cannot_escape_its_install_directory() {
+        let root = scratch("managed-traversal");
+        let install = root.join("b10752").join("cpu");
+        fs::create_dir_all(&install).unwrap();
+        fs::write(root.join("outside.exe"), b"x").unwrap();
+        fs::write(
+            install.join("runtime.json"),
+            r#"{"tag":"b10752","backend":"cpu","runtime":"../../outside.exe"}"#,
+        )
+        .unwrap();
+
+        let records = list_managed_runtimes_in(&root);
+
+        assert!(records.is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn runtime_manifest_must_describe_the_requested_executable() {
+        let dir = scratch("manifest-mismatch");
+        fs::write(dir.join("llama-server.exe"), b"x").unwrap();
+        fs::write(dir.join("other.exe"), b"x").unwrap();
+        fs::write(
+            dir.join("runtime.json"),
+            r#"{"tag":"b10752","backend":"cuda","runtime":"other.exe"}"#,
+        )
+        .unwrap();
+
+        let identity = describe_runtime(&dir.join("llama-server.exe"));
+
+        assert_ne!(identity.source, "manifest");
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

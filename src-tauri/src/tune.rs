@@ -572,6 +572,7 @@ mod tests {
             version: "v".into(),
             build: "10679".into(),
             commit: "abc".into(),
+            help_sha256: "a".repeat(64),
             spec_types: vec!["none".into(), "draft-dspark".into(), "ngram-mod".into()],
             supported_flags: vec![],
             metrics: true,
@@ -589,6 +590,9 @@ mod tests {
             driver_version: "1".into(),
             detection_status: "fixture".into(),
             recommendation: String::new(),
+            system_memory: crate::runtime::detect_system_memory(),
+            adapters: Vec::new(),
+            manual_overrides: Vec::new(),
         }
     }
 

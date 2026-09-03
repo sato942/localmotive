@@ -1,23 +1,407 @@
 import { describe, expect, it } from "vitest";
 import {
+  artifactReadyForLaunch,
+  calibrationState,
+  candidateFromBenchmark,
   catalogRevision,
+  conflictingCapacityMetrics,
+  defaultWorkload,
+  derivedEvidence,
   downloadKey,
   downloadPercent,
   downloadReadiness,
+  errorText,
   keepLatestRequest,
+  manualGpuOverride,
   retainOrDisposeListener,
   etaLabel,
   normalizeProfile,
   originLabel,
+  qualityPassRate,
   rateLabel,
   runtimeOptionState,
   suggestedProfile,
+  validateWorkload,
+  type ArtifactInspection,
+  type BenchmarkRunResult,
+  type CalibrationModel,
+  type DeviceAllocationPlan,
+  type Evidence,
+  type GpuAdapterInfo,
   type GithubAsset,
   type LogicalModel,
   type ManagedRuntimeRecord,
   type RuntimeIdentity,
   type RuntimeOption,
+  type QualitySuiteResult,
+  type StorageVolumeEvidence,
 } from "./model";
+
+describe("launch failure presentation", () => {
+  it("shows the message and bounded log tail from structured launch evidence", () => {
+    const failure = JSON.stringify({
+      schema: 1,
+      phase: "health_exit",
+      exitCode: 7,
+      timedOut: false,
+      cancelled: false,
+      message: "llama-server exited before becoming healthy",
+      logTail: "useful exit detail",
+    });
+
+    expect(errorText(failure)).toBe(
+      "llama-server exited before becoming healthy\nuseful exit detail",
+    );
+  });
+
+  it("shows structured server-status failure evidence", () => {
+    expect(
+      errorText({
+        schema: 1,
+        phase: "runtime_exit",
+        exitCode: 7,
+        timedOut: false,
+        cancelled: false,
+        message: "llama-server exited after health validation",
+        logTail: "useful runtime exit detail",
+      }),
+    ).toBe("llama-server exited after health validation\nuseful runtime exit detail");
+  });
+});
+
+describe("v0.3 evidence contracts", () => {
+  it("preserves device capacity beside the unvalidated allocation estimate", () => {
+    const evidence = (value: number): Evidence<number> => ({
+      value,
+      level: "observed",
+      source: { kind: "windowsApi", detail: "fixture" },
+      observedAtMs: 42,
+      notes: [],
+    });
+    const plan: DeviceAllocationPlan = {
+      adapterId: "gpu-0",
+      weightBytes: evidence(100),
+      kvCacheBytes: evidence(50),
+      totalBytes: evidence(150),
+      availableBytes: evidence(200),
+      note: "Launch validation remains required",
+    };
+
+    expect(plan.availableBytes.value).toBe(200);
+    expect(plan.note).toMatch(/validation/i);
+  });
+
+  it("keeps resident and available bytes separate for each volume", () => {
+    const volume: StorageVolumeEvidence = {
+      volumePath: {
+        value: "C:\\",
+        level: "observed",
+        source: { kind: "windowsApi", detail: "GetVolumePathNameW" },
+        observedAtMs: 42,
+        notes: [],
+      },
+      residentBytes: {
+        value: 100,
+        level: "exact",
+        source: { kind: "fileSystem", detail: "selected artifact bytes" },
+        observedAtMs: 42,
+        notes: [],
+      },
+      availableBytes: {
+        value: 2_000,
+        level: "observed",
+        source: { kind: "windowsApi", detail: "GetDiskFreeSpaceExW" },
+        observedAtMs: 42,
+        notes: [],
+      },
+    };
+
+    expect(volume.residentBytes.value).toBe(100);
+    expect(volume.availableBytes.value).toBe(2_000);
+  });
+
+  it("propagates an unknown required input into derived evidence", () => {
+    const result = derivedEvidence(
+      4096,
+      ["exact", "unknown"],
+      { kind: "calculation", detail: "KV bytes" },
+      42,
+      [],
+    );
+
+    expect(result.level).toBe("unknown");
+    expect(result.value).toBeNull();
+    expect(result.notes.join(" ")).toMatch(/required input/i);
+  });
+
+  it("keeps known calculations derived instead of measured", () => {
+    const result: Evidence<number> = derivedEvidence(
+      4096,
+      ["exact", "observed"],
+      { kind: "calculation", detail: "KV bytes" },
+      42,
+      [],
+    );
+
+    expect(result.level).toBe("derived");
+    expect(result.value).toBe(4096);
+  });
+
+  it("validates the default benchmark workload", () => {
+    const workload = defaultWorkload();
+
+    expect(validateWorkload(workload)).toEqual([]);
+    expect(workload).toMatchObject({ warmups: 1, trials: 5, seed: 42 });
+  });
+
+  it("rejects invalid workload limits before IPC", () => {
+    const errors = validateWorkload({
+      ...defaultWorkload(),
+      trials: 0,
+      concurrency: 65,
+    });
+
+    expect(errors.map((error) => error.code)).toEqual(["invalidRange", "limitExceeded"]);
+    expect(errors.map((error) => error.field)).toEqual([
+      "workload.trials",
+      "workload.concurrency",
+    ]);
+  });
+});
+
+describe("v0.3 artifact contracts", () => {
+  it("allows launch only for complete artifacts with consistent headers", () => {
+    const artifact: ArtifactInspection = {
+      logicalId: "a".repeat(64),
+      contentId: "b".repeat(64),
+      logicalName: "Fixture-Q4",
+      firstShard: "C:/models/Fixture-Q4-00001-of-00002.gguf",
+      expectedShards: 2,
+      complete: true,
+      headerConsistent: true,
+      identityLevel: "exact",
+      shardBytes: 20,
+      companionBytes: 0,
+      shards: [],
+      companions: [],
+      summary: null,
+      problems: [],
+    };
+
+    expect(artifactReadyForLaunch(artifact)).toBe(true);
+    expect(artifactReadyForLaunch({ ...artifact, complete: false })).toBe(false);
+    expect(artifactReadyForLaunch({ ...artifact, headerConsistent: false })).toBe(false);
+  });
+});
+
+describe("v0.3 measurement decisions", () => {
+  const memoryEvidence = (value: number | null) => ({
+    value,
+    level: "observed" as const,
+    source: { kind: "windowsApi" as const, detail: "GetProcessMemoryInfo(PeakWorkingSetSize)" },
+    observedAtMs: 42,
+    notes: [] as string[],
+  });
+  const run: BenchmarkRunResult = {
+    manifest: {
+      schema: 1,
+      harnessVersion: "0.3.0",
+      compatibilityKey: "c".repeat(64),
+      runtime: null,
+      hardware: [],
+      model: {
+        logicalId: "model",
+        architecture: "llama",
+        shards: [{ path: "C:/private/model.gguf", bytes: 100, sha256: "a".repeat(64) }],
+        companions: [{ path: "C:/private/mmproj.gguf", bytes: 20, sha256: "b".repeat(64) }],
+        ggufHeaderSha256: "c".repeat(64),
+      },
+      launch: null,
+      workload: defaultWorkload(),
+      warmups: [],
+      observations: [
+        {
+          trial: 1,
+          startedAtMs: 1,
+          durationMs: 100,
+          promptTokens: 32,
+          generatedTokens: 16,
+          prefillTps: 120,
+          decodeTps: 60,
+          firstTokenMs: 25,
+          derivedTtftMs: 20,
+          peakProcessRssBytes: memoryEvidence(1_000),
+          outcome: "succeeded",
+          error: null,
+        },
+        {
+          trial: 2,
+          startedAtMs: 2,
+          durationMs: 110,
+          promptTokens: 32,
+          generatedTokens: 16,
+          prefillTps: 100,
+          decodeTps: 50,
+          firstTokenMs: null,
+          derivedTtftMs: 22,
+          peakProcessRssBytes: memoryEvidence(1_200),
+          outcome: "succeeded",
+          error: null,
+        },
+      ],
+      terminalOutcome: null,
+    },
+    summary: {
+      resultClass: "measured",
+      successfulTrials: 2,
+      failedTrials: 0,
+      prefillTps: { count: 2, mean: 110, median: 110, p50: 100, p95: 120, min: 100, max: 120, standardDeviation: 10 },
+      decodeTps: { count: 2, mean: 55, median: 55, p50: 50, p95: 60, min: 50, max: 60, standardDeviation: 5 },
+      firstTokenMs: { count: 1, mean: 25, median: 25, p50: 25, p95: 25, min: 25, max: 25, standardDeviation: 0 },
+      derivedTtftMs: { count: 2, mean: 21, median: 21, p50: 20, p95: 22, min: 20, max: 22, standardDeviation: 1 },
+      failures: [],
+    },
+    manifestPath: "C:/private/benchmark.json",
+    compatibilityKey: "d".repeat(64),
+    resultClass: "measured",
+    failure: null,
+  };
+
+  const quality: QualitySuiteResult = {
+    suiteId: "gguf-pilot-structural-v1",
+    seed: 42,
+    observedAtMs: 42,
+    modelLogicalId: "model-a",
+    runtimeSha256: "d".repeat(64),
+    status: "failed",
+    cases: [
+      { caseId: "one", status: "passed", detail: "ok" },
+      { caseId: "two", status: "failed", detail: "mismatch" },
+    ],
+  };
+
+  it("keeps direct latency separate from derived TTFT when building a candidate", () => {
+    const candidate = candidateFromBenchmark("candidate", run, quality);
+
+    expect(candidate).toMatchObject({
+      id: "candidate",
+      resultClass: "measured",
+      decodeTps: 55,
+      prefillTps: 110,
+      p95LatencyMs: 25,
+      peakMemoryBytes: 1_200,
+      qualityPassRate: 0.5,
+      storageBytes: 120,
+    });
+  });
+
+  it("derives peak benchmark memory from evidence values only", () => {
+    const candidate = candidateFromBenchmark("candidate", run, quality);
+
+    expect(candidate.peakMemoryBytes).toBe(1_200);
+  });
+
+  it("leaves quality unknown when the suite did not produce scored cases", () => {
+    expect(qualityPassRate(null)).toBeNull();
+    const emptySuite = {
+      suiteId: "v1",
+      seed: 42,
+      observedAtMs: null,
+      modelLogicalId: null,
+      runtimeSha256: null,
+      cases: [],
+    };
+    expect(qualityPassRate({ ...emptySuite, status: "notRun" })).toBeNull();
+    expect(qualityPassRate({ ...emptySuite, status: "error" })).toBeNull();
+  });
+});
+
+describe("v0.3 calibration decisions", () => {
+  const model: CalibrationModel = {
+    compatibilityKey: "a".repeat(64),
+    factor: 1,
+    residualStandardDeviation: 0.1,
+    anchorCount: 3,
+    createdAtMs: 100,
+    expiresAtMs: 200,
+  };
+
+  it("distinguishes compatible, expired, incompatible, and unavailable calibration", () => {
+    expect(calibrationState(model, model.compatibilityKey, 150)).toBe("compatible");
+    expect(calibrationState(model, model.compatibilityKey, 201)).toBe("expired");
+    expect(calibrationState(model, "b".repeat(64), 150)).toBe("incompatible");
+    expect(calibrationState(null, model.compatibilityKey, 150)).toBe("unavailable");
+  });
+});
+
+describe("manual GPU override decisions", () => {
+  it("converts one explicit GiB value without combining shared memory", () => {
+    expect(manualGpuOverride("gpu-0", "8", "Firmware reserve")).toEqual({
+      adapterId: "gpu-0",
+      dedicatedBytes: 8 * 1024 ** 3,
+      sharedBytes: null,
+      note: "Firmware reserve",
+    });
+  });
+
+  it("rejects missing adapters and invalid capacities", () => {
+    expect(manualGpuOverride("", "8", "")).toBeNull();
+    expect(manualGpuOverride("gpu-0", "0", "")).toBeNull();
+    expect(manualGpuOverride("gpu-0", "Infinity", "")).toBeNull();
+  });
+});
+
+describe("hardware evidence", () => {
+  it("keeps conflicts visible by metric", () => {
+    const observed = (value: number, kind: "windowsApi" | "nvidiaSmi") => ({
+      value,
+      level: "observed" as const,
+      source: { kind, detail: kind },
+      observedAtMs: 42,
+      notes: [],
+    });
+    const unknown = {
+      value: null,
+      level: "unknown" as const,
+      source: { kind: "unknown" as const, detail: "fixture" },
+      observedAtMs: 42,
+      notes: ["unknown"],
+    };
+    const adapter: GpuAdapterInfo = {
+      adapterId: "luid:1",
+      name: "Fixture GPU",
+      vendor: "nvidia",
+      driver: {
+        value: "1",
+        level: "observed",
+        source: { kind: "nvidiaSmi", detail: "fixture" },
+        observedAtMs: 42,
+        notes: [],
+      },
+      backend: {
+        value: "cuda",
+        level: "heuristic",
+        source: { kind: "policy", detail: "fixture" },
+        observedAtMs: 42,
+        notes: [],
+      },
+      dedicatedBytes: observed(100, "windowsApi"),
+      sharedBytes: observed(50, "windowsApi"),
+      budgetBytes: observed(80, "windowsApi"),
+      currentUsageBytes: observed(10, "windowsApi"),
+      availableBudgetBytes: observed(70, "windowsApi"),
+      reservationBytes: unknown,
+      availableForReservationBytes: unknown,
+      capacityObservations: [
+        { metric: "dedicated", evidence: observed(100, "windowsApi") },
+        { metric: "dedicated", evidence: observed(99, "nvidiaSmi") },
+        { metric: "budget", evidence: observed(80, "windowsApi") },
+      ],
+    };
+
+    expect(conflictingCapacityMetrics(adapter)).toEqual(["dedicated"]);
+  });
+});
 
 describe("asynchronous UI race guards", () => {
   it("accepts only the newest request result", () => {
@@ -52,6 +436,7 @@ const model: LogicalModel = {
   expectedShards: 1,
   complete: true,
   quant: "Q8_0",
+  shards: [],
   companions: [
     {
       path: "C:\\models\\LFM\\draft.gguf",

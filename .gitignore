@@ -12,6 +12,9 @@ __pycache__/
 /.impeccable/review
 /.impeccable/detect.json
 
+# Local research worktrees and notes
+/research
+
 # Editor / OS
 .DS_Store
 Thumbs.db

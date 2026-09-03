@@ -1,8 +1,544 @@
+export type EvidenceLevel =
+  | "exact"
+  | "observed"
+  | "derived"
+  | "userOverride"
+  | "catalog"
+  | "heuristic"
+  | "unknown";
+
+export type EvidenceSourceKind =
+  | "fileSystem"
+  | "ggufMetadata"
+  | "runtime"
+  | "windowsApi"
+  | "nvidiaSmi"
+  | "cim"
+  | "user"
+  | "catalog"
+  | "benchmark"
+  | "calculation"
+  | "policy"
+  | "import"
+  | "unknown";
+
+export type EvidenceSource = {
+  kind: EvidenceSourceKind;
+  detail: string;
+};
+
+export type Evidence<T> = {
+  value: T | null;
+  level: EvidenceLevel;
+  source: EvidenceSource;
+  observedAtMs: number;
+  notes: string[];
+};
+
+export type ErrorCode =
+  | "unsupportedSchema"
+  | "missingValue"
+  | "unexpectedValue"
+  | "invalidRange"
+  | "limitExceeded"
+  | "nonFinite"
+  | "invalidDigest"
+  | "emptyIdentity"
+  | "evidenceUpgrade"
+  | "inconsistentEvidence";
+
+export type DomainError = {
+  code: ErrorCode;
+  field: string;
+  message: string;
+};
+
+export type FitClass =
+  | "unknown"
+  | "estimated"
+  | "preflightLikely"
+  | "preflightTight"
+  | "requiresOffload"
+  | "launchValidated"
+  | "measured"
+  | "failed";
+
+export type ExecutionPath =
+  | "unknown"
+  | "fullGpu"
+  | "layerOffload"
+  | "cpu"
+  | "unifiedMemory"
+  | "multiGpu"
+  | "unsupported";
+
+export type CacheMode = "cold" | "warm";
+
+export type Workload = {
+  id: string;
+  promptTokens: number;
+  generationTokens: number;
+  warmups: number;
+  trials: number;
+  seed: number | null;
+  concurrency: number;
+  stream: boolean;
+  cacheMode: CacheMode;
+  timeoutMs: number;
+};
+
+export type RuntimeFact = {
+  path: string;
+  version: string;
+  build: string;
+  executableSha256: string | null;
+  helpSha256: string;
+  backend: string;
+};
+
+export type FileFact = {
+  path: string;
+  bytes: number;
+  sha256: string | null;
+};
+
+export type ModelFact = {
+  logicalId: string;
+  architecture: string;
+  shards: FileFact[];
+  companions: FileFact[];
+  ggufHeaderSha256: string;
+};
+
+export type HardwareFact = {
+  adapterId: string;
+  name: string;
+  vendor: string;
+  driver: string | null;
+  backend: string | null;
+  dedicatedBytes: Evidence<number>;
+  sharedBytes: Evidence<number>;
+  budgetBytes: Evidence<number>;
+  currentUsageBytes: Evidence<number>;
+};
+
+export type LaunchFact = {
+  requestedContext: number;
+  effectiveContext: Evidence<number>;
+  parallel: number;
+  gpuLayers: string;
+  batch: number;
+  ubatch: number;
+  cacheTypeK: string;
+  cacheTypeV: string;
+  splitMode: string;
+  tensorSplit: string;
+  mainGpu: number;
+  commandArgs: string[];
+  rejectedFlags: string[];
+};
+
+export type BenchmarkObservation = {
+  trial: number;
+  startedAtMs: number;
+  durationMs: number;
+  promptTokens: number;
+  generatedTokens: number;
+  prefillTps: number | null;
+  decodeTps: number | null;
+  firstTokenMs: number | null;
+  derivedTtftMs: number | null;
+  peakProcessRssBytes: Evidence<number>;
+  outcome: AttemptOutcome;
+  error: string | null;
+};
+
+export type AttemptOutcome = "succeeded" | "failed" | "timedOut" | "cancelled";
+
+export type WarmupObservation = {
+  warmup: number;
+  startedAtMs: number;
+  durationMs: number;
+  outcome: AttemptOutcome;
+  error: string | null;
+};
+
+export type BenchmarkManifest = {
+  schema: number;
+  harnessVersion: string;
+  compatibilityKey: string | null;
+  runtime: RuntimeFact | null;
+  hardware: HardwareFact[];
+  model: ModelFact | null;
+  launch: LaunchFact | null;
+  workload: Workload;
+  warmups: WarmupObservation[];
+  observations: BenchmarkObservation[];
+  terminalOutcome: AttemptOutcome | null;
+};
+
+export type MetricStats = {
+  count: number;
+  mean: number;
+  median: number;
+  p50: number;
+  p95: number;
+  min: number;
+  max: number;
+  standardDeviation: number;
+};
+
+export type BenchmarkSummaryV2 = {
+  resultClass: FitClass;
+  successfulTrials: number;
+  failedTrials: number;
+  prefillTps: MetricStats | null;
+  decodeTps: MetricStats;
+  firstTokenMs: MetricStats | null;
+  derivedTtftMs: MetricStats | null;
+  failures: string[];
+};
+
+export type BenchmarkRunResult = {
+  manifest: BenchmarkManifest;
+  summary: BenchmarkSummaryV2 | null;
+  manifestPath: string;
+  compatibilityKey: string;
+  resultClass: FitClass;
+  failure: string | null;
+};
+
+export type QualityStatus = "notRun" | "passed" | "failed" | "error";
+
+export type QualityCaseResult = {
+  caseId: string;
+  status: QualityStatus;
+  detail: string;
+};
+
+export type QualitySuiteResult = {
+  suiteId: string;
+  seed: number;
+  observedAtMs: number | null;
+  modelLogicalId: string | null;
+  runtimeSha256: string | null;
+  status: QualityStatus;
+  cases: QualityCaseResult[];
+};
+
+export type CandidateEvidence = {
+  id: string;
+  resultClass: FitClass;
+  decodeTps: number | null;
+  prefillTps: number | null;
+  p95LatencyMs: number | null;
+  peakMemoryBytes: number | null;
+  qualityPassRate: number | null;
+  storageBytes: number | null;
+};
+
+export type RecommendationConstraints = {
+  minDecodeTps: number | null;
+  maxP95LatencyMs: number | null;
+  maxPeakMemoryBytes: number | null;
+  minQualityPassRate: number | null;
+  maxStorageBytes: number | null;
+  requireMeasured: boolean;
+};
+
+export type ObjectiveWeights = {
+  decodeTps: number;
+  prefillTps: number;
+  latency: number;
+  memory: number;
+  quality: number;
+  storage: number;
+};
+
+export type ScoreComponent = {
+  objective: string;
+  normalized: number;
+  weight: number;
+  contribution: number;
+};
+
+export type RankedCandidate = {
+  id: string;
+  feasible: boolean;
+  violations: string[];
+  pareto: boolean;
+  dominatedBy: string[];
+  preferenceScore: number | null;
+  scoreComponents: ScoreComponent[];
+};
+
+export type CalibrationAnchor = {
+  compatibilityKey: string;
+  estimatedValue: number;
+  measuredValue: number;
+  observedAtMs: number;
+};
+
+export type CalibrationModel = {
+  compatibilityKey: string;
+  factor: number;
+  residualStandardDeviation: number;
+  anchorCount: number;
+  createdAtMs: number;
+  expiresAtMs: number;
+};
+
+export type CalibrationRecords = {
+  anchors: CalibrationAnchor[];
+  models: CalibrationModel[];
+};
+
+export type CalibratedEstimate = {
+  value: number;
+  lowerBound: number;
+  upperBound: number;
+  evidenceLevel: EvidenceLevel;
+  compatibilityKey: string;
+  expiresAtMs: number;
+};
+
+export type ExternalEvidenceState = "pending" | "verified" | "flagged" | "rejected";
+
+export type ExternalObservation = {
+  metric: string;
+  value: number;
+  unit: string;
+  observedAtMs: number;
+};
+
+export type ExternalEvidenceBundle = {
+  schema: number;
+  source: string;
+  compatibilityKey: string;
+  state: ExternalEvidenceState;
+  records: ExternalObservation[];
+};
+
+export type ShareFile = {
+  bytes: number;
+  sha256: string;
+};
+
+export type ShareRuntime = {
+  version: string;
+  build: string;
+  backend: string;
+  executableSha256: string;
+  helpSha256: string;
+};
+
+export type ShareModel = {
+  logicalId: string;
+  architecture: string;
+  ggufHeaderSha256: string;
+  shards: ShareFile[];
+  companions: ShareFile[];
+};
+
+export type ShareHardware = {
+  vendor: string;
+  backend: string | null;
+  driver: string | null;
+  dedicatedBytes: Evidence<number>;
+  sharedBytes: Evidence<number>;
+  budgetBytes: Evidence<number>;
+};
+
+export type ShareLaunch = {
+  requestedContext: number;
+  effectiveContext: Evidence<number>;
+  parallel: number;
+  gpuLayers: string;
+  batch: number;
+  ubatch: number;
+  cacheTypeK: string;
+  cacheTypeV: string;
+  splitMode: string;
+  tensorSplit: string;
+  mainGpu: number;
+  rejectedFlags: string[];
+};
+
+export type ShareObservation = {
+  trial: number;
+  durationMs: number;
+  promptTokens: number;
+  generatedTokens: number;
+  prefillTps: number | null;
+  decodeTps: number | null;
+  firstTokenMs: number | null;
+  derivedTtftMs: number | null;
+  peakProcessRssBytes: Evidence<number>;
+  outcome: AttemptOutcome;
+  succeeded: boolean;
+};
+
+export type ShareQuality = {
+  suiteId: string;
+  seed: number;
+  observedAtMs: number;
+  modelLogicalId: string;
+  runtimeSha256: string;
+  status: QualityStatus;
+  cases: Array<{ caseId: string; status: QualityStatus }>;
+};
+
+export type PrivacyReview = {
+  omittedFields: string[];
+  requiresUserConfirmation: boolean;
+};
+
+export type ShareBundle = {
+  schema: number;
+  createdAtMs: number;
+  compatibilityKey: string;
+  runtime: ShareRuntime;
+  model: ShareModel;
+  hardware: ShareHardware[];
+  launch: ShareLaunch;
+  workload: Workload;
+  warmupOutcomes: AttemptOutcome[];
+  observations: ShareObservation[];
+  terminalOutcome: AttemptOutcome | null;
+  summary: BenchmarkSummaryV2 | null;
+  quality: ShareQuality | null;
+  privacyReview: PrivacyReview;
+};
+
+export function qualityPassRate(result: QualitySuiteResult | null): number | null {
+  if (!result || result.status === "notRun" || result.status === "error") return null;
+  const scored = result.cases.filter((item) => item.status === "passed" || item.status === "failed");
+  if (!scored.length) return null;
+  return scored.filter((item) => item.status === "passed").length / scored.length;
+}
+
+export function candidateFromBenchmark(
+  id: string,
+  run: BenchmarkRunResult,
+  quality: QualitySuiteResult | null,
+): CandidateEvidence {
+  const files = run.manifest.model
+    ? [...run.manifest.model.shards, ...run.manifest.model.companions]
+    : [];
+  const peakMemory = run.manifest.observations
+    .map((item) => item.peakProcessRssBytes.value ?? null)
+    .filter((value): value is number => value !== null)
+    .reduce<number | null>((maximum, value) => maximum === null ? value : Math.max(maximum, value), null);
+  return {
+    id,
+    resultClass: run.resultClass,
+    decodeTps: run.summary?.decodeTps.mean ?? null,
+    prefillTps: run.summary?.prefillTps?.mean ?? null,
+    p95LatencyMs: run.summary?.firstTokenMs?.p95 ?? null,
+    peakMemoryBytes: peakMemory,
+    qualityPassRate: qualityPassRate(quality),
+    storageBytes: files.length ? files.reduce((total, file) => total + file.bytes, 0) : null,
+  };
+}
+
+export type CalibrationState = "compatible" | "expired" | "incompatible" | "unavailable";
+
+export function calibrationState(
+  model: CalibrationModel | null,
+  compatibilityKey: string,
+  nowMs: number,
+): CalibrationState {
+  if (!model) return "unavailable";
+  if (model.compatibilityKey !== compatibilityKey) return "incompatible";
+  return nowMs > model.expiresAtMs ? "expired" : "compatible";
+}
+
+export function derivedEvidence<T>(
+  value: T,
+  requiredLevels: EvidenceLevel[],
+  source: EvidenceSource,
+  observedAtMs: number,
+  notes: string[],
+): Evidence<T> {
+  if (requiredLevels.includes("unknown")) {
+    return {
+      value: null,
+      level: "unknown",
+      source,
+      observedAtMs,
+      notes: [...notes, "At least one required input is unknown."],
+    };
+  }
+  return { value, level: "derived", source, observedAtMs, notes: [...notes] };
+}
+
+export function defaultWorkload(): Workload {
+  return {
+    id: "technical-explanation-v1",
+    promptTokens: 512,
+    generationTokens: 256,
+    warmups: 1,
+    trials: 5,
+    seed: 42,
+    concurrency: 1,
+    stream: false,
+    cacheMode: "warm",
+    timeoutMs: 600_000,
+  };
+}
+
+export function validateWorkload(workload: Workload): DomainError[] {
+  const errors: DomainError[] = [];
+  const identity = workload.id.trim();
+  if (!identity) {
+    errors.push({
+      code: "emptyIdentity",
+      field: "workload.id",
+      message: "Workload identity is required",
+    });
+  }
+  const bounded = (field: string, value: number, minimum: number, maximum: number) => {
+    if (!Number.isFinite(value) || value < minimum) {
+      errors.push({ code: "invalidRange", field, message: `Value must be at least ${minimum}` });
+    } else if (value > maximum) {
+      errors.push({ code: "limitExceeded", field, message: `Value cannot exceed ${maximum}` });
+    }
+  };
+  bounded("workload.promptTokens", workload.promptTokens, 1, 1_048_576);
+  bounded("workload.generationTokens", workload.generationTokens, 1, 65_536);
+  bounded("workload.warmups", workload.warmups, 0, 10);
+  bounded("workload.trials", workload.trials, 1, 100);
+  bounded("workload.concurrency", workload.concurrency, 1, 64);
+  bounded("workload.timeoutMs", workload.timeoutMs, 1_000, 3_600_000);
+  return errors;
+}
+
 export type Companion = {
   path: string;
   name: string;
   role: "mmproj" | "dspark" | "mtp" | "dflash" | "eagle3" | string;
   sizeBytes: number;
+};
+
+export type ArtifactFileFact = {
+  path: string;
+  name: string;
+  sizeBytes: number;
+  sha256: string | null;
+  headerSha256: string | null;
+  shardIndex: number | null;
+  expectedShards: number | null;
+};
+
+export type ArtifactProblemCode =
+  | "missingShard"
+  | "duplicateShard"
+  | "conflictingHeader"
+  | "unreadableHeader";
+
+export type ArtifactProblem = {
+  code: ArtifactProblemCode;
+  message: string;
 };
 
 export type LogicalModel = {
@@ -15,6 +551,7 @@ export type LogicalModel = {
   expectedShards: number;
   complete: boolean;
   quant: string;
+  shards: ArtifactFileFact[];
   companions: Companion[];
 };
 
@@ -109,6 +646,66 @@ export type LaunchProfile = {
   extraArgs: string[];
 };
 
+export type MemoryMetric =
+  | "dedicated"
+  | "shared"
+  | "budget"
+  | "currentUsage"
+  | "availableBudget"
+  | "availableForReservation";
+
+export type CapacityObservation = {
+  metric: MemoryMetric;
+  evidence: Evidence<number>;
+};
+
+export type SystemMemoryInfo = {
+  totalPhysicalBytes: Evidence<number>;
+  availablePhysicalBytes: Evidence<number>;
+  memoryLoadPercent: Evidence<number>;
+};
+
+export type GpuAdapterInfo = {
+  adapterId: string;
+  name: string;
+  vendor: string;
+  driver: Evidence<string>;
+  backend: Evidence<string>;
+  dedicatedBytes: Evidence<number>;
+  sharedBytes: Evidence<number>;
+  budgetBytes: Evidence<number>;
+  currentUsageBytes: Evidence<number>;
+  availableBudgetBytes: Evidence<number>;
+  reservationBytes: Evidence<number>;
+  availableForReservationBytes: Evidence<number>;
+  capacityObservations: CapacityObservation[];
+};
+
+export type HardwareOverride = {
+  adapterId: string;
+  dedicatedBytes: number | null;
+  sharedBytes: number | null;
+  note: string;
+};
+
+export function manualGpuOverride(
+  adapterId: string,
+  dedicatedGiB: string,
+  note: string,
+): HardwareOverride | null {
+  const gib = Number(dedicatedGiB);
+  const id = adapterId.trim();
+  if (!id || id.length > 256 || !Number.isFinite(gib) || gib <= 0 || gib > 1024 || note.length > 1024) {
+    return null;
+  }
+  return {
+    adapterId: id,
+    dedicatedBytes: Math.round(gib * 1024 ** 3),
+    sharedBytes: null,
+    note: note.trim(),
+  };
+}
+
 export type HardwareInfo = {
   architecture: string;
   gpuNames: string[];
@@ -117,7 +714,27 @@ export type HardwareInfo = {
   driverVersion: string;
   detectionStatus: string;
   recommendation: string;
+  systemMemory: SystemMemoryInfo;
+  adapters: GpuAdapterInfo[];
+  manualOverrides: HardwareOverride[];
 };
+
+export function conflictingCapacityMetrics(adapter: GpuAdapterInfo): MemoryMetric[] {
+  const metricOrder: MemoryMetric[] = [
+    "dedicated",
+    "shared",
+    "budget",
+    "currentUsage",
+    "availableBudget",
+    "availableForReservation",
+  ];
+  return metricOrder.filter((metric) => {
+    const values = adapter.capacityObservations
+      .filter((item) => item.metric === metric && item.evidence.value !== null)
+      .map((item) => item.evidence.value as number);
+    return new Set(values).size > 1;
+  });
+}
 
 export type GithubAsset = {
   name: string;
@@ -227,6 +844,7 @@ export type RuntimeCapabilities = {
   version: string;
   build: string;
   commit: string;
+  helpSha256: string;
   specTypes: string[];
   supportedFlags: string[];
   metrics: boolean;
@@ -244,6 +862,9 @@ export type ServerStatus = {
   logPath: string | null;
   startedAt: number | null;
   exitCode: number | null;
+  resultClass: FitClass;
+  validation: LaunchValidation | null;
+  failure: LaunchFailureEvidence | null;
 };
 
 export type BenchmarkSummary = {
@@ -257,6 +878,7 @@ export type BenchmarkSummary = {
 };
 
 export type GgufSummary = {
+  version: number;
   architecture: string;
   name: string;
   sizeLabel: string;
@@ -266,13 +888,185 @@ export type GgufSummary = {
   embeddingLength: number | null;
   headCount: number | null;
   headCountKv: number | null;
+  keyLength: number | null;
+  valueLength: number | null;
   expertCount: number | null;
   expertUsedCount: number | null;
   vocabSize: number | null;
   ropeFreqBase: number | null;
   tensorCount: number;
   kvCount: number;
+  metadataFacts: MetadataFact[];
+  tensorDescriptors: TensorDescriptor[];
+  tensorDescriptorsTruncated: boolean;
+  headerBytes: number;
 };
+
+export type MetadataScalar =
+  | { kind: "unsigned"; value: number }
+  | { kind: "signed"; value: number }
+  | { kind: "float"; value: number }
+  | { kind: "boolean"; value: boolean }
+  | { kind: "string"; value: string };
+
+export type MetadataValue =
+  | { shape: "scalar"; value: MetadataScalar }
+  | {
+      shape: "array";
+      elementType: number;
+      count: number;
+      values: MetadataScalar[];
+      truncated: boolean;
+    };
+
+export type MetadataFact = {
+  key: string;
+  value: MetadataValue;
+};
+
+export type TensorDescriptor = {
+  name: string;
+  dimensions: number[];
+  ggmlType: number;
+  offset: number;
+};
+
+export type ArtifactInspection = {
+  logicalId: string;
+  contentId: string | null;
+  logicalName: string;
+  firstShard: string;
+  expectedShards: number;
+  complete: boolean;
+  headerConsistent: boolean;
+  identityLevel: EvidenceLevel;
+  shardBytes: number;
+  companionBytes: number;
+  shards: ArtifactFileFact[];
+  companions: ArtifactFileFact[];
+  summary: GgufSummary | null;
+  problems: ArtifactProblem[];
+};
+
+export type RejectedLaunchArgument = {
+  flag: string;
+  reason: string;
+};
+
+export type LaunchArgumentValidation = {
+  effectiveArgs: string[];
+  rejected: RejectedLaunchArgument[];
+  command: string;
+};
+
+export type LaunchValidation = {
+  runtime: RuntimeCapabilities;
+  artifacts: ArtifactInspection[];
+  arguments: LaunchArgumentValidation;
+  effectiveContext: Evidence<number>;
+  unverifiedRequirements: string[];
+};
+
+export type LaunchFailureEvidence = {
+  schema: number;
+  phase: string;
+  exitCode: number | null;
+  timedOut: boolean;
+  cancelled: boolean;
+  message: string;
+  logTail: string;
+};
+
+function structuredFailureText(value: unknown): string | null {
+  if (typeof value !== "object" || value === null) return null;
+  const failure = value as Record<string, unknown>;
+  if (
+    failure.schema !== 1 ||
+    typeof failure.message !== "string" ||
+    typeof failure.logTail !== "string"
+  ) {
+    return null;
+  }
+  return [failure.message, failure.logTail].filter(Boolean).join("\n");
+}
+
+export function errorText(error: unknown): string {
+  const value = error instanceof Error ? error.message : error;
+  const structured = structuredFailureText(value);
+  if (structured !== null) return structured;
+  const text = String(value);
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return structuredFailureText(parsed) ?? text;
+  } catch {
+    // Preserve non-structured Tauri and JavaScript errors.
+  }
+  return text;
+}
+
+export type KvCacheInputs = {
+  blockCount: number | null;
+  headCountKv: number | null;
+  keyLength: number | null;
+  valueLength: number | null;
+  context: number;
+  cacheTypeK: string;
+  cacheTypeV: string;
+  recurrentOrHybrid: boolean;
+  observedAtMs: number;
+};
+
+export type MemoryAssessment = {
+  class: FitClass;
+  requiredBytes: Evidence<number>;
+  availableBytes: Evidence<number>;
+  policyReserveBytes: number;
+  assumptions: string[];
+};
+
+export type StorageVolumeEvidence = {
+  volumePath: Evidence<string>;
+  residentBytes: Evidence<number>;
+  availableBytes: Evidence<number>;
+};
+
+export type PreflightReport = {
+  schema: number;
+  class: FitClass;
+  executionPath: ExecutionPath;
+  requestedContext: Evidence<number>;
+  nativeContext: Evidence<number>;
+  effectiveContext: Evidence<number>;
+  weightBytes: Evidence<number>;
+  kvCacheBytes: Evidence<number>;
+  storageRequiredBytes: Evidence<number>;
+  diskAvailableBytes: Evidence<number>;
+  storageVolumes: StorageVolumeEvidence[];
+  memory: MemoryAssessment;
+  assumptions: string[];
+  unknowns: string[];
+};
+
+export type DeviceAllocationPlan = {
+  adapterId: string;
+  weightBytes: Evidence<number>;
+  kvCacheBytes: Evidence<number>;
+  totalBytes: Evidence<number>;
+  availableBytes: Evidence<number>;
+  note: string;
+};
+
+export type PreflightResult = {
+  report: PreflightReport;
+  devicePlan: DeviceAllocationPlan[];
+  launch: LaunchValidation;
+  hardware: HardwareInfo;
+  selectedAdapterIds: string[];
+};
+
+export function artifactReadyForLaunch(artifact: ArtifactInspection): boolean {
+  return artifact.complete && artifact.headerConsistent && artifact.problems.length === 0;
+}
 
 export type CloudProvider = {
   id: string;

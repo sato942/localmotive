@@ -39,6 +39,7 @@ import "./App.css";
 import {
   bytesLabel,
   catalogRevision,
+  conflictingCapacityMetrics,
   contextChoices,
   describeChanges,
   downloadKey,
@@ -78,6 +79,7 @@ import {
   type DownloadEvent,
   type TokenStatus,
 } from "./model";
+import { V03EvidencePanel } from "./V03EvidencePanel";
 
 type View = "dashboard" | "models" | "catalog" | "runtime" | "profile" | "tune" | "benchmark" | "about";
 
@@ -96,6 +98,9 @@ const idleStatus: ServerStatus = {
   logPath: null,
   startedAt: null,
   exitCode: null,
+  resultClass: "unknown",
+  validation: null,
+  failure: null,
 };
 
 const previewModels: LogicalModel[] = [
@@ -109,6 +114,7 @@ const previewModels: LogicalModel[] = [
     expectedShards: 1,
     complete: true,
     quant: "Q4_K_M",
+    shards: [],
     companions: [],
   },
   {
@@ -121,6 +127,7 @@ const previewModels: LogicalModel[] = [
     expectedShards: 2,
     complete: true,
     quant: "Q4_K_M",
+    shards: [],
     companions: [
       {
         name: "Example-MoE-DSpark-F16.gguf",
@@ -242,6 +249,7 @@ function App() {
           version: "browser preview",
           build: "10679",
           commit: "preview",
+          helpSha256: "0".repeat(64),
           specTypes: ["none", "draft-simple", "draft-eagle3", "draft-mtp", "draft-dflash", "draft-dspark", "ngram-simple", "ngram-map-k", "ngram-map-k4v", "ngram-mod", "ngram-cache"],
           supportedFlags: ["--lazy-mode"],
           metrics: true,
@@ -293,6 +301,31 @@ function App() {
           driverVersion: "browser preview",
           detectionStatus: "Browser preview — real app reads GPU and driver locally",
           recommendation: "CUDA 13 is the best match for this NVIDIA driver",
+          systemMemory: {
+            totalPhysicalBytes: {
+              value: null,
+              level: "unknown",
+              source: { kind: "unknown", detail: "browser preview" },
+              observedAtMs: 0,
+              notes: ["Native Windows evidence is unavailable in browser preview."],
+            },
+            availablePhysicalBytes: {
+              value: null,
+              level: "unknown",
+              source: { kind: "unknown", detail: "browser preview" },
+              observedAtMs: 0,
+              notes: ["Native Windows evidence is unavailable in browser preview."],
+            },
+            memoryLoadPercent: {
+              value: null,
+              level: "unknown",
+              source: { kind: "unknown", detail: "browser preview" },
+              observedAtMs: 0,
+              notes: ["Native Windows evidence is unavailable in browser preview."],
+            },
+          },
+          adapters: [],
+          manualOverrides: [],
         });
         setRuntimeCatalog({
           tag: "b10752",
@@ -667,22 +700,21 @@ function App() {
     setProfile(next);
     setSelectedId(model.id);
     setView("profile");
-    // Only move an unsaved suggestion off a busy port; a saved profile keeps
-    // the port the user chose.
-    if (!stored) void ensureFreePort(next);
+    // Only move an unsaved candidate off a currently busy port. Launch remains authoritative.
+    if (!stored) void suggestPortCandidate(next);
   }
 
-  /** Replace the profile's port with the first free one at or above it. */
-  async function ensureFreePort(candidate: LaunchProfile) {
+  /** Suggest a currently unused port without claiming that the released socket stays available. */
+  async function suggestPortCandidate(candidate: LaunchProfile) {
     try {
       const free = await invoke<number>("suggest_port", { host: candidate.host, preferred: candidate.port });
       if (free !== candidate.port) {
         setProfile((current) => (current ? { ...current, port: free } : current));
-        setNotice(`Port ${candidate.port} is in use; this profile will serve on ${free}.`);
+        setNotice(`Port ${candidate.port} is in use. Trying ${free}; launch validation will confirm it.`);
       }
     } catch {
       // Browser preview, or no free port in range: keep the requested one and
-      // let the start-time bind check report it.
+      // let child startup and health validation report the authoritative result.
     }
   }
 
@@ -1188,6 +1220,46 @@ function App() {
               <div className="hardware-meta"><span>{hardware?.architecture ?? "—"}</span><span>{hardware?.vendor.toUpperCase() ?? "—"}</span>{hardware?.cudaMajor && <span>CUDA {hardware.cudaMajor}</span>}{hardware?.driverVersion && <span>Driver {hardware.driverVersion}</span>}</div>
             </div>
 
+            {hardware && (
+              <div className="hardware-evidence-grid" aria-label="Hardware evidence">
+                <article className="hardware-evidence-card">
+                  <span className="instrument-label">SYSTEM MEMORY</span>
+                  <strong>{hardware.systemMemory.totalPhysicalBytes.value === null ? "UNKNOWN" : bytesLabel(hardware.systemMemory.totalPhysicalBytes.value)}</strong>
+                  <dl>
+                    <div><dt>Available</dt><dd>{hardware.systemMemory.availablePhysicalBytes.value === null ? "Unknown" : bytesLabel(hardware.systemMemory.availablePhysicalBytes.value)}<small>{hardware.systemMemory.availablePhysicalBytes.source.detail} · {hardware.systemMemory.availablePhysicalBytes.observedAtMs ? new Date(hardware.systemMemory.availablePhysicalBytes.observedAtMs).toISOString() : "not observed"}</small></dd></div>
+                    <div><dt>Load</dt><dd>{hardware.systemMemory.memoryLoadPercent.value === null ? "Unknown" : `${hardware.systemMemory.memoryLoadPercent.value}%`}<small>{hardware.systemMemory.memoryLoadPercent.source.detail} · {hardware.systemMemory.memoryLoadPercent.observedAtMs ? new Date(hardware.systemMemory.memoryLoadPercent.observedAtMs).toISOString() : "not observed"}</small></dd></div>
+                  </dl>
+                  <small>{hardware.systemMemory.totalPhysicalBytes.source.detail} · {hardware.systemMemory.totalPhysicalBytes.observedAtMs ? new Date(hardware.systemMemory.totalPhysicalBytes.observedAtMs).toISOString() : "not observed"}</small>
+                </article>
+                {hardware.adapters.map((adapter) => {
+                  const conflicts = conflictingCapacityMetrics(adapter);
+                  return (
+                    <article className="hardware-evidence-card" key={adapter.adapterId}>
+                      <span className="instrument-label">GPU ADAPTER · {adapter.adapterId}</span>
+                      <strong>{adapter.name}</strong>
+                      <dl>
+                        <div><dt>Dedicated</dt><dd>{adapter.dedicatedBytes.value === null ? "Unknown" : bytesLabel(adapter.dedicatedBytes.value)}<small>{adapter.dedicatedBytes.source.detail} · {adapter.dedicatedBytes.observedAtMs ? new Date(adapter.dedicatedBytes.observedAtMs).toISOString() : "not observed"}</small></dd></div>
+                        <div><dt>Shared</dt><dd>{adapter.sharedBytes.value === null ? "Unknown" : bytesLabel(adapter.sharedBytes.value)}<small>{adapter.sharedBytes.source.detail} · {adapter.sharedBytes.observedAtMs ? new Date(adapter.sharedBytes.observedAtMs).toISOString() : "not observed"}</small></dd></div>
+                        <div><dt>Budget</dt><dd>{adapter.budgetBytes.value === null ? "Unknown" : bytesLabel(adapter.budgetBytes.value)}<small>{adapter.budgetBytes.source.detail} · {adapter.budgetBytes.observedAtMs ? new Date(adapter.budgetBytes.observedAtMs).toISOString() : "not observed"}</small></dd></div>
+                        <div><dt>Current use</dt><dd>{adapter.currentUsageBytes.value === null ? "Unknown" : bytesLabel(adapter.currentUsageBytes.value)}<small>{adapter.currentUsageBytes.source.detail} · {adapter.currentUsageBytes.observedAtMs ? new Date(adapter.currentUsageBytes.observedAtMs).toISOString() : "not observed"}</small></dd></div>
+                        <div><dt>Available budget</dt><dd>{adapter.availableBudgetBytes.value === null ? "Unknown" : bytesLabel(adapter.availableBudgetBytes.value)}<small>{adapter.availableBudgetBytes.source.detail} · {adapter.availableBudgetBytes.observedAtMs ? new Date(adapter.availableBudgetBytes.observedAtMs).toISOString() : "not observed"}</small></dd></div>
+                        <div><dt>Backend</dt><dd>{adapter.backend.value?.toUpperCase() ?? "Unknown"} ({adapter.backend.level})</dd></div>
+                      </dl>
+                      <small>{adapter.budgetBytes.source.detail} · {adapter.budgetBytes.observedAtMs ? new Date(adapter.budgetBytes.observedAtMs).toISOString() : "not observed"}</small>
+                      {conflicts.length > 0 && <p className="hardware-conflict">Conflicting probes: {conflicts.join(", ")}</p>}
+                    </article>
+                  );
+                })}
+                {hardware.manualOverrides.map((override) => (
+                  <article className="hardware-evidence-card hardware-override" key={`override-${override.adapterId}`}>
+                    <span className="instrument-label">MANUAL OVERRIDE · {override.adapterId}</span>
+                    <strong>User supplied</strong>
+                    <p>{override.note || "No note supplied."}</p>
+                  </article>
+                ))}
+              </div>
+            )}
+
             <div className="runtime-layout">
               <div className="runtime-main">
                 <div className="runtime-section-title">
@@ -1469,7 +1541,11 @@ function App() {
                         <label className="wide">Model metadata overrides<input value={profile.overrideKv} onChange={(e) => setProfile({ ...profile, overrideKv: e.target.value })} /></label>
                         <label>Log verbosity<input type="number" min="0" max="5" value={profile.verbosity} onChange={(e) => setProfile({ ...profile, verbosity: Number(e.target.value) })} /></label>
                         <label className="toggle-line"><input type="checkbox" checked={profile.logTimestamps} onChange={(e) => setProfile({ ...profile, logTimestamps: e.target.checked })} /> Log timestamps</label>
-                        <label className="wide">Raw extra arguments<input value={profile.extraArgs.join(" ")} onChange={(e) => setProfile({ ...profile, extraArgs: e.target.value.trim() ? e.target.value.trim().split(/\s+/) : [] })} /><small className="field-help">Escape hatch for experimental or model-specific flags not promoted into the UI.</small></label>
+                        <label className="wide">
+                          Raw extra arguments
+                          <input value={profile.extraArgs.join(" ")} onChange={(e) => setProfile({ ...profile, extraArgs: e.target.value.trim() ? e.target.value.trim().split(/\s+/) : [] })} />
+                          <small className="field-help">Use self-contained `--flag` or `--flag=value` tokens. Typed-field overrides and privileged capabilities are rejected.</small>
+                        </label>
                       </div>
                     </details>
                   </div>
@@ -1731,6 +1807,12 @@ function App() {
                 ) : <div className="empty-result"><Activity size={28} /><p>No measurement recorded for this session.</p></div>}
               </article>
             </div>
+            <V03EvidencePanel
+              model={selected ?? null}
+              profile={profile}
+              serverStatus={status}
+              initialHardware={hardware}
+            />
           </section>
         )}
       </main>

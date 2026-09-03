@@ -30,6 +30,7 @@ already does, it does not belong here.
 ### Architecture
 
 ```
+TODO.md                 v0.3 implementation strategy, status, and evidence ledger
 src/                    React + TypeScript frontend (one screen per nav item)
   App.tsx               All screens; state lives here
   App.css               The entire design system, hand-written
@@ -116,6 +117,24 @@ exactly.
 ---
 
 ## 3. Development workflow
+
+### v0.3 tracker and research inputs
+
+Read `TODO.md` after this file before starting v0.3 work. Treat `TODO.md` as the
+authoritative phase tracker, but never treat a checkbox as verification evidence.
+
+For model-fit or measurement work, read these research files in this order:
+
+1. `research/measuring/README.md`
+2. `research/measuring/SYNTHESIS.md`
+3. Relevant project notes, source files, and tests
+
+Update `TODO.md` after each acceptance check. Keep only one implementation phase
+in progress. Record exact commands and observed results in its verification ledger.
+
+Keep `research/` ignored and unmodified during product implementation. Vitest is
+restricted to `src/**/*.test.{ts,tsx}` so third-party checkout tests cannot enter
+the GGUF Pilot suite.
 
 ### Setup
 
