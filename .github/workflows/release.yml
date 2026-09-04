@@ -108,7 +108,7 @@ jobs:
       - name: Smoke-test the packaged executable
         shell: pwsh
         run: |
-          $portable = "src-tauri/target/release/gguf-pilot.exe"
+          $portable = "src-tauri/target/release/localmotive.exe"
           if (-not (Test-Path $portable)) { throw "Portable executable was not built" }
           $process = Start-Process $portable -PassThru
           Start-Sleep -Seconds 8
@@ -121,16 +121,16 @@ jobs:
         run: |
           version="${{ steps.version.outputs.version }}"
           mkdir -p artifacts
-          cp "src-tauri/target/release/bundle/msi/GGUF Pilot_${version}_x64_en-US.msi" \
-             "artifacts/GGUF-Pilot_${version}_x64.msi"
-          cp "src-tauri/target/release/bundle/nsis/GGUF Pilot_${version}_x64-setup.exe" \
-             "artifacts/GGUF-Pilot_${version}_x64-setup.exe"
-          cp "src-tauri/target/release/gguf-pilot.exe" \
-             "artifacts/GGUF-Pilot_${version}_x64-portable.exe"
+          cp "src-tauri/target/release/bundle/msi/Localmotive_${version}_x64_en-US.msi" \
+             "artifacts/Localmotive_${version}_x64.msi"
+          cp "src-tauri/target/release/bundle/nsis/Localmotive_${version}_x64-setup.exe" \
+             "artifacts/Localmotive_${version}_x64-setup.exe"
+          cp "src-tauri/target/release/localmotive.exe" \
+             "artifacts/Localmotive_${version}_x64-portable.exe"
           for required in \
-            "artifacts/GGUF-Pilot_${version}_x64.msi" \
-            "artifacts/GGUF-Pilot_${version}_x64-setup.exe" \
-            "artifacts/GGUF-Pilot_${version}_x64-portable.exe"; do
+            "artifacts/Localmotive_${version}_x64.msi" \
+            "artifacts/Localmotive_${version}_x64-setup.exe" \
+            "artifacts/Localmotive_${version}_x64-portable.exe"; do
             test -s "$required" || { echo "::error::Missing or empty release artifact: $required"; exit 1; }
           done
           ls -l artifacts
@@ -152,7 +152,7 @@ jobs:
           test -n "$(printf '%s' "$section" | tr -d '[:space:]')" \
             || { echo "::error::CHANGELOG.md has no section for ${version}"; exit 1; }
           {
-            echo "## GGUF Pilot ${version}"
+            echo "## Localmotive ${version}"
             echo
             printf '%s\n' "$section"
             echo
@@ -160,9 +160,9 @@ jobs:
             echo
             echo "| File | Use |"
             echo "|---|---|"
-            echo "| \`GGUF-Pilot_${version}_x64-setup.exe\` | Recommended installer (NSIS) |"
-            echo "| \`GGUF-Pilot_${version}_x64.msi\` | MSI installer for managed deployment |"
-            echo "| \`GGUF-Pilot_${version}_x64-portable.exe\` | Portable executable, no installation |"
+            echo "| \`Localmotive_${version}_x64-setup.exe\` | Recommended installer (NSIS) |"
+            echo "| \`Localmotive_${version}_x64.msi\` | MSI installer for managed deployment |"
+            echo "| \`Localmotive_${version}_x64-portable.exe\` | Portable executable, no installation |"
             echo "| \`SHA256SUMS-${version}.txt\` | Checksums for the files above |"
             echo
             echo "Windows 10/11 x64. The installers are not Authenticode-signed, so SmartScreen may warn on first run."
@@ -173,7 +173,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
-          name: GGUF Pilot ${{ steps.version.outputs.version }}
+          name: Localmotive ${{ steps.version.outputs.version }}
           body_path: release-notes.md
           files: artifacts/*
           fail_on_unmatched_files: true

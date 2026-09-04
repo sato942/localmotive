@@ -268,7 +268,7 @@ describe("v0.3 measurement decisions", () => {
   };
 
   const quality: QualitySuiteResult = {
-    suiteId: "gguf-pilot-structural-v1",
+    suiteId: "localmotive-structural-v1",
     seed: 42,
     observedAtMs: 42,
     modelLogicalId: "model-a",
@@ -459,10 +459,10 @@ describe("normalizeProfile", () => {
     const next = normalizeProfile(
       stored,
       model,
-      "C:\\Users\\x\\AppData\\Local\\GGUF Pilot\\runtimes\\b10752\\cuda-13.3\\llama-server.exe",
+      "C:\\Users\\x\\AppData\\Local\\Localmotive\\runtimes\\b10752\\cuda-13.3\\llama-server.exe",
     );
     expect(next.runtime).toBe(
-      "C:\\Users\\x\\AppData\\Local\\GGUF Pilot\\runtimes\\b10752\\cuda-13.3\\llama-server.exe",
+      "C:\\Users\\x\\AppData\\Local\\Localmotive\\runtimes\\b10752\\cuda-13.3\\llama-server.exe",
     );
     // Everything the user actually chose survives.
     expect(next.name).toBe("My tuned profile");

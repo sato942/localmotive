@@ -24,9 +24,9 @@ jobs:
 
       - name: Resolve, sign, and validate the curated catalog
         env:
-          GGUF_PILOT_CATALOG_SIGNING_KEY_PEM: ${{ secrets.CATALOG_SIGNING_KEY_PEM }}
+          LOCALMOTIVE_CATALOG_SIGNING_KEY_PEM: ${{ secrets.CATALOG_SIGNING_KEY_PEM }}
         run: |
-          test -n "$GGUF_PILOT_CATALOG_SIGNING_KEY_PEM" \
+          test -n "$LOCALMOTIVE_CATALOG_SIGNING_KEY_PEM" \
             || { echo "::error::CATALOG_SIGNING_KEY_PEM is not configured"; exit 1; }
           npm run catalog:refresh
           npm run catalog:validate

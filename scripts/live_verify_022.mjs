@@ -68,7 +68,7 @@ async function evaluate(cdp, expression, timeoutMs = 60000) {
 const results = {};
 const invoke = (cmd, args) => `window.__TAURI_INTERNALS__.invoke(${JSON.stringify(cmd)}, ${JSON.stringify(args || {})})`;
 
-const OUT = process.env.LIVE_OUT || `${process.env.LOCALAPPDATA}\\Temp\\gguf-pilot-live-022.json`;
+const OUT = process.env.LIVE_OUT || `${process.env.LOCALAPPDATA}\\Temp\\localmotive-live-022.json`;
 async function emit(obj, code) {
   const fs = await import('node:fs');
   fs.writeFileSync(OUT, JSON.stringify(obj, null, 2));
@@ -87,7 +87,7 @@ async function emit(obj, code) {
   const catalog = await evaluate(cdp, `${invoke('fetch_runtime_catalog')}.then(c => ({tag: c.tag, options: c.options.map(o => ({id: o.id, backend: o.backend, installKey: o.installKey, recommended: o.recommended}))}))`);
   results.catalog = catalog;
   // Drive the UI: select the runtime and open the Runtime tab, then read the button labels.
-  await evaluate(cdp, `localStorage.setItem('gguf-pilot:runtime', ${JSON.stringify(RUNTIME)}); localStorage.setItem('gguf-pilot:model-root', ${JSON.stringify(MODEL_ROOT)}); location.reload(); true`);
+  await evaluate(cdp, `localStorage.setItem('localmotive:runtime', ${JSON.stringify(RUNTIME)}); localStorage.setItem('localmotive:model-root', ${JSON.stringify(MODEL_ROOT)}); location.reload(); true`);
   await new Promise((r) => setTimeout(r, 6500));
   await evaluate(cdp, `(() => { const b=[...document.querySelectorAll('.nav-item')].find(x=>/runtime/i.test(x.textContent)); b && b.click(); return true; })()`);
   await new Promise((r) => setTimeout(r, 4000));

@@ -1,6 +1,6 @@
 //! Child-process construction that never flashes a console window.
 //!
-//! GGUF Pilot is a windowed application, so it owns no console. Every
+//! Localmotive is a windowed application, so it owns no console. Every
 //! `std::process::Command` it spawns on Windows would therefore allocate a
 //! fresh console window: `nvidia-smi`, the PowerShell adapter query, the
 //! `llama-server --version` / `--help` capability probes, and the served

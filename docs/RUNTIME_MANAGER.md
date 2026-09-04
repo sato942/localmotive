@@ -1,6 +1,6 @@
 # Runtime Manager
 
-GGUF Pilot does not bundle llama.cpp. It obtains official binaries at first run or accepts a user-supplied executable.
+Localmotive does not bundle llama.cpp. It obtains official binaries at first run or accepts a user-supplied executable.
 
 ## Release discovery
 
@@ -8,7 +8,7 @@ The app queries:
 
 `https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=20`
 
-Stable semantic releases may contain only release notes. GGUF Pilot therefore chooses the newest non-draft release in that response that actually publishes Windows runtime ZIP assets.
+Stable semantic releases may contain only release notes. Localmotive therefore chooses the newest non-draft release in that response that actually publishes Windows runtime ZIP assets.
 
 ## Windows recommendation policy
 
@@ -26,7 +26,7 @@ CUDA installation always pairs the main `llama-...-win-cuda-...zip` archive with
 
 ## Installation location
 
-`%LOCALAPPDATA%\GGUF Pilot\runtimes\<release-tag>\<backend-variant>`
+`%LOCALAPPDATA%\Localmotive\runtimes\<release-tag>\<backend-variant>`
 
 CUDA variants include their toolkit version in the folder name (for example `cuda-13.3`), so CUDA 12 and CUDA 13 builds can coexist.
 
@@ -48,6 +48,6 @@ Existing versioned installs are reused rather than downloaded again. Installing 
 
 ## User-supplied runtimes
 
-The native file picker accepts an existing `llama-server.exe`. GGUF Pilot executes `--version` and `--help`, records its capabilities, labels it as user-supplied, and filters profile arguments to flags advertised by that build.
+The native file picker accepts an existing `llama-server.exe`. Localmotive executes `--version` and `--help`, records its capabilities, labels it as user-supplied, and filters profile arguments to flags advertised by that build.
 
-A user-supplied runtime is not claimed to be downloaded or hash-verified by GGUF Pilot.
+A user-supplied runtime is not claimed to be downloaded or hash-verified by Localmotive.

@@ -1579,7 +1579,7 @@ mod tests {
     #[test]
     fn runtime_inspection_times_out_a_stalled_probe() {
         let root = std::env::temp_dir().join(format!(
-            "gguf-pilot-runtime-probe-timeout-{}",
+            "localmotive-runtime-probe-timeout-{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&root);
@@ -1622,7 +1622,7 @@ fn main() {
     #[test]
     fn runtime_inspection_rejects_excessive_probe_output() {
         let root = std::env::temp_dir().join(format!(
-            "gguf-pilot-runtime-probe-output-{}",
+            "localmotive-runtime-probe-output-{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&root);
@@ -1697,7 +1697,7 @@ fn main() {
         // `dspark/` subfolder plus one at the family root). All are genuine
         // companions, but the list must be ordered so the variant matching the
         // target's own quantisation is offered first instead of an arbitrary one.
-        let root = std::env::temp_dir().join(format!("gguf-pilot-rank-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("localmotive-rank-{}", std::process::id()));
         let family = root.join("DeepSeek-V4-Flash-0731");
         let drafts = family.join("dspark");
         let target_dir = family.join("UD-IQ4_XS");
@@ -1795,7 +1795,7 @@ fn main() {
 
     #[test]
     fn scan_groups_complete_shards_and_marks_companions() {
-        let root = std::env::temp_dir().join(format!("gguf-pilot-scan-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("localmotive-scan-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("ModelA")).unwrap();
         fs::write(root.join("ModelA/ModelA-Q4-00001-of-00002.gguf"), b"a").unwrap();
@@ -1841,8 +1841,8 @@ fn main() {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("gguf-pilot-scan-root-{nonce}"));
-        let outside = std::env::temp_dir().join(format!("gguf-pilot-scan-outside-{nonce}"));
+        let root = std::env::temp_dir().join(format!("localmotive-scan-root-{nonce}"));
+        let outside = std::env::temp_dir().join(format!("localmotive-scan-outside-{nonce}"));
         fs::create_dir_all(&root).unwrap();
         fs::create_dir_all(&outside).unwrap();
         fs::write(outside.join("private-Q4_K_M.gguf"), b"outside").unwrap();
@@ -1868,7 +1868,7 @@ fn main() {
     #[test]
     fn scan_rejects_conflicting_expected_shard_counts() {
         let root = std::env::temp_dir().join(format!(
-            "gguf-pilot-conflicting-shards-{}",
+            "localmotive-conflicting-shards-{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&root);
@@ -1886,7 +1886,7 @@ fn main() {
 
     #[test]
     fn scan_attaches_companion_from_nested_folder_to_parent_target() {
-        let root = std::env::temp_dir().join(format!("gguf-pilot-nested-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("localmotive-nested-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("Qwen/MTP")).unwrap();
         fs::write(root.join("Qwen/Qwen-Q6.gguf"), b"target").unwrap();
@@ -1901,7 +1901,7 @@ fn main() {
 
     #[test]
     fn scan_attaches_companion_from_sibling_folder_in_same_family() {
-        let root = std::env::temp_dir().join(format!("gguf-pilot-sibling-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("localmotive-sibling-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("DeepSeek/UD-IQ4_XS")).unwrap();
         fs::create_dir_all(root.join("DeepSeek/dspark")).unwrap();

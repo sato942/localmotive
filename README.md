@@ -1,11 +1,11 @@
-# GGUF Pilot
+# Localmotive
 
-GGUF Pilot is a Windows desktop control plane for local GGUF inference.
+Localmotive is a Windows desktop control plane for local GGUF inference.
 
-Use GGUF Pilot to manage `llama.cpp` runtimes, organize GGUF models,
+Use Localmotive to manage `llama.cpp` runtimes, organize GGUF models,
 build launch profiles, run `llama-server`, and measure generation throughput.
 
-GGUF Pilot is not an inference engine.
+Localmotive is not an inference engine.
 
 The selected `llama-server.exe` performs model loading and inference.
 The same executable provides the local API and optional WebUI.
@@ -16,9 +16,9 @@ Download the current release from [GitHub Releases][releases].
 
 Release 0.3.0 provides these Windows x64 files:
 
-- `GGUF-Pilot_0.3.0_x64-setup.exe` is the NSIS installer.
-- `GGUF-Pilot_0.3.0_x64.msi` is the MSI installer.
-- `GGUF-Pilot_0.3.0_x64-portable.exe` runs without installation.
+- `Localmotive_0.3.0_x64-setup.exe` is the NSIS installer.
+- `Localmotive_0.3.0_x64.msi` is the MSI installer.
+- `Localmotive_0.3.0_x64-portable.exe` runs without installation.
 - `SHA256SUMS-0.3.0.txt` covers the three application files.
 
 The 0.3.0 application files do not have Authenticode signatures.
@@ -28,7 +28,7 @@ Windows SmartScreen can show a warning when you start an unsigned file.
 Verify a downloaded file before use:
 
 ```powershell
-Get-FileHash .\GGUF-Pilot_0.3.0_x64-setup.exe -Algorithm SHA256
+Get-FileHash .\Localmotive_0.3.0_x64-setup.exe -Algorithm SHA256
 Get-Content .\SHA256SUMS-0.3.0.txt
 ```
 
@@ -40,7 +40,7 @@ The current release requires a Windows x64 computer.
 
 Select one of these runtime sources:
 
-- An official Windows `llama.cpp` build installed by GGUF Pilot.
+- An official Windows `llama.cpp` build installed by Localmotive.
 - An existing compatible `llama-server.exe` selected by the user.
 
 Provide an existing GGUF model or use **HF Catalog** to download one.
@@ -60,7 +60,7 @@ and computer hardware.
 
 ## Quick start
 
-1. Start GGUF Pilot.
+1. Start Localmotive.
 2. Open **Runtime**.
 3. Install a recommended `llama.cpp` build or select an existing runtime.
 4. Open **Inventory**.
@@ -80,7 +80,7 @@ New profiles use these defaults:
 - Parallel slots: `1`
 - GPU layers: `all`
 
-If the preferred port is unavailable, GGUF Pilot scans a bounded port range.
+If the preferred port is unavailable, Localmotive scans a bounded port range.
 
 ## Features
 
@@ -95,7 +95,7 @@ If the preferred port is unavailable, GGUF Pilot scans a bounded port range.
 - Check each asset SHA-256 when GitHub provides a `sha256:` digest.
 - Reject ZIP entries that do not have an enclosed archive path.
 - Remove a failed installation's staging directory.
-- Install managed runtimes under `%LOCALAPPDATA%\GGUF Pilot\runtimes`.
+- Install managed runtimes under `%LOCALAPPDATA%\Localmotive\runtimes`.
 - Keep runtime versions and backend variants in separate directories.
 - Register and inspect an existing `llama-server.exe`.
 - Read supported options from the selected runtime's `--help` output.
@@ -104,7 +104,7 @@ If the preferred port is unavailable, GGUF Pilot scans a bounded port range.
 The available release can include CUDA, ROCm, SYCL, OpenVINO, Vulkan,
 OpenCL, CPU, or ARM64 assets.
 
-GGUF Pilot shows only assets that match the running application architecture.
+Localmotive shows only assets that match the running application architecture.
 
 ### Model inventory and profiles
 
@@ -151,16 +151,16 @@ GGUF Pilot shows only assets that match the running application architecture.
 The optional Hugging Face token supports authenticated Hub requests.
 The token also supports gated repositories accepted by the account.
 
-GGUF Pilot stores the token in Windows Credential Manager.
-The service name is `GGUF Pilot HF`.
+Localmotive stores the token in Windows Credential Manager.
+The service name is `Localmotive HF`.
 
-GGUF Pilot sends the token in an `Authorization` header.
-GGUF Pilot does not put the token in a download URL or process argument.
+Localmotive sends the token in an `Authorization` header.
+Localmotive does not put the token in a download URL or process argument.
 
 ### AI Tune
 
 AI Tune asks a cloud model to propose throughput settings.
-GGUF Pilot measures each accepted proposal on the local computer.
+Localmotive measures each accepted proposal on the local computer.
 
 The user can replace the saved profile with the best measured profile.
 
@@ -176,8 +176,8 @@ The application includes configurations for these providers:
 OpenRouter supports browser sign-in with OAuth PKCE or a pasted API key.
 The other provider interfaces accept pasted API keys.
 
-GGUF Pilot stores cloud credentials in Windows Credential Manager.
-The service name is `GGUF Pilot`.
+Localmotive stores cloud credentials in Windows Credential Manager.
+The service name is `Localmotive`.
 
 The frontend receives only credential status and a masked suffix.
 
@@ -186,25 +186,25 @@ The whitelist excludes identity, network, path, and security fields.
 
 Each trial starts `llama-server` and waits for `/health`.
 Each successful launch is measured through `/completion`.
-GGUF Pilot then stops the trial process.
+Localmotive then stops the trial process.
 
 ## Network and data behavior
 
 ### Runtime network access
 
-GGUF Pilot reads release metadata from the GitHub API.
-GGUF Pilot downloads selected official runtime archives from GitHub.
+Localmotive reads release metadata from the GitHub API.
+Localmotive downloads selected official runtime archives from GitHub.
 
 ### Model catalog
 
-GGUF Pilot reads the catalog and signature from `raw.githubusercontent.com`.
-GGUF Pilot downloads selected model bytes from Hugging Face redirects.
+Localmotive reads the catalog and signature from `raw.githubusercontent.com`.
+Localmotive downloads selected model bytes from Hugging Face redirects.
 
 If configured, the Hugging Face authorization header starts at the Hub URL.
 
 ### AI Tune network access
 
-GGUF Pilot sends a structured tuning brief to the selected cloud provider.
+Localmotive sends a structured tuning brief to the selected cloud provider.
 
 The brief includes these values:
 
@@ -233,12 +233,12 @@ The OAuth PKCE flow returns through a temporary loopback callback.
 
 ### Local inference
 
-GGUF Pilot sends health checks and benchmarks to the configured server.
+Localmotive sends health checks and benchmarks to the configured server.
 The WebUI communicates with the local `llama-server` endpoint.
 
 ## Local storage
 
-GGUF Pilot stores these values in the application WebView's local storage:
+Localmotive stores these values in the application WebView's local storage:
 
 - Model folder
 - Selected runtime path
@@ -247,10 +247,10 @@ GGUF Pilot stores these values in the application WebView's local storage:
 - Saved benchmark results
 - Saved tuning reports
 
-GGUF Pilot does not encrypt these local-storage values.
+Localmotive does not encrypt these local-storage values.
 
 Server logs use the operating system temporary directory.
-The server log subdirectory is `gguf-pilot`.
+The server log subdirectory is `localmotive`.
 
 Cloud credentials and the Hugging Face token do not use local storage.
 They use Windows Credential Manager.
@@ -261,14 +261,14 @@ They use Windows Credential Manager.
 - Non-loopback profiles require an API key file.
 - Non-loopback profiles require restricted CORS origins.
 - API secrets use `--api-key-file` instead of a literal key argument.
-- GGUF Pilot passes process arguments without a shell command string.
+- Localmotive passes process arguments without a shell command string.
 - Child processes use `CREATE_NO_WINDOW` on Windows.
 - Runtime and model paths must identify files before server launch.
 - Catalog downloads must match the validated catalog.
 
 Advanced extra arguments remain an expert interface.
 
-GGUF Pilot does not provide a permissions workflow for shell, file,
+Localmotive does not provide a permissions workflow for shell, file,
 or agent options supplied through extra arguments.
 
 Review the generated command before launch.
@@ -277,8 +277,8 @@ Review the generated command before launch.
 
 - The current application release provides Windows x64 artifacts only.
 - The runtime manager can discover ARM64 assets on an ARM64 build.
-- This repository does not publish an ARM64 GGUF Pilot application build.
-- GGUF Pilot supervises one model server at a time.
+- This repository does not publish an ARM64 Localmotive application build.
+- Localmotive supervises one model server at a time.
 - Stop terminates the directly owned child process.
 - Windows Job Object containment is not implemented.
 - Catalog downloads support single-file GGUF entries only.
@@ -306,7 +306,7 @@ Add a Hugging Face read token with access to the repository.
 ### A download stops
 
 Select **Download** again to reuse valid saved chunks.
-GGUF Pilot restarts when the saved remote identity no longer matches.
+Localmotive restarts when the saved remote identity no longer matches.
 
 ### The server does not start
 
@@ -323,8 +323,8 @@ Install the Microsoft C++ Build Tools and WebView2 requirements described
 by the linked Tauri prerequisites.
 
 ```bash
-git clone https://github.com/sato942/gguf-pilot.git
-cd gguf-pilot
+git clone https://github.com/sato942/localmotive.git
+cd localmotive
 npm ci
 npm run tauri dev
 ```
@@ -337,9 +337,9 @@ npm run tauri build
 
 The Windows x64 build produces these local artifacts:
 
-- `src-tauri/target/release/gguf-pilot.exe`
-- `src-tauri/target/release/bundle/msi/GGUF Pilot_<version>_x64_en-US.msi`
-- `src-tauri/target/release/bundle/nsis/GGUF Pilot_<version>_x64-setup.exe`
+- `src-tauri/target/release/localmotive.exe`
+- `src-tauri/target/release/bundle/msi/Localmotive_<version>_x64_en-US.msi`
+- `src-tauri/target/release/bundle/nsis/Localmotive_<version>_x64-setup.exe`
 
 ## Test and verify
 
@@ -409,9 +409,9 @@ See these project records for more detail:
 
 ## License and affiliation
 
-GGUF Pilot is available under the [MIT License](LICENSE).
+Localmotive is available under the [MIT License](LICENSE).
 
-GGUF Pilot is not affiliated with or endorsed by these organizations:
+Localmotive is not affiliated with or endorsed by these organizations:
 
 - `ggml-org`
 - Hugging Face
@@ -421,6 +421,6 @@ GGUF Pilot is not affiliated with or endorsed by these organizations:
 
 Review the applicable license and model card before use or redistribution.
 
-[issues]: https://github.com/sato942/gguf-pilot/issues
-[releases]: https://github.com/sato942/gguf-pilot/releases/latest
+[issues]: https://github.com/sato942/localmotive/issues
+[releases]: https://github.com/sato942/localmotive/releases/latest
 [tauri-prerequisites]: https://v2.tauri.app/start/prerequisites/

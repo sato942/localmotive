@@ -106,7 +106,7 @@ where
         QualityStatus::Passed
     };
     QualitySuiteResult {
-        suite_id: "gguf-pilot-structural-v1".into(),
+        suite_id: "localmotive-structural-v1".into(),
         seed: 42,
         observed_at_ms: None,
         model_logical_id: None,

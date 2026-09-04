@@ -6,7 +6,7 @@
 const PORT = process.argv[2] || '10013';
 const RUNTIME = process.argv[3] || 'C:\\llama\\llama-server.exe';
 const MODEL_ROOT = process.argv[4] || 'C:\\models';
-const OUT = `${process.env.LOCALAPPDATA}\\Temp\\gguf-pilot-verify-024.json`;
+const OUT = `${process.env.LOCALAPPDATA}\\Temp\\localmotive-verify-024.json`;
 const fs = await import('node:fs');
 const net = await import('node:net');
 
@@ -76,17 +76,17 @@ results.deepseek = await evaluate(
 );
 
 // ---- 3. Runtime persistence --------------------------------------------------
-await evaluate(`localStorage.setItem('gguf-pilot:runtime', ${JSON.stringify(RUNTIME)}); localStorage.setItem('gguf-pilot:model-root', ${JSON.stringify(MODEL_ROOT)}); true`);
+await evaluate(`localStorage.setItem('localmotive:runtime', ${JSON.stringify(RUNTIME)}); localStorage.setItem('localmotive:model-root', ${JSON.stringify(MODEL_ROOT)}); true`);
 // Save a profile pinned to a deliberately stale runtime, as 0.2.2 would have.
 const modelId = await evaluate(`${invoke('scan_models', { root: MODEL_ROOT })}.then(ms => ms.find(x => x.name.includes('LFM2.5-2.6B'))?.id)`);
-await evaluate(`localStorage.setItem('gguf-pilot:profile:' + ${JSON.stringify(modelId)}, JSON.stringify({name:'stale', runtime:'C:\\\\old\\\\llama-server.exe', context: 16384, port: 8080})); location.reload(); true`);
+await evaluate(`localStorage.setItem('localmotive:profile:' + ${JSON.stringify(modelId)}, JSON.stringify({name:'stale', runtime:'C:\\\\old\\\\llama-server.exe', context: 16384, port: 8080})); location.reload(); true`);
 await sleep(7000);
 await clickNav('inventory');
 await sleep(2500);
 await evaluate(`(() => { const r=[...document.querySelectorAll('.table-row')].find(x=>x.textContent.includes('LFM2.5-2.6B')); r && r.click(); return !!r; })()`);
 await sleep(1500);
 results.staleProfileAdoptsCurrentRuntime = await evaluate(`(() => { const inputs=[...document.querySelectorAll('.profile-screen input')]; const rt=inputs.find(i=>i.value && i.value.toLowerCase().includes('llama-server.exe')); const ctx=[...document.querySelectorAll('.profile-screen input')].map(i=>i.value); return { runtimeField: rt?.value, keptContext: ctx.includes('16384') }; })()`);
-results.runtimeRemembered = await evaluate(`localStorage.getItem('gguf-pilot:runtime')`);
+results.runtimeRemembered = await evaluate(`localStorage.getItem('localmotive:runtime')`);
 
 // ---- 4. About tab -------------------------------------------------------------
 results.aboutNavPresent = await clickNav('about');

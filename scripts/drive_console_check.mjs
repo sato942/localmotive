@@ -1,4 +1,4 @@
-// Drive the packaged GGUF Pilot over CDP to exercise every child-process path
+// Drive the packaged Localmotive over CDP to exercise every child-process path
 // (hardware detection, runtime capability inspection, model scan, server start/stop)
 // while watch_console_windows.py polls for console windows.
 const PORT = process.argv[2] || '10011';

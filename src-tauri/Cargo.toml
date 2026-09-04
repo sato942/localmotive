@@ -1,11 +1,11 @@
 [package]
-name = "gguf-pilot"
+name = "localmotive"
 version = "0.3.0"
 description = "A public Windows desktop control plane for local GGUF inference"
-authors = ["GGUF Pilot contributors"]
+authors = ["Localmotive contributors"]
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/sato942/gguf-pilot"
+repository = "https://github.com/sato942/localmotive"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -13,7 +13,7 @@ repository = "https://github.com/sato942/gguf-pilot"
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "gguf_pilot_lib"
+name = "localmotive_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

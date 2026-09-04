@@ -14,7 +14,7 @@ use std::time::Duration;
 /// Where the shipped catalog lives. Forks can change this compile-time value;
 /// the production command does not accept an untrusted runtime URL.
 pub const DEFAULT_CATALOG_URL: &str =
-    "https://raw.githubusercontent.com/sato942/gguf-pilot/main/catalog/catalog.json";
+    "https://raw.githubusercontent.com/sato942/localmotive/main/catalog/catalog.json";
 const BUNDLED_CATALOG: &str = include_str!("../../catalog/catalog.json");
 const CATALOG_VERIFYING_KEY: [u8; 32] = [
     234, 194, 139, 46, 191, 202, 36, 78, 104, 245, 230, 170, 90, 67, 238, 61, 1, 162, 242, 207,
@@ -95,7 +95,7 @@ pub fn parse_catalog(text: &str) -> Result<Catalog, String> {
         .map_err(|error| format!("Catalog is not valid JSON: {error}"))?;
     if catalog.schema_version == 0 || catalog.schema_version > SUPPORTED_SCHEMA {
         return Err(format!(
-            "Catalog schema {} is newer than this build supports ({SUPPORTED_SCHEMA}). Update GGUF Pilot.",
+            "Catalog schema {} is newer than this build supports ({SUPPORTED_SCHEMA}). Update Localmotive.",
             catalog.schema_version
         ));
     }
@@ -505,7 +505,7 @@ pub fn fetch_catalog(url: &str, cache_root: &Path) -> Result<CatalogSnapshot, St
 
 fn http_client() -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
-        .user_agent(format!("GGUF-Pilot/{}", env!("CARGO_PKG_VERSION")))
+        .user_agent(format!("Localmotive/{}", env!("CARGO_PKG_VERSION")))
         .connect_timeout(Duration::from_secs(15))
         .timeout(Duration::from_secs(30))
         .build()
@@ -557,7 +557,10 @@ fn now() -> String {
 
 /// Credential Manager service name for the Hugging Face token. Separate from
 /// the cloud-advisor service so revoking one never disturbs the other.
-pub const HF_KEYRING_SERVICE: &str = "GGUF Pilot HF";
+pub const HF_KEYRING_SERVICE: &str = "Localmotive HF";
+/// Previous product name. Upgrades read the legacy entry once and move it to
+/// the current service so an existing token keeps working.
+pub const LEGACY_HF_KEYRING_SERVICE: &str = "GGUF Pilot HF";
 const HF_ACCOUNT: &str = "huggingface";
 
 /// What the interface may know about a stored token: that one exists, and
@@ -614,18 +617,50 @@ pub fn validate_hf_token(token: &str) -> Result<String, String> {
 }
 
 fn hf_entry() -> Result<keyring::Entry, String> {
-    keyring::Entry::new(HF_KEYRING_SERVICE, HF_ACCOUNT)
+    hf_entry_for(HF_KEYRING_SERVICE)
+}
+
+fn hf_entry_for(service: &str) -> Result<keyring::Entry, String> {
+    keyring::Entry::new(service, HF_ACCOUNT)
         .map_err(|error| format!("Could not open Credential Manager: {error}"))
+}
+
+fn read_hf_service(service: &str) -> Option<String> {
+    let entry = hf_entry_for(service).ok()?;
+    match entry.get_password() {
+        Ok(secret) if !secret.trim().is_empty() => Some(secret),
+        _ => None,
+    }
 }
 
 /// Read the stored token. Returns `None` rather than an error when absent, so
 /// anonymous downloading stays the normal path.
 pub fn hf_token() -> Option<String> {
-    let entry = hf_entry().ok()?;
-    match entry.get_password() {
-        Ok(secret) if !secret.trim().is_empty() => Some(secret),
-        _ => None,
+    if let Some(token) = read_hf_service(HF_KEYRING_SERVICE) {
+        return Some(token);
     }
+    // Legacy installs stored the token under the previous product name.
+    // Migrate the value forward so the old entry does not linger.
+    if let Some(token) = read_hf_service(LEGACY_HF_KEYRING_SERVICE) {
+        let migrated = token.clone();
+        if hf_entry()
+            .and_then(|entry| {
+                entry.set_password(&token).map_err(|error| {
+                    format!("Could not save the token to Credential Manager: {error}")
+                })
+            })
+            .is_ok()
+        {
+            let _ = hf_entry_for(LEGACY_HF_KEYRING_SERVICE).and_then(|entry| {
+                match entry.delete_credential() {
+                    Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+                    Err(error) => Err(format!("Could not remove the token: {error}")),
+                }
+            });
+        }
+        return Some(migrated);
+    }
+    None
 }
 
 pub fn hf_token_status() -> TokenStatus {
@@ -646,6 +681,12 @@ pub fn save_hf_token(token: &str) -> Result<TokenStatus, String> {
     hf_entry()?
         .set_password(&token)
         .map_err(|error| format!("Could not save the token to Credential Manager: {error}"))?;
+    // A migrated write replaces the legacy entry; never keep two copies.
+    let _ =
+        hf_entry_for(LEGACY_HF_KEYRING_SERVICE).and_then(|entry| match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(error) => Err(format!("Could not remove the token: {error}")),
+        });
     Ok(TokenStatus {
         configured: true,
         masked: mask_token(&token),
@@ -655,6 +696,12 @@ pub fn save_hf_token(token: &str) -> Result<TokenStatus, String> {
 pub fn clear_hf_token() -> Result<TokenStatus, String> {
     let entry = hf_entry()?;
     match entry.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => (),
+        Err(error) => return Err(format!("Could not remove the token: {error}")),
+    }
+    // Legacy installs may still hold a token under the previous product name.
+    let legacy = hf_entry_for(LEGACY_HF_KEYRING_SERVICE)?;
+    match legacy.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(TokenStatus {
             configured: false,
             masked: String::new(),
@@ -1056,7 +1103,7 @@ mod tests {
     #[test]
     fn cache_body_and_etag_are_published_as_one_consistent_record() {
         let root =
-            std::env::temp_dir().join(format!("gguf-pilot-cache-record-{}", std::process::id()));
+            std::env::temp_dir().join(format!("localmotive-cache-record-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         save_cache_record(
             &root,
@@ -1089,7 +1136,7 @@ mod tests {
     #[test]
     fn concurrent_cache_refreshes_never_mix_a_body_with_another_etag() {
         let root =
-            std::env::temp_dir().join(format!("gguf-pilot-cache-race-{}", std::process::id()));
+            std::env::temp_dir().join(format!("localmotive-cache-race-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
@@ -1133,7 +1180,7 @@ mod tests {
     #[test]
     fn cache_readers_wait_until_a_cache_publication_finishes() {
         let root =
-            std::env::temp_dir().join(format!("gguf-pilot-cache-reader-{}", std::process::id()));
+            std::env::temp_dir().join(format!("localmotive-cache-reader-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let guard = CATALOG_CACHE_WRITE_LOCK.lock().unwrap();
@@ -1154,7 +1201,7 @@ mod tests {
 
     #[test]
     fn cached_catalog_is_used_when_the_network_fails() {
-        let root = std::env::temp_dir().join(format!("gguf-pilot-cat-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("localmotive-cat-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let catalog_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1185,7 +1232,7 @@ mod tests {
         // An interrupted external cache edit or disk corruption must not leave
         // the catalog tab empty while the network is also unavailable.
         let root =
-            std::env::temp_dir().join(format!("gguf-pilot-corrupt-cat-{}", std::process::id()));
+            std::env::temp_dir().join(format!("localmotive-corrupt-cat-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(cache_path(&root), "not json").unwrap();

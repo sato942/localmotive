@@ -1,7 +1,7 @@
 // Packaged 0.3.0 verification: v0.3 evidence IPC, preflight, quality,
 // ranking, calibration, sharing validation, plus failure-path checks.
 const PORT = process.argv[2] || '10015';
-const OUT = `${process.env.LOCALAPPDATA}\\Temp\\gguf-pilot-verify-030.json`;
+const OUT = `${process.env.LOCALAPPDATA}\\Temp\\localmotive-verify-030.json`;
 const fs = await import('node:fs');
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

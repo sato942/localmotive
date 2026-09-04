@@ -16,11 +16,11 @@ Windows users running local GGUF language models on CPU, NVIDIA, AMD, or Intel h
 
 ## Product Purpose
 
-GGUF Pilot turns a heterogeneous GGUF collection into validated logical models and repeatable launch profiles. Success means specialized paths—baseline, n-gram, MTP, DFlash, DSpark, EAGLE-3 and multimodal companions—remain explicit, inspectable, and benchmarkable rather than hidden behind generic presets.
+Localmotive turns a heterogeneous GGUF collection into validated logical models and repeatable launch profiles. Success means specialized paths—baseline, n-gram, MTP, DFlash, DSpark, EAGLE-3 and multimodal companions—remain explicit, inspectable, and benchmarkable rather than hidden behind generic presets.
 
 ## Positioning
 
-Unlike chat-first local-model apps, GGUF Pilot treats runtime build capability, target/companion compatibility, exact command provenance, and measured profile performance as first-class product data.
+Unlike chat-first local-model apps, Localmotive treats runtime build capability, target/companion compatibility, exact command provenance, and measured profile performance as first-class product data.
 
 ## Operating Context
 

@@ -1,8 +1,8 @@
-# GGUF Pilot v0.3 implementation tracker
+# Localmotive v0.3 implementation tracker
 
 ## Purpose
 
-Use this file as the authoritative development tracker for GGUF Pilot v0.3.
+Use this file as the authoritative development tracker for Localmotive v0.3.
 
 Target version: `0.3.0`.
 
@@ -44,14 +44,14 @@ The selected runtime, exact model artifacts, hardware observations, launches, an
 
 - [x] Read `research/measuring/README.md` before `SYNTHESIS.md`.
 - [x] Record the eight synthesis phases in this tracker.
-- [x] Restrict Vitest discovery to GGUF Pilot tests under `src/`.
+- [x] Restrict Vitest discovery to Localmotive tests under `src/`.
 - [x] Add the v0.3 tracker workflow to `AGENTS.md`.
 - [x] Run the complete pre-change project baseline after tracker setup.
 - [ ] Preserve the existing `.gitignore` and `README.md` changes.
 
 Acceptance checks:
 
-- `npm test` discovers only GGUF Pilot tests.
+- `npm test` discovers only Localmotive tests.
 - `npm run check` passes.
 - `cargo fmt --check` passes.
 - `cargo clippy --all-targets -- -D warnings` passes.

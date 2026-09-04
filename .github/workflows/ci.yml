@@ -95,9 +95,9 @@ jobs:
         shell: pwsh
         run: |
           $version = (Get-Content package.json | ConvertFrom-Json).version
-          $portable = "src-tauri/target/release/gguf-pilot.exe"
-          $msi = "src-tauri/target/release/bundle/msi/GGUF Pilot_${version}_x64_en-US.msi"
-          $setup = "src-tauri/target/release/bundle/nsis/GGUF Pilot_${version}_x64-setup.exe"
+          $portable = "src-tauri/target/release/localmotive.exe"
+          $msi = "src-tauri/target/release/bundle/msi/Localmotive_${version}_x64_en-US.msi"
+          $setup = "src-tauri/target/release/bundle/nsis/Localmotive_${version}_x64-setup.exe"
           foreach ($path in @($portable, $msi, $setup)) {
             if (-not (Test-Path $path)) { throw "Missing packaged artifact: $path" }
             if ((Get-Item $path).Length -le 0) { throw "Empty packaged artifact: $path" }

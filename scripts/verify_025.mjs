@@ -1,7 +1,7 @@
 // Packaged 0.2.5 verification: catalog IPC, filters, secure token UI, download
 // input validation, desktop/mobile layout, and real release metadata.
 const PORT = process.argv[2] || '10014';
-const OUT = `${process.env.LOCALAPPDATA}\\Temp\\gguf-pilot-verify-025.json`;
+const OUT = `${process.env.LOCALAPPDATA}\\Temp\\localmotive-verify-025.json`;
 const fs = await import('node:fs');
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    gguf_pilot_lib::run()
+    localmotive_lib::run()
 }

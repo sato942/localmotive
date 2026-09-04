@@ -83,10 +83,24 @@ import { V03EvidencePanel } from "./V03EvidencePanel";
 
 type View = "dashboard" | "models" | "catalog" | "runtime" | "profile" | "tune" | "benchmark" | "about";
 
-const MODEL_ROOT = localStorage.getItem("gguf-pilot:model-root") ?? "";
-const RUNTIME = localStorage.getItem("gguf-pilot:runtime") ?? "";
-const CLOUD_PROVIDER = localStorage.getItem("gguf-pilot:cloud-provider") ?? "openrouter";
-const CLOUD_MODEL = localStorage.getItem("gguf-pilot:cloud-model") ?? "";
+const readRecord = (key: string): string | null => {
+  // Upgrades read records saved under the previous product prefix once.
+  // New writes use the current prefix; the old value stays for downgrade.
+  try {
+    const current = localStorage.getItem(`localmotive:${key}`);
+    if (current !== null) return current;
+    return localStorage.getItem(`gguf-pilot:${key}`);
+  } catch {
+    return null;
+  }
+};
+
+const readSetting = (key: string): string => readRecord(key) ?? "";
+
+const MODEL_ROOT = readSetting("model-root");
+const RUNTIME = readSetting("runtime");
+const CLOUD_PROVIDER = readSetting("cloud-provider") || "openrouter";
+const CLOUD_MODEL = readSetting("cloud-model");
 const inTauri = () => Boolean((window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
 const idleStatus: ServerStatus = {
   running: false,
@@ -213,7 +227,7 @@ function App() {
       const result = await invoke<LogicalModel[]>("scan_models", { root: modelRoot });
       setModels(result);
       setSelectedId(result[0]?.id ?? "");
-      localStorage.setItem("gguf-pilot:model-root", modelRoot);
+      localStorage.setItem("localmotive:model-root", modelRoot);
       setNotice(`${result.length} logical targets indexed from ${modelRoot}`);
     } catch (error) {
       if (!(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__) {
@@ -240,7 +254,7 @@ function App() {
       setRuntime(caps);
       setRuntimeIdentity(await invoke<RuntimeIdentity>("describe_runtime", { path }));
       setManagedRuntimes(await invoke<ManagedRuntimeRecord[]>("list_managed_runtimes"));
-      localStorage.setItem("gguf-pilot:runtime", path);
+      localStorage.setItem("localmotive:runtime", path);
       setNotice(`Runtime build ${caps.build} inspected; ${caps.specTypes.length} speculation modes exposed.`);
     } catch (error) {
       if (!inTauri()) {
@@ -269,7 +283,7 @@ function App() {
   /** Point the app at a different executable and inspect it in one step. */
   async function activateRuntime(path: string) {
     setRuntimePath(path);
-    localStorage.setItem("gguf-pilot:runtime", path);
+    localStorage.setItem("localmotive:runtime", path);
     if (profile) setProfile({ ...profile, runtime: path });
     await inspect(path);
   }
@@ -366,7 +380,7 @@ function App() {
             },
           ],
         });
-        setRuntimeRoot("%LOCALAPPDATA%\\GGUF Pilot\\runtimes");
+        setRuntimeRoot("%LOCALAPPDATA%\\Localmotive\\runtimes");
         setNotice("Browser preview: the packaged app detects local hardware and reads live GitHub releases.");
       } else {
         setNotice(String(error));
@@ -398,7 +412,7 @@ function App() {
     const selected = await openDialog({ directory: true, multiple: false, title: "Choose your GGUF model folder" });
     if (typeof selected === "string") {
       setModelRoot(selected);
-      localStorage.setItem("gguf-pilot:model-root", selected);
+      localStorage.setItem("localmotive:model-root", selected);
     }
   }
 
@@ -533,7 +547,7 @@ function App() {
           const modelsList = await invoke<CloudModel[]>("cloud_list_models", { provider: nextProvider });
           setCloudModels(modelsList);
           const fallback = list.find((entry) => entry.id === nextProvider)?.defaultModel ?? "";
-          const stored = localStorage.getItem(`gguf-pilot:cloud-model:${nextProvider}`);
+          const stored = readRecord(`cloud-model:${nextProvider}`);
           const chosen = stored && modelsList.some((m) => m.id === stored) ? stored : modelsList.some((m) => m.id === fallback) ? fallback : (modelsList[0]?.id ?? fallback);
           setCloudModel(chosen);
         } catch (error) {
@@ -557,7 +571,7 @@ function App() {
 
   async function switchProvider(next: string) {
     setProviderId(next);
-    localStorage.setItem("gguf-pilot:cloud-provider", next);
+    localStorage.setItem("localmotive:cloud-provider", next);
     setKeyDraft("");
     await loadCloud(next);
   }
@@ -594,7 +608,7 @@ function App() {
 
   async function openRouterLogin() {
     setBusy("oauth");
-    setNotice("Finish signing in to OpenRouter in your browser. GGUF Pilot is waiting on a local callback.");
+    setNotice("Finish signing in to OpenRouter in your browser. Localmotive is waiting on a local callback.");
     try {
       const status = await invoke<CredentialStatus>("cloud_openrouter_login");
       setCredential(status);
@@ -622,8 +636,8 @@ function App() {
 
   function chooseCloudModel(id: string) {
     setCloudModel(id);
-    localStorage.setItem("gguf-pilot:cloud-model", id);
-    localStorage.setItem(`gguf-pilot:cloud-model:${providerId}`, id);
+    localStorage.setItem("localmotive:cloud-model", id);
+    localStorage.setItem(`localmotive:cloud-model:${providerId}`, id);
   }
 
   // ---- AI tuning -------------------------------------------------------------
@@ -663,7 +677,7 @@ function App() {
         },
       });
       setTuneReport(report);
-      localStorage.setItem(`gguf-pilot:tuning:${selected.id}`, JSON.stringify(report));
+      localStorage.setItem(`localmotive:tuning:${selected.id}`, JSON.stringify(report));
       const gain = report.baselineTps && report.bestTps ? ((report.bestTps / report.baselineTps - 1) * 100).toFixed(1) : null;
       setNotice(gain ? `Tuning finished: best ${report.bestTps?.toFixed(2)} tok/s (${Number(gain) >= 0 ? "+" : ""}${gain}% vs baseline). ${report.stoppedReason}.` : `Tuning finished. ${report.stoppedReason}.`);
     } catch (error) {
@@ -687,13 +701,13 @@ function App() {
     if (!tuneReport || !selected) return;
     const adopted = { ...tuneReport.bestProfile, name: `${selected.name} / AI-tuned @${tuneContext.toLocaleString()}` };
     setProfile(adopted);
-    localStorage.setItem(`gguf-pilot:profile:${selected.id}`, JSON.stringify(adopted));
+    localStorage.setItem(`localmotive:profile:${selected.id}`, JSON.stringify(adopted));
     setNotice(`Adopted the best configuration as the saved profile for ${selected.name}.`);
     setView("profile");
   }
 
   function loadProfile(model: LogicalModel) {
-    const stored = localStorage.getItem(`gguf-pilot:profile:${model.id}`);
+    const stored = readRecord(`profile:${model.id}`);
     const next = stored
       ? normalizeProfile(JSON.parse(stored), model, runtimePath)
       : suggestedProfile(model, runtimePath);
@@ -720,7 +734,7 @@ function App() {
 
   function saveProfile() {
     if (!profile || !selected) return;
-    localStorage.setItem(`gguf-pilot:profile:${selected.id}`, JSON.stringify(profile));
+    localStorage.setItem(`localmotive:profile:${selected.id}`, JSON.stringify(profile));
     setNotice(`Saved ${profile.name}`);
   }
 
@@ -776,7 +790,7 @@ function App() {
         repeats,
       });
       setBenchmark(result);
-      localStorage.setItem(`gguf-pilot:benchmark:${status.alias}`, JSON.stringify(result));
+      localStorage.setItem(`localmotive:benchmark:${status.alias}`, JSON.stringify(result));
       setNotice(`Benchmark complete: ${result.meanTps.toFixed(2)} generation tok/s mean.`);
     } catch (error) {
       setNotice(String(error));
@@ -827,7 +841,7 @@ function App() {
     loadRuntimeSetup();
     loadCloud();
     invoke<AboutInfo>("about_info").then(setAbout).catch(() => {
-      setAbout({ name: "GGUF Pilot", version: "0.2.4", tauriVersion: "2", identifier: "io.github.ggufpilot.app", os: "windows x86_64", runtimeRoot: "", logDir: "", repository: "https://github.com/sato942/gguf-pilot", license: "MIT" });
+      setAbout({ name: "Localmotive", version: "0.2.4", tauriVersion: "2", identifier: "io.github.localmotive.app", os: "windows x86_64", runtimeRoot: "", logDir: "", repository: "https://github.com/sato942/localmotive", license: "MIT" });
     });
     if (modelRoot) scan();
     if (runtimePath) inspect();
@@ -840,7 +854,7 @@ function App() {
   useEffect(() => {
     loadGguf(selected);
     if (selected) {
-      const stored = localStorage.getItem(`gguf-pilot:tuning:${selected.id}`);
+      const stored = readRecord(`tuning:${selected.id}`);
       setTuneReport(stored ? (JSON.parse(stored) as TuningReport) : null);
       setTuneLive([]);
     }
@@ -910,8 +924,8 @@ function App() {
   return (
     <div className="app-shell">
       <aside className="rail">
-        <div className="brand-mark" aria-label="GGUF Pilot">
-          <span>GP</span>
+        <div className="brand-mark" aria-label="Localmotive">
+          <span>LM</span>
         </div>
         <nav aria-label="Primary">
           {nav.map(({ id, label, icon: Icon }) => (
@@ -935,7 +949,7 @@ function App() {
       <main className="workspace">
         <header className="topbar">
           <div>
-            <p className="product-name">GGUF PILOT</p>
+            <p className="product-name">LOCALMOTIVE</p>
             <p className="product-sub">Local inference control plane</p>
           </div>
           <div className="runtime-plate">
@@ -1180,11 +1194,11 @@ function App() {
                   <button className="text-link" onClick={() => openUrl("https://huggingface.co/settings/tokens")}>Create a read token on Hugging Face ↗</button>
                 </div>
                 <dl className="runtime-facts catalog-transfer-facts">
-                  <div><dt>Data route</dt><dd>Hugging Face → this PC. GGUF Pilot never proxies model bytes.</dd></div>
+                  <div><dt>Data route</dt><dd>Hugging Face → this PC. Localmotive never proxies model bytes.</dd></div>
                   <div><dt>Resume</dt><dd>Per-chunk progress survives interruption in .part metadata.</dd></div>
                   <div><dt>Parallelism</dt><dd>Four ranged HTTPS connections; one when the CDN does not support ranges.</dd></div>
                   <div><dt>Integrity</dt><dd>Final size always checked; SHA-256 verified when Hugging Face publishes it as the object ETag.</dd></div>
-                  <div><dt>Secret storage</dt><dd>Windows Credential Manager service “GGUF Pilot HF”; never local storage or logs.</dd></div>
+                  <div><dt>Secret storage</dt><dd>Windows Credential Manager service “Localmotive HF”; never local storage or logs.</dd></div>
                 </dl>
               </aside>
             </div>
@@ -1279,7 +1293,7 @@ function App() {
                         <small>{option.compatibility}</small>
                         <code>{option.asset.name}</code>
                         <small className="runtime-provenance"><ShieldCheck size={12} /> Official ggml-org asset · {runtimeCatalog.tag} · {option.asset.digest ? "digest available" : "size metadata available"}</small>
-                        <details className="asset-proof"><summary>Artifact verification</summary><code>{option.asset.digest ?? "No digest published for this asset"}</code><span>GGUF Pilot verifies published size and SHA-256 before extraction. GitHub release metadata does not provide a Windows code-signing result.</span></details>
+                        <details className="asset-proof"><summary>Artifact verification</summary><code>{option.asset.digest ?? "No digest published for this asset"}</code><span>Localmotive verifies published size and SHA-256 before extraction. GitHub release metadata does not provide a Windows code-signing result.</span></details>
                       </div>
                       <div className="runtime-option-action">
                         <span>{bytesLabel(option.asset.size + (option.companionAsset?.size ?? 0))}</span>
@@ -1608,7 +1622,7 @@ function App() {
                         <input type="password" autoComplete="off" spellCheck={false} value={keyDraft} onChange={(e) => setKeyDraft(e.target.value)} placeholder={provider ? `${provider.keyPrefixHint}…` : ""} aria-label="API key" />
                         <button className="button secondary" onClick={saveKey} disabled={!keyDraft.trim() || busy === "cloud"}><Save size={15} /> Store</button>
                       </div>
-                      <small className="field-help">Stored under “GGUF Pilot” in Windows Credential Manager, not in this app’s settings. {provider && <button className="text-link" onClick={() => openUrl(provider.consoleUrl)}>Get a key from {provider.label} →</button>}</small>
+                      <small className="field-help">Stored under “Localmotive” in Windows Credential Manager, not in this app’s settings. {provider && <button className="text-link" onClick={() => openUrl(provider.consoleUrl)}>Get a key from {provider.label} →</button>}</small>
                     </label>
                     {credential?.configured && (
                       <>
@@ -1710,15 +1724,15 @@ function App() {
                 <p>What this build is, where it keeps things, and what it is made of.</p>
               </div>
               <div className="actions">
-                <button className="button secondary" onClick={() => openUrl(about?.repository ?? "https://github.com/sato942/gguf-pilot")}><Link2 size={15} /> Project on GitHub</button>
+                <button className="button secondary" onClick={() => openUrl(about?.repository ?? "https://github.com/sato942/localmotive")}><Link2 size={15} /> Project on GitHub</button>
               </div>
             </div>
 
             <div className="about-layout">
               <article className="machine-panel about-identity">
-                <div className="about-mark">GP</div>
+                <div className="about-mark">LM</div>
                 <div>
-                  <strong>{about?.name ?? "GGUF Pilot"}</strong>
+                  <strong>{about?.name ?? "Localmotive"}</strong>
                   <span>Version {about?.version ?? "—"}</span>
                   <p>A Windows control plane for local GGUF inference: it manages official llama.cpp runtimes, discovers models, builds exact launch profiles, supervises the server, measures throughput, and tunes settings with a cloud advisor.</p>
                 </div>
@@ -1751,7 +1765,7 @@ function App() {
                   <div><dt>Model folder</dt><dd>{modelRoot || "Not selected"}</dd></div>
                   <div><dt>Managed runtimes</dt><dd>{about?.runtimeRoot || "—"}</dd></div>
                   <div><dt>Server logs</dt><dd>{about?.logDir || "—"}</dd></div>
-                  <div><dt>Cloud keys</dt><dd>Windows Credential Manager, service “GGUF Pilot” — never in settings or logs</dd></div>
+                  <div><dt>Cloud keys</dt><dd>Windows Credential Manager, service “Localmotive” — never in settings or logs</dd></div>
                   <div><dt>Settings</dt><dd>Browser local storage in this app (model folder, runtime, profiles, tuning reports)</dd></div>
                 </dl>
               </article>
@@ -1764,7 +1778,7 @@ function App() {
                   <button className="credit" onClick={() => openUrl("https://react.dev")}><strong>React + TypeScript + Vite</strong><span>MIT — interface</span></button>
                   <button className="credit" onClick={() => openUrl("https://lucide.dev")}><strong>Lucide</strong><span>ISC — icons</span></button>
                 </div>
-                <p className="group-note about-note">GGUF Pilot is not affiliated with ggml-org. Runtime binaries are downloaded directly from official llama.cpp GitHub releases and verified against their published size and SHA-256 before use.</p>
+                <p className="group-note about-note">Localmotive is not affiliated with ggml-org. Runtime binaries are downloaded directly from official llama.cpp GitHub releases and verified against their published size and SHA-256 before use.</p>
               </article>
             </div>
           </section>

@@ -583,7 +583,7 @@ mod tests {
     #[test]
     fn streams_sha256_without_loading_the_artifact() {
         let directory =
-            std::env::temp_dir().join(format!("gguf-pilot-artifact-hash-{}", std::process::id()));
+            std::env::temp_dir().join(format!("localmotive-artifact-hash-{}", std::process::id()));
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory).unwrap();
         let path = directory.join("fixture.gguf");
@@ -601,7 +601,7 @@ mod tests {
     #[test]
     fn inspects_a_complete_split_artifact_with_exact_file_facts() {
         let directory = std::env::temp_dir().join(format!(
-            "gguf-pilot-artifact-inspect-{}",
+            "localmotive-artifact-inspect-{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&directory);
@@ -636,7 +636,7 @@ mod tests {
     #[test]
     fn logical_identity_is_stable_when_full_hashes_are_requested() {
         let directory = std::env::temp_dir().join(format!(
-            "gguf-pilot-artifact-identity-mode-{}",
+            "localmotive-artifact-identity-mode-{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&directory);
@@ -661,7 +661,7 @@ mod tests {
     #[test]
     fn rejects_conflicting_required_headers_across_shards() {
         let directory = std::env::temp_dir().join(format!(
-            "gguf-pilot-artifact-conflict-{}",
+            "localmotive-artifact-conflict-{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&directory);
@@ -685,7 +685,7 @@ mod tests {
     #[test]
     fn keeps_companion_file_facts_and_bytes_separate() {
         let directory = std::env::temp_dir().join(format!(
-            "gguf-pilot-artifact-companion-{}",
+            "localmotive-artifact-companion-{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&directory);
@@ -712,7 +712,7 @@ mod tests {
     #[test]
     fn reports_an_unreadable_shard_header_without_claiming_completeness() {
         let directory = std::env::temp_dir().join(format!(
-            "gguf-pilot-artifact-unreadable-{}",
+            "localmotive-artifact-unreadable-{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&directory);

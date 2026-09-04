@@ -1,5 +1,5 @@
 ---
-name: GGUF Pilot
+name: Localmotive
 description: A machine-room control cabinet for local GGUF inference — matte graphite panels, engraved plates, and instrument-grade readouts.
 colors:
   primary: "#9edc72"
@@ -311,13 +311,13 @@ components:
     padding: "8px 10px"
 ---
 
-# Design System: GGUF Pilot
+# Design System: Localmotive
 
 ## Overview
 
 **Creative North Star: "The Machine-Room Control Cabinet"**
 
-GGUF Pilot looks like the front face of a rack-mounted control cabinet in a machine room: matte graphite steel, engraved label plates, hard-edged panels butted against each other with a single hairline of separation, and a small number of lamps that mean exactly one thing each. The interface is a physical instrument for a physical job — a 30 GB model is about to occupy real memory on real silicon, and the screen should feel as consequential as that.
+Localmotive looks like the front face of a rack-mounted control cabinet in a machine room: matte graphite steel, engraved label plates, hard-edged panels butted against each other with a single hairline of separation, and a small number of lamps that mean exactly one thing each. The interface is a physical instrument for a physical job — a 30 GB model is about to occupy real memory on real silicon, and the screen should feel as consequential as that.
 
 Density is a feature, not a compromise. Values live next to the controls that produce them, exact commands are shown rather than summarized, and every number is set in tabular figures so a column of measurements reads as a column. The palette is nearly monochrome so that the three signal colors — green, amber, red — carry real information instead of decoration. Nothing floats: depth comes from tonal steps between regions (`#171a1b` workbench → `#1d2122` rail → `#222627` panel → `#292e2f` raised header), never from drop shadows.
 
@@ -446,7 +446,7 @@ Disclosure uses typographic markers, not chevrons: `+` when closed, `−` when o
 
 ### Named Rules
 
-**The Zero-Radius Rule.** No radius on anything rectangular, including inputs and selects. The only round things in GGUF Pilot are indicator lamps.
+**The Zero-Radius Rule.** No radius on anything rectangular, including inputs and selects. The only round things in Localmotive are indicator lamps.
 
 **The Border-Is-Structure Rule.** Separation is always a 1 px line in `line` or `line-soft`. Gaps alone never imply a boundary, and a boundary is never implied by a shadow.
 

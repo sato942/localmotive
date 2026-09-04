@@ -1,6 +1,6 @@
 # Curated Hugging Face catalog
 
-`catalog.json` is the public manifest consumed by GGUF Pilot's **HF Catalog**
+`catalog.json` is the public manifest consumed by Localmotive's **HF Catalog**
 tab. It controls which GGUF builds appear; model files are always downloaded
 directly from Hugging Face.
 

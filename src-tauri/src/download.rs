@@ -478,7 +478,7 @@ fn client(token: Option<&str>) -> Result<reqwest::blocking::Client, String> {
         headers.insert(reqwest::header::AUTHORIZATION, value);
     }
     reqwest::blocking::Client::builder()
-        .user_agent(format!("GGUF-Pilot/{}", env!("CARGO_PKG_VERSION")))
+        .user_agent(format!("Localmotive/{}", env!("CARGO_PKG_VERSION")))
         .default_headers(headers)
         .connect_timeout(Duration::from_secs(20))
         .timeout(None)
@@ -994,7 +994,8 @@ mod tests {
 
     #[test]
     fn an_open_download_directory_cannot_be_redirected_by_path_replacement() {
-        let root = std::env::temp_dir().join(format!("gguf-pilot-dir-race-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("localmotive-dir-race-{}", std::process::id()));
         let moved = root.with_extension("moved");
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&moved);
@@ -1024,7 +1025,7 @@ mod tests {
     #[test]
     fn an_open_directory_handle_must_match_the_validated_path() {
         let root =
-            std::env::temp_dir().join(format!("gguf-pilot-dir-identity-{}", std::process::id()));
+            std::env::temp_dir().join(format!("localmotive-dir-identity-{}", std::process::id()));
         let other = root.with_extension("other");
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&other);
@@ -1255,7 +1256,7 @@ mod tests {
 
     #[test]
     fn existing_files_are_reused_only_when_remote_identity_matches() {
-        let dir = std::env::temp_dir().join(format!("gguf-pilot-existing-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("localmotive-existing-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("model.gguf");
         std::fs::write(&path, b"abc").unwrap();
@@ -1269,7 +1270,7 @@ mod tests {
 
     #[test]
     fn sha256_matches_a_known_digest() {
-        let dir = std::env::temp_dir().join(format!("gguf-pilot-sha-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("localmotive-sha-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("f.bin");
         std::fs::write(&path, b"abc").unwrap();
@@ -1288,7 +1289,7 @@ mod tests {
 
     #[test]
     fn resume_state_survives_a_round_trip_through_disk() {
-        let dir = std::env::temp_dir().join(format!("gguf-pilot-rs-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("localmotive-rs-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let target = dir.join("model.gguf");
         assert!(load_resume_state(&target).is_none(), "nothing saved yet");
@@ -1390,7 +1391,7 @@ mod tests {
             }
         });
 
-        let dir = std::env::temp_dir().join(format!("gguf-pilot-dl-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("localmotive-dl-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let target = dir.join("model.gguf");
@@ -1436,7 +1437,7 @@ mod tests {
     /// rather than starting over — the whole point for multi-gigabyte models.
     #[test]
     fn an_interrupted_download_resumes_from_existing_bytes() {
-        let dir = std::env::temp_dir().join(format!("gguf-pilot-rsm-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("localmotive-rsm-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let target = dir.join("model.gguf");

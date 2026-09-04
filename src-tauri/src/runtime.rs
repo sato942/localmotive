@@ -804,7 +804,23 @@ pub fn list_managed_runtimes_in(root: &Path) -> Vec<ManagedRuntimeRecord> {
 }
 
 pub fn list_managed_runtimes() -> Result<Vec<ManagedRuntimeRecord>, String> {
-    Ok(list_managed_runtimes_in(&managed_runtime_root()?))
+    let primary = runtime_data_dir("Localmotive");
+    let legacy = runtime_data_dir("GGUF Pilot");
+    let mut records = list_managed_runtimes_in(&primary);
+    // Keep legacy installs visible and selectable until a new runtime arrives.
+    for record in list_managed_runtimes_in(&legacy) {
+        if !records.iter().any(|existing| {
+            existing.tag == record.tag && existing.install_key == record.install_key
+        }) {
+            records.push(record);
+        }
+    }
+    records.sort_by(|a, b| {
+        tag_build(&b.tag)
+            .cmp(&tag_build(&a.tag))
+            .then_with(|| a.install_key.cmp(&b.install_key))
+    });
+    Ok(records)
 }
 
 fn architecture() -> String {
@@ -1179,15 +1195,35 @@ pub fn managed_runtime_relative_path(tag: &str, backend: &str) -> PathBuf {
 }
 
 pub fn managed_runtime_root() -> Result<PathBuf, String> {
-    let base = std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::current_exe()
-                .ok()
-                .and_then(|path| path.parent().map(Path::to_path_buf))
-        })
-        .ok_or_else(|| "Unable to resolve an application data directory".to_string())?;
-    Ok(base.join("GGUF Pilot").join("runtimes"))
+    managed_runtime_root_in(
+        &runtime_data_dir("Localmotive"),
+        &runtime_data_dir("GGUF Pilot"),
+    )
+}
+
+/// Previous product directory. Upgrades fall back to it when the new
+/// directory has no records, so existing installs keep working.
+fn runtime_data_dir(product: &str) -> PathBuf {
+    if let Some(base) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
+        return base.join(product).join("runtimes");
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            return parent.join(product).join("runtimes");
+        }
+    }
+    PathBuf::from(product).join("runtimes")
+}
+
+fn managed_runtime_root_in(primary: &Path, legacy: &Path) -> Result<PathBuf, String> {
+    if list_managed_runtimes_in(primary).is_empty() && !list_managed_runtimes_in(legacy).is_empty()
+    {
+        return Ok(legacy.to_path_buf());
+    }
+    if primary.exists() || !legacy.exists() {
+        return Ok(primary.to_path_buf());
+    }
+    Ok(legacy.to_path_buf())
 }
 
 fn github_client() -> Result<reqwest::blocking::Client, String> {
@@ -1197,7 +1233,7 @@ fn github_client() -> Result<reqwest::blocking::Client, String> {
         reqwest::header::HeaderValue::from_static("application/vnd.github+json"),
     );
     reqwest::blocking::Client::builder()
-        .user_agent(format!("GGUF-Pilot/{}", env!("CARGO_PKG_VERSION")))
+        .user_agent(format!("Localmotive/{}", env!("CARGO_PKG_VERSION")))
         .default_headers(headers)
         .connect_timeout(Duration::from_secs(20))
         .timeout(Duration::from_secs(900))
@@ -1786,6 +1822,43 @@ mod tests {
     }
 
     #[test]
+    fn managed_runtime_root_prefers_the_new_directory_but_keeps_legacy_installs() {
+        let base = std::env::temp_dir().join(format!(
+            "localmotive-root-select-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let primary = base.join("Localmotive").join("runtimes");
+        let legacy = base.join("GGUF Pilot").join("runtimes");
+        // No records anywhere: callers install into the new directory.
+        assert_eq!(managed_runtime_root_in(&primary, &legacy).unwrap(), primary);
+        // Legacy-only installs keep working until a new runtime arrives.
+        let legacy_install = legacy.join("b10000").join("cpu");
+        std::fs::create_dir_all(&legacy_install).unwrap();
+        std::fs::write(
+            legacy_install.join("runtime.json"),
+            r#"{"tag":"b10000","backend":"cpu","runtime":"llama-server.exe"}"#,
+        )
+        .unwrap();
+        std::fs::write(legacy_install.join("llama-server.exe"), b"x").unwrap();
+        assert_eq!(managed_runtime_root_in(&primary, &legacy).unwrap(), legacy);
+        // A new install wins once both directories hold records.
+        let primary_install = primary.join("b10000").join("cpu");
+        std::fs::create_dir_all(&primary_install).unwrap();
+        std::fs::write(
+            primary_install.join("runtime.json"),
+            r#"{"tag":"b10000","backend":"cpu","runtime":"llama-server.exe"}"#,
+        )
+        .unwrap();
+        std::fs::write(primary_install.join("llama-server.exe"), b"x").unwrap();
+        assert_eq!(managed_runtime_root_in(&primary, &legacy).unwrap(), primary);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
     fn managed_runtime_relative_path_is_versioned_and_sanitized() {
         let path = managed_runtime_relative_path("b10736/../../bad", "cuda 13.3");
         assert_eq!(path.to_string_lossy(), "b10736_.._.._bad\\cuda_13.3");
@@ -1811,7 +1884,7 @@ mod tests {
     }
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("gguf-pilot-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("localmotive-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir

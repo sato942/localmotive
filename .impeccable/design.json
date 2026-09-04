@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "generatedAt": "2026-09-02T00:00:00Z",
-  "title": "Design System: GGUF Pilot",
+  "title": "Design System: Localmotive",
   "extensions": {
     "colorMeta": {
       "primary": {
@@ -317,7 +317,7 @@
   ],
   "narrative": {
     "northStar": "The Machine-Room Control Cabinet",
-    "overview": "GGUF Pilot looks like the front face of a rack-mounted control cabinet in a machine room: matte graphite steel, engraved label plates, hard-edged panels butted against each other with a single hairline of separation, and a small number of lamps that mean exactly one thing each. The interface is a physical instrument for a physical job — a 30 GB model is about to occupy real memory on real silicon, and the screen should feel as consequential as that.\n\nDensity is a feature, not a compromise. Values live next to the controls that produce them, exact commands are shown rather than summarized, and every number is set in tabular figures so a column of measurements reads as a column. The palette is nearly monochrome so that the three signal colors — green, amber, red — carry real information instead of decoration. Nothing floats: depth comes from tonal steps between regions (#171a1b workbench to #1d2122 rail to #222627 panel to #292e2f raised header), never from drop shadows.\n\nTwo worlds are explicitly rejected. It is not a rounded-card SaaS dashboard: no pill buttons, no soft shadows, no pastel status chips, no 24 px radii. It is also not a decorative sci-fi terminal: no scanlines, no glow text, no ambient animation, no fictional telemetry. Every lamp, plate, and readout corresponds to a fact the control plane actually knows.",
+    "overview": "Localmotive looks like the front face of a rack-mounted control cabinet in a machine room: matte graphite steel, engraved label plates, hard-edged panels butted against each other with a single hairline of separation, and a small number of lamps that mean exactly one thing each. The interface is a physical instrument for a physical job — a 30 GB model is about to occupy real memory on real silicon, and the screen should feel as consequential as that.\n\nDensity is a feature, not a compromise. Values live next to the controls that produce them, exact commands are shown rather than summarized, and every number is set in tabular figures so a column of measurements reads as a column. The palette is nearly monochrome so that the three signal colors — green, amber, red — carry real information instead of decoration. Nothing floats: depth comes from tonal steps between regions (#171a1b workbench to #1d2122 rail to #222627 panel to #292e2f raised header), never from drop shadows.\n\nTwo worlds are explicitly rejected. It is not a rounded-card SaaS dashboard: no pill buttons, no soft shadows, no pastel status chips, no 24 px radii. It is also not a decorative sci-fi terminal: no scanlines, no glow text, no ambient animation, no fictional telemetry. Every lamp, plate, and readout corresponds to a fact the control plane actually knows.",
     "keyCharacteristics": [
       "Zero border radius on every rectangular surface; corners are cut, not eased.",
       "Condensed uppercase (Bahnschrift Condensed) for structure and measurement; Public Sans for prose; Consolas for paths, commands, and logs.",
@@ -383,7 +383,7 @@
       },
       {
         "name": "The Zero-Radius Rule",
-        "body": "No radius on anything rectangular, including inputs and selects. The only round things in GGUF Pilot are indicator lamps.",
+        "body": "No radius on anything rectangular, including inputs and selects. The only round things in Localmotive are indicator lamps.",
         "section": "shapes"
       },
       {

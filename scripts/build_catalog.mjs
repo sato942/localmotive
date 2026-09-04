@@ -18,7 +18,7 @@ const WANTED = [
 ];
 
 const api = async (url) => {
-  const r = await fetch(url, { headers: { 'User-Agent': 'gguf-pilot-catalog-builder' } });
+  const r = await fetch(url, { headers: { 'User-Agent': 'localmotive-catalog-builder' } });
   if (!r.ok) throw new Error(`${r.status} ${url}`);
   return r.json();
 };
@@ -70,8 +70,8 @@ for (const want of WANTED) {
 const catalog = {
   schemaVersion: 1,
   updated: new Date().toISOString().slice(0, 10),
-  source: 'https://github.com/sato942/gguf-pilot/blob/main/catalog/catalog.json',
-  note: 'Curated list of GGUF builds. GGUF Pilot downloads directly from Hugging Face; this file only decides what is offered.',
+  source: 'https://github.com/sato942/localmotive/blob/main/catalog/catalog.json',
+  note: 'Curated list of GGUF builds. Localmotive downloads directly from Hugging Face; this file only decides what is offered.',
   models: entries.sort((a, b) => b.downloads - a.downloads),
 };
 const rendered = JSON.stringify(catalog, null, 2) + '\n';
@@ -81,9 +81,9 @@ if (problems.length) {
   console.error('UNRESOLVED (catalog not replaced):\n  ' + problems.join('\n  '));
   process.exitCode = 1;
 } else if (process.argv.includes('--write')) {
-  const signingKey = process.env.GGUF_PILOT_CATALOG_SIGNING_KEY_PEM;
+  const signingKey = process.env.LOCALMOTIVE_CATALOG_SIGNING_KEY_PEM;
   if (!signingKey) {
-    console.error('GGUF_PILOT_CATALOG_SIGNING_KEY_PEM is required to publish the catalog');
+    console.error('LOCALMOTIVE_CATALOG_SIGNING_KEY_PEM is required to publish the catalog');
     process.exitCode = 1;
     process.exit();
   }

@@ -2,7 +2,7 @@
 /dist
 /src-tauri/target
 node_modules
-/gguf-pilot.exe
+/localmotive.exe
 
 # Python bytecode from the verification scripts
 __pycache__/

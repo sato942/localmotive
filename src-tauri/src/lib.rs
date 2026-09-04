@@ -481,7 +481,7 @@ fn spawn_server(
     let validation = prepare_launch(profile)
         .map_err(|message| launch_failure("validation", message, "", None, false))?;
 
-    let log_dir = std::env::temp_dir().join("gguf-pilot");
+    let log_dir = std::env::temp_dir().join("localmotive");
     fs::create_dir_all(&log_dir).map_err(|error| {
         launch_failure(
             "log_setup",
@@ -1221,7 +1221,7 @@ fn preflight_model(request: PreflightRequest) -> Result<PreflightResult, String>
             }
         }
         evidence::ExecutionPath::MultiGpu => unknown_memory(
-            "Per-device placement is required; GGUF Pilot does not aggregate adapter memory.",
+            "Per-device placement is required; Localmotive does not aggregate adapter memory.",
             observed_at_ms,
         ),
         _ => unknown_memory(
@@ -1430,7 +1430,7 @@ fn validated_server_snapshot(
     let status = status_from(slot);
     if !status.running {
         return Err(format!(
-            "Start and validate a GGUF Pilot server before {action}"
+            "Start and validate a Localmotive server before {action}"
         ));
     }
     if status.result_class != evidence::FitClass::LaunchValidated {
@@ -2433,7 +2433,7 @@ fn catalog_cache_root(app: &tauri::AppHandle) -> std::path::PathBuf {
     use tauri::Manager;
     app.path()
         .app_cache_dir()
-        .unwrap_or_else(|_| std::env::temp_dir().join("gguf-pilot"))
+        .unwrap_or_else(|_| std::env::temp_dir().join("localmotive"))
 }
 
 #[tauri::command]
@@ -2717,7 +2717,7 @@ fn about_info(app: tauri::AppHandle) -> AboutInfo {
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default(),
         log_dir: std::env::temp_dir()
-            .join("gguf-pilot")
+            .join("localmotive")
             .to_string_lossy()
             .to_string(),
         repository: env!("CARGO_PKG_REPOSITORY").to_string(),
@@ -2802,7 +2802,7 @@ pub fn run() {
             download_eta,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running GGUF Pilot");
+        .expect("error while running Localmotive");
 }
 
 #[cfg(test)]
@@ -3136,7 +3136,7 @@ mod release_security_tests {
         let port = listener.local_addr().unwrap().port();
         drop(listener);
         let log_path = std::env::temp_dir().join(format!(
-            "gguf-pilot-health-timeout-{}.log",
+            "localmotive-health-timeout-{}.log",
             std::process::id()
         ));
         std::fs::write(&log_path, "initial line\nuseful timeout detail\n").unwrap();
@@ -3175,7 +3175,7 @@ mod release_security_tests {
         let port = listener.local_addr().unwrap().port();
         drop(listener);
         let log_path = std::env::temp_dir().join(format!(
-            "gguf-pilot-health-cancelled-{}.log",
+            "localmotive-health-cancelled-{}.log",
             std::process::id()
         ));
         std::fs::write(&log_path, "cancelled health detail\n").unwrap();
@@ -3216,8 +3216,10 @@ mod release_security_tests {
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
         drop(listener);
-        let log_path =
-            std::env::temp_dir().join(format!("gguf-pilot-health-exit-{}.log", std::process::id()));
+        let log_path = std::env::temp_dir().join(format!(
+            "localmotive-health-exit-{}.log",
+            std::process::id()
+        ));
         std::fs::write(&log_path, "useful exit detail\n").unwrap();
         let mut child = crate::proc::hidden_command("cmd")
             .args(["/C", "exit", "7"])
@@ -3249,7 +3251,7 @@ mod release_security_tests {
     #[test]
     fn post_health_exit_evidence_preserves_status_with_a_byte_bounded_tail() {
         let log_path = std::env::temp_dir().join(format!(
-            "gguf-pilot-runtime-exit-{}.log",
+            "localmotive-runtime-exit-{}.log",
             std::process::id()
         ));
         let mut log = vec![b'x'; 32 * 1024];
@@ -3384,7 +3386,7 @@ mod release_security_tests {
         // Folder creation before reparse-point validation could change an
         // attacker-controlled location. The picker supplies an existing folder.
         let root = std::env::temp_dir().join(format!(
-            "gguf-pilot-missing-download-root-{}",
+            "localmotive-missing-download-root-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&root);
@@ -3396,7 +3398,7 @@ mod release_security_tests {
     #[test]
     fn launch_validation_rejects_an_invalid_model_artifact() {
         let path = std::env::temp_dir().join(format!(
-            "gguf-pilot-invalid-launch-artifact-{}.gguf",
+            "localmotive-invalid-launch-artifact-{}.gguf",
             std::process::id()
         ));
         std::fs::write(&path, b"not a GGUF file").unwrap();
@@ -3410,7 +3412,7 @@ mod release_security_tests {
     #[test]
     fn profile_artifact_validation_uses_the_main_model_gate() {
         let path = std::env::temp_dir().join(format!(
-            "gguf-pilot-invalid-profile-artifact-{}.gguf",
+            "localmotive-invalid-profile-artifact-{}.gguf",
             std::process::id()
         ));
         std::fs::write(&path, b"not a GGUF file").unwrap();
@@ -3428,7 +3430,7 @@ mod release_security_tests {
     #[test]
     fn shared_launch_path_validation_checks_lora_files() {
         let root =
-            std::env::temp_dir().join(format!("gguf-pilot-missing-lora-{}", std::process::id()));
+            std::env::temp_dir().join(format!("localmotive-missing-lora-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let model = root.join("fixture.gguf");
@@ -3452,7 +3454,7 @@ mod release_security_tests {
     #[test]
     fn launch_artifact_validation_includes_lora_identity_and_bytes() {
         let root =
-            std::env::temp_dir().join(format!("gguf-pilot-lora-artifact-{}", std::process::id()));
+            std::env::temp_dir().join(format!("localmotive-lora-artifact-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let model = root.join("model.gguf");
@@ -3480,7 +3482,7 @@ mod release_security_tests {
     #[test]
     fn launch_artifact_validation_rejects_a_model_in_the_lora_slot() {
         let root =
-            std::env::temp_dir().join(format!("gguf-pilot-lora-role-{}", std::process::id()));
+            std::env::temp_dir().join(format!("localmotive-lora-role-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let model = root.join("model.gguf");
@@ -3502,7 +3504,7 @@ mod release_security_tests {
     #[test]
     fn launch_artifact_validation_rejects_a_text_model_as_projector() {
         let root =
-            std::env::temp_dir().join(format!("gguf-pilot-projector-role-{}", std::process::id()));
+            std::env::temp_dir().join(format!("localmotive-projector-role-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let model = root.join("model.gguf");
@@ -3523,8 +3525,10 @@ mod release_security_tests {
 
     #[test]
     fn launch_artifact_validation_accepts_a_clip_projector_role() {
-        let root =
-            std::env::temp_dir().join(format!("gguf-pilot-projector-valid-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "localmotive-projector-valid-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let model = root.join("model.gguf");
@@ -3546,7 +3550,7 @@ mod release_security_tests {
     #[test]
     fn launch_artifact_validation_rejects_a_projector_embedding_mismatch() {
         let root = std::env::temp_dir().join(format!(
-            "gguf-pilot-projector-dimension-{}",
+            "localmotive-projector-dimension-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&root);
@@ -3595,7 +3599,7 @@ mod release_security_tests {
     #[test]
     fn launch_artifact_validation_rejects_conflicting_draft_tokenizer_identity() {
         let root =
-            std::env::temp_dir().join(format!("gguf-pilot-draft-identity-{}", std::process::id()));
+            std::env::temp_dir().join(format!("localmotive-draft-identity-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let model = root.join("model.gguf");
@@ -3642,7 +3646,7 @@ mod release_security_tests {
     #[test]
     fn scaled_lora_validation_preserves_the_windows_drive_prefix() {
         let root =
-            std::env::temp_dir().join(format!("gguf-pilot-scaled-lora-{}", std::process::id()));
+            std::env::temp_dir().join(format!("localmotive-scaled-lora-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let lora = root.join("adapter with spaces.gguf");
@@ -3668,7 +3672,7 @@ mod release_security_tests {
     #[test]
     fn shared_launch_validation_rejects_an_invalid_artifact_before_spawn() {
         let path = std::env::temp_dir().join(format!(
-            "gguf-pilot-invalid-shared-{}.gguf",
+            "localmotive-invalid-shared-{}.gguf",
             std::process::id()
         ));
         std::fs::write(&path, b"not a GGUF").unwrap();
@@ -3691,7 +3695,7 @@ mod release_security_tests {
     #[test]
     fn preflight_command_rejects_an_invalid_artifact() {
         let path = std::env::temp_dir().join(format!(
-            "gguf-pilot-invalid-preflight-{}.gguf",
+            "localmotive-invalid-preflight-{}.gguf",
             std::process::id()
         ));
         std::fs::write(&path, b"not a GGUF").unwrap();
@@ -3723,8 +3727,8 @@ mod release_security_tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("gguf-pilot-launch-root-{nonce}"));
-        let outside = std::env::temp_dir().join(format!("gguf-pilot-launch-outside-{nonce}"));
+        let root = std::env::temp_dir().join(format!("localmotive-launch-root-{nonce}"));
+        let outside = std::env::temp_dir().join(format!("localmotive-launch-outside-{nonce}"));
         std::fs::create_dir_all(&root).unwrap();
         std::fs::create_dir_all(&outside).unwrap();
         std::fs::write(outside.join("llama-server.exe"), b"outside").unwrap();
@@ -3753,7 +3757,7 @@ mod release_security_tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("gguf-pilot-prepare-root-{nonce}"));
+        let root = std::env::temp_dir().join(format!("localmotive-prepare-root-{nonce}"));
         std::fs::create_dir_all(&root).unwrap();
         let model = root.join("fixture.gguf");
         write_test_gguf(&model);

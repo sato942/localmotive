@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Instructions for AI agents working on GGUF Pilot. Read this before touching the
+Instructions for AI agents working on Localmotive. Read this before touching the
 repository. It describes what the project is, how to change it safely, and the
 rules that keep releases from shipping bugs.
 
@@ -10,7 +10,7 @@ Human contributors: everything here applies to you too.
 
 ## 1. What this project is
 
-GGUF Pilot is a Windows desktop control plane for local GGUF inference. It does
+Localmotive is a Windows desktop control plane for local GGUF inference. It does
 five jobs, and nothing else:
 
 1. **Runtime management** — download official `llama.cpp` Windows builds from
@@ -109,7 +109,7 @@ omit the row. This application's entire value is that its numbers are real.
 ### Rule 5 — Secrets never touch disk in the clear
 
 Cloud and Hugging Face tokens live in **Windows Credential Manager** via the
-`keyring` crate, under service names `GGUF Pilot` / `GGUF Pilot HF`. They are
+`keyring` crate, under service names `Localmotive` / `Localmotive HF`. They are
 never written to local storage, settings files, logs, or command lines, and
 the UI shows only a masked suffix. If you add a provider, follow that pattern
 exactly.
@@ -134,7 +134,7 @@ in progress. Record exact commands and observed results in its verification ledg
 
 Keep `research/` ignored and unmodified during product implementation. Vitest is
 restricted to `src/**/*.test.{ts,tsx}` so third-party checkout tests cannot enter
-the GGUF Pilot suite.
+the Localmotive suite.
 
 ### Setup
 
@@ -164,7 +164,7 @@ there; do not push hoping otherwise.
 npm run tauri build
 ```
 
-Produces `src-tauri/target/release/gguf-pilot.exe`, an MSI, and an NSIS
+Produces `src-tauri/target/release/localmotive.exe`, an MSI, and an NSIS
 installer.
 
 ### Verifying the packaged app
@@ -175,7 +175,7 @@ Protocol. This is how every release is checked:
 ```bash
 # 1. Launch with the debugger port open
 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS='--remote-debugging-port=10013' \
-  ./src-tauri/target/release/gguf-pilot.exe < /dev/null &
+  ./src-tauri/target/release/localmotive.exe < /dev/null &
 
 # 2. Drive it
 node scripts/verify_024.mjs 10013 "C:\\llama\\llama-server.exe" "C:\\models"

@@ -42,7 +42,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 await send('Page.enable');
 await send('Emulation.clearDeviceMetricsOverride').catch(() => {});
-await evaluate(`localStorage.setItem('gguf-pilot:runtime','C:\\\\llama\\\\llama-server.exe'); localStorage.setItem('gguf-pilot:model-root','C:\\\\models'); location.reload(); true`);
+await evaluate(`localStorage.setItem('localmotive:runtime','C:\\\\llama\\\\llama-server.exe'); localStorage.setItem('localmotive:model-root','C:\\\\models'); location.reload(); true`);
 await sleep(7000);
 
 // Desktop (native window size)
@@ -63,12 +63,12 @@ results.tuneDesktop = await evaluate(`({
   overflow: [...document.querySelectorAll('.tune-screen *')].filter(e=>e.scrollWidth>e.clientWidth+1 && getComputedStyle(e).overflowX==='visible').slice(0,5).map(e=>e.className)
 })`);
 // Feed a stored report (from the live run) so the ledger and result render with real data.
-const live = JSON.parse(fs.readFileSync(`${process.env.LOCALAPPDATA}\\Temp\\gguf-pilot-live-022.json`, 'utf8'));
+const live = JSON.parse(fs.readFileSync(`${process.env.LOCALAPPDATA}\\Temp\\localmotive-live-022.json`, 'utf8'));
 if (live.tuning && !live.tuning.error) {
   const modelId = await evaluate(`window.__TAURI_INTERNALS__.invoke('scan_models',{root:'C:\\\\models'}).then(m=>m.find(x=>x.name.includes('LFM2.5-2.6B'))?.id)`);
   const report = { ...live.tuning, trials: live.tuning.trials.map((t) => ({ index: t.index, changes: t.changes, rationale: t.rationale, meanTps: t.mean, medianTps: t.mean, error: t.error, command: '' })), bestProfile: { ...live.tuning.bestProfile } };
   // bestProfile from the driver is partial; fetch a full profile shape via a fresh suggested one is not available here, so store the report and let the UI read numbers only.
-  await evaluate(`localStorage.setItem('gguf-pilot:tuning:' + ${JSON.stringify(modelId)}, ${JSON.stringify(JSON.stringify(report))}); true`);
+  await evaluate(`localStorage.setItem('localmotive:tuning:' + ${JSON.stringify(modelId)}, ${JSON.stringify(JSON.stringify(report))}); true`);
   await clickNav('inventory');
   await sleep(2500);
   await evaluate(`(() => { const row=[...document.querySelectorAll('.table-row')].find(r=>r.textContent.includes('LFM2.5-2.6B')); row && row.click(); return !!row; })()`);

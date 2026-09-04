@@ -500,7 +500,7 @@ export function V03EvidencePanel({
       return;
     }
     const target = await saveDialog({
-      defaultPath: `gguf-pilot-evidence-${benchmark.compatibilityKey.slice(0, 12)}.json`,
+      defaultPath: `localmotive-evidence-${benchmark.compatibilityKey.slice(0, 12)}.json`,
       filters: [{ name: "JSON evidence", extensions: ["json"] }],
     });
     if (!target) return;
@@ -682,7 +682,7 @@ export function V03EvidencePanel({
               />
             </Field>
             <p className="muted override-help">
-              Manual capacity remains userOverride evidence. GGUF Pilot does not combine dedicated and shared memory.
+              Manual capacity remains userOverride evidence. Localmotive does not combine dedicated and shared memory.
             </p>
           </div>
 

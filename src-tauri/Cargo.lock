@@ -1489,29 +1489,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gguf-pilot"
-version = "0.3.0"
-dependencies = [
- "base64 0.22.1",
- "cap-std",
- "ed25519-dalek",
- "hex",
- "keyring",
- "rand 0.8.8",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "sha2",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "windows",
- "windows-sys 0.61.2",
- "zip",
-]
-
-[[package]]
 name = "gio"
 version = "0.18.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2287,6 +2264,29 @@ name = "litemap"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
+
+[[package]]
+name = "localmotive"
+version = "0.3.0"
+dependencies = [
+ "base64 0.22.1",
+ "cap-std",
+ "ed25519-dalek",
+ "hex",
+ "keyring",
+ "rand 0.8.8",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "windows",
+ "windows-sys 0.61.2",
+ "zip",
+]
 
 [[package]]
 name = "lock_api"

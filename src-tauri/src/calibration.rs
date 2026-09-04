@@ -749,7 +749,7 @@ mod tests {
     #[test]
     fn calibration_records_persist_as_bounded_local_files() {
         let root = std::env::temp_dir().join(format!(
-            "gguf-pilot-calibration-{}",
+            "localmotive-calibration-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

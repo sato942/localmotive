@@ -17,7 +17,10 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::time::Duration;
 
-const KEYRING_SERVICE: &str = "GGUF Pilot";
+const KEYRING_SERVICE: &str = "Localmotive";
+/// Previous product name. Upgrades read legacy entries once and move them to
+/// the current service so existing users keep their keys.
+const LEGACY_KEYRING_SERVICE: &str = "GGUF Pilot";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -119,24 +122,51 @@ pub struct KeyringStore;
 
 impl SecretStore for KeyringStore {
     fn get(&self, account: &str) -> Result<Option<String>, String> {
-        let entry = keyring::Entry::new(KEYRING_SERVICE, account).map_err(|e| e.to_string())?;
-        match entry.get_password() {
-            Ok(secret) => Ok(Some(secret)),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(error) => Err(format!("Credential Manager read failed: {error}")),
+        if let Some(secret) = read_service(KEYRING_SERVICE, account)? {
+            return Ok(Some(secret));
         }
+        // Legacy installs stored keys under the previous product name.
+        // Migrate the value forward so the old entry does not linger.
+        if let Some(secret) = read_service(LEGACY_KEYRING_SERVICE, account)? {
+            write_service(KEYRING_SERVICE, account, &secret)?;
+            delete_service(LEGACY_KEYRING_SERVICE, account)?;
+            return Ok(Some(secret));
+        }
+        Ok(None)
     }
     fn set(&self, account: &str, secret: &str) -> Result<(), String> {
-        keyring::Entry::new(KEYRING_SERVICE, account)
-            .and_then(|entry| entry.set_password(secret))
-            .map_err(|error| format!("Credential Manager write failed: {error}"))
+        write_service(KEYRING_SERVICE, account, secret)?;
+        // A migrated write replaces the legacy entry; never keep two copies.
+        delete_service(LEGACY_KEYRING_SERVICE, account)?;
+        Ok(())
     }
     fn delete(&self, account: &str) -> Result<(), String> {
-        let entry = keyring::Entry::new(KEYRING_SERVICE, account).map_err(|e| e.to_string())?;
-        match entry.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(error) => Err(format!("Credential Manager delete failed: {error}")),
-        }
+        delete_service(KEYRING_SERVICE, account)?;
+        delete_service(LEGACY_KEYRING_SERVICE, account)?;
+        Ok(())
+    }
+}
+
+fn read_service(service: &str, account: &str) -> Result<Option<String>, String> {
+    let entry = keyring::Entry::new(service, account).map_err(|e| e.to_string())?;
+    match entry.get_password() {
+        Ok(secret) => Ok(Some(secret)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(error) => Err(format!("Credential Manager read failed: {error}")),
+    }
+}
+
+fn write_service(service: &str, account: &str, secret: &str) -> Result<(), String> {
+    keyring::Entry::new(service, account)
+        .and_then(|entry| entry.set_password(secret))
+        .map_err(|error| format!("Credential Manager write failed: {error}"))
+}
+
+fn delete_service(service: &str, account: &str) -> Result<(), String> {
+    let entry = keyring::Entry::new(service, account).map_err(|e| e.to_string())?;
+    match entry.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(format!("Credential Manager delete failed: {error}")),
     }
 }
 
@@ -317,9 +347,9 @@ pub fn wait_for_code(listener: &TcpListener, timeout: Duration) -> Result<String
                     .map_err(|error| error.to_string())?;
                 let code = code_from_request_line(&line);
                 let body = if code.is_some() {
-                    "<!doctype html><meta charset=utf-8><title>GGUF Pilot</title><body style=\"background:#171a1b;color:#e8e9e4;font:15px 'Public Sans','Segoe UI',sans-serif;display:grid;place-items:center;height:100vh;margin:0\"><div style=\"border:1px solid #424849;background:#222627;padding:28px 32px;text-align:center\"><div style=\"font:700 22px 'Bahnschrift Condensed','Arial Narrow',sans-serif;letter-spacing:.06em;color:#9edc72\">OPENROUTER CONNECTED</div><p style=\"color:#9ca3a0;margin:12px 0 0\">You can close this tab and return to GGUF Pilot.</p></div></body>"
+                    "<!doctype html><meta charset=utf-8><title>Localmotive</title><body style=\"background:#171a1b;color:#e8e9e4;font:15px 'Public Sans','Segoe UI',sans-serif;display:grid;place-items:center;height:100vh;margin:0\"><div style=\"border:1px solid #424849;background:#222627;padding:28px 32px;text-align:center\"><div style=\"font:700 22px 'Bahnschrift Condensed','Arial Narrow',sans-serif;letter-spacing:.06em;color:#9edc72\">OPENROUTER CONNECTED</div><p style=\"color:#9ca3a0;margin:12px 0 0\">You can close this tab and return to Localmotive.</p></div></body>"
                 } else {
-                    "<!doctype html><meta charset=utf-8><title>GGUF Pilot</title><body style=\"background:#171a1b;color:#e8e9e4;font:15px sans-serif;display:grid;place-items:center;height:100vh;margin:0\"><div style=\"border:1px solid #424849;background:#222627;padding:28px 32px\">No authorization code was returned. Return to GGUF Pilot and try again.</div></body>"
+                    "<!doctype html><meta charset=utf-8><title>Localmotive</title><body style=\"background:#171a1b;color:#e8e9e4;font:15px sans-serif;display:grid;place-items:center;height:100vh;margin:0\"><div style=\"border:1px solid #424849;background:#222627;padding:28px 32px\">No authorization code was returned. Return to Localmotive and try again.</div></body>"
                 };
                 let _ = write!(
                     stream,
@@ -378,7 +408,7 @@ pub fn exchange_code_for_key(code: &str, verifier: &str) -> Result<String, Strin
 
 fn http_client(timeout: Duration) -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
-        .user_agent(format!("GGUF-Pilot/{}", env!("CARGO_PKG_VERSION")))
+        .user_agent(format!("Localmotive/{}", env!("CARGO_PKG_VERSION")))
         .connect_timeout(Duration::from_secs(20))
         .timeout(timeout)
         .build()
@@ -393,8 +423,8 @@ fn authed(
     let request = request.bearer_auth(secret);
     if provider.id == "openrouter" {
         request
-            .header("HTTP-Referer", "https://github.com/ggufpilot/gguf-pilot")
-            .header("X-Title", "GGUF Pilot")
+            .header("HTTP-Referer", "https://github.com/sato942/localmotive")
+            .header("X-Title", "Localmotive")
     } else {
         request
     }

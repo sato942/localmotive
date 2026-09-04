@@ -1346,7 +1346,7 @@ mod tests {
     #[test]
     fn manifest_persistence_is_atomic_and_round_trips_raw_observations() {
         let directory = std::env::temp_dir().join(format!(
-            "gguf-pilot-manifest-persist-{}",
+            "localmotive-manifest-persist-{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&directory);

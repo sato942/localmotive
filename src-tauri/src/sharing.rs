@@ -629,7 +629,7 @@ mod tests {
     #[test]
     fn local_share_persistence_creates_one_new_json_file_without_overwriting() {
         let directory =
-            std::env::temp_dir().join(format!("gguf-pilot-share-export-{}", std::process::id()));
+            std::env::temp_dir().join(format!("localmotive-share-export-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&directory);
         std::fs::create_dir_all(&directory).unwrap();
         let target = directory.join("evidence.json");

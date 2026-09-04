@@ -11,7 +11,7 @@ export default defineConfig(async () => ({
   plugins: [react()],
 
   // Local research checkouts can contain their own tests and dependencies.
-  // Run only GGUF Pilot tests so ignored research never changes this suite.
+  // Run only Localmotive tests so ignored research never changes this suite.
   test: {
     include: ["src/**/*.test.{ts,tsx}"],
   },

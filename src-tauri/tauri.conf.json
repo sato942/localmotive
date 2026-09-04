@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "GGUF Pilot",
+  "productName": "Localmotive",
   "version": "0.3.0",
-  "identifier": "io.github.ggufpilot.app",
+  "identifier": "io.github.localmotive.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "GGUF Pilot",
+        "title": "Localmotive",
         "width": 1320,
         "height": 860,
         "minWidth": 760,

@@ -589,7 +589,8 @@ mod tests {
 
     #[test]
     fn reads_from_disk_without_touching_tensor_bytes() {
-        let path = std::env::temp_dir().join(format!("gguf-pilot-hdr-{}.gguf", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("localmotive-hdr-{}.gguf", std::process::id()));
         let mut file = File::create(&path).unwrap();
         file.write_all(&fixture()).unwrap();
         drop(file);

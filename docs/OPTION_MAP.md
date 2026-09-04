@@ -1,6 +1,6 @@
 # llama-server Option Map
 
-Source: `LLAMA-SERVER-README.md`. GGUF Pilot promotes options according to how often they matter, how safely they can be changed, and whether a wrong value can make a model fail to load.
+Source: `LLAMA-SERVER-README.md`. Localmotive promotes options according to how often they matter, how safely they can be changed, and whether a wrong value can make a model fail to load.
 
 ## Shown immediately
 
@@ -77,7 +77,7 @@ Reasoning budget/history, custom chat template, LoRAs, tensor/model-metadata ove
 ## Deliberately kept out of dedicated controls
 
 The raw-extra-arguments field accepts only self-contained `--flag` or
-`--flag=value` tokens. GGUF Pilot checks each token against the selected
+`--flag=value` tokens. Localmotive checks each token against the selected
 runtime's current `--help` output before process creation.
 
 The backend rejects positional values and overrides of typed profile fields.
@@ -91,4 +91,4 @@ The backend also rejects these privileged capability families:
 - arbitrary static, UI-configuration, and slot-save paths.
 
 Other advertised experimental options can use the raw field. Use dedicated
-typed fields whenever GGUF Pilot provides them.
+typed fields whenever Localmotive provides them.

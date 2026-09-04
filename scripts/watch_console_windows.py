@@ -1,4 +1,4 @@
-"""Poll for console windows while GGUF Pilot runs its child-process probes.
+"""Poll for console windows while Localmotive runs its child-process probes.
 
 Fails loudly if any new console window (ConsoleWindowClass / CASCADIA_HOSTING_WINDOW_CLASS)
 appears while the app is spawning nvidia-smi, powershell, and llama-server --help.
