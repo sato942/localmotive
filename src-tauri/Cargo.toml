@@ -1,6 +1,6 @@
 [package]
 name = "localmotive"
-version = "0.3.0"
+version = "0.4.0"
 description = "A public Windows desktop control plane for local GGUF inference"
 authors = ["Localmotive contributors"]
 edition = "2021"

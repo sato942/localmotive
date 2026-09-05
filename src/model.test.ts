@@ -19,8 +19,10 @@ import {
   originLabel,
   qualityPassRate,
   rateLabel,
+  runtimeIdentityMismatch,
   runtimeOptionState,
   suggestedProfile,
+  supportStatusForOption,
   validateWorkload,
   type ArtifactInspection,
   type BenchmarkRunResult,
@@ -558,6 +560,52 @@ describe("runtimeOptionState", () => {
 
   it("still offers install when the active build cannot be identified", () => {
     expect(runtimeOptionState(cpu, "b10752", [], identity({ source: "none" }), "10752")).toEqual({ kind: "install" });
+  });
+
+  it("offers reinstall with detail when installed files disagree with the install record", () => {
+    // Phase 5 RED: a `manifest-dll-mismatch` identity must surface as
+    // `mismatch` with actionable detail, never as `active`, `update`,
+    // `use`, or `install`. The frontend already renders this state
+    // (MISMATCH · REINSTALL in App.tsx); the decision function must now
+    // produce it. Finding A-09 (clean-machine dependency failure)
+    // records this gap.
+    const active = identity({ source: "manifest-dll-mismatch", backend: "mismatch", cudaMajor: 13, tag: "b10752", installKey: "cuda-13.3" });
+    expect(runtimeIdentityMismatch(cuda13, active)).toBe("Installed files disagree with the install record");
+    expect(runtimeIdentityMismatch(cuda12, active)).toBeNull();
+    expect(runtimeIdentityMismatch(cuda13, null)).toBeNull();
+    const state = runtimeOptionState(cuda13, "b10752", [managedCuda13("b10752")], active, "10752");
+    expect(state).toEqual({ kind: "mismatch", detail: "Installed files disagree with the install record" });
+  });
+});
+
+describe("supportStatusForOption", () => {
+  // Phase 5 RED: the interface must never show `Supported` without
+  // scope, level, OS, architecture, backend, and runtime revision.
+  // Locally validated rows (cpu, cuda-13.3, vulkan on the Phase 3 host)
+  // carry full scope plus an attestation path; every untested key
+  // (ROCm, SYCL, OpenVINO, CUDA 12.4, Arm64) returns `Not validated`
+  // with null evidence. Finding A-01 records this risk.
+  it("marks the three locally validated rows Supported with full scope and evidence", () => {
+    for (const [key, backend] of [["cpu", "cpu"], ["cuda-13.3", "cuda"], ["vulkan", "vulkan"]] as const) {
+      const status = supportStatusForOption(option(key, backend));
+      expect(status.level).toBe("Supported");
+      expect(status.scope.os).toBe("Windows 11");
+      expect(status.scope.architecture).toBe("x64");
+      expect(status.scope.backend).toBe(backend);
+      expect(status.scope.runtimeRevision).toBe("b10796");
+      expect(status.scope.deviceClass.length).toBeGreaterThan(0);
+      expect(status.evidence).toMatch(/attestations\/local-windows-x64-/);
+    }
+  });
+
+  it("marks untested backends Not validated with null evidence", () => {
+    for (const [key, backend] of [["rocm-10.0", "rocm"], ["sycl", "sycl"], ["openvino-2026.3.1", "openvino"], ["cuda-12.4", "cuda"]] as const) {
+      const status = supportStatusForOption(option(key, backend));
+      expect(status.level).toBe("Not validated");
+      expect(status.evidence).toBeNull();
+      expect(status.scope.backend).toBe(backend);
+      expect(status.scope.runtimeRevision).toBe("b10796");
+    }
   });
 });
 

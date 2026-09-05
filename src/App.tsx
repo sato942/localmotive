@@ -53,6 +53,7 @@ import {
   retainOrDisposeListener,
   runtimeOptionState,
   suggestedProfile,
+  supportStatusForOption,
   type BenchmarkSummary,
   type CloudModel,
   type CloudProvider,
@@ -1284,11 +1285,14 @@ function App() {
                   {runtimeCatalog?.options.map((option) => {
                     const state = runtimeOptionState(option, runtimeCatalog.tag, managedRuntimes, runtimeIdentity, runtime?.build ?? null);
                     const downloading = installing === option.id;
+                    const support = supportStatusForOption(option);
+                    const supportLabel = `${support.level.toUpperCase()} · ${support.scope.os} ${support.scope.architecture} · ${support.scope.deviceClass}${support.scope.driverBranch ? ` · driver ${support.scope.driverBranch}` : ""} · ${support.scope.backend} · ${support.scope.runtimeRevision}`;
                     return (
-                    <article className={`runtime-option${option.recommended ? " recommended" : ""}${state.kind === "active" ? " is-active" : ""}`} key={`${option.id}:${option.asset.name}`}>
+                    <article className={`runtime-option${option.recommended ? " recommended" : ""}${state.kind === "active" ? " is-active" : ""}`} key={`${option.id}:${option.asset.name}`} aria-label={`${option.label} runtime option, ${option.recommended ? "recommended" : "not recommended"}, ${state.kind}`}>
                       <div className="runtime-option-main">
-                        <div className="runtime-option-title"><strong>{option.label}</strong>{state.kind === "active" && <span className="state-tag good"><BadgeCheck size={10} /> ACTIVE · b{runtime?.build}</span>}{state.kind === "update" && <span className="state-tag warning"><ArrowUp size={10} /> UPDATE FROM {state.from.toUpperCase()}</span>}{state.kind !== "active" && state.kind !== "update" && option.recommended && <span className="state-tag good">RECOMMENDED</span>}</div>
-                        <span className="runtime-role">{state.kind === "active" ? (isManagedPath ? "This is the runtime in use" : "Your existing executable matches this package") : state.kind === "update" ? `Newer official build available for the runtime in use` : state.kind === "use" ? "Already downloaded · not the active runtime" : option.recommended ? "Recommended for this PC" : option.backend === "cpu" ? "CPU fallback" : option.backend === "vulkan" ? "Compatibility fallback" : option.backend === "cuda" ? "Alternative CUDA package" : "Optional backend"}</span>
+                        <div className="runtime-option-title"><strong>{option.label}</strong>{state.kind === "active" && <span className="state-tag good"><BadgeCheck size={10} /> ACTIVE · b{runtime?.build}</span>}{state.kind === "update" && <span className="state-tag warning"><ArrowUp size={10} /> UPDATE FROM {state.from.toUpperCase()}</span>}{state.kind === "mismatch" && <span className="state-tag warning">MISMATCH · REINSTALL</span>}<span className={`state-tag ${support.level === "Supported" ? "good" : "warning"}`} title={support.evidence ? `Evidence: ${support.evidence}` : "No validation evidence for this configuration"}>{support.level.toUpperCase()}</span>{state.kind !== "active" && state.kind !== "update" && state.kind !== "mismatch" && option.recommended && <span className="state-tag good">RECOMMENDED</span>}</div>
+                        <span className="runtime-role">{supportLabel}{support.evidence ? "" : " · untested configuration"}</span>
+                        <span className="runtime-role">{state.kind === "active" ? (isManagedPath ? "This is the runtime in use" : "Your existing executable matches this package") : state.kind === "update" ? `Newer official build available for the runtime in use` : state.kind === "mismatch" ? "Installed files disagree with the install record · reinstall before launch" : state.kind === "use" ? "Already downloaded · not the active runtime" : option.recommended ? "Recommended for this PC" : option.backend === "cpu" ? "CPU fallback" : option.backend === "vulkan" ? "Compatibility fallback" : option.backend === "cuda" ? "Alternative CUDA package" : "Optional backend"}</span>
                         <p>{option.description}</p>
                         <small>{option.compatibility}</small>
                         <code>{option.asset.name}</code>
@@ -1313,6 +1317,11 @@ function App() {
                         {state.kind === "install" && (
                           <button className={option.recommended ? "button primary" : "button secondary"} onClick={() => installRuntime(option)} disabled={Boolean(installing)}>
                             <Download size={15} /> {downloading ? "Downloading…" : "Install"}
+                          </button>
+                        )}
+                        {state.kind === "mismatch" && (
+                          <button className="button primary" onClick={() => installRuntime(option)} disabled={Boolean(installing)}>
+                            <Download size={15} /> {downloading ? "Downloading…" : "Reinstall"}
                           </button>
                         )}
                       </div>

@@ -790,7 +790,103 @@ export type RuntimeOptionState =
   | { kind: "install" }
   | { kind: "active" }
   | { kind: "update"; from: string }
+  | { kind: "mismatch"; detail: string }
   | { kind: "use"; runtimePath: string };
+
+/**
+ * Product support scope for one runtime catalog option: the exact
+ * configuration the release compatibility table can validate. This is a
+ * presentation label only; the backend gate is the approved manifest plus
+ * the device evidence in `HardwareInfo`. Upstream capability without a
+ * table row stays `Experimental` or `Not validated`, never `Supported`.
+ * Finding A-01 records this risk.
+ */
+export type SupportScope = {
+  os: string;
+  architecture: string;
+  deviceClass: string;
+  driverBranch: string | null;
+  backend: string;
+  runtimeRevision: string;
+};
+
+/** Product support level for one runtime catalog option. */
+export type SupportLevel = "Supported" | "Experimental" | "Not validated";
+
+/**
+ * The release compatibility-table row for one runtime catalog option.
+ * `level` is `Supported` only when the row carries local or attested
+ * Phase 3 evidence at the pinned revision; untested configurations use
+ * `Experimental` or `Not validated` per the TODO-0.4 support contract.
+ */
+export type SupportStatus = {
+  level: SupportLevel;
+  scope: SupportScope;
+  evidence: string | null;
+};
+
+const SUPPORT_STATUSES: Record<string, SupportStatus> = {
+  "cpu": {
+    level: "Supported",
+    scope: {
+      os: "Windows 11",
+      architecture: "x64",
+      deviceClass: "AMD Ryzen 9 9950X3D",
+      driverBranch: null,
+      backend: "cpu",
+      runtimeRevision: "b10796",
+    },
+    evidence: "research/0.4/evidence/attestations/local-windows-x64-cpu.json",
+  },
+  "cuda-13.3": {
+    level: "Supported",
+    scope: {
+      os: "Windows 11",
+      architecture: "x64",
+      deviceClass: "NVIDIA GeForce RTX 5090",
+      driverBranch: "610.74",
+      backend: "cuda",
+      runtimeRevision: "b10796",
+    },
+    evidence: "research/0.4/evidence/attestations/local-windows-x64-cuda.json",
+  },
+  "vulkan": {
+    level: "Supported",
+    scope: {
+      os: "Windows 11",
+      architecture: "x64",
+      deviceClass: "NVIDIA GeForce RTX 5090",
+      driverBranch: "610.74",
+      backend: "vulkan",
+      runtimeRevision: "b10796",
+    },
+    evidence: "research/0.4/evidence/attestations/local-windows-x64-vulkan.json",
+  },
+};
+
+/**
+ * Product support status for one runtime catalog option. Known install
+ * keys return their compatibility-table row; every other key is an
+ * untested configuration and returns `Not validated` with a null
+ * evidence path, so the interface can never show `Supported` without
+ * scope, level, OS, architecture, backend, and runtime revision.
+ */
+export function supportStatusForOption(option: RuntimeOption): SupportStatus {
+  const known = SUPPORT_STATUSES[option.installKey];
+  if (known) return known;
+  return {
+    level: "Not validated",
+    scope: {
+      os: "Windows 11",
+      architecture: "x64",
+      deviceClass: "Untested configuration",
+      driverBranch: null,
+      backend: option.backend,
+      runtimeRevision: "b10796",
+    },
+    evidence: null,
+  };
+}
 
 export function tagBuild(tag: string | null | undefined): number | null {
   if (!tag) return null;
@@ -802,14 +898,36 @@ export function tagBuild(tag: string | null | undefined): number | null {
  * Whether the active executable is the same *variant* as a catalog option:
  * same backend, and for CUDA the same CUDA major version. The managed manifest
  * is authoritative when present; otherwise the DLL-derived identity is used.
+ * A `manifest-dll-mismatch` identity never matches: the installed files
+ * disagree with the install record and the caller must reinstall.
  */
 function activeMatchesVariant(option: RuntimeOption, active: RuntimeIdentity): boolean {
   if (active.source === "none") return false;
+  if (active.source === "manifest-dll-mismatch") return false;
+  if (active.backend === "mismatch") return false;
   if (active.installKey) return active.installKey === option.installKey;
   if (active.backend !== option.backend) return false;
   if (option.backend !== "cuda") return true;
   const optionMajor = tagBuild(option.installKey.replace(/^cuda-/, "").split(".")[0]);
   return active.cudaMajor !== null && optionMajor === active.cudaMajor;
+}
+
+/**
+ * Whether the active executable is a manifest/DLL mismatch against a catalog
+ * option with the same install key. The install record claims this variant
+ * but the files beside the executable disagree, so the interface must offer
+ * a reinstall instead of `use` or `active`.
+ */
+export function runtimeIdentityMismatch(
+  option: RuntimeOption,
+  active: RuntimeIdentity | null,
+): string | null {
+  if (!active) return null;
+  if (active.installKey !== option.installKey) return null;
+  if (active.source === "manifest-dll-mismatch" || active.backend === "mismatch") {
+    return "Installed files disagree with the install record";
+  }
+  return null;
 }
 
 /**
@@ -825,6 +943,9 @@ export function runtimeOptionState(
 ): RuntimeOptionState {
   const releaseBuild = tagBuild(catalogTag);
   const currentBuild = tagBuild(activeBuild);
+
+  const mismatch = runtimeIdentityMismatch(option, active);
+  if (mismatch) return { kind: "mismatch", detail: mismatch };
 
   if (active && activeMatchesVariant(option, active)) {
     if (releaseBuild !== null && currentBuild !== null) {

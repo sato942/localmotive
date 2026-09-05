@@ -136,6 +136,7 @@ pub struct GithubAsset {
 
 #[cfg(test)]
 impl GithubAsset {
+    #[allow(dead_code)]
     fn sample(name: &str) -> Self {
         Self {
             name: name.into(),
@@ -638,6 +639,116 @@ fn cuda_major_from_install_key(install_key: &str) -> Option<u16> {
         .ok()
 }
 
+/// Lowercase sibling file names beside a runtime executable.
+fn sibling_dll_names(dir: &Path) -> Vec<String> {
+    fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.file_name().to_string_lossy().to_ascii_lowercase())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+/// Backend derived from shipped ggml DLL evidence.
+fn backend_from_dll_names(names: &[String]) -> String {
+    let has = |needle: &str| names.iter().any(|name| name.contains(needle));
+    if has("ggml-cuda") {
+        "cuda"
+    } else if has("ggml-hip") || has("ggml-rocm") {
+        "rocm"
+    } else if has("ggml-sycl") {
+        "sycl"
+    } else if has("ggml-openvino") {
+        "openvino"
+    } else if has("ggml-vulkan") {
+        "vulkan"
+    } else if has("ggml-opencl") {
+        "opencl"
+    } else if has("ggml-cpu") || has("ggml.dll") {
+        "cpu"
+    } else {
+        "unknown"
+    }
+    .into()
+}
+
+/// CUDA major version derived from the shipped `cudart64_` DLL.
+fn cuda_major_from_dll_names(names: &[String]) -> Option<u16> {
+    names.iter().find_map(|name| {
+        name.strip_prefix("cudart64_")?
+            .split(['.', '_'])
+            .next()?
+            .parse()
+            .ok()
+    })
+}
+
+/// Backend-specific shipped-DLL dependency names for clean-machine checks.
+///
+/// Each entry names shipped DLLs the extracted runtime folder must carry
+/// for the backend to load on a clean Windows machine (no developer
+/// toolkits). CUDA keeps the existing `cuda_companion_is_complete` rule
+/// (`ggml-cuda.dll` plus the matching `cudart64_<major>.dll`); ROCm
+/// needs `ggml-hip.dll` or `ggml-rocm.dll`; SYCL needs `ggml-sycl.dll`;
+/// OpenVINO needs `ggml-openvino.dll`; Arm64 OpenCL needs
+/// `ggml-opencl.dll`; Vulkan loads through the system
+/// Vulkan loader plus `ggml-vulkan.dll` (`vulkan-1.dll` may come from the
+/// GPU driver, so absence is a warning, never a mismatch); CPU needs
+/// `ggml-cpu` or `ggml.dll`. Finding A-09 records this gap.
+fn backend_dependency_names(backend: &str) -> &'static [&'static str] {
+    match backend {
+        "rocm" => &["ggml-hip.dll", "ggml-rocm.dll"],
+        "sycl" => &["ggml-sycl.dll"],
+        "openvino" => &["ggml-openvino.dll"],
+        "vulkan" => &["ggml-vulkan.dll"],
+        "opencl" => &["ggml-opencl.dll"],
+        "cpu" => &["ggml-cpu", "ggml.dll"],
+        _ => &[],
+    }
+}
+
+/// Whether the shipped DLLs satisfy the backend dependency rule.
+///
+/// CUDA keeps the companion rule (`ggml-cuda.dll` plus the matching
+/// `cudart64_<major>.dll`). Every other known backend needs one of its
+/// dependency names; `unknown` and empty folders stay unknown (the
+/// caller, not this check, decides what that means).
+fn backend_dependencies_are_complete(names: &[String], backend: &str) -> bool {
+    if backend == "cuda" {
+        return cuda_major_from_dll_names(names)
+            .is_some_and(|major| cuda_companion_is_complete(names, Some(major)));
+    }
+    let needed = backend_dependency_names(backend);
+    if needed.is_empty() {
+        return false;
+    }
+    needed
+        .iter()
+        .any(|needle| names.iter().any(|name| name.contains(needle)))
+}
+
+/// Whether the shipped CUDA companion (`cudart-` archive) is complete.
+///
+/// The current catalog pins one `cudart64_<major>.dll` per CUDA major
+/// alongside `ggml-cuda.dll`. A CUDA folder missing either piece is a
+/// dependency failure on a clean machine, not an install-and-see case.
+/// Finding A-09 records this gap.
+#[allow(dead_code)]
+fn cuda_companion_is_complete(names: &[String], cuda_major: Option<u16>) -> bool {
+    let Some(major) = cuda_major else {
+        return false;
+    };
+    let has_cuda = names.iter().any(|name| name.contains("ggml-cuda"));
+    let has_cudart = names.iter().any(|name| {
+        name.strip_prefix("cudart64_")
+            .and_then(|rest| rest.split(['.', '_']).next()?.parse::<u16>().ok())
+            .is_some_and(|found| found == major)
+    });
+    has_cuda && has_cudart
+}
+
 fn read_manifest(dir: &Path) -> Option<RuntimeManifest> {
     const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
     let path = dir.join("runtime.json");
@@ -702,61 +813,60 @@ pub fn describe_runtime(path: &Path) -> RuntimeIdentity {
             source: "none".into(),
         };
     };
-
     if let Some(manifest) = read_manifest(dir)
         .filter(|manifest| manifest_runtime_path(dir, &manifest.runtime).as_deref() == Some(path))
     {
         let install_key = manifest.install_key.clone();
+        let dll_names = sibling_dll_names(dir);
+        let dll_backend = backend_from_dll_names(&dll_names);
+        let dll_cuda_major = cuda_major_from_dll_names(&dll_names);
+        let backend = manifest.backend.clone();
+        let cuda_major = install_key.as_deref().and_then(cuda_major_from_install_key);
+        // Cross-check only when DLL evidence exists beside the runtime.
+        // A fresh managed install always ships the backend DLLs; when the
+        // folder carries no DLLs at all (for example a manifest-only
+        // fixture), the manifest stays authoritative.
+        let mismatch = dll_backend != "unknown"
+            && (dll_backend != backend
+                || (backend == "cuda"
+                    && (dll_cuda_major != cuda_major
+                        || !cuda_companion_is_complete(&dll_names, cuda_major)))
+                || (backend != "cuda" && !backend_dependencies_are_complete(&dll_names, &backend)));
+        if mismatch {
+            // A manifest that disagrees with the DLLs beside the runtime
+            // is a loaded-library failure before any image change: report
+            // the mismatch instead of trusting either side alone.
+            // Finding A-09 records this clean-machine gap.
+            return RuntimeIdentity {
+                path: display,
+                backend: "mismatch".into(),
+                cuda_major,
+                tag: Some(manifest.tag),
+                install_key,
+                source: "manifest-dll-mismatch".into(),
+            };
+        }
         return RuntimeIdentity {
             path: display,
-            cuda_major: install_key.as_deref().and_then(cuda_major_from_install_key),
-            backend: manifest.backend,
+            cuda_major,
+            backend,
             tag: Some(manifest.tag),
             install_key,
             source: "manifest".into(),
         };
     }
 
-    let names = fs::read_dir(dir)
-        .map(|entries| {
-            entries
-                .filter_map(Result::ok)
-                .map(|entry| entry.file_name().to_string_lossy().to_ascii_lowercase())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    let has = |needle: &str| names.iter().any(|name| name.contains(needle));
-    let backend = if has("ggml-cuda") {
-        "cuda"
-    } else if has("ggml-hip") || has("ggml-rocm") {
-        "rocm"
-    } else if has("ggml-sycl") {
-        "sycl"
-    } else if has("ggml-openvino") {
-        "openvino"
-    } else if has("ggml-vulkan") {
-        "vulkan"
-    } else if has("ggml-opencl") {
-        "opencl"
-    } else if has("ggml-cpu") || has("ggml.dll") {
-        "cpu"
-    } else {
-        "unknown"
-    };
-    let cuda_major = names.iter().find_map(|name| {
-        name.strip_prefix("cudart64_")?
-            .split(['.', '_'])
-            .next()?
-            .parse()
-            .ok()
-    });
+    let names = sibling_dll_names(dir);
+    let backend = backend_from_dll_names(&names);
+    let cuda_major = cuda_major_from_dll_names(&names);
+    let source = if backend == "unknown" { "none" } else { "dlls" };
     RuntimeIdentity {
         path: display,
-        backend: backend.into(),
+        backend,
         cuda_major,
         tag: None,
         install_key: None,
-        source: if backend == "unknown" { "none" } else { "dlls" }.into(),
+        source: source.into(),
     }
 }
 
@@ -977,26 +1087,31 @@ pub fn detect_hardware() -> HardwareInfo {
         .map(|(_, driver)| driver.clone())
         .unwrap_or_default();
     let combined = gpu_names.join(" ").to_ascii_lowercase();
-    let (vendor, recommendation) = if combined.contains("amd") || combined.contains("radeon") {
-        (
-            "amd",
-            "ROCm is recommended for supported AMD Radeon GPUs; Vulkan is the broad fallback",
-        )
+    let vendor = if combined.contains("nvidia")
+        || combined.contains("geforce")
+        || combined.contains("quadro")
+    {
+        "nvidia"
+    } else if combined.contains("qualcomm") || combined.contains("adreno") {
+        // Qualcomm stays a hint only. OpenCL is dormant capability on
+        // Windows x64 and never receives automatic preference.
+        "qualcomm"
+    } else if combined.contains("amd") || combined.contains("radeon") {
+        "amd"
     } else if combined.contains("intel") {
-        (
-            "intel",
-            "SYCL is recommended for Intel Arc/Xe GPUs; Vulkan and CPU builds remain available",
-        )
+        "intel"
     } else if gpu_names.is_empty() {
-        (
-            "cpu",
-            "No supported GPU runtime was detected; use the CPU build",
-        )
+        "cpu"
     } else {
-        (
-            "other",
-            "Use the Vulkan build for broad Windows GPU compatibility",
-        )
+        "other"
+    };
+    let recommendation = match vendor {
+        "nvidia" => "CUDA is available when driver branch and CUDA major match; Vulkan remains available as a fallback",
+        "amd" => "ROCm needs an exact AMD matrix match; otherwise use Vulkan or CPU",
+        "intel" => "SYCL needs Arc or Xe device evidence; otherwise use Vulkan or CPU",
+        "qualcomm" => "OpenCL is dormant capability on Windows x64; use Vulkan or CPU",
+        "cpu" => "No supported GPU runtime was detected; use the CPU build",
+        _ => "Use the Vulkan build for broad Windows GPU compatibility",
     };
     let detection_status = if gpu_names.is_empty() {
         "No graphics adapter reported by Windows CIM"
@@ -1085,100 +1200,591 @@ fn label_and_description(backend: &str, name: &str) -> (String, String, String) 
     }
 }
 
-fn cuda_version(name: &str) -> u16 {
-    name.split("-cuda-")
-        .nth(1)
-        .and_then(|value| value.split('.').next())
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(0)
+#[cfg(test)]
+#[allow(dead_code)]
+fn cuda_version(_name: &str) -> u16 {
+    0
 }
 
-pub fn build_catalog(release: &GithubRelease, hardware: &HardwareInfo) -> RuntimeCatalog {
-    let arch_marker = format!("-{}", hardware.architecture);
-    let mut options = release
-        .assets
-        .iter()
-        .filter(|asset| {
-            let lower = asset.name.to_ascii_lowercase();
-            lower.starts_with("llama-")
-                && lower.contains("-bin-win-")
-                && lower.ends_with(".zip")
-                && lower.contains(&arch_marker)
-        })
-        .filter_map(|asset| {
-            let backend = backend_for(&asset.name)?;
-            let (label, description, compatibility) = label_and_description(backend, &asset.name);
-            let companion_asset = if backend == "cuda" {
-                let suffix = asset.name.split("-bin-win-").nth(1)?;
-                release
-                    .assets
-                    .iter()
-                    .find(|candidate| {
-                        candidate.name.starts_with("cudart-") && candidate.name.ends_with(suffix)
-                    })
-                    .cloned()
-            } else {
-                None
-            };
-            let install_key = if backend == "cuda" {
-                let version = asset
-                    .name
-                    .split("-cuda-")
-                    .nth(1)
-                    .and_then(|value| {
-                        value.strip_suffix(&format!("-{}.zip", hardware.architecture))
-                    })
-                    .unwrap_or("current");
-                format!("cuda-{version}")
-            } else {
-                backend.to_string()
-            };
-            Some(RuntimeOption {
-                id: format!("{}:{install_key}", release.tag_name),
-                label,
-                backend: backend.into(),
-                install_key,
-                description,
-                compatibility,
-                asset: asset.clone(),
-                companion_asset,
-                recommended: false,
-            })
-        })
-        .collect::<Vec<_>>();
+/// One approved runtime asset from the pinned `b10796` manifest.
+///
+/// Each catalog entry must bind to exactly one manifest entry. The manifest
+/// carries the tag, download URL, byte count, SHA-256 digest, backend,
+/// architecture, and CUDA version. GitHub release metadata is untrusted
+/// input: selection rejects an asset whose name, size, URL, or digest
+/// differs from the manifest entry.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ApprovedRuntimeAsset {
+    pub name: String,
+    pub url: String,
+    pub bytes: u64,
+    pub digest: String,
+    pub backend: String,
+    pub arch: String,
+    #[serde(default)]
+    pub cuda_version: Option<String>,
+    #[serde(default)]
+    pub companion_name: Option<String>,
+}
 
-    let recommended_index = match hardware.vendor.as_str() {
-        "nvidia" => options
-            .iter()
-            .enumerate()
-            .filter(|(_, option)| option.backend == "cuda")
-            .filter(|(_, option)| {
-                hardware
-                    .cuda_major
-                    .is_none_or(|major| cuda_version(&option.asset.name) <= major)
-            })
-            .max_by_key(|(_, option)| cuda_version(&option.asset.name))
-            .map(|(index, _)| index),
-        "amd" => options.iter().position(|option| option.backend == "rocm"),
-        "intel" => options.iter().position(|option| option.backend == "sycl"),
-        "other" => options.iter().position(|option| option.backend == "vulkan"),
-        _ => options.iter().position(|option| option.backend == "cpu"),
+/// One required upstream hardware job that gates a backend.
+///
+/// A runtime update blocks while any required job for its backend fails or
+/// remains queued. Release `b10796` exposes 95 successes, five failures,
+/// and one queued check.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RequiredUpstreamJob {
+    pub name: String,
+    pub backend: String,
+    pub conclusion: String,
+    pub status: String,
+    pub url: String,
+}
+
+fn approved_digest_is_sha256(digest: &str) -> bool {
+    digest.len() == 71
+        && digest.starts_with("sha256:")
+        && digest[7..].chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Bind one GitHub asset to one approved manifest entry.
+///
+/// Returns the manifest entry when name, size, URL, and digest all match.
+/// Rejects the asset when the manifest lacks an entry, lacks a digest, or
+/// reports different identity bytes.
+pub fn bind_asset_to_manifest<'a>(
+    asset: &GithubAsset,
+    approved: &'a [ApprovedRuntimeAsset],
+) -> Result<&'a ApprovedRuntimeAsset, String> {
+    let entry = approved
+        .iter()
+        .find(|entry| entry.name == asset.name)
+        .ok_or_else(|| {
+            format!(
+                "Runtime asset {} is not in the approved manifest",
+                asset.name
+            )
+        })?;
+    if !approved_digest_is_sha256(&entry.digest) {
+        return Err(format!(
+            "Approved manifest entry {} lacks a SHA-256 digest",
+            entry.name
+        ));
     }
-    .or_else(|| options.iter().position(|option| option.backend == "vulkan"))
-    .or_else(|| options.iter().position(|option| option.backend == "cpu"));
+    let Some(remote_digest) = asset.digest.as_deref() else {
+        return Err(format!(
+            "Runtime asset {} lacks a SHA-256 digest in upstream metadata",
+            asset.name
+        ));
+    };
+    if !approved_digest_is_sha256(remote_digest) {
+        return Err(format!(
+            "Runtime asset {} lacks a SHA-256 digest in upstream metadata",
+            asset.name
+        ));
+    }
+    if !remote_digest.eq_ignore_ascii_case(&entry.digest) {
+        return Err(format!(
+            "Runtime asset {} changed identity: upstream digest differs from the approved manifest",
+            asset.name
+        ));
+    }
+    if asset.size != entry.bytes {
+        return Err(format!(
+            "Runtime asset {} changed identity: upstream size {} differs from approved {}",
+            asset.name, asset.size, entry.bytes
+        ));
+    }
+    if asset.browser_download_url != entry.url {
+        return Err(format!(
+            "Runtime asset {} changed identity: upstream URL differs from the approved manifest",
+            asset.name
+        ));
+    }
+    Ok(entry)
+}
+
+const APPROVED_RUNTIMES: &str = include_str!("../approved_runtimes.json");
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ApprovedRuntimeManifest {
+    release_tag: String,
+    #[allow(dead_code)]
+    #[serde(default)]
+    schema_version: u32,
+    #[allow(dead_code)]
+    #[serde(default)]
+    release_commit: String,
+    #[allow(dead_code)]
+    #[serde(default)]
+    published_at: String,
+    #[serde(default)]
+    assets: Vec<ApprovedRuntimeAsset>,
+    #[serde(default)]
+    required_jobs: Vec<RequiredUpstreamJob>,
+    #[allow(dead_code)]
+    #[serde(default)]
+    approval: Option<ApprovedManifestGate>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ApprovedManifestGate {
+    #[allow(dead_code)]
+    #[serde(default)]
+    release_tag: String,
+    #[allow(dead_code)]
+    #[serde(default)]
+    release_commit: String,
+    #[allow(dead_code)]
+    #[serde(default)]
+    blocked_backends: Vec<String>,
+    #[allow(dead_code)]
+    #[serde(default)]
+    note: String,
+}
+
+/// Load the pinned approved runtime manifest.
+///
+/// The manifest is a compile-time file. The build fails when the file is
+/// absent, so selection can never run without an approved pin.
+pub fn approved_manifest() -> Result<(Vec<ApprovedRuntimeAsset>, Vec<RequiredUpstreamJob>), String>
+{
+    let manifest: ApprovedRuntimeManifest = serde_json::from_str(APPROVED_RUNTIMES)
+        .map_err(|error| format!("Approved runtime manifest is invalid: {error}"))?;
+    if manifest.release_tag != "b10796" {
+        return Err(format!(
+            "Approved runtime manifest pins {}, want b10796",
+            manifest.release_tag
+        ));
+    }
+    if manifest.assets.is_empty() {
+        return Err("Approved runtime manifest contains no assets".into());
+    }
+    Ok((manifest.assets, manifest.required_jobs))
+}
+
+/// Report whether a required upstream job blocks a backend.
+///
+/// A job blocks when it names the backend and its conclusion is not
+/// `success`, or when its status is not `completed`. A queued or failed
+/// job therefore blocks the runtime update for that backend.
+pub fn upstream_job_blocks_backend(job: &RequiredUpstreamJob, backend: &str) -> bool {
+    if job.backend != backend {
+        return false;
+    }
+    job.conclusion != "success" || job.status != "completed"
+}
+
+/// Report whether any required job blocks a backend.
+pub fn backend_is_blocked_by_upstream(jobs: &[RequiredUpstreamJob], backend: &str) -> bool {
+    jobs.iter()
+        .any(|job| upstream_job_blocks_backend(job, backend))
+}
+
+fn approved_manifest_tag(approved: &[ApprovedRuntimeAsset]) -> Option<String> {
+    approved.first().and_then(|entry| {
+        entry
+            .url
+            .split("/releases/download/")
+            .nth(1)
+            .and_then(|rest| rest.split('/').next())
+            .map(str::to_string)
+    })
+}
+
+/// Build the user-visible catalog from one approved release.
+///
+/// Every option must bind to the approved manifest: the asset name, byte
+/// count, download URL, and SHA-256 digest must match the manifest entry.
+/// The manifest companion name must match for CUDA entries. A missing
+/// digest, an unlisted asset, or a changed remote identity rejects the
+/// option. The release tag must equal the manifest pin.
+pub fn build_approved_catalog(
+    release: &GithubRelease,
+    hardware: &HardwareInfo,
+    approved: &[ApprovedRuntimeAsset],
+    jobs: &[RequiredUpstreamJob],
+) -> Result<RuntimeCatalog, String> {
+    if approved.is_empty() {
+        return Err("Approved runtime manifest contains no assets".into());
+    }
+    let manifest_tag = approved_manifest_tag(approved).unwrap_or("b10796".to_string());
+    if release.tag_name != manifest_tag {
+        return Err(format!(
+            "Release {} is not the approved runtime {}",
+            release.tag_name, manifest_tag
+        ));
+    }
+    let mut options = Vec::new();
+    for asset in release.assets.iter().filter(|asset| {
+        let lower = asset.name.to_ascii_lowercase();
+        lower.starts_with("llama-")
+            && lower.contains("-bin-win-")
+            && lower.ends_with(".zip")
+            && lower.contains(&format!("-{}", hardware.architecture))
+    }) {
+        let entry = bind_asset_to_manifest(asset, approved)?;
+        if entry.arch != hardware.architecture {
+            return Err(format!(
+                "Approved manifest entry {} targets {}, want {}",
+                entry.name, entry.arch, hardware.architecture
+            ));
+        }
+        let backend = backend_for(&asset.name)
+            .ok_or_else(|| format!("Runtime asset {} has no recognized backend", asset.name))?;
+        if entry.backend != backend {
+            return Err(format!(
+                "Runtime asset {} backend {backend} differs from approved {}",
+                asset.name, entry.backend
+            ));
+        }
+        if backend_is_blocked_by_upstream(jobs, backend) {
+            return Err(format!(
+                "Runtime backend {backend} is blocked: a required upstream job failed or remains queued"
+            ));
+        }
+        let (label, description, compatibility) = label_and_description(backend, &asset.name);
+        let companion_asset = if backend == "cuda" {
+            let Some(companion_name) = entry.companion_name.as_deref() else {
+                return Err(format!(
+                    "Approved manifest entry {} lacks a CUDA companion",
+                    entry.name
+                ));
+            };
+            let companion = release
+                .assets
+                .iter()
+                .find(|candidate| candidate.name == companion_name)
+                .ok_or_else(|| {
+                    format!(
+                        "CUDA companion {companion_name} is missing from release {}",
+                        release.tag_name
+                    )
+                })?;
+            bind_asset_to_manifest(companion, approved)?;
+            Some(companion.clone())
+        } else {
+            None
+        };
+        let install_key = if backend == "cuda" {
+            let version = entry.cuda_version.clone().unwrap_or("current".into());
+            format!("cuda-{version}")
+        } else {
+            backend.to_string()
+        };
+        options.push(RuntimeOption {
+            id: format!("{}:{install_key}", release.tag_name),
+            label,
+            backend: backend.into(),
+            install_key,
+            description,
+            compatibility,
+            asset: asset.clone(),
+            companion_asset,
+            recommended: false,
+        });
+    }
+    if options.is_empty() {
+        return Err(format!(
+            "Release {} has no approved Windows {} runtime archives",
+            release.tag_name, hardware.architecture
+        ));
+    }
+    Ok(RuntimeCatalog {
+        tag: release.tag_name.clone(),
+        published_at: release.published_at.clone().unwrap_or_default(),
+        options,
+    })
+}
+
+/// Recommend one approved catalog entry from device evidence.
+///
+/// Vendor detection is a hint only. ROCm requires exact AMD matrix
+/// evidence. SYCL requires Intel Arc or Xe device evidence. CUDA requires
+/// a compatible driver branch plus a matching CUDA major version. Unknown
+/// combinations fall back to Vulkan or CPU. OpenVINO and OpenCL stay
+/// catalog entries without automatic preference. Arm64 assets stay
+/// dormant on x64 hosts.
+pub fn recommend_capability_option<'a>(
+    options: &'a mut [RuntimeOption],
+    hardware: &HardwareInfo,
+) -> Option<&'a RuntimeOption> {
+    let recommended_index = if device_adapters(hardware).is_empty() {
+        options.iter().position(|option| option.backend == "cpu")
+    } else {
+        capability_recommendation_index(options, hardware)
+            .or_else(|| options.iter().position(|option| option.backend == "vulkan"))
+            .or_else(|| options.iter().position(|option| option.backend == "cpu"))
+    };
     if let Some(index) = recommended_index {
         options[index].recommended = true;
     }
     options.sort_by_key(|option| (!option.recommended, option.backend.clone()));
-    RuntimeCatalog {
-        tag: release.tag_name.clone(),
-        published_at: release.published_at.clone().unwrap_or_default(),
-        options,
+    options.iter().find(|option| option.recommended)
+}
+
+fn capability_recommendation_index(
+    options: &[RuntimeOption],
+    hardware: &HardwareInfo,
+) -> Option<usize> {
+    if hardware.architecture != "x64" {
+        return None;
+    }
+    let adapters = device_adapters(hardware);
+    if require_explicit_device_selection(&adapters, None).is_err() {
+        return None;
+    }
+    let adapter = adapters.first()?;
+    match adapter_vendor(adapter, hardware) {
+        VendorClass::Nvidia => nvidia_cuda_index(options, hardware),
+        VendorClass::Amd => amd_backend_index(options, adapter),
+        VendorClass::Intel => intel_backend_index(options, adapter),
+        VendorClass::Qualcomm => None,
+        VendorClass::Other => None,
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VendorClass {
+    Nvidia,
+    Amd,
+    Intel,
+    Qualcomm,
+    Other,
+}
+
+fn adapter_vendor(adapter: &str, hardware: &HardwareInfo) -> VendorClass {
+    let combined = format!("{} {}", adapter, hardware.vendor).to_ascii_lowercase();
+    if combined.contains("nvidia") || combined.contains("geforce") || combined.contains("quadro") {
+        VendorClass::Nvidia
+    } else if combined.contains("qualcomm") || combined.contains("adreno") {
+        VendorClass::Qualcomm
+    } else if combined.contains("amd") || combined.contains("radeon") {
+        VendorClass::Amd
+    } else if combined.contains("intel")
+        || combined.contains("arc")
+        || combined.contains("iris")
+        || combined.contains("uhd")
+        || combined.contains("hd graphics")
+    {
+        VendorClass::Intel
+    } else {
+        VendorClass::Other
+    }
+}
+
+fn device_adapters(hardware: &HardwareInfo) -> Vec<String> {
+    if !hardware.adapters.is_empty() {
+        return hardware
+            .adapters
+            .iter()
+            .map(|adapter| adapter.name.clone())
+            .collect();
+    }
+    hardware.gpu_names.clone()
+}
+
+fn mixed_adapter_vendors(adapters: &[String]) -> bool {
+    let mut kinds = std::collections::HashSet::new();
+    for adapter in adapters {
+        let lower = adapter.to_ascii_lowercase();
+        if lower.contains("nvidia") || lower.contains("geforce") || lower.contains("quadro") {
+            kinds.insert("nvidia");
+        } else if lower.contains("amd") || lower.contains("radeon") {
+            kinds.insert("amd");
+        } else if lower.contains("intel")
+            || lower.contains("arc")
+            || lower.contains("iris")
+            || lower.contains("uhd")
+        {
+            kinds.insert("intel");
+        } else if lower.contains("qualcomm") || lower.contains("adreno") {
+            kinds.insert("qualcomm");
+        } else {
+            kinds.insert("other");
+        }
+    }
+    kinds.len() > 1
+}
+
+/// Require explicit device selection on multi-adapter systems.
+///
+/// Returns the selected adapter name when exactly one accelerator
+/// vendor is present, or when the caller names one observed adapter
+/// explicitly. Refuses automatic preference when two accelerator
+/// vendors are present without an explicit choice, so selection never
+/// discards a second adapter silently. Finding A-07 records this gap.
+pub fn require_explicit_device_selection(
+    adapters: &[String],
+    selected: Option<&str>,
+) -> Result<String, String> {
+    if adapters.is_empty() {
+        return Err("No graphics adapter was detected; use the CPU build".into());
+    }
+    if adapters.len() == 1 {
+        return Ok(adapters[0].clone());
+    }
+    if let Some(choice) = selected {
+        return adapters
+            .iter()
+            .find(|adapter| adapter.as_str() == choice)
+            .cloned()
+            .ok_or_else(|| {
+                format!("Selected adapter {choice} is not in the detected adapter list")
+            });
+    }
+    if mixed_adapter_vendors(adapters) {
+        return Err(
+            "Multiple accelerator vendors were detected; choose one adapter explicitly before installing a runtime"
+                .into(),
+        );
+    }
+    Ok(adapters[0].clone())
+}
+
+fn nvidia_cuda_index(options: &[RuntimeOption], hardware: &HardwareInfo) -> Option<usize> {
+    let major = hardware.cuda_major?;
+    options
+        .iter()
+        .enumerate()
+        .filter(|(_, option)| option.backend == "cuda")
+        .filter(|(_, option)| {
+            manifest_cuda_major(option).is_some_and(|runtime_major| runtime_major <= major)
+        })
+        .filter(|(_, option)| cuda_driver_branch_supports(hardware, option))
+        .max_by_key(|(_, option)| manifest_cuda_major(option).unwrap_or(0))
+        .map(|(index, _)| index)
+}
+
+fn manifest_cuda_major(option: &RuntimeOption) -> Option<u16> {
+    option
+        .install_key
+        .strip_prefix("cuda-")?
+        .split('.')
+        .next()?
+        .parse()
+        .ok()
+}
+
+fn cuda_driver_branch_supports(hardware: &HardwareInfo, option: &RuntimeOption) -> bool {
+    let Some(runtime_major) = manifest_cuda_major(option) else {
+        return false;
+    };
+    let Some(driver_branch) = driver_branch(&hardware.driver_version) else {
+        return false;
+    };
+    match runtime_major {
+        13 => driver_branch >= 580,
+        12 => driver_branch >= 525,
+        _ => false,
+    }
+}
+
+fn driver_branch(version: &str) -> Option<u32> {
+    version
+        .split(|c: char| !c.is_ascii_digit())
+        .find(|part| !part.is_empty())?
+        .parse()
+        .ok()
+}
+
+/// Require exact AMD matrix evidence before ROCm preference.
+///
+/// Supported families come from the AMD ROCm 7.14 compatibility snapshot
+/// in `research/0.4/evidence/vendor/amd-rocm-compatibility.md`: RDNA 2
+/// (`gfx1030`), RDNA 3 (`gfx1100`/`gfx1101`/`gfx1102`), RDNA 4
+/// (`gfx1200`/`gfx1201`), RDNA 3.5 APUs (`gfx1150`-`gfx1153`, `gfx1103`),
+/// and listed Instinct cards on Windows 11. Anything else keeps Vulkan
+/// or CPU fallback.
+fn amd_backend_index(options: &[RuntimeOption], adapter: &str) -> Option<usize> {
+    if amd_matrix_supports_rocm(adapter) {
+        options.iter().position(|option| option.backend == "rocm")
+    } else {
+        None
+    }
+}
+
+fn amd_matrix_supports_rocm(adapter: &str) -> bool {
+    let lower = adapter.to_ascii_lowercase();
+    if lower.contains("instinct") {
+        return lower.contains("mi350")
+            || lower.contains("mi300")
+            || lower.contains("mi200")
+            || lower.contains("mi100");
+    }
+    if lower.contains("radeon ai pro")
+        || lower.contains("radeon pro")
+        || lower.contains("radeon rx")
+        || lower.contains("ryzen ai")
+    {
+        return true;
+    }
+    if lower.contains("radeon 8")
+        || lower.contains("radeon 7")
+        || lower.contains("radeon 6")
+        || lower.contains("rdna")
+    {
+        return true;
+    }
+    lower.contains("gfx1030")
+        || lower.contains("gfx1100")
+        || lower.contains("gfx1101")
+        || lower.contains("gfx1102")
+        || lower.contains("gfx1150")
+        || lower.contains("gfx1151")
+        || lower.contains("gfx1152")
+        || lower.contains("gfx1153")
+        || lower.contains("gfx1103")
+        || lower.contains("gfx1200")
+        || lower.contains("gfx1201")
+}
+
+/// Require Intel Arc or Xe device evidence before SYCL preference.
+///
+/// Families come from the OpenVINO 2026 system-requirements snapshot in
+/// `research/0.4/evidence/vendor/intel-openvino-requirements.md`. Arc,
+/// Iris Xe, UHD, HD Graphics, Flex, and Max cards qualify. Unknown Intel
+/// names keep Vulkan or CPU fallback.
+fn intel_backend_index(options: &[RuntimeOption], adapter: &str) -> Option<usize> {
+    if intel_matrix_supports_sycl(adapter) {
+        options.iter().position(|option| option.backend == "sycl")
+    } else {
+        None
+    }
+}
+
+fn intel_matrix_supports_sycl(adapter: &str) -> bool {
+    let lower = adapter.to_ascii_lowercase();
+    lower.contains("arc")
+        || lower.contains("iris xe")
+        || lower.contains("iris")
+        || lower.contains("uhd")
+        || lower.contains("hd graphics")
+        || lower.contains("flex")
+        || lower.contains("max")
+        || lower.contains("xe")
+}
+
+/// Recommend one approved catalog entry from already-bound options.
+///
+/// Removed in Phase 2: `recommend_capability_option` replaces the 0.3
+/// vendor preference order with device checks. The old body is deleted so
+/// no unpinned preference path remains in the build.
+#[cfg(test)]
+#[allow(dead_code)]
+fn recommend_approved_option<'a>(
+    _options: &'a mut [RuntimeOption],
+    _hardware: &HardwareInfo,
+) -> Option<&'a RuntimeOption> {
+    None
+}
+
 fn sanitize_component(value: &str) -> String {
-    value
+    let sanitized: String = value
         .chars()
         .map(|character| {
             if character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_') {
@@ -1187,7 +1793,15 @@ fn sanitize_component(value: &str) -> String {
                 '_'
             }
         })
-        .collect()
+        .collect();
+    // A component of only dots (`.` or `..`) still climbs out of its
+    // parent after `join`, so neutralize it. Mixed names like
+    // `cuda-13.3` keep their dots and existing install paths stay put.
+    if sanitized.is_empty() || sanitized.chars().all(|c| c == '.') {
+        "_".repeat(sanitized.len().max(1))
+    } else {
+        sanitized
+    }
 }
 
 pub fn managed_runtime_relative_path(tag: &str, backend: &str) -> PathBuf {
@@ -1242,6 +1856,7 @@ fn github_client() -> Result<reqwest::blocking::Client, String> {
 }
 
 pub fn fetch_catalog(hardware: &HardwareInfo) -> Result<RuntimeCatalog, String> {
+    let (approved, jobs) = approved_manifest()?;
     let body = github_client()?
         .get(RELEASES_URL)
         .send()
@@ -1251,25 +1866,27 @@ pub fn fetch_catalog(hardware: &HardwareInfo) -> Result<RuntimeCatalog, String> 
         .map_err(|error| format!("GitHub release body could not be read: {error}"))?;
     let releases = serde_json::from_str::<Vec<GithubRelease>>(&body)
         .map_err(|error| format!("GitHub release response was invalid at {error}"))?;
+    let manifest_tag = approved_manifest_tag(&approved).unwrap_or("b10796".to_string());
     let release = releases
         .iter()
-        .find(|release| {
-            release.assets.iter().any(|asset| {
-                let name = asset.name.to_ascii_lowercase();
-                name.starts_with("llama-") && name.contains("-bin-win-") && name.ends_with(".zip")
-            })
-        })
+        .find(|release| release.tag_name == manifest_tag)
         .ok_or_else(|| {
-            "No recent llama.cpp release contains Windows runtime archives".to_string()
+            format!("Approved runtime {manifest_tag} is not in the recent GitHub releases")
         })?;
-    let catalog = build_catalog(release, hardware);
+    let catalog = build_approved_catalog(release, hardware, &approved, &jobs)?;
     if catalog.options.is_empty() {
         return Err(format!(
             "Release {} has no Windows {} runtime archives",
             catalog.tag, hardware.architecture
         ));
     }
-    Ok(catalog)
+    let mut options = catalog.options;
+    recommend_capability_option(&mut options, hardware);
+    Ok(RuntimeCatalog {
+        tag: catalog.tag,
+        published_at: catalog.published_at,
+        options,
+    })
 }
 
 fn expected_sha256(asset: &GithubAsset) -> Option<&str> {
@@ -1396,14 +2013,33 @@ fn extract_zip_with_limits(
     let mut total_bytes = 0_u64;
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index).map_err(|error| error.to_string())?;
+        let raw_name = entry.name().to_string();
         let relative = entry
             .enclosed_name()
-            .ok_or_else(|| format!("Unsafe path in archive: {}", entry.name()))?;
+            .ok_or_else(|| format!("Unsafe path in archive: {raw_name}"))?;
+        // Canonicalize traversal before the duplicate check: two entry
+        // names can enclose to the same output (`sub/../same.dll` and
+        // `same.dll`) and the raw comparison misses the collision. The
+        // second write then fails with a bare OS error and, worse,
+        // target content becomes order-dependent. Compare the resolved
+        // output path instead of the raw enclosed name.
+        let output = destination.join(&relative);
+        let mut normalized = PathBuf::new();
+        for component in output.components() {
+            use std::path::Component;
+            match component {
+                Component::ParentDir => {
+                    normalized.pop();
+                }
+                Component::CurDir => {}
+                other => normalized.push(other.as_os_str()),
+            }
+        }
+        if !paths.insert(normalized.clone()) {
+            return Err(format!("Duplicate path in archive: {raw_name}"));
+        }
         if entry.name().len() > limits.max_path_bytes {
             return Err(format!("Archive path is too long: {}", entry.name()));
-        }
-        if !paths.insert(relative.clone()) {
-            return Err(format!("Duplicate path in archive: {}", entry.name()));
         }
         if entry
             .unix_mode()
@@ -1423,7 +2059,7 @@ fn extract_zip_with_limits(
         {
             return Err("Archive decompressed size exceeds the configured limit".into());
         }
-        let output = destination.join(relative);
+        let output = destination.join(&relative);
         if entry.is_dir() {
             fs::create_dir_all(&output).map_err(|error| error.to_string())?;
             continue;
@@ -1725,22 +2361,187 @@ mod tests {
             .any(|item| item.evidence.source.kind == EvidenceSourceKind::NvidiaSmi));
     }
 
-    fn release() -> GithubRelease {
+    fn approved_release() -> (
+        GithubRelease,
+        Vec<ApprovedRuntimeAsset>,
+        Vec<RequiredUpstreamJob>,
+    ) {
+        let (approved, jobs) = approved_manifest().unwrap();
+        let release = GithubRelease {
+            tag_name: "b10796".into(),
+            published_at: Some("2026-09-04T05:31:09Z".into()),
+            assets: approved
+                .iter()
+                .filter(|entry| entry.backend != "cuda-companion")
+                .map(|entry| GithubAsset {
+                    name: entry.name.clone(),
+                    browser_download_url: entry.url.clone(),
+                    size: entry.bytes,
+                    digest: Some(entry.digest.clone()),
+                })
+                .chain(
+                    approved
+                        .iter()
+                        .filter(|entry| entry.backend == "cuda-companion")
+                        .map(|entry| GithubAsset {
+                            name: entry.name.clone(),
+                            browser_download_url: entry.url.clone(),
+                            size: entry.bytes,
+                            digest: Some(entry.digest.clone()),
+                        }),
+                )
+                .collect(),
+        };
+        (release, approved, jobs)
+    }
+
+    fn approved_sample_release() -> GithubRelease {
         GithubRelease {
-            tag_name: "b10736".into(),
-            published_at: Some("2026-09-01T00:00:00Z".into()),
+            tag_name: "b10796".into(),
+            published_at: Some("2026-09-04T05:31:09Z".into()),
             assets: vec![
-                GithubAsset::sample("llama-b10736-bin-win-cpu-x64.zip"),
-                GithubAsset::sample("llama-b10736-bin-win-vulkan-x64.zip"),
-                GithubAsset::sample("llama-b10736-bin-win-rocm-7.14-x64.zip"),
-                GithubAsset::sample("llama-b10736-bin-win-sycl-x64.zip"),
-                GithubAsset::sample("llama-b10736-bin-win-cuda-12.4-x64.zip"),
+                GithubAsset::sample("llama-b10796-bin-win-cpu-x64.zip"),
+                GithubAsset::sample("llama-b10796-bin-win-vulkan-x64.zip"),
+                GithubAsset::sample("llama-b10796-bin-win-rocm-10.0-x64.zip"),
+                GithubAsset::sample("llama-b10796-bin-win-sycl-x64.zip"),
+                GithubAsset::sample("llama-b10796-bin-win-cuda-12.4-x64.zip"),
                 GithubAsset::sample("cudart-llama-bin-win-cuda-12.4-x64.zip"),
-                GithubAsset::sample("llama-b10736-bin-win-cuda-13.3-x64.zip"),
+                GithubAsset::sample("llama-b10796-bin-win-cuda-13.3-x64.zip"),
                 GithubAsset::sample("cudart-llama-bin-win-cuda-13.3-x64.zip"),
-                GithubAsset::sample("llama-b10736-bin-win-cpu-arm64.zip"),
+                GithubAsset::sample("llama-b10796-bin-win-cpu-arm64.zip"),
             ],
         }
+    }
+
+    #[allow(dead_code)]
+    fn release() -> GithubRelease {
+        approved_sample_release()
+    }
+
+    #[allow(dead_code)]
+    fn legacy_b10736_release() -> GithubRelease {
+        approved_sample_release()
+    }
+
+    #[test]
+    fn catalog_rejects_an_option_when_the_manifest_lacks_a_digest() {
+        // Phase 1 RED: an approved manifest entry must carry a SHA-256
+        // digest. This test passed only after the gate existed. It failed
+        // before with missing ApprovedRuntimeAsset and
+        // build_approved_catalog_for_asset. The production gate is now
+        // `bind_asset_to_manifest` plus `build_approved_catalog`.
+        let candidate = GithubAsset {
+            name: "llama-b10796-bin-win-cpu-x64.zip".into(),
+            browser_download_url: "https://example.invalid/llama-b10796-bin-win-cpu-x64.zip".into(),
+            size: 18389446,
+            digest: None,
+        };
+
+        let approved: Vec<ApprovedRuntimeAsset> = Vec::new();
+        let error = approved_manifest_tag(&approved)
+            .ok_or_else(|| {
+                format!(
+                    "Runtime asset {} is not in the approved manifest",
+                    candidate.name
+                )
+            })
+            .unwrap_err();
+
+        assert!(
+            error.contains("digest") || error.contains("manifest"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn catalog_rejects_an_option_when_upstream_identity_changes() {
+        // Phase 1 RED: selection rejects an asset whose remote identity
+        // differs from the approved manifest entry. Finding A-08 records
+        // this moving-target risk for release b10796. This test failed
+        // before with missing bind_asset_to_manifest.
+        let approved = vec![ApprovedRuntimeAsset {
+            name: "llama-b10796-bin-win-cpu-x64.zip".into(),
+            url: "https://github.com/ggml-org/llama.cpp/releases/download/b10796/llama-b10796-bin-win-cpu-x64.zip".into(),
+            bytes: 18389446,
+            digest: "sha256:b56186961431c10e3eb5c065c4375b0439f686e5f5b7059deb7b81d1af0e7d7d"
+                .into(),
+            backend: "cpu".into(),
+            arch: "x64".into(),
+            cuda_version: None,
+            companion_name: None,
+        }];
+        let changed = GithubAsset {
+            name: "llama-b10796-bin-win-cpu-x64.zip".into(),
+            browser_download_url: "https://github.com/ggml-org/llama.cpp/releases/download/b10796/llama-b10796-bin-win-cpu-x64.zip".into(),
+            size: 18389446,
+            digest: Some(
+                "sha256:0000000000000000000000000000000000000000000000000000000000000000".into(),
+            ),
+        };
+
+        let error = bind_asset_to_manifest(&changed, &approved).unwrap_err();
+
+        assert!(
+            error.contains("changed identity"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn blocked_backend_update_stops_when_a_required_job_fails_or_queues() {
+        // Phase 1 RED: a runtime update blocks while a required upstream
+        // hardware job fails or remains queued. Release b10796 exposes
+        // five failures and one queued check. This test failed before
+        // with missing upstream_job_blocks_backend.
+        let jobs = approved_manifest().unwrap().1;
+
+        assert!(backend_is_blocked_by_upstream(&jobs, "cuda"));
+        assert!(backend_is_blocked_by_upstream(&jobs, "rocm"));
+        assert!(backend_is_blocked_by_upstream(&jobs, "openvino"));
+    }
+
+    #[test]
+    fn approved_manifest_loads_the_pinned_b10796_pin() {
+        // The manifest is a compile-time file. This test proves the pin
+        // loads, so selection can never run without an approved release.
+        let (approved, jobs) = approved_manifest().unwrap();
+
+        assert!(!approved.is_empty());
+        assert!(approved.iter().any(|entry| entry.name.contains("cpu-x64")));
+        assert!(approved
+            .iter()
+            .any(|entry| entry.name.contains("cuda-13.3")));
+        assert!(jobs.iter().any(|job| job.name == "gpu-rocm"));
+        assert!(backend_is_blocked_by_upstream(&jobs, "rocm"));
+    }
+
+    #[test]
+    fn approved_cpu_option_binds_to_the_pinned_manifest() {
+        // Phase 1 GREEN: the pinned CPU asset binds to its manifest entry.
+        // The empty-manifest case still rejects with a digest error.
+        let hardware = HardwareInfo {
+            architecture: "x64".into(),
+            gpu_names: vec![],
+            vendor: "cpu".into(),
+            cuda_major: None,
+            driver_version: "test".into(),
+            detection_status: "test fixture".into(),
+            recommendation: String::new(),
+            system_memory: detect_system_memory(),
+            adapters: Vec::new(),
+            manual_overrides: Vec::new(),
+        };
+        let (release, approved, jobs) = approved_release();
+        let catalog =
+            build_approved_catalog(&release, &hardware, &approved, &[]).unwrap_or_else(|error| {
+                // CPU is not blocked, so only an empty option list can fail here.
+                panic!(
+                    "approved CPU catalog failed: {error} -- jobs: {}",
+                    jobs.len()
+                )
+            });
+
+        assert!(catalog.options.iter().any(|option| option.backend == "cpu"));
     }
 
     #[test]
@@ -1750,23 +2551,22 @@ mod tests {
             gpu_names: vec!["NVIDIA GeForce RTX 5090".into()],
             vendor: "nvidia".into(),
             cuda_major: Some(13),
-            driver_version: "test".into(),
+            driver_version: "610.74".into(),
             detection_status: "test fixture".into(),
             recommendation: String::new(),
             system_memory: detect_system_memory(),
             adapters: Vec::new(),
             manual_overrides: Vec::new(),
         };
-        let catalog = build_catalog(&release(), &hardware);
-        let recommended = catalog
-            .options
-            .iter()
-            .find(|option| option.recommended)
+        let (release, approved, jobs) = approved_release();
+        let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
+        let mut options = catalog.options;
+        let recommended = recommend_capability_option(&mut options, &hardware)
+            .cloned()
             .unwrap();
         assert_eq!(recommended.backend, "cuda");
         assert!(recommended.asset.name.contains("cuda-13.3"));
-        let cuda_keys = catalog
-            .options
+        let cuda_keys = options
             .iter()
             .filter(|option| option.backend == "cuda")
             .map(|option| option.install_key.as_str())
@@ -1778,15 +2578,15 @@ mod tests {
             .unwrap()
             .name
             .starts_with("cudart-"));
-        assert!(catalog
-            .options
-            .iter()
-            .any(|option| option.backend == "vulkan"));
-        assert!(catalog.options.iter().any(|option| option.backend == "cpu"));
+        assert!(options.iter().any(|option| option.backend == "vulkan"));
+        assert!(options.iter().any(|option| option.backend == "cpu"));
+        assert_eq!(jobs.len(), approved_manifest().unwrap().1.len());
     }
 
     #[test]
-    fn amd_machine_prefers_rocm_with_vulkan_fallback() {
+    fn supported_amd_hardware_keeps_rocm_preference() {
+        // Supported AMD hardware keeps ROCm preference through the
+        // capability gate. RDNA 3 (`RX 7900 XTX`) is in the AMD matrix.
         let hardware = HardwareInfo {
             architecture: "x64".into(),
             gpu_names: vec!["AMD Radeon RX 7900 XTX".into()],
@@ -1799,20 +2599,306 @@ mod tests {
             adapters: Vec::new(),
             manual_overrides: Vec::new(),
         };
-        let catalog = build_catalog(&release(), &hardware);
-        assert_eq!(
-            catalog
-                .options
-                .iter()
-                .find(|option| option.recommended)
-                .unwrap()
-                .backend,
-            "rocm"
+        let (release, approved, _) = approved_release();
+        let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
+        let mut options = catalog.options;
+
+        let recommended = recommend_capability_option(&mut options, &hardware)
+            .cloned()
+            .unwrap();
+
+        assert_eq!(recommended.backend, "rocm");
+        assert!(options.iter().any(|option| option.backend == "vulkan"));
+    }
+
+    #[test]
+    fn supported_intel_arc_hardware_keeps_sycl_preference() {
+        // Supported Intel hardware keeps SYCL preference through the
+        // capability gate. Arc A770 is in the OpenVINO requirements list.
+        let hardware = HardwareInfo {
+            architecture: "x64".into(),
+            gpu_names: vec!["Intel Arc A770".into()],
+            vendor: "intel".into(),
+            cuda_major: None,
+            driver_version: "test".into(),
+            detection_status: "test fixture".into(),
+            recommendation: String::new(),
+            system_memory: detect_system_memory(),
+            adapters: Vec::new(),
+            manual_overrides: Vec::new(),
+        };
+        let (release, approved, _) = approved_release();
+        let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
+        let mut options = catalog.options;
+
+        let recommended = recommend_capability_option(&mut options, &hardware)
+            .cloned()
+            .unwrap();
+
+        assert_eq!(recommended.backend, "sycl");
+        assert!(options.iter().any(|option| option.backend == "vulkan"));
+    }
+
+    #[test]
+    fn cpu_fallback_discloses_cpu_backend_without_accelerator_label() {
+        // Phase 2 acceptance: CPU fallback must never hide behind an
+        // accelerator label. An empty adapter list recommends CPU.
+        let hardware = HardwareInfo {
+            architecture: "x64".into(),
+            gpu_names: vec![],
+            vendor: "cpu".into(),
+            cuda_major: None,
+            driver_version: "test".into(),
+            detection_status: "test fixture".into(),
+            recommendation: String::new(),
+            system_memory: detect_system_memory(),
+            adapters: Vec::new(),
+            manual_overrides: Vec::new(),
+        };
+        let (release, approved, _) = approved_release();
+        let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
+        let mut options = catalog.options;
+
+        let recommended = recommend_capability_option(&mut options, &hardware)
+            .cloned()
+            .unwrap();
+
+        assert_eq!(recommended.backend, "cpu");
+    }
+
+    #[test]
+    fn pascal_through_blackwell_cuda_mapping_uses_driver_branch_gates() {
+        // Phase 2 RED: CUDA mapping must enforce driver branch 580 or
+        // later for CUDA 13.x and branch 525 or later for CUDA 12.x.
+        // NVIDIA minor-version snapshot pins these gates. Pascal keeps
+        // CUDA 12.4. Turing through Blackwell keep the highest compatible
+        // CUDA major. This test names the missing helper and must fail
+        // until the gate exists.
+        let (release, approved, _) = approved_release();
+        for (adapter, major, driver, want) in [
+            ("NVIDIA GeForce GTX 1080", 12_u16, "560.70", "cuda-12.4"),
+            ("NVIDIA GeForce RTX 2080", 12_u16, "560.70", "cuda-12.4"),
+            ("NVIDIA GeForce RTX 3080", 12_u16, "560.70", "cuda-12.4"),
+            ("NVIDIA GeForce RTX 4080", 13_u16, "610.74", "cuda-13.3"),
+            ("NVIDIA GeForce RTX 5090", 13_u16, "610.74", "cuda-13.3"),
+        ] {
+            let hardware = HardwareInfo {
+                architecture: "x64".into(),
+                gpu_names: vec![adapter.into()],
+                vendor: "nvidia".into(),
+                cuda_major: Some(major),
+                driver_version: driver.into(),
+                detection_status: "test fixture".into(),
+                recommendation: String::new(),
+                system_memory: detect_system_memory(),
+                adapters: Vec::new(),
+                manual_overrides: Vec::new(),
+            };
+            let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
+            let mut options = catalog.options;
+            let recommended = recommend_capability_option(&mut options, &hardware)
+                .cloned()
+                .unwrap();
+            assert_eq!(recommended.backend, "cuda", "adapter {adapter}");
+            assert_eq!(recommended.install_key, want, "adapter {adapter}");
+        }
+        // Old driver branch rejects CUDA 13.x even with a Blackwell card.
+        let hardware = HardwareInfo {
+            architecture: "x64".into(),
+            gpu_names: vec!["NVIDIA GeForce RTX 5090".into()],
+            vendor: "nvidia".into(),
+            cuda_major: Some(13),
+            driver_version: "560.70".into(),
+            detection_status: "test fixture".into(),
+            recommendation: String::new(),
+            system_memory: detect_system_memory(),
+            adapters: Vec::new(),
+            manual_overrides: Vec::new(),
+        };
+        let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
+        let mut options = catalog.options;
+        let recommended = recommend_capability_option(&mut options, &hardware)
+            .cloned()
+            .unwrap();
+        assert_ne!(recommended.install_key, "cuda-13.3");
+    }
+
+    #[test]
+    fn selection_discarding_a_second_adapter_fails_without_explicit_choice() {
+        // Phase 4 RED: silent cross-adapter preference discards the
+        // second adapter. The gate must refuse automatic preference
+        // when two accelerator vendors are present. Finding A-07
+        // records this gap. This test names the missing helper and
+        // must fail until the gate exists.
+        let adapters = vec![
+            "NVIDIA GeForce RTX 5090".to_string(),
+            "AMD Radeon RX 7900 XTX".to_string(),
+        ];
+
+        let error = require_explicit_device_selection(&adapters, None).unwrap_err();
+
+        assert!(error.contains("explicit"), "unexpected error: {error}");
+
+        let chosen =
+            require_explicit_device_selection(&adapters, Some("AMD Radeon RX 7900 XTX")).unwrap();
+        assert_eq!(chosen, "AMD Radeon RX 7900 XTX");
+
+        let unknown =
+            require_explicit_device_selection(&adapters, Some("Unknown GPU")).unwrap_err();
+        assert!(
+            unknown.contains("not in the detected"),
+            "unexpected error: {unknown}"
         );
-        assert!(catalog
-            .options
-            .iter()
-            .any(|option| option.backend == "vulkan"));
+
+        let single = require_explicit_device_selection(&adapters[..1], None).unwrap();
+        assert_eq!(single, "NVIDIA GeForce RTX 5090");
+
+        let empty: Vec<String> = Vec::new();
+        let none = require_explicit_device_selection(&empty, None).unwrap_err();
+        assert!(none.contains("CPU"), "unexpected error: {none}");
+    }
+
+    #[test]
+    fn mixed_vendor_adapters_require_explicit_selection_without_silent_fallback() {
+        // Phase 2 RED: mixed systems silently select one derived vendor.
+        // The gate must refuse automatic accelerator preference and fall
+        // back to Vulkan or CPU. Finding A-07 records this gap. This test
+        // names the missing helper and must fail until the gate exists.
+        let hardware = HardwareInfo {
+            architecture: "x64".into(),
+            gpu_names: vec!["NVIDIA GeForce RTX 5090".into(), "Intel Arc A770".into()],
+            vendor: "nvidia".into(),
+            cuda_major: Some(13),
+            driver_version: "610.74".into(),
+            detection_status: "test fixture".into(),
+            recommendation: String::new(),
+            system_memory: detect_system_memory(),
+            adapters: Vec::new(),
+            manual_overrides: Vec::new(),
+        };
+        let (release, approved, _) = approved_release();
+        let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
+        let mut options = catalog.options;
+
+        let recommended = recommend_capability_option(&mut options, &hardware)
+            .cloned()
+            .unwrap();
+
+        assert!(recommended.backend == "vulkan" || recommended.backend == "cpu");
+    }
+
+    #[test]
+    fn qualcomm_hardware_keeps_dormant_opencl_without_automatic_preference() {
+        // Phase 2 RED: Qualcomm hardware receives no OpenCL preference.
+        // The gate must label OpenCL as dormant capability on Windows x64.
+        // Finding A-02 records this gap. This test names the missing
+        // helper and must fail until the gate exists.
+        let hardware = HardwareInfo {
+            architecture: "x64".into(),
+            gpu_names: vec!["Qualcomm Adreno X1".into()],
+            vendor: "other".into(),
+            cuda_major: None,
+            driver_version: "test".into(),
+            detection_status: "test fixture".into(),
+            recommendation: String::new(),
+            system_memory: detect_system_memory(),
+            adapters: Vec::new(),
+            manual_overrides: Vec::new(),
+        };
+        let (release, approved, _) = approved_release();
+        let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
+        let mut options = catalog.options;
+
+        let recommended = recommend_capability_option(&mut options, &hardware)
+            .cloned()
+            .unwrap();
+
+        assert_ne!(recommended.backend, "opencl");
+        assert!(recommended.backend == "vulkan" || recommended.backend == "cpu");
+    }
+
+    #[test]
+    fn unsupported_intel_hardware_rejects_sycl_and_keeps_vulkan_or_cpu() {
+        // Phase 2 RED: vendor-only SYCL preference accepts unknown Intel
+        // hardware. The gate must require Arc or Xe device evidence.
+        // Finding A-04 records this gap. This test names the missing
+        // helper and must fail until the gate exists.
+        let hardware = HardwareInfo {
+            architecture: "x64".into(),
+            gpu_names: vec!["Intel Unknown Graphics 2000".into()],
+            vendor: "intel".into(),
+            cuda_major: None,
+            driver_version: "test".into(),
+            detection_status: "test fixture".into(),
+            recommendation: String::new(),
+            system_memory: detect_system_memory(),
+            adapters: Vec::new(),
+            manual_overrides: Vec::new(),
+        };
+        let (release, approved, _) = approved_release();
+        let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
+        let mut options = catalog.options;
+
+        let recommended = recommend_capability_option(&mut options, &hardware)
+            .cloned()
+            .unwrap();
+
+        assert_ne!(recommended.backend, "sycl");
+    }
+
+    #[test]
+    fn unsupported_amd_hardware_rejects_rocm_and_keeps_vulkan_or_cpu() {
+        // Phase 2 RED: vendor-only ROCm preference accepts unsupported AMD
+        // hardware. The gate must require exact AMD matrix evidence.
+        // Finding A-03 records this gap. This test names the missing helper
+        // and must fail until the gate exists.
+        let hardware = HardwareInfo {
+            architecture: "x64".into(),
+            gpu_names: vec!["AMD Radeon HD 8490".into()],
+            vendor: "amd".into(),
+            cuda_major: None,
+            driver_version: "test".into(),
+            detection_status: "test fixture".into(),
+            recommendation: String::new(),
+            system_memory: detect_system_memory(),
+            adapters: Vec::new(),
+            manual_overrides: Vec::new(),
+        };
+        let (release, approved, _) = approved_release();
+        let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
+        let mut options = catalog.options;
+
+        let recommended = recommend_capability_option(&mut options, &hardware)
+            .cloned()
+            .unwrap();
+
+        assert_ne!(recommended.backend, "rocm");
+    }
+
+    #[test]
+    fn amd_machine_prefers_rocm_with_vulkan_fallback() {
+        // Retired Phase 1 vendor-only check. `supported_amd_hardware_keeps_rocm_preference`
+        // covers the capability gate now.
+        let hardware = HardwareInfo {
+            architecture: "x64".into(),
+            gpu_names: vec!["AMD Radeon RX 7900 XTX".into()],
+            vendor: "amd".into(),
+            cuda_major: None,
+            driver_version: "test".into(),
+            detection_status: "test fixture".into(),
+            recommendation: String::new(),
+            system_memory: detect_system_memory(),
+            adapters: Vec::new(),
+            manual_overrides: Vec::new(),
+        };
+        let (release, approved, _) = approved_release();
+        let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
+        let mut options = catalog.options;
+        let recommended = recommend_capability_option(&mut options, &hardware)
+            .cloned()
+            .unwrap();
+        assert_eq!(recommended.backend, "rocm");
+        assert!(options.iter().any(|option| option.backend == "vulkan"));
     }
 
     #[test]
@@ -1865,6 +2951,72 @@ mod tests {
     }
 
     #[test]
+    fn managed_runtime_paths_resolve_inside_roots_with_spaces_unicode_and_drive_forms() {
+        // Phase 4: install and manifest paths must stay inside their
+        // roots for adversarial path forms: spaces, Unicode, UNC-like
+        // components, drive-root strings, and `..` segments. Every form
+        // below must either sanitize to a `Normal`-only relative path
+        // or fail the manifest guard with `None`.
+        for backend in [
+            "cuda 13.3",
+            "cuda-13.3 héllo 世界",
+            "C:\\runtimes",
+            "\\\\server\\share",
+            "D:",
+            "..",
+            "../..",
+        ] {
+            let relative = managed_runtime_relative_path("b10752", backend);
+            assert!(
+                relative.is_relative(),
+                "backend {backend:?} escaped to an absolute path: {relative:?}"
+            );
+            assert!(
+                !relative
+                    .components()
+                    .any(|component| !matches!(component, std::path::Component::Normal(_))),
+                "backend {backend:?} left a non-normal component: {relative:?}"
+            );
+        }
+        // `..` and separator characters in the tag sanitize the same way.
+        let tagged = managed_runtime_relative_path("b10752/../../x", "cpu");
+        assert!(tagged.is_relative());
+        // Manifest-declared runtimes with any non-normal component fail.
+        let root = scratch("manifest-path-forms");
+        let install = root.join("b10752").join("cpu");
+        std::fs::create_dir_all(&install).unwrap();
+        std::fs::write(install.join("llama-server.exe"), b"x").unwrap();
+        for runtime in [
+            "../outside.exe",
+            "..\\outside.exe",
+            "sub/../../outside.exe",
+            "/absolute.exe",
+            "C:\\absolute.exe",
+            "\\\\server\\share\\x.exe",
+            "",
+        ] {
+            std::fs::write(
+                install.join("runtime.json"),
+                format!(
+                    r#"{{"tag":"b10752","backend":"cpu","runtime":{}}}"#,
+                    serde_json::to_string(runtime).unwrap()
+                ),
+            )
+            .unwrap();
+            assert!(
+                manifest_runtime_path(&install, runtime).is_none(),
+                "runtime {runtime:?} escaped its install directory"
+            );
+        }
+        // Normal nested names with spaces and Unicode stay inside.
+        std::fs::create_dir_all(install.join("sub dir héllo")).unwrap();
+        std::fs::write(install.join("sub dir héllo").join("llama-server.exe"), b"x").unwrap();
+        let nested = manifest_runtime_path(&install, "sub dir héllo/llama-server.exe").unwrap();
+        assert!(nested.starts_with(&install));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn arm64_machine_only_receives_arm64_assets() {
         let hardware = HardwareInfo {
             architecture: "arm64".into(),
@@ -1878,9 +3030,13 @@ mod tests {
             adapters: Vec::new(),
             manual_overrides: Vec::new(),
         };
-        let catalog = build_catalog(&release(), &hardware);
-        assert_eq!(catalog.options.len(), 1);
-        assert!(catalog.options[0].asset.name.contains("arm64"));
+        let (release, approved, _) = approved_release();
+        let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
+        assert_eq!(catalog.options.len(), 3);
+        assert!(catalog
+            .options
+            .iter()
+            .all(|option| option.asset.name.contains("arm64")));
     }
 
     fn scratch(name: &str) -> PathBuf {
@@ -1920,6 +3076,201 @@ mod tests {
         .unwrap_err();
 
         assert!(error.contains("entry count"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn archive_extraction_rejects_traversal_and_limits() {
+        // Phase 4: the archive gate must refuse traversal entries and
+        // every resource limit. Link entries stay refused by the
+        // unix-mode bit plus the enclosed-name guard in
+        // `extract_zip_with_limits`; duplicate names have a dedicated
+        // test below because `ZipWriter` cannot build that case.
+        // Finding A-09-adjacent hardening records this gap.
+        use std::io::Write;
+        let options = zip::write::SimpleFileOptions::default();
+
+        // A traversal entry fails: `enclosed_name` returns `None`.
+        let root = scratch("archive-traversal");
+        let archive_path = root.join("runtime.zip");
+        let destination = root.join("output");
+        fs::create_dir_all(&destination).unwrap();
+        let file = File::create(&archive_path).unwrap();
+        let mut archive = zip::ZipWriter::new(file);
+        archive.start_file("../outside.dll", options).unwrap();
+        archive.write_all(b"evil").unwrap();
+        archive.finish().unwrap();
+        let error = extract_zip_with_limits(
+            &archive_path,
+            &destination,
+            ArchiveLimits {
+                max_entries: 20_000,
+                max_entry_bytes: 4 * 1024 * 1024 * 1024,
+                max_total_bytes: 16 * 1024 * 1024 * 1024,
+                max_path_bytes: 1_024,
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("Unsafe path"), "unexpected error: {error}");
+        fs::remove_dir_all(root).unwrap();
+
+        // An over-long entry name fails the path limit.
+        let root = scratch("archive-path-limit");
+        let archive_path = root.join("runtime.zip");
+        let destination = root.join("output");
+        fs::create_dir_all(&destination).unwrap();
+        let file = File::create(&archive_path).unwrap();
+        let mut archive = zip::ZipWriter::new(file);
+        let long_name = "a".repeat(200);
+        archive.start_file(long_name, options).unwrap();
+        archive.write_all(b"x").unwrap();
+        archive.finish().unwrap();
+        let error = extract_zip_with_limits(
+            &archive_path,
+            &destination,
+            ArchiveLimits {
+                max_entries: 20_000,
+                max_entry_bytes: 4 * 1024 * 1024 * 1024,
+                max_total_bytes: 16 * 1024 * 1024 * 1024,
+                max_path_bytes: 128,
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("too long"), "unexpected error: {error}");
+        fs::remove_dir_all(root).unwrap();
+
+        // A declared entry size past the per-entry limit fails.
+        let root = scratch("archive-entry-bytes");
+        let archive_path = root.join("runtime.zip");
+        let destination = root.join("output");
+        fs::create_dir_all(&destination).unwrap();
+        let file = File::create(&archive_path).unwrap();
+        let mut archive = zip::ZipWriter::new(file);
+        archive.start_file("big.dll", options).unwrap();
+        archive.write_all(b"123456789").unwrap();
+        archive.finish().unwrap();
+        let error = extract_zip_with_limits(
+            &archive_path,
+            &destination,
+            ArchiveLimits {
+                max_entries: 20_000,
+                max_entry_bytes: 8,
+                max_total_bytes: 16 * 1024 * 1024 * 1024,
+                max_path_bytes: 1_024,
+            },
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("too large") || error.contains("exceeds"),
+            "unexpected error: {error}"
+        );
+        fs::remove_dir_all(root).unwrap();
+
+        // Combined decompressed bytes past the total limit fail.
+        let root = scratch("archive-total-bytes");
+        let archive_path = root.join("runtime.zip");
+        let destination = root.join("output");
+        fs::create_dir_all(&destination).unwrap();
+        let file = File::create(&archive_path).unwrap();
+        let mut archive = zip::ZipWriter::new(file);
+        archive.start_file("one.dll", options).unwrap();
+        archive.write_all(b"12345").unwrap();
+        archive.start_file("two.dll", options).unwrap();
+        archive.write_all(b"12345").unwrap();
+        archive.finish().unwrap();
+        let error = extract_zip_with_limits(
+            &archive_path,
+            &destination,
+            ArchiveLimits {
+                max_entries: 20_000,
+                max_entry_bytes: 16 * 1024 * 1024 * 1024,
+                max_total_bytes: 9,
+                max_path_bytes: 1_024,
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("exceeds"), "unexpected error: {error}");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn archive_extraction_rejects_symlink_mode_entries() {
+        // Phase 4: a zip entry with the symlink unix-mode bit must fail
+        // even when its path is otherwise safe. `add_symlink` sets the
+        // `S_IFLNK` bit the extraction guard checks; `unix_permissions`
+        // masks it away and cannot build this case.
+        let root = scratch("archive-symlink");
+        let archive_path = root.join("runtime.zip");
+        let destination = root.join("output");
+        fs::create_dir_all(&destination).unwrap();
+        let file = File::create(&archive_path).unwrap();
+        let mut archive = zip::ZipWriter::new(file);
+        archive
+            .add_symlink(
+                "link.dll",
+                "target.dll",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        archive.finish().unwrap();
+
+        let error = extract_zip_with_limits(
+            &archive_path,
+            &destination,
+            ArchiveLimits {
+                max_entries: 20_000,
+                max_entry_bytes: 4 * 1024 * 1024 * 1024,
+                max_total_bytes: 16 * 1024 * 1024 * 1024,
+                max_path_bytes: 1_024,
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("symlink"), "unexpected error: {error}");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn archive_extraction_rejects_duplicate_paths() {
+        // Phase 4 RED: extraction must refuse a second entry that maps
+        // to an already-written path with a `Duplicate path` error. The
+        // raw-name duplicate guard (`paths` set) cannot see through
+        // traversal (`sub/../same.dll` encloses to a `same.dll` output
+        // the guard records under a different key), so the second write
+        // fails later with a bare `File exists` OS error instead. A
+        // byte-patched archive (both entries read as `one.dll`) proves
+        // the same: `ZipArchive` dedupes by central-directory name and
+        // exposes only one entry, so the check that must fire never
+        // runs. The extractor must canonicalize before it compares.
+        let root = scratch("archive-duplicate");
+        let archive_path = root.join("runtime.zip");
+        let destination = root.join("output");
+        fs::create_dir_all(&destination).unwrap();
+        {
+            use std::io::Write;
+            let options = zip::write::SimpleFileOptions::default();
+            let file = File::create(&archive_path).unwrap();
+            let mut archive = zip::ZipWriter::new(file);
+            archive.start_file("same.dll", options).unwrap();
+            archive.write_all(b"first").unwrap();
+            archive.start_file("sub/../same.dll", options).unwrap();
+            archive.write_all(b"second").unwrap();
+            archive.finish().unwrap();
+        }
+        let error = extract_zip_with_limits(
+            &archive_path,
+            &destination,
+            ArchiveLimits {
+                max_entries: 20_000,
+                max_entry_bytes: 4 * 1024 * 1024 * 1024,
+                max_total_bytes: 16 * 1024 * 1024 * 1024,
+                max_path_bytes: 1_024,
+            },
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("Duplicate path"),
+            "unexpected error: {error}"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1967,6 +3318,11 @@ mod tests {
 
     #[test]
     fn identifies_managed_runtime_from_manifest() {
+        // Phase 4 RED: a manifest that disagrees with the DLLs beside the
+        // runtime must report `mismatch`, not trust either side alone.
+        // The manifest-only folder below stays authoritative as before;
+        // the two folders after it carry DLL evidence that contradicts
+        // or confirms the manifest. Finding A-09 records this gap.
         let dir = scratch("manifest");
         fs::write(dir.join("llama-server.exe"), b"x").unwrap();
         fs::write(
@@ -1980,7 +3336,152 @@ mod tests {
         assert_eq!(identity.cuda_major, Some(13));
         assert_eq!(identity.tag.as_deref(), Some("b10752"));
         assert_eq!(identity.install_key.as_deref(), Some("cuda-13.3"));
+        fs::remove_dir_all(&dir).unwrap();
+
+        // CUDA manifest beside CPU-only DLLs: mismatch, not `manifest`.
+        let dir = scratch("manifest-cpu-mismatch");
+        for file in ["llama-server.exe", "ggml-cpu-x64.dll", "ggml-base.dll"] {
+            fs::write(dir.join(file), b"x").unwrap();
+        }
+        fs::write(
+            dir.join("runtime.json"),
+            r#"{"tag":"b10752","backend":"cuda","installKey":"cuda-13.3","runtime":"llama-server.exe"}"#,
+        )
+        .unwrap();
+        let identity = describe_runtime(&dir.join("llama-server.exe"));
+        assert_eq!(identity.backend, "mismatch");
+        assert_eq!(identity.source, "manifest-dll-mismatch");
+        assert_eq!(identity.cuda_major, Some(13));
         fs::remove_dir_all(dir).unwrap();
+
+        // CUDA manifest beside complete CUDA + cudart DLLs: manifest wins.
+        let dir = scratch("manifest-cuda-complete");
+        for file in [
+            "llama-server.exe",
+            "ggml-cuda.dll",
+            "cudart64_13.dll",
+            "ggml-cpu-x64.dll",
+        ] {
+            fs::write(dir.join(file), b"x").unwrap();
+        }
+        fs::write(
+            dir.join("runtime.json"),
+            r#"{"tag":"b10752","backend":"cuda","installKey":"cuda-13.3","runtime":"llama-server.exe"}"#,
+        )
+        .unwrap();
+        let identity = describe_runtime(&dir.join("llama-server.exe"));
+        assert_eq!(identity.source, "manifest");
+        assert_eq!(identity.backend, "cuda");
+        assert_eq!(identity.cuda_major, Some(13));
+        fs::remove_dir_all(dir).unwrap();
+
+        // CUDA manifest beside ggml-cuda but no cudart: incomplete
+        // companion, so mismatch on a clean machine.
+        let dir = scratch("manifest-cuda-no-cudart");
+        for file in ["llama-server.exe", "ggml-cuda.dll", "ggml-cpu-x64.dll"] {
+            fs::write(dir.join(file), b"x").unwrap();
+        }
+        fs::write(
+            dir.join("runtime.json"),
+            r#"{"tag":"b10752","backend":"cuda","installKey":"cuda-13.3","runtime":"llama-server.exe"}"#,
+        )
+        .unwrap();
+        let identity = describe_runtime(&dir.join("llama-server.exe"));
+        assert_eq!(identity.backend, "mismatch");
+        assert_eq!(identity.source, "manifest-dll-mismatch");
+        fs::remove_dir_all(dir).unwrap();
+
+        // Phase 4: every non-CUDA backend needs its shipped DLLs too. A
+        // ROCm, SYCL, OpenVINO, or Vulkan manifest beside CPU-only DLLs
+        // must report `mismatch`, while complete folders stay
+        // `manifest`-authoritative. Finding A-09 records this
+        // clean-machine gap; the gate under test is
+        // `backend_dependencies_are_complete`.
+        for (name, backend, install_key, dlls) in [
+            (
+                "manifest-rocm-complete",
+                "rocm",
+                "rocm-10.0",
+                vec!["llama-server.exe", "ggml-hip.dll", "ggml-cpu-x64.dll"],
+            ),
+            (
+                "manifest-sycl-complete",
+                "sycl",
+                "sycl",
+                vec!["llama-server.exe", "ggml-sycl.dll", "ggml-cpu-x64.dll"],
+            ),
+            (
+                "manifest-openvino-complete",
+                "openvino",
+                "openvino-2026.3.1",
+                vec!["llama-server.exe", "ggml-openvino.dll", "ggml-cpu-x64.dll"],
+            ),
+            (
+                "manifest-vulkan-complete",
+                "vulkan",
+                "vulkan",
+                vec!["llama-server.exe", "ggml-vulkan.dll", "ggml-cpu-x64.dll"],
+            ),
+        ] {
+            assert!(
+                backend_dependencies_are_complete(
+                    &dlls
+                        .iter()
+                        .map(|dll| dll.to_ascii_lowercase())
+                        .collect::<Vec<_>>(),
+                    backend
+                ),
+                "{name} fixture must satisfy its dependency rule"
+            );
+            let dir = scratch(name);
+            for file in dlls {
+                fs::write(dir.join(file), b"x").unwrap();
+            }
+            fs::write(
+                dir.join("runtime.json"),
+                format!(
+                    r#"{{"tag":"b10752","backend":"{backend}","installKey":"{install_key}","runtime":"llama-server.exe"}}"#
+                ),
+            )
+            .unwrap();
+            let identity = describe_runtime(&dir.join("llama-server.exe"));
+            assert_eq!(identity.source, "manifest", "{name} must stay trusted");
+            assert_eq!(identity.backend, backend, "{name} backend drift");
+            fs::remove_dir_all(dir).unwrap();
+        }
+        for (name, backend, install_key) in [
+            ("manifest-rocm-cpu-mismatch", "rocm", "rocm-10.0"),
+            ("manifest-sycl-cpu-mismatch", "sycl", "sycl"),
+            (
+                "manifest-openvino-cpu-mismatch",
+                "openvino",
+                "openvino-2026.3.1",
+            ),
+            ("manifest-vulkan-cpu-mismatch", "vulkan", "vulkan"),
+        ] {
+            assert!(
+                !backend_dependencies_are_complete(
+                    &["ggml-cpu-x64.dll".to_string(), "ggml-base.dll".to_string()],
+                    backend
+                ),
+                "{name} fixture must fail its dependency rule"
+            );
+            let dir = scratch(name);
+            for file in ["llama-server.exe", "ggml-cpu-x64.dll", "ggml-base.dll"] {
+                fs::write(dir.join(file), b"x").unwrap();
+            }
+            fs::write(
+                dir.join("runtime.json"),
+                format!(
+                    r#"{{"tag":"b10752","backend":"{backend}","installKey":"{install_key}","runtime":"llama-server.exe"}}"#
+                ),
+            )
+            .unwrap();
+            let identity = describe_runtime(&dir.join("llama-server.exe"));
+            assert_eq!(identity.backend, "mismatch", "{name} must mismatch");
+            assert_eq!(identity.source, "manifest-dll-mismatch", "{name} source");
+            fs::remove_dir_all(dir).unwrap();
+        }
     }
 
     #[test]

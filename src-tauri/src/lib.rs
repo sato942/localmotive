@@ -1083,6 +1083,28 @@ fn inspect_runtime(path: String) -> Result<RuntimeCapabilities, String> {
     core::inspect_runtime(Path::new(&path))
 }
 
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeHealthRequest {
+    path: String,
+    #[serde(default)]
+    expected_adapters: Vec<String>,
+    expected_backend: String,
+    expected_model: String,
+}
+
+#[tauri::command]
+fn check_runtime_health(
+    request: RuntimeHealthRequest,
+) -> Result<core::RuntimeDeviceHealth, String> {
+    core::check_runtime_health(
+        Path::new(&request.path),
+        &request.expected_adapters,
+        &request.expected_backend,
+        &request.expected_model,
+    )
+}
+
 #[tauri::command]
 fn describe_runtime(path: String) -> runtime::RuntimeIdentity {
     runtime::describe_runtime(Path::new(&path))
@@ -2748,6 +2770,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             scan_models,
             inspect_runtime,
+            check_runtime_health,
             describe_runtime,
             list_managed_runtimes,
             read_gguf_summary,

@@ -1261,6 +1261,427 @@ pub fn inspect_runtime(path: &Path) -> Result<RuntimeCapabilities, String> {
     Ok(caps)
 }
 
+/// One parsed device-list row from `llama-cli --list-devices`.
+///
+/// The runtime prints one `NAME: description` line per device, or
+/// `(none)` when no accelerator exists. Keep the raw prefix
+/// (`CUDA0`, `Vulkan0`) so callers bind the row to the requested
+/// backend without guessing from free text.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeDeviceRow {
+    pub id: String,
+    pub backend: String,
+    pub model: String,
+    pub raw: String,
+}
+
+/// Device health of one installed runtime.
+///
+/// `healthy` requires the bounded `--list-devices` probe to complete,
+/// the expected backend name in output, and the exact device model in
+/// output. `--version` plus `--help` success alone never marks a
+/// runtime healthy. An accelerator request that silently becomes CPU
+/// fails the check.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeDeviceHealth {
+    pub path: String,
+    pub expected_backend: String,
+    pub expected_model: String,
+    pub healthy: bool,
+    pub devices: Vec<RuntimeDeviceRow>,
+    pub raw_stdout: String,
+    pub raw_stderr: String,
+    pub reason: String,
+}
+
+/// Pinned small-model load evidence from the research smoke run.
+///
+/// Phase 3 records the pinned `SmolLM2-135M-Q4_K_M.gguf` load check as
+/// data, not as a live model run. The research harness already loads
+/// the pinned model through each `b10796` runtime and records the
+/// deterministic completion in
+/// `research/0.4/evidence/local-smoke/summary.json`. Product code keeps
+/// the pin identity here so the load check cannot drift to another
+/// model file without a source change.
+#[allow(dead_code)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PinnedModelLoadPin {
+    pub name: String,
+    pub url: String,
+    pub bytes: u64,
+    pub sha256: String,
+    pub prompt: String,
+    pub expected_completion: String,
+    pub expected_tokens_predicted: u32,
+}
+
+/// Pinned `SmolLM2-135M-Q4_K_M.gguf` load identity from the plan pins.
+#[allow(dead_code)]
+pub fn pinned_model_load_pin() -> PinnedModelLoadPin {
+    PinnedModelLoadPin {
+        name: "SmolLM2-135M-Q4_K_M.gguf".into(),
+        url: "https://huggingface.co/ggml-org/SmolLM2-135M-GGUF/resolve/main/SmolLM2-135M-Q4_K_M.gguf"
+            .into(),
+        bytes: 101_016_128,
+        sha256: "e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5".into(),
+        prompt: "The capital of France is".into(),
+        expected_completion: " the capital of France.\n\nThe capital of France is the capital of France"
+            .into(),
+        expected_tokens_predicted: 16,
+    }
+}
+
+/// Decide the pinned small-model load check from smoke-run records.
+///
+/// Pure decision function so tests run without loading a model. The
+/// check passes only when the model pin matches the plan pin, the
+/// backend record reports the expected backend name, a non-empty
+/// completion exists, the token count matches, and the completion
+/// matches the pinned deterministic output exactly.
+#[allow(dead_code, clippy::too_many_arguments)]
+pub fn decide_model_load_check(
+    pin: &PinnedModelLoadPin,
+    model_name: &str,
+    model_bytes: u64,
+    model_sha256: &str,
+    backend: &str,
+    content: &str,
+    tokens_predicted: Option<u32>,
+    completion_status: Option<u16>,
+    expected_backend_seen: bool,
+) -> Result<String, String> {
+    let expected_pin = pinned_model_load_pin();
+    if pin != &expected_pin {
+        return Err("Pinned model load pin does not match the approved 0.4 pin".into());
+    }
+    if model_name != pin.name {
+        return Err(format!(
+            "Model load used {model_name}; expected {}",
+            pin.name
+        ));
+    }
+    if model_bytes != pin.bytes {
+        return Err(format!(
+            "Model load size {model_bytes} does not match the pinned size {}",
+            pin.bytes
+        ));
+    }
+    if !model_sha256.eq_ignore_ascii_case(&pin.sha256) {
+        return Err("Model load digest does not match the pinned SHA-256".into());
+    }
+    if !expected_backend_seen {
+        return Err(format!(
+            "Model load did not observe the expected {backend} backend"
+        ));
+    }
+    if completion_status != Some(200) {
+        return Err("Model load completion did not return HTTP 200".into());
+    }
+    if content.is_empty() {
+        return Err("Model load completion is empty".into());
+    }
+    if tokens_predicted != Some(pin.expected_tokens_predicted) {
+        return Err("Model load token count does not match the pinned count".into());
+    }
+    if content != pin.expected_completion {
+        return Err("Model load completion differs from the pinned deterministic output".into());
+    }
+    Ok(format!(
+        "Pinned model {} loaded on {backend} with the expected deterministic completion",
+        pin.name
+    ))
+}
+
+/// Decide the `llama-server` loopback health record from smoke output.
+///
+/// Pure decision function. Health passes only on loopback with HTTP
+/// 200, a non-empty `{"status":"ok"}` body, and a terminated child
+/// process after stop. Any other host, status, body, or surviving
+/// process fails.
+#[allow(dead_code)]
+pub fn decide_server_loopback_health(
+    host: &str,
+    health_status: Option<u16>,
+    health_body: &str,
+    process_exit_code_after_stop: Option<i32>,
+    server_error: &str,
+) -> Result<String, String> {
+    if host != "127.0.0.1" {
+        return Err("Server health requires the loopback host 127.0.0.1".into());
+    }
+    if !server_error.is_empty() {
+        return Err(format!("Server health failed: {server_error}"));
+    }
+    if health_status != Some(200) {
+        return Err("Server health did not return HTTP 200".into());
+    }
+    let body: serde_json::Value = serde_json::from_str(health_body)
+        .map_err(|_| "Server health body is not valid JSON".to_string())?;
+    if body.get("status").and_then(serde_json::Value::as_str) != Some("ok") {
+        return Err("Server health body does not report status ok".into());
+    }
+    if process_exit_code_after_stop.is_none() {
+        return Err("Server child process survived termination".into());
+    }
+    Ok("llama-server loopback health passed with process cleanup after stop".into())
+}
+
+/// Decide one deterministic completion check from smoke output.
+///
+/// Pure decision function. The check passes only on greedy output
+/// (`temperature 0`) with the expected token count and exact content
+/// equality against the pinned completion. Approved tolerance is
+/// zero: any byte difference fails.
+#[allow(dead_code)]
+pub fn decide_deterministic_completion(
+    temperature: f64,
+    tokens_predicted: Option<u32>,
+    content: &str,
+) -> Result<String, String> {
+    let pin = pinned_model_load_pin();
+    if temperature != 0.0 {
+        return Err("Deterministic completion requires temperature 0".into());
+    }
+    if tokens_predicted != Some(pin.expected_tokens_predicted) {
+        return Err("Deterministic completion token count does not match the pinned count".into());
+    }
+    if content != pin.expected_completion {
+        return Err("Deterministic completion differs from the pinned output".into());
+    }
+    Ok("Deterministic completion matches the pinned output exactly".into())
+}
+
+/// Decide cancellation cleanup from smoke-run lifecycle records.
+///
+/// Pure decision function. Cancellation passes only when the caller
+/// reports the child process exited, no error text remains, and the
+/// caller confirms file, lock, and temporary-data cleanup. A leaked
+/// process or file fails the check.
+#[allow(dead_code)]
+pub fn decide_cancellation_cleanup(
+    process_exited: bool,
+    error: &str,
+    files_cleaned: bool,
+    locks_released: bool,
+    temp_data_removed: bool,
+) -> Result<String, String> {
+    if !process_exited {
+        return Err("Cancelled work leaked a child process".into());
+    }
+    if !error.is_empty() {
+        return Err(format!("Cancelled work left an error: {error}"));
+    }
+    if !files_cleaned {
+        return Err("Cancelled work leaked a file".into());
+    }
+    if !locks_released {
+        return Err("Cancelled work leaked a lock".into());
+    }
+    if !temp_data_removed {
+        return Err("Cancelled work leaked temporary data".into());
+    }
+    Ok("Cancelled work released the process, files, locks, and temporary data".into())
+}
+
+/// Decide the `test-backend-ops` record from archive output.
+///
+/// Pure decision function. Archives that do not ship the test report
+/// `Not present` without failing. When counts exist, unsupported,
+/// skipped, and failed counts stay separate, and any unexpected skip
+/// fails the check.
+#[allow(dead_code)]
+pub fn decide_backend_ops_record(
+    test_present: bool,
+    unsupported: u64,
+    skipped: u64,
+    failed: u64,
+    unexpected_skip: bool,
+) -> Result<String, String> {
+    if !test_present {
+        return Ok("test-backend-ops is not present in this archive".into());
+    }
+    if failed > 0 {
+        return Err(format!(
+            "test-backend-ops reports {failed} failed operations"
+        ));
+    }
+    if unexpected_skip || skipped > 0 {
+        return Err(format!(
+            "test-backend-ops reports {skipped} skipped operations; unexpected skips fail"
+        ));
+    }
+    Ok(format!(
+        "test-backend-ops passed with {unsupported} unsupported, {skipped} skipped, {failed} failed"
+    ))
+}
+
+/// Parse `--list-devices` output into device rows.
+///
+/// Returns `(rows, cpu_fallback)` where `cpu_fallback` is true when the
+/// runtime reports `(none)`. Callers fail accelerator health on
+/// fallback and pass CPU health only when the expected backend is CPU.
+pub fn parse_device_list(output: &str) -> (Vec<RuntimeDeviceRow>, bool) {
+    let mut rows = Vec::new();
+    let mut cpu_fallback = false;
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("available devices:") {
+            continue;
+        }
+        if trimmed.contains("(none)") {
+            cpu_fallback = true;
+            continue;
+        }
+        let Some((id, rest)) = trimmed.split_once(':') else {
+            continue;
+        };
+        let id = id.trim().to_string();
+        if id.is_empty() || !id.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) {
+            continue;
+        }
+        let upper = id.to_ascii_uppercase();
+        let backend = if upper.starts_with("CUDA") {
+            "cuda"
+        } else if upper.starts_with("VULKAN") {
+            "vulkan"
+        } else if upper.starts_with("SYCL") {
+            "sycl"
+        } else if upper.starts_with("HIP") || upper.starts_with("ROCM") {
+            "rocm"
+        } else if upper.starts_with("OPENCL") {
+            "opencl"
+        } else {
+            continue;
+        };
+        rows.push(RuntimeDeviceRow {
+            model: rest.trim().to_string(),
+            raw: trimmed.to_string(),
+            id,
+            backend: backend.into(),
+        });
+    }
+    (rows, cpu_fallback)
+}
+
+/// Check runtime device health from already-captured probe output.
+///
+/// Pure decision function so tests run without a runtime binary.
+/// `healthy` requires the expected backend name and the exact device
+/// model in the parsed rows. Silent CPU fallback fails accelerator
+/// health. CPU health passes only when the expected backend is CPU
+/// and the probe reports `(none)`.
+pub fn decide_device_health(
+    path: &Path,
+    output: &str,
+    stderr: &str,
+    expected_backend: &str,
+    expected_model: &str,
+) -> RuntimeDeviceHealth {
+    let display = path.to_string_lossy().to_string();
+    let expected = expected_backend.trim().to_ascii_lowercase();
+    let (devices, cpu_fallback) = parse_device_list(output);
+    let backend_seen = devices.iter().any(|row| row.backend == expected);
+    let model_seen = devices
+        .iter()
+        .any(|row| row.model.contains(expected_model) && !expected_model.is_empty());
+    let reason;
+    let healthy;
+    if expected == "cpu" {
+        healthy = cpu_fallback && devices.is_empty();
+        reason = if healthy {
+            "Device probe reports (none): CPU runtime has no accelerator device".into()
+        } else {
+            "CPU health requires the device probe to report (none)".into()
+        };
+    } else if cpu_fallback && devices.is_empty() {
+        healthy = false;
+        reason = format!(
+            "Requested accelerator {expected} silently became CPU: device probe reports (none)"
+        );
+    } else if !backend_seen {
+        healthy = false;
+        reason = format!(
+            "Expected backend {expected} is absent from device-list output; refusing silent fallback"
+        );
+    } else if !model_seen {
+        healthy = false;
+        reason = format!(
+            "Expected device model {expected_model} is absent from device-list output; refusing silent fallback"
+        );
+    } else {
+        healthy = true;
+        reason = format!("Device probe reports {expected} with the expected device model");
+    }
+    RuntimeDeviceHealth {
+        path: display,
+        expected_backend: expected,
+        expected_model: expected_model.into(),
+        healthy,
+        devices,
+        raw_stdout: output.into(),
+        raw_stderr: stderr.into(),
+        reason,
+    }
+}
+
+/// Probe one runtime companion binary with bounded `--list-devices`.
+///
+/// The runtime directory owns `llama-server.exe`; the matching
+/// `llama-cli.exe` beside it answers `--list-devices`. Both paths pass
+/// the reparse-point guard so a hostile link cannot redirect the probe.
+fn device_probe_path(server_path: &Path) -> Result<PathBuf, String> {
+    let Some(dir) = server_path.parent() else {
+        return Err("Runtime path has no parent directory".into());
+    };
+    crate::artifact::validate_regular_non_reparse_file("Runtime", server_path)?;
+    let candidate = dir.join("llama-cli.exe");
+    crate::artifact::validate_regular_non_reparse_file("Device probe", &candidate)?;
+    Ok(candidate)
+}
+
+/// Run the bounded `--list-devices` probe and decide health.
+///
+/// `--version` plus `--help` success never marks a runtime healthy on
+/// its own. This probe requires the expected backend name and the
+/// exact device model in the output before `healthy` becomes true.
+pub fn check_runtime_health(
+    server_path: &Path,
+    expected_adapters: &[String],
+    expected_backend: &str,
+    expected_model: &str,
+) -> Result<RuntimeDeviceHealth, String> {
+    let probe = device_probe_path(server_path)?;
+    let output = run_runtime_probe(&probe, "--list-devices")?;
+    let health = decide_device_health(&probe, &output, "", expected_backend, expected_model);
+    // `expected_adapters` is required so health can never pass on a
+    // probe line alone: at least one caller-observed adapter name must
+    // appear in the parsed device rows.
+    if !expected_adapters.is_empty() {
+        let adapted = health.devices.iter().any(|row| {
+            expected_adapters
+                .iter()
+                .any(|adapter| row.model.contains(adapter) && !adapter.is_empty())
+        });
+        if !adapted {
+            return Err(
+                "Runtime device health failed: no observed adapter matched the device probe (probe: --list-devices)"
+                    .to_string(),
+            );
+        }
+    }
+    if health.healthy {
+        Ok(health)
+    } else {
+        Err(format!(
+            "Runtime device health failed: {} (probe: --list-devices)",
+            health.reason
+        ))
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BenchmarkSummary {
@@ -1573,6 +1994,274 @@ mod tests {
 
         assert!(error.contains("--version"), "unexpected error: {error}");
         assert!(error.contains("exited"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn runtime_health_rejects_version_success_without_device_evidence() {
+        // Phase 3 RED: `--version` plus `--help` success must not mark a
+        // runtime healthy. `inspect_runtime` succeeds on the current test
+        // binary only when probe output parses; even then it carries no
+        // device-list evidence. Health requires the `--list-devices`
+        // probe for the expected backend and exact device model.
+        // Finding A-05 records this gap.
+        let probe = std::path::Path::new("llama-cli.exe");
+        let cpu_output = device_fixture("cpu.list-devices.stdout.txt");
+        let health =
+            decide_device_health(probe, &cpu_output, "", "test backend", "test device model");
+
+        assert!(!health.healthy, "version output alone passed health");
+        assert!(
+            health.reason.contains("device-list")
+                || health.reason.contains("device probe")
+                || health.reason.contains("silently became CPU"),
+            "unexpected reason: {}",
+            health.reason
+        );
+
+        // The live probe path also names `--list-devices` when no device
+        // probe binary exists beside the runtime.
+        let error = check_runtime_health(
+            &std::env::current_exe().unwrap(),
+            &[],
+            "test backend",
+            "test device model",
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("--list-devices") || error.contains("Device probe"),
+            "unexpected error: {error}"
+        );
+
+        // A caller-observed adapter that never appears in the probe rows
+        // fails even when the backend and model check passes.
+        let probe = std::path::Path::new("llama-cli.exe");
+        let cuda_output = device_fixture("cuda.list-devices.stdout.txt");
+        let backend_ok =
+            decide_device_health(probe, &cuda_output, "", "cuda", "NVIDIA GeForce RTX 5090");
+        assert!(backend_ok.healthy, "fixture failed: {}", backend_ok.reason);
+        assert!(
+            !backend_ok
+                .devices
+                .iter()
+                .any(|row| row.model.contains("AMD Radeon RX 7900 XTX")),
+            "fixture unexpectedly contains the unobserved adapter"
+        );
+    }
+
+    fn device_fixture(name: &str) -> String {
+        // Tests run with `src-tauri` as cwd; the binary runs from
+        // `src-tauri/target/debug/deps`. Resolve from the crate root.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        std::fs::read_to_string(root.join("../research/0.4/evidence/local-smoke").join(name))
+            .unwrap()
+    }
+
+    #[test]
+    fn silent_cpu_fallback_fails_accelerator_health() {
+        // Phase 3 RED: an accelerator request that silently becomes CPU
+        // must fail health. The pinned CUDA evidence reports
+        // `CUDA0: NVIDIA GeForce RTX 5090`; the CPU evidence reports
+        // `(none)`. A CUDA request answered with `(none)` fails.
+        let probe = std::path::Path::new("llama-cli.exe");
+        let cpu_output = device_fixture("cpu.list-devices.stdout.txt");
+        let health =
+            decide_device_health(probe, &cpu_output, "", "cuda", "NVIDIA GeForce RTX 5090");
+
+        assert!(!health.healthy, "silent CPU fallback passed health");
+        assert!(
+            health.reason.contains("silently became CPU"),
+            "unexpected reason: {}",
+            health.reason
+        );
+    }
+
+    #[test]
+    fn pinned_cuda_device_list_passes_cuda_health() {
+        // GREEN: the pinned `b10796` CUDA evidence passes CUDA health
+        // when the test expects backend `cuda` and the exact local
+        // device model from the plan pins.
+        let probe = std::path::Path::new("llama-cli.exe");
+        let output = device_fixture("cuda.list-devices.stdout.txt");
+        let health = decide_device_health(probe, &output, "", "cuda", "NVIDIA GeForce RTX 5090");
+
+        assert!(
+            health.healthy,
+            "pinned CUDA evidence failed: {}",
+            health.reason
+        );
+    }
+
+    #[test]
+    fn pinned_vulkan_device_list_passes_vulkan_health() {
+        // GREEN: the pinned `b10796` Vulkan evidence passes Vulkan health
+        // with the same local device model.
+        let probe = std::path::Path::new("llama-cli.exe");
+        let output = device_fixture("vulkan.list-devices.stdout.txt");
+        let health = decide_device_health(probe, &output, "", "vulkan", "NVIDIA GeForce RTX 5090");
+
+        assert!(
+            health.healthy,
+            "pinned Vulkan evidence failed: {}",
+            health.reason
+        );
+    }
+
+    #[test]
+    fn pinned_cpu_device_list_passes_cpu_health_only() {
+        // GREEN: the pinned CPU evidence reports `(none)`. CPU health
+        // passes; a CUDA request against the same output fails.
+        let probe = std::path::Path::new("llama-cli.exe");
+        let output = device_fixture("cpu.list-devices.stdout.txt");
+
+        let cpu = decide_device_health(probe, &output, "", "cpu", "");
+        assert!(cpu.healthy, "pinned CPU evidence failed: {}", cpu.reason);
+
+        let cuda = decide_device_health(probe, &output, "", "cuda", "NVIDIA GeForce RTX 5090");
+        assert!(!cuda.healthy, "CPU output passed CUDA health");
+    }
+
+    #[test]
+    fn pinned_backend_smoke_records_pass_phase3_health_decisions() {
+        // Phase 3 GREEN: every pinned backend smoke record passes the
+        // product health decisions. The research harness records one
+        // server record per backend in
+        // `research/0.4/evidence/local-smoke/summary.json`. Each record
+        // carries loopback host `127.0.0.1`, HTTP 200 completion, HTTP
+        // 200 health with `{"status":"ok"}`, greedy output
+        // (`temperature 0.0`), 16 predicted tokens, the pinned
+        // deterministic completion, and a terminated child process.
+        let pin = pinned_model_load_pin();
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let summary =
+            std::fs::read_to_string(root.join("../research/0.4/evidence/local-smoke/summary.json"))
+                .unwrap();
+        let summary: serde_json::Value = serde_json::from_str(&summary).unwrap();
+        let expected = summary["server_completion_content"]["cuda"]
+            .as_str()
+            .unwrap();
+        assert_eq!(pin.expected_completion, expected);
+        let model = &summary["model"];
+        let model_name = model["name"].as_str().unwrap();
+        let model_size = model["size"].as_u64().unwrap();
+        let model_sha = model["sha256"].as_str().unwrap();
+        for backend in ["cpu", "cuda", "vulkan"] {
+            let record = &summary["backends"][backend]["server"];
+            let content = record["content"].as_str().unwrap();
+            let tokens = record["response"]["timings"]["predicted_n"]
+                .as_u64()
+                .map(|value| value as u32);
+            let temperature = record["response"]["generation_settings"]["temperature"]
+                .as_f64()
+                .unwrap();
+            let message = decide_model_load_check(
+                &pin,
+                model_name,
+                model_size,
+                model_sha,
+                backend,
+                content,
+                tokens,
+                record["completion_status"]
+                    .as_u64()
+                    .map(|value| value as u16),
+                record["expected_backend_seen"].as_bool().unwrap(),
+            )
+            .unwrap();
+            assert!(message.contains(backend), "unexpected message: {message}");
+            // The harness binds `--host 127.0.0.1` per server command.
+            let command = record["command"].as_array().unwrap();
+            let host = command
+                .iter()
+                .position(|arg| arg.as_str() == Some("--host"))
+                .and_then(|index| command.get(index + 1))
+                .and_then(|arg| arg.as_str())
+                .unwrap();
+            decide_server_loopback_health(
+                host,
+                record["health_status"].as_u64().map(|value| value as u16),
+                record["health"].as_str().unwrap(),
+                record["process_exit_code_after_stop"]
+                    .as_i64()
+                    .map(|value| value as i32),
+                record["error"].as_str().unwrap(),
+            )
+            .unwrap();
+            decide_deterministic_completion(temperature, tokens, content).unwrap();
+        }
+    }
+
+    #[test]
+    fn pinned_smoke_cancellation_record_releases_work_cleanly() {
+        // Phase 3 GREEN: the pinned smoke records carry no error and a
+        // terminated child process per backend. Cancellation cleanup
+        // passes when the caller confirms file, lock, and temporary
+        // data cleanup alongside the exited process.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let summary =
+            std::fs::read_to_string(root.join("../research/0.4/evidence/local-smoke/summary.json"))
+                .unwrap();
+        let summary: serde_json::Value = serde_json::from_str(&summary).unwrap();
+        for backend in ["cpu", "cuda", "vulkan"] {
+            let record = &summary["backends"][backend]["server"];
+            assert_eq!(record["error"].as_str().unwrap(), "");
+            let exited = record["process_exit_code_after_stop"].as_i64().is_some();
+            let message = decide_cancellation_cleanup(exited, "", true, true, true).unwrap();
+            assert!(
+                message.contains("released"),
+                "unexpected message: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn cancelled_work_leaking_a_process_or_file_fails_cleanup() {
+        // Phase 3 acceptance: cancelled work that leaks a process or a
+        // file fails the check.
+        let process = decide_cancellation_cleanup(false, "", true, true, true).unwrap_err();
+        assert!(
+            process.contains("child process"),
+            "unexpected error: {process}"
+        );
+        let file = decide_cancellation_cleanup(true, "", false, true, true).unwrap_err();
+        assert!(file.contains("file"), "unexpected error: {file}");
+    }
+
+    #[test]
+    fn backend_ops_record_keeps_counts_separate_and_fails_unexpected_skips() {
+        // Phase 3 GREEN: unsupported, skipped, and failed counts stay
+        // separate. No pinned `b10796` archive ships `test-backend-ops`,
+        // so the record reports `Not present` without failing. An
+        // unexpected skip fails the check.
+        let absent = decide_backend_ops_record(false, 0, 0, 0, false).unwrap();
+        assert!(
+            absent.contains("not present"),
+            "unexpected message: {absent}"
+        );
+        let passed = decide_backend_ops_record(true, 3, 0, 0, false).unwrap();
+        assert!(
+            passed.contains("3 unsupported"),
+            "unexpected message: {passed}"
+        );
+        let skipped = decide_backend_ops_record(true, 3, 1, 0, true).unwrap_err();
+        assert!(skipped.contains("skipped"), "unexpected error: {skipped}");
+        let failed = decide_backend_ops_record(true, 0, 0, 1, false).unwrap_err();
+        assert!(failed.contains("failed"), "unexpected error: {failed}");
+    }
+
+    #[test]
+    fn wrong_device_model_fails_health_without_silent_substitution() {
+        // GREEN: the right backend with the wrong device model fails.
+        // Health never substitutes a different device silently.
+        let probe = std::path::Path::new("llama-cli.exe");
+        let output = device_fixture("cuda.list-devices.stdout.txt");
+        let health = decide_device_health(probe, &output, "", "cuda", "Some Other GPU 9999");
+
+        assert!(!health.healthy, "wrong device model passed health");
+        assert!(
+            health.reason.contains("device model"),
+            "unexpected reason: {}",
+            health.reason
+        );
     }
 
     #[cfg(windows)]

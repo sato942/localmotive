@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.4.0
+
+### Validated scope only: approved runtimes, device evidence, explicit selection
+
+Localmotive targets Windows x64. Runtime availability depends on exact processor, accelerator, driver, and llama.cpp artifact. Only configurations in the release compatibility table carry validation. Upstream capability is not product support.
+
+Compatibility table (`b10796`, `9a4843cf2f1a3fc8e39f8148e92ee6bfe18e2db6`):
+
+- Supported: Windows 11, x64, AMD Ryzen 9 9950X3D, CPU — attested `research/0.4/evidence/attestations/local-windows-x64-cpu.json` (`L2`, `PARTIAL`).
+- Supported: Windows 11, x64, NVIDIA GeForce RTX 5090, driver 610.74, CUDA 13.3 — attested `research/0.4/evidence/attestations/local-windows-x64-cuda.json` (`L2`, `PARTIAL`).
+- Supported: Windows 11, x64, NVIDIA GeForce RTX 5090, driver 610.74, Vulkan — attested `research/0.4/evidence/attestations/local-windows-x64-vulkan.json` (`L2`, `PARTIAL`).
+- Not validated: every other catalog entry (ROCm, SYCL, OpenVINO, CUDA 12.4, Arm64) — untested configuration, no automatic preference, no `Supported` label.
+
+Known limitations: no `test-backend-ops` in any pinned `b10796` archive (no `L3 RUNTIME` reachable; 5/5 runnable attestation checks `PASS`, `gguf-pilot-end-to-end` and `performance-qualification` `UNKNOWN`); 16 of 19 P0 classes need hardware owners or approved cloud spend (no AMD/Intel/Pascal/Turing/Ampere/Ada hardware locally); no clean-account/VM run; no installer/launch/inference/cancellation/restart/uninstall evidence; research evidence is gitignored and cited by path, not carried in the tag.
+
+- Runtime selection uses one approved manifest (`src-tauri/approved_runtimes.json` pins `b10796` with URLs, bytes, SHA-256) instead of the newest release with Windows archives. Updates block when a required upstream hardware job fails or remains queued (`server-cuda`, `server-metal`, `gpu-rocm`, `gpu-vulkan-apple`, `gpu-vulkan-nvidia-cm` failed; `gpu-openvino-low-perf` queued).
+- Recommendation is device-evidence based: CUDA needs driver branch 580+ (13.x) or 525+ (12.x) plus matching CUDA major; ROCm needs an exact AMD matrix family; SYCL needs Arc/Xe device evidence; OpenVINO and OpenCL stay catalog entries without automatic preference; Arm64 assets stay dormant; Qualcomm maps to dormant OpenCL; empty adapter lists recommend CPU explicitly; mixed-vendor multi-adapter systems require explicit device selection (`require_explicit_device_selection`), never silent cross-backend fallback.
+- Runtime health requires `--list-devices` evidence plus the pinned `SmolLM2-135M-Q4_K_M.gguf` model load (`e31313…f5`, 16-token deterministic completion), `127.0.0.1` loopback health, and cancellation cleanup. Version/help success alone never marks a runtime healthy; silent CPU fallback fails accelerator health.
+- Installed identity is evidence-derived (`describe_runtime`): managed `runtime.json` manifest, otherwise shipped ggml/CUDA DLLs. A manifest that disagrees with sibling DLLs (wrong backend, wrong CUDA major, missing companion) reports `mismatch` / `manifest-dll-mismatch` with a reinstall action before launch. Completeness per backend: CUDA needs `ggml-cuda.dll` plus matching `cudart64_<major>.dll`; ROCm `ggml-hip.dll`/`ggml-rocm.dll`; SYCL `ggml-sycl.dll`; OpenVINO `ggml-openvino.dll`; Vulkan `ggml-vulkan.dll`; Arm64 OpenCL `ggml-opencl.dll`; CPU `ggml-cpu`/`ggml.dll`.
+- Extraction refuses traversal, symlink bits, duplicate paths (canonicalized), entry-count, per-entry, total-byte, and path-length violations. Install paths sanitize spaces, Unicode, drive-root, UNC, and `..` forms to `Normal`-only relative paths; manifest runtimes with non-normal components fail.
+- The managed runtime screen shows one `SUPPORTED` / `NOT VALIDATED` tag plus a scope line per option (`OS arch · device · driver · backend · revision`), hardware evidence per adapter with source, artifact digest/size before actions, and `MISMATCH · REINSTALL` before launch on identity mismatch. New decision functions `supportStatusForOption` and `runtimeIdentityMismatch` carry Vitest coverage (46 tests).
+- Verification on the release candidate: `cargo fmt --check` passes; `cargo clippy --locked --all-targets -- -D warnings` passes; `cargo test --locked` passes (296 passed, 1 ignored); `npx tsc --noEmit -p tsconfig.json` passes; `npm test` passes (46); `npm run build` passes; `python3 research/0.4/scripts/run_local_smoke.py` passes 10/10 on CPU/CUDA 13.3/Vulkan; `scripts/verify_040.mjs` (`node --check` passes) asserts packaged values but is not run here — it needs `npm run tauri build` plus a human-gated release tag, signing, and publication.
+- Tracker: `TODO-0.4.md` holds pins, frozen P0 list, phase gates, and the verification ledger. Architecture: `docs/RUNTIME_MANAGER.md` gains the product support contract and identity/completeness sections.
+
 ## 0.3.0
 
 ### Evidence-first model fit, measurement, and sharing
