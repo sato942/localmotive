@@ -619,25 +619,27 @@ Record exact results here before declaring 0.4 ready.
 | Check | Result | Evidence |
 |---|---|---|
 | Phase 0 pins and P0 freeze | PASS | This tracker, pins plus 19-row P0 list |
-| `npx tsc --noEmit -p tsconfig.json` | PASS (`TSC:0`) | This run, `2026-09-05` |
-| `npm test` | PASS (46 passed) | This run, `2026-09-05` |
-| `npm run build` | PASS (1838 modules, dist emitted) | This run, `2026-09-05` |
-| `cargo fmt --check` | PASS (`FMT:0`) | This run, `2026-09-05` |
-| `cargo clippy --all-targets -- -D warnings` | PASS | This run, `2026-09-05` |
-| `cargo test` (`--locked`) | PASS (296 passed, 1 ignored) | This run, `2026-09-05` |
-| `node --check scripts/verify_040.mjs` | PASS (`SYNTAX_OK`) | This run, `2026-09-05`; full run needs packaged binary (human-gated) |
-| `node scripts/verify_040.mjs` (packaged run) | PENDING | Needs `npm run tauri build` plus human-gated tag/sign/publish |
-| `npm run tauri build` | PENDING | Human-gated release step; not run here |
+| `npx tsc --noEmit -p tsconfig.json` | PASS (`TSC:0`) | Local run `2026-09-05` plus CI `check` job |
+| `npm test` | PASS (46 passed) | Local run `2026-09-05` plus CI `check` job |
+| `npm run build` | PASS (1838 modules, dist emitted) | Local run `2026-09-05` plus CI `package-smoke` job |
+| `cargo fmt --check` | PASS (`FMT:0`) | Local run `2026-09-05` plus CI `check` job |
+| `cargo clippy --all-targets -- -D warnings` | PASS | Local run `2026-09-05` plus CI `check` job |
+| `cargo test` (`--locked`) | PASS (296 passed, 1 ignored) | Local run `2026-09-05` plus CI `check` job |
+| `node --check scripts/verify_040.mjs` | PASS (`SYNTAX_OK`) | Local run `2026-09-05` |
+| `npm run tauri build` (CI package) | PASS | CI `package-smoke` job built portable plus MSI plus NSIS and launched the portable build |
+| `node scripts/verify_040.mjs` (packaged run) | PENDING | Packaged CDP run not executed; script asserts values and exits non-zero on failure |
 | Research checks | PASS (local smoke 10/10) | `python3 research/0.4/scripts/run_local_smoke.py`, `2026-09-05` |
 | P0 local smoke on release candidate | PASS (CPU/CUDA 13.3/Vulkan) | `summary.json` `2026-09-05T04:24:28Z`, `b10796`/`9a4843cf`; 16 of 19 rows need owners/cloud |
+| Release `v0.4.0` CI | PASS | CI run `33948464859` success; Release run `33948466104` success |
+| Published assets | PASS | `Localmotive_0.4.0_x64.msi` `d60bcee…`, portable `6610a8d…`, setup `d5515fc…`; local SHA-256 values match `SHA256SUMS-0.4.0.txt` |
 | Clean-machine install evidence | PENDING | Clean VM required |
 | AMD hardware attestation | PENDING | Hardware owner required |
 | Intel hardware attestation | PENDING | Hardware owner required |
-| Signing approval | BLOCKED | No certificate; approval required |
-| Publication approval | BLOCKED | Approval required |
+| Signing approval | NOT APPLICABLE | Installers ship unsigned per release notes; SmartScreen may warn |
+| Publication approval | PASS | Tag `v0.4.0` pushed; release published `2026-09-05T06:16:05Z` |
 | Cloud spending approval | BLOCKED | Approval required |
 
-Release gate state: versions consistent (`0.4.0` in `package.json`, `package-lock.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`); `CHANGELOG.md` holds a `0.4.0` section with compatibility table plus known limitations; broad hardware claims stay blocked (no `L4 PRODUCT` on any row — local attestations are `L2`/`PARTIAL`); the blocked-backend rule holds (5 failed + 1 queued required upstream jobs); checksums/signatures and CI provenance/publication stay human-gated. No tag, no signing, no publication without explicit approval.
+Release gate state: versions consistent (`0.4.0` in `package.json`, `package-lock.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`); `CHANGELOG.md` holds a `0.4.0` section with compatibility table plus known limitations; broad hardware claims stay blocked (no `L4 PRODUCT` on any row — local attestations are `L2`/`PARTIAL`); the blocked-backend rule holds (5 failed + 1 queued required upstream jobs). Release `v0.4.0` published `2026-09-05T06:16:05Z` from tag `v0.4.0` (`b0435b3`); CI run `33948464859` and Release run `33948466104` both success; published MSI, NSIS setup, portable, and SHA256SUMS verified locally against the release checksums. Installers ship unsigned per release notes. Cloud spend stays blocked without approval.
 
 ## Release checklist
 
