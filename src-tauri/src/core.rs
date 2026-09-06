@@ -1162,85 +1162,26 @@ const RUNTIME_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
 const RUNTIME_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const RUNTIME_PROBE_STREAM_LIMIT: usize = 2 * 1024 * 1024;
 
-fn read_runtime_probe_stream(stream: &mut impl Read) -> std::io::Result<(Vec<u8>, bool)> {
-    let mut bytes = Vec::new();
-    let mut buffer = [0_u8; 8 * 1024];
-    let mut exceeded = false;
-    loop {
-        let read = stream.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        let remaining = RUNTIME_PROBE_STREAM_LIMIT.saturating_sub(bytes.len());
-        bytes.extend_from_slice(&buffer[..read.min(remaining)]);
-        exceeded |= read > remaining;
-    }
-    Ok((bytes, exceeded))
-}
-
 fn run_runtime_probe(path: &Path, arg: &str) -> Result<String, String> {
-    let mut child = crate::proc::hidden_command(path)
-        .arg(arg)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("Could not run runtime {arg} probe: {error}"))?;
-    let Some(mut stdout) = child.stdout.take() else {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(format!("Runtime {arg} probe did not expose stdout"));
-    };
-    let Some(mut stderr) = child.stderr.take() else {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(format!("Runtime {arg} probe did not expose stderr"));
-    };
-    let stdout_reader = std::thread::spawn(move || read_runtime_probe_stream(&mut stdout));
-    let stderr_reader = std::thread::spawn(move || read_runtime_probe_stream(&mut stderr));
-    let started = std::time::Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if started.elapsed() < RUNTIME_PROBE_TIMEOUT => {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = stdout_reader.join();
-                let _ = stderr_reader.join();
-                return Err(format!(
-                    "Runtime {arg} probe timed out after {} seconds",
-                    RUNTIME_PROBE_TIMEOUT.as_secs_f32()
-                ));
-            }
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = stdout_reader.join();
-                let _ = stderr_reader.join();
-                return Err(format!("Could not inspect runtime {arg} probe: {error}"));
-            }
+    let mut command = crate::proc::hidden_command(path);
+    command.arg(arg).stdin(std::process::Stdio::null());
+    let output = crate::proc::output_with_timeout_and_cancel(
+        &mut command,
+        RUNTIME_PROBE_TIMEOUT,
+        RUNTIME_PROBE_STREAM_LIMIT,
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .map_err(|error| {
+        if error.kind == crate::proc::ProcessFailureKind::OutputLimit {
+            format!("Runtime {arg} probe exceeded the output limit: {error}")
+        } else {
+            format!("Runtime {arg} probe failed: {error}")
         }
-    };
-    let (stdout, stdout_exceeded) = stdout_reader
-        .join()
-        .map_err(|_| format!("Runtime {arg} stdout reader failed"))?
-        .map_err(|error| format!("Could not read runtime {arg} stdout: {error}"))?;
-    let (stderr, stderr_exceeded) = stderr_reader
-        .join()
-        .map_err(|_| format!("Runtime {arg} stderr reader failed"))?
-        .map_err(|error| format!("Could not read runtime {arg} stderr: {error}"))?;
-    if stdout_exceeded || stderr_exceeded {
-        return Err(format!(
-            "Runtime {arg} probe exceeded the {} byte output limit",
-            RUNTIME_PROBE_STREAM_LIMIT
-        ));
-    }
-    let text = String::from_utf8_lossy(&[stdout, stderr].concat()).to_string();
-    if !status.success() {
-        let status = status
+    })?;
+    let text = String::from_utf8_lossy(&[output.stdout, output.stderr].concat()).to_string();
+    if !output.status.success() {
+        let status = output
+            .status
             .code()
             .map(|code| format!("code {code}"))
             .unwrap_or_else(|| "a signal".into());
@@ -1309,10 +1250,13 @@ pub struct RuntimeDeviceHealth {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PinnedModelLoadPin {
+    pub repository: String,
+    pub revision: String,
     pub name: String,
     pub url: String,
     pub bytes: u64,
     pub sha256: String,
+    pub license: String,
     pub prompt: String,
     pub expected_completion: String,
     pub expected_tokens_predicted: u32,
@@ -1322,11 +1266,13 @@ pub struct PinnedModelLoadPin {
 #[allow(dead_code)]
 pub fn pinned_model_load_pin() -> PinnedModelLoadPin {
     PinnedModelLoadPin {
+        repository: "ggml-org/SmolLM2-135M-GGUF".into(),
+        revision: "44686446221a479a9227d7a895cf92930f86de8a".into(),
         name: "SmolLM2-135M-Q4_K_M.gguf".into(),
-        url: "https://huggingface.co/ggml-org/SmolLM2-135M-GGUF/resolve/main/SmolLM2-135M-Q4_K_M.gguf"
-            .into(),
+        url: "https://huggingface.co/ggml-org/SmolLM2-135M-GGUF/resolve/44686446221a479a9227d7a895cf92930f86de8a/SmolLM2-135M-Q4_K_M.gguf?download=true".into(),
         bytes: 101_016_128,
         sha256: "e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5".into(),
+        license: "apache-2.0".into(),
         prompt: "The capital of France is".into(),
         expected_completion: " the capital of France.\n\nThe capital of France is the capital of France"
             .into(),
@@ -2049,11 +1995,8 @@ mod tests {
     }
 
     fn device_fixture(name: &str) -> String {
-        // Tests run with `src-tauri` as cwd; the binary runs from
-        // `src-tauri/target/debug/deps`. Resolve from the crate root.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        std::fs::read_to_string(root.join("../research/0.4/evidence/local-smoke").join(name))
-            .unwrap()
+        std::fs::read_to_string(root.join("tests/fixtures/health").join(name)).unwrap()
     }
 
     #[test]
@@ -2122,37 +2065,23 @@ mod tests {
 
     #[test]
     fn pinned_backend_smoke_records_pass_phase3_health_decisions() {
-        // Phase 3 GREEN: every pinned backend smoke record passes the
-        // product health decisions. The research harness records one
-        // server record per backend in
-        // `research/0.4/evidence/local-smoke/summary.json`. Each record
-        // carries loopback host `127.0.0.1`, HTTP 200 completion, HTTP
-        // 200 health with `{"status":"ok"}`, greedy output
-        // (`temperature 0.0`), 16 predicted tokens, the pinned
-        // deterministic completion, and a terminated child process.
         let pin = pinned_model_load_pin();
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let summary =
-            std::fs::read_to_string(root.join("../research/0.4/evidence/local-smoke/summary.json"))
+            std::fs::read_to_string(root.join("tests/fixtures/health/decision-records.json"))
                 .unwrap();
         let summary: serde_json::Value = serde_json::from_str(&summary).unwrap();
-        let expected = summary["server_completion_content"]["cuda"]
-            .as_str()
-            .unwrap();
+        let expected = summary["expectedCompletion"].as_str().unwrap();
         assert_eq!(pin.expected_completion, expected);
         let model = &summary["model"];
         let model_name = model["name"].as_str().unwrap();
         let model_size = model["size"].as_u64().unwrap();
         let model_sha = model["sha256"].as_str().unwrap();
         for backend in ["cpu", "cuda", "vulkan"] {
-            let record = &summary["backends"][backend]["server"];
+            let record = &summary["backends"][backend];
             let content = record["content"].as_str().unwrap();
-            let tokens = record["response"]["timings"]["predicted_n"]
-                .as_u64()
-                .map(|value| value as u32);
-            let temperature = record["response"]["generation_settings"]["temperature"]
-                .as_f64()
-                .unwrap();
+            let tokens = record["tokensPredicted"].as_u64().map(|value| value as u32);
+            let temperature = record["temperature"].as_f64().unwrap();
             let message = decide_model_load_check(
                 &pin,
                 model_name,
@@ -2161,26 +2090,18 @@ mod tests {
                 backend,
                 content,
                 tokens,
-                record["completion_status"]
+                record["completionStatus"]
                     .as_u64()
                     .map(|value| value as u16),
-                record["expected_backend_seen"].as_bool().unwrap(),
+                record["expectedBackendSeen"].as_bool().unwrap(),
             )
             .unwrap();
             assert!(message.contains(backend), "unexpected message: {message}");
-            // The harness binds `--host 127.0.0.1` per server command.
-            let command = record["command"].as_array().unwrap();
-            let host = command
-                .iter()
-                .position(|arg| arg.as_str() == Some("--host"))
-                .and_then(|index| command.get(index + 1))
-                .and_then(|arg| arg.as_str())
-                .unwrap();
             decide_server_loopback_health(
-                host,
-                record["health_status"].as_u64().map(|value| value as u16),
+                record["host"].as_str().unwrap(),
+                record["healthStatus"].as_u64().map(|value| value as u16),
                 record["health"].as_str().unwrap(),
-                record["process_exit_code_after_stop"]
+                record["processExitCodeAfterStop"]
                     .as_i64()
                     .map(|value| value as i32),
                 record["error"].as_str().unwrap(),
@@ -2192,19 +2113,15 @@ mod tests {
 
     #[test]
     fn pinned_smoke_cancellation_record_releases_work_cleanly() {
-        // Phase 3 GREEN: the pinned smoke records carry no error and a
-        // terminated child process per backend. Cancellation cleanup
-        // passes when the caller confirms file, lock, and temporary
-        // data cleanup alongside the exited process.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let summary =
-            std::fs::read_to_string(root.join("../research/0.4/evidence/local-smoke/summary.json"))
+            std::fs::read_to_string(root.join("tests/fixtures/health/decision-records.json"))
                 .unwrap();
         let summary: serde_json::Value = serde_json::from_str(&summary).unwrap();
         for backend in ["cpu", "cuda", "vulkan"] {
-            let record = &summary["backends"][backend]["server"];
+            let record = &summary["backends"][backend];
             assert_eq!(record["error"].as_str().unwrap(), "");
-            let exited = record["process_exit_code_after_stop"].as_i64().is_some();
+            let exited = record["processExitCodeAfterStop"].as_i64().is_some();
             let message = decide_cancellation_cleanup(exited, "", true, true, true).unwrap();
             assert!(
                 message.contains("released"),
@@ -2262,6 +2179,20 @@ mod tests {
             "unexpected reason: {}",
             health.reason
         );
+    }
+
+    #[test]
+    fn runtime_probe_uses_the_contained_process_runner() {
+        let source = include_str!("core.rs");
+        let probe = source
+            .split("fn run_runtime_probe")
+            .nth(1)
+            .unwrap()
+            .split("pub fn inspect_runtime")
+            .next()
+            .unwrap();
+        assert!(probe.contains("output_with_timeout"));
+        assert!(!probe.contains(".spawn()"));
     }
 
     #[cfg(windows)]

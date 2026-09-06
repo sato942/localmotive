@@ -32,6 +32,14 @@ pub const MIN_CHUNK_BYTES: u64 = 8 * 1024 * 1024;
 /// contention and risks throttling.
 pub const MAX_CONNECTIONS: usize = 8;
 const BUFFER_BYTES: usize = 1024 * 1024;
+const MAX_REQUEST_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_TRANSFER_ATTEMPTS: usize = 3;
+const MAX_RESUME_STATE_BYTES: u64 = 64 * 1024;
+#[cfg(not(test))]
+const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
+#[cfg(test)]
+const PROBE_TIMEOUT: Duration = Duration::from_millis(500);
+const TRANSFER_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn open_download_directory(root: &Path) -> Result<Dir, String> {
     Dir::open_ambient_dir(root, ambient_authority())
@@ -39,7 +47,7 @@ fn open_download_directory(root: &Path) -> Result<Dir, String> {
 }
 
 #[cfg(windows)]
-fn opened_directory_matches(directory: &Dir, expected: &Path) -> Result<bool, String> {
+pub(crate) fn opened_directory_matches(directory: &Dir, expected: &Path) -> Result<bool, String> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::GetFinalPathNameByHandleW;
 
@@ -53,7 +61,7 @@ fn opened_directory_matches(directory: &Dir, expected: &Path) -> Result<bool, St
         )
     };
     if length == 0 || length as usize >= buffer.len() {
-        return Err("Could not confirm the opened model folder's Windows identity.".into());
+        return Err("Could not confirm the opened directory's Windows identity.".into());
     }
     let opened = String::from_utf16_lossy(&buffer[..length as usize]);
     // `expected` was canonicalized before the capability was opened. Do not
@@ -75,7 +83,7 @@ fn opened_directory_matches(directory: &Dir, expected: &Path) -> Result<bool, St
 }
 
 #[cfg(unix)]
-fn opened_directory_matches(directory: &Dir, expected: &Path) -> Result<bool, String> {
+pub(crate) fn opened_directory_matches(directory: &Dir, expected: &Path) -> Result<bool, String> {
     use std::os::unix::fs::MetadataExt;
     let opened = directory
         .metadata(".")
@@ -144,12 +152,14 @@ pub fn plan_chunks(size: u64, connections: usize) -> Vec<Chunk> {
 
 /// Resume state written next to the partial file.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ResumeState {
     pub url: String,
     pub size: u64,
+    pub expected_sha256: String,
     /// The server's sha256 for the file, when it published one.
     pub etag: Option<String>,
+    pub last_modified: Option<String>,
     pub chunks: Vec<Chunk>,
 }
 
@@ -188,18 +198,38 @@ fn resume_chunks_are_valid(chunks: &[Chunk], size: u64, connections: usize) -> b
     }
     let mut expected_start = 0u64;
     for chunk in chunks {
-        if chunk.start != expected_start || chunk.end < chunk.start || chunk.done > chunk.len() {
+        let Some(length) = chunk
+            .end
+            .checked_sub(chunk.start)
+            .and_then(|difference| difference.checked_add(1))
+        else {
+            return false;
+        };
+        if chunk.start != expected_start || chunk.done > length {
             return false;
         }
-        expected_start = chunk.end + 1;
+        let Some(next_start) = chunk.end.checked_add(1) else {
+            return false;
+        };
+        expected_start = next_start;
     }
     expected_start == size
 }
 
 /// Resume check at the actual requested URL. When no ETag exists, matching the
 /// URL is the remaining identity signal; a different revision must restart.
-pub fn can_resume_from(state: &ResumeState, url: &str, size: u64, etag: Option<&str>) -> bool {
-    state.url == url && can_resume(state, size, etag)
+pub fn can_resume_from(
+    state: &ResumeState,
+    url: &str,
+    size: u64,
+    expected_sha256: &str,
+    etag: Option<&str>,
+    last_modified: Option<&str>,
+) -> bool {
+    state.url == url
+        && state.expected_sha256.eq_ignore_ascii_case(expected_sha256)
+        && state.last_modified.as_deref() == last_modified
+        && can_resume(state, size, etag)
 }
 
 /// Human-readable byte size. Kept in Rust so every surface agrees.
@@ -257,6 +287,7 @@ pub fn resolve_url(repo: &str, filename: &str, revision: &str) -> String {
 pub struct RemoteFile {
     pub size: u64,
     pub etag: Option<String>,
+    pub last_modified: Option<String>,
     pub supports_ranges: bool,
 }
 
@@ -278,12 +309,14 @@ pub fn read_remote_headers(headers: &reqwest::header::HeaderMap) -> RemoteFile {
         .or_else(|| get("etag"))
         .map(|value| value.trim_matches('"').to_string())
         .filter(|value| !value.is_empty());
+    let last_modified = get("last-modified").filter(|value| !value.is_empty());
     let supports_ranges = get("accept-ranges")
         .map(|value| value.to_ascii_lowercase().contains("bytes"))
         .unwrap_or(false);
     RemoteFile {
         size,
         etag,
+        last_modified,
         supports_ranges,
     }
 }
@@ -330,29 +363,106 @@ fn open_download_entries(target: &Path) -> Result<DownloadEntries, String> {
 }
 
 fn load_resume_state_in(entries: &DownloadEntries) -> Option<ResumeState> {
-    let text = entries.dir.read_to_string(&entries.meta).ok()?;
-    serde_json::from_str(&text).ok()
+    let file = entries.dir.open(&entries.meta).ok()?;
+    let mut bytes = Vec::new();
+    file.take(MAX_RESUME_STATE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() as u64 > MAX_RESUME_STATE_BYTES {
+        return None;
+    }
+    serde_json::from_slice(&bytes).ok()
 }
 
 fn save_resume_state_in(entries: &DownloadEntries, state: &ResumeState) -> Result<(), String> {
     let text = serde_json::to_string(state)
         .map_err(|error| format!("Could not serialize download progress: {error}"))?;
-    let temporary = PathBuf::from(format!("{}.next", entries.meta.to_string_lossy()));
-    entries
-        .dir
-        .write(&temporary, text)
-        .and_then(|_| entries.dir.rename(&temporary, &entries.dir, &entries.meta))
-        .map_err(|error| {
-            format!(
+    for _ in 0..8 {
+        let temporary = PathBuf::from(format!(
+            "{}.next-{:016x}",
+            entries.meta.to_string_lossy(),
+            rand::random::<u64>()
+        ));
+        let mut options = CapOpenOptions::new();
+        options.write(true).create_new(true);
+        let mut file = match entries.dir.open_with(&temporary, &options) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!(
+                    "Could not securely create download progress: {error}"
+                ));
+            }
+        };
+        let result = file
+            .write_all(text.as_bytes())
+            .and_then(|_| file.sync_all())
+            .and_then(|_| entries.dir.rename(&temporary, &entries.dir, &entries.meta));
+        if let Err(error) = result {
+            let _ = entries.dir.remove_file(&temporary);
+            return Err(format!(
                 "Could not securely save download progress to {}: {error}",
                 entries.meta.display()
-            )
-        })
+            ));
+        }
+        return Ok(());
+    }
+    Err("Could not allocate a unique download progress file".into())
 }
 
 fn entry_is_unsafe_for_writes(is_symlink: bool, file_attributes: u32) -> bool {
     const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
     is_symlink || file_attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(windows)]
+fn open_file_hard_link_count(file: &CapFile) -> Result<u32, String> {
+    use std::mem::MaybeUninit;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+
+    let mut information = MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+    // SAFETY: `file` owns a valid handle and `information` points to writable storage.
+    let result =
+        unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, information.as_mut_ptr()) };
+    if result == 0 {
+        return Err(format!(
+            "Could not inspect hard links for an open download file: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    // SAFETY: a successful Win32 call initialized the complete output structure.
+    Ok(unsafe { information.assume_init() }.nNumberOfLinks)
+}
+
+#[cfg(windows)]
+fn hard_link_count(path: &Path) -> Result<u32, String> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
+
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(path)
+        .map_err(|error| {
+            format!(
+                "Could not open {} for link inspection: {error}",
+                path.display()
+            )
+        })?;
+    open_file_hard_link_count(&CapFile::from_std(file))
+}
+
+#[cfg(not(windows))]
+fn open_file_hard_link_count(_file: &CapFile) -> Result<u32, String> {
+    Ok(1)
+}
+
+#[cfg(not(windows))]
+fn hard_link_count(_path: &Path) -> Result<u32, String> {
+    Ok(1)
 }
 
 fn ensure_safe_write_entry(path: &Path) -> Result<(), String> {
@@ -371,6 +481,12 @@ fn ensure_safe_write_entry(path: &Path) -> Result<(), String> {
     if entry_is_unsafe_for_writes(metadata.file_type().is_symlink(), file_attributes) {
         return Err(format!(
             "Refusing to write through a symbolic link or reparse point: {}",
+            path.display()
+        ));
+    }
+    if hard_link_count(path)? != 1 {
+        return Err(format!(
+            "Refusing to write through a file with multiple hard links: {}",
             path.display()
         ));
     }
@@ -467,7 +583,10 @@ fn sha256_reader(mut file: impl Read, display_path: &Path) -> Result<String, Str
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-fn client(token: Option<&str>) -> Result<reqwest::blocking::Client, String> {
+fn client(
+    token: Option<&str>,
+    request_timeout: Duration,
+) -> Result<reqwest::blocking::Client, String> {
     let mut headers = reqwest::header::HeaderMap::new();
     if let Some(token) = token.filter(|t| !t.trim().is_empty()) {
         // The token rides in an Authorization header, never in the URL or a
@@ -481,7 +600,7 @@ fn client(token: Option<&str>) -> Result<reqwest::blocking::Client, String> {
         .user_agent(format!("Localmotive/{}", env!("CARGO_PKG_VERSION")))
         .default_headers(headers)
         .connect_timeout(Duration::from_secs(20))
-        .timeout(None)
+        .timeout(request_timeout)
         .build()
         .map_err(|error| format!("Could not create an HTTPS client: {error}"))
 }
@@ -515,13 +634,43 @@ pub fn explain_status(status: u16, repo: &str, has_token: bool) -> String {
 }
 
 /// Probe a file: size, checksum and whether it can be fetched in parallel.
+#[cfg(test)]
 pub fn probe(url: &str, token: Option<&str>, repo: &str) -> Result<RemoteFile, String> {
-    let client = client(token)?;
+    probe_with_cancel(url, token, repo, None)
+}
+
+fn probe_with_cancel(
+    url: &str,
+    token: Option<&str>,
+    repo: &str,
+    cancel: Option<&AtomicBool>,
+) -> Result<RemoteFile, String> {
+    if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+        return Err("Download cancelled before network access started.".into());
+    }
+    #[cfg(test)]
+    let probe_timeout = if std::env::var_os("LOCALMOTIVE_LIVE_HEALTH").is_some() {
+        Duration::from_secs(15)
+    } else {
+        PROBE_TIMEOUT
+    };
+    #[cfg(not(test))]
+    let probe_timeout = PROBE_TIMEOUT;
+    let client = client(token, probe_timeout)?;
     let response = client
         .get(url)
         .header(reqwest::header::RANGE, "bytes=0-0")
         .send()
-        .map_err(|error| format!("Could not reach Hugging Face: {error}"))?;
+        .map_err(|error| {
+            if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+                "Download cancelled while checking the remote file.".to_string()
+            } else {
+                format!("Could not reach Hugging Face: {error}")
+            }
+        })?;
+    if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+        return Err("Download cancelled while checking the remote file.".into());
+    }
     let status = response.status().as_u16();
     if status >= 400 {
         return Err(explain_status(status, repo, token.is_some()));
@@ -531,15 +680,31 @@ pub fn probe(url: &str, token: Option<&str>, repo: &str) -> Result<RemoteFile, S
     // more than the advertised header.
     if status == 206 {
         remote.supports_ranges = true;
-        if let Some(range) = response
+        let total = response
             .headers()
             .get(reqwest::header::CONTENT_RANGE)
             .and_then(|v| v.to_str().ok())
-        {
-            if let Some(total) = range.rsplit('/').next().and_then(|t| t.parse::<u64>().ok()) {
-                remote.size = total;
-            }
+            .and_then(|range| range.strip_prefix("bytes 0-0/"))
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|total| *total > 0)
+            .ok_or_else(|| {
+                "The server returned an invalid Content-Range while probing the file.".to_string()
+            })?;
+        let linked_size = response
+            .headers()
+            .get("x-linked-size")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.trim().parse::<u64>().ok());
+        if linked_size.is_some_and(|size| size != total) {
+            return Err("The server reported inconsistent file sizes while probing.".into());
         }
+        // Content-Length describes this one-byte 206 response, not the complete
+        // object. Content-Range supplies the authoritative complete size.
+        remote.size = total;
+    } else {
+        // A 200 response to the one-byte probe proves that this transfer path
+        // ignored Range, even when an intermediary advertises Accept-Ranges.
+        remote.supports_ranges = false;
     }
     if remote.size == 0 {
         return Err("Hugging Face did not report a file size for this download.".into());
@@ -563,6 +728,9 @@ pub fn download_file(
     downloaded: Arc<AtomicU64>,
     mut on_progress: impl FnMut(u64, u64) + Send,
 ) -> Result<PathBuf, String> {
+    if cancel.load(Ordering::Relaxed) {
+        return Err("Download cancelled before network access started.".into());
+    }
     if let Some(parent) = target.parent() {
         ensure_safe_write_entry(parent)?;
     }
@@ -573,7 +741,7 @@ pub fn download_file(
     ensure_safe_write_entry(&meta)?;
     let entries = open_download_entries(target)?;
 
-    let remote = probe(url, token, repo)?;
+    let remote = probe_with_cancel(url, token, repo, Some(&cancel))?;
     if remote.size != expected_size {
         return Err("The remote file size does not match the validated catalog.".into());
     }
@@ -597,18 +765,33 @@ pub fn download_file(
     // Reuse previous work only when the remote file is provably the same one.
     let mut state = match load_resume_state_in(&entries) {
         Some(saved)
-            if can_resume_from(&saved, url, remote.size, remote.etag.as_deref())
+            if remote.supports_ranges
+                && can_resume_from(
+                    &saved,
+                    url,
+                    remote.size,
+                    expected_sha256,
+                    remote.etag.as_deref(),
+                    remote.last_modified.as_deref(),
+                )
                 && resume_chunks_are_valid(&saved.chunks, remote.size, effective_connections)
-                && entries.dir.is_file(&entries.part) =>
+                && entries.dir.is_file(&entries.part)
+                && entries
+                    .dir
+                    .metadata(&entries.part)
+                    .is_ok_and(|metadata| metadata.is_file() && metadata.len() == remote.size) =>
         {
             saved
         }
         _ => {
             let _ = entries.dir.remove_file(&entries.part);
+            let _ = entries.dir.remove_file(&entries.meta);
             ResumeState {
                 url: url.to_string(),
                 size: remote.size,
+                expected_sha256: expected_sha256.to_ascii_lowercase(),
                 etag: remote.etag.clone(),
+                last_modified: remote.last_modified.clone(),
                 chunks: plan_chunks(remote.size, effective_connections),
             }
         }
@@ -620,6 +803,12 @@ pub fn download_file(
         .dir
         .open_with(&entries.part, &options)
         .map_err(|error| format!("Could not securely open {}: {error}", part.display()))?;
+    if open_file_hard_link_count(&file)? != 1 {
+        return Err(format!(
+            "Refusing to use a partial download with multiple hard links: {}",
+            part.display()
+        ));
+    }
     file.set_len(remote.size)
         .map_err(|error| format!("Could not reserve {}: {error}", human_bytes(remote.size)))?;
     let file = Arc::new(Mutex::new(file));
@@ -648,6 +837,7 @@ pub fn download_file(
                 );
                 let repo = repo.to_string();
                 let remote_etag = remote.etag.clone();
+                let remote_last_modified = remote.last_modified.clone();
                 scope.spawn(move || {
                     if let Err(error) = fetch_chunk(
                         &url,
@@ -659,6 +849,7 @@ pub fn download_file(
                         client_token,
                         &repo,
                         remote_etag.as_deref(),
+                        remote_last_modified.as_deref(),
                     ) {
                         let mut slot = failure.lock().unwrap();
                         if slot.is_none() {
@@ -754,6 +945,9 @@ fn range_response_is_usable(
 }
 
 fn content_range_matches(value: &str, start: u64, end: u64, total: u64) -> bool {
+    if total == 0 || start > end || end >= total {
+        return false;
+    }
     let Some(rest) = value.strip_prefix("bytes ") else {
         return false;
     };
@@ -776,6 +970,16 @@ fn response_identity_matches(probed: Option<&str>, response: Option<&str>) -> bo
     }
 }
 
+fn response_validators_match(
+    probed_etag: Option<&str>,
+    probed_last_modified: Option<&str>,
+    response_etag: Option<&str>,
+    response_last_modified: Option<&str>,
+) -> bool {
+    response_identity_matches(probed_etag, response_etag)
+        && response_identity_matches(probed_last_modified, response_last_modified)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn fetch_chunk(
     url: &str,
@@ -787,21 +991,30 @@ fn fetch_chunk(
     token: Option<&str>,
     repo: &str,
     remote_etag: Option<&str>,
+    remote_last_modified: Option<&str>,
 ) -> Result<(), String> {
-    let client = client(token)?;
-    // Retry a stalled connection a few times; a long download crossing a brief
-    // network blip should not lose the whole file.
-    let mut attempt = 0;
+    let client = client(token, TRANSFER_REQUEST_TIMEOUT)?;
+    // Permit two retries after the initial request for each bounded range.
+    let mut attempt = 0_usize;
     loop {
         let chunk = chunks.lock().unwrap()[index];
         if chunk.is_complete() || cancel.load(Ordering::Relaxed) {
             return Ok(());
         }
-        let range = format!("bytes={}-{}", chunk.cursor(), chunk.end);
+        let request_start = chunk.cursor();
+        let request_end = chunk
+            .end
+            .min(request_start.saturating_add(MAX_REQUEST_BYTES - 1));
+        let range = format!("bytes={request_start}-{request_end}");
         let result = (|| -> Result<(), String> {
-            let response = client
-                .get(url)
-                .header(reqwest::header::RANGE, &range)
+            let mut request = client.get(url).header(reqwest::header::RANGE, &range);
+            if let Some(etag) = remote_etag {
+                request = request.header(reqwest::header::IF_MATCH, format!("\"{etag}\""));
+            }
+            if let Some(last_modified) = remote_last_modified {
+                request = request.header(reqwest::header::IF_UNMODIFIED_SINCE, last_modified);
+            }
+            let response = request
                 .send()
                 .map_err(|error| format!("Connection failed: {error}"))?;
             let status = response.status().as_u16();
@@ -818,12 +1031,11 @@ fn fetch_chunk(
             }
             if response.status() == reqwest::StatusCode::PARTIAL_CONTENT {
                 let total = chunks.lock().unwrap().iter().map(Chunk::len).sum();
-                let expected_start = chunk.cursor();
                 let valid = response
                     .headers()
                     .get(reqwest::header::CONTENT_RANGE)
                     .and_then(|v| v.to_str().ok())
-                    .is_some_and(|v| content_range_matches(v, expected_start, chunk.end, total));
+                    .is_some_and(|v| content_range_matches(v, request_start, request_end, total));
                 if !valid {
                     return Err(
                         "The server returned an invalid Content-Range for the requested chunk."
@@ -836,10 +1048,19 @@ fn fetch_chunk(
                 .get("x-linked-etag")
                 .or_else(|| response.headers().get(reqwest::header::ETAG))
                 .and_then(|value| value.to_str().ok());
-            if !response_identity_matches(remote_etag, response_etag) {
+            let response_last_modified = response
+                .headers()
+                .get(reqwest::header::LAST_MODIFIED)
+                .and_then(|value| value.to_str().ok());
+            if !response_validators_match(
+                remote_etag,
+                remote_last_modified,
+                response_etag,
+                response_last_modified,
+            ) {
                 return Err("The remote file changed while it was downloading.".into());
             }
-            let expected_body = chunk.end - requested_start + 1;
+            let expected_body = request_end - requested_start + 1;
             if response
                 .content_length()
                 .is_some_and(|length| length != expected_body)
@@ -852,17 +1073,18 @@ fn fetch_chunk(
                 if cancel.load(Ordering::Relaxed) {
                     return Ok(());
                 }
-                let read = response
-                    .read(&mut buffer)
-                    .map_err(|error| format!("Transfer interrupted: {error}"))?;
+                let read = match response.read(&mut buffer) {
+                    Ok(read) => read,
+                    Err(_) if cancel.load(Ordering::Relaxed) => return Ok(()),
+                    Err(error) => return Err(format!("Transfer interrupted: {error}")),
+                };
                 if read == 0 {
-                    return Ok(());
+                    return Err(
+                        "The response ended before the requested range was complete.".into(),
+                    );
                 }
                 let cursor = chunks.lock().unwrap()[index].cursor();
-                let remaining = {
-                    let guard = chunks.lock().unwrap();
-                    guard[index].len() - guard[index].done
-                };
+                let remaining = request_end.saturating_sub(cursor).saturating_add(1);
                 if !response_read_fits(remaining, read) {
                     return Err("The server returned more bytes than the requested range.".into());
                 }
@@ -881,7 +1103,7 @@ fn fetch_chunk(
                     entry.is_complete()
                 };
                 downloaded.fetch_add(accepted as u64, Ordering::Relaxed);
-                if complete {
+                if complete || cursor + accepted as u64 > request_end {
                     return Ok(());
                 }
             }
@@ -893,7 +1115,7 @@ fn fetch_chunk(
                 if chunk.is_complete() || cancel.load(Ordering::Relaxed) {
                     return Ok(());
                 }
-                attempt += 1;
+                attempt = 0;
             }
             Err(error) => {
                 // Authentication and missing files will not fix themselves.
@@ -906,14 +1128,17 @@ fn fetch_chunk(
                     return Err(error);
                 }
                 attempt += 1;
-                if attempt >= 5 {
+                if attempt >= MAX_TRANSFER_ATTEMPTS {
                     return Err(error);
                 }
-                std::thread::sleep(Duration::from_millis(500 * attempt as u64));
+                let retry_delay = Duration::from_millis(500 * attempt as u64);
+                let mut waited = Duration::ZERO;
+                while waited < retry_delay && !cancel.load(Ordering::Relaxed) {
+                    let step = Duration::from_millis(50).min(retry_delay - waited);
+                    std::thread::sleep(step);
+                    waited += step;
+                }
             }
-        }
-        if attempt >= 5 {
-            return Err("The connection kept dropping. Press Download to resume.".into());
         }
     }
 }
@@ -921,6 +1146,387 @@ fn fetch_chunk(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pre_cancelled_download_does_not_start_network_io() {
+        let root = std::env::temp_dir().join(format!(
+            "localmotive-pre-cancelled-download-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let cancel = Arc::new(AtomicBool::new(true));
+
+        let error = download_file(
+            "http://127.0.0.1:9/must-not-connect",
+            &root.join("runtime.zip"),
+            "test artifact",
+            1,
+            &"0".repeat(64),
+            None,
+            1,
+            cancel,
+            Arc::new(AtomicU64::new(0)),
+            |_, _| {},
+        )
+        .unwrap_err();
+
+        assert!(error.to_ascii_lowercase().contains("cancel"), "{error}");
+        assert!(!root.join("runtime.zip.part").exists());
+        assert!(!root.join("runtime.zip.part.json").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_stalled_transfer_request_has_a_deadline() {
+        use std::io::Write as _;
+        use std::net::TcpListener;
+        use std::time::Instant;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+            loop {
+                let mut line = String::new();
+                use std::io::BufRead as _;
+                if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                    break;
+                }
+            }
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n")
+                .unwrap();
+            stream.flush().unwrap();
+            std::thread::sleep(Duration::from_secs(1));
+        });
+
+        let started = Instant::now();
+        let mut response = client(None, Duration::from_millis(250))
+            .unwrap()
+            .get(format!("http://{address}/runtime.zip"))
+            .send()
+            .unwrap();
+        let mut byte = [0_u8; 1];
+        assert!(response.read_exact(&mut byte).is_err());
+        assert!(started.elapsed() < Duration::from_millis(900));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn ranged_probe_uses_content_range_total_instead_of_one_byte_content_length() {
+        use std::io::{BufRead as _, BufReader, Write as _};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" || line.is_empty() {
+                    break;
+                }
+            }
+            stream
+                .write_all(
+                    b"HTTP/1.1 206 Partial Content\r\nContent-Length: 1\r\nContent-Range: bytes 0-0/123\r\nAccept-Ranges: bytes\r\nConnection: close\r\n\r\nx",
+                )
+                .unwrap();
+        });
+
+        let remote = probe(&format!("http://{address}/artifact"), None, "fixture").unwrap();
+        assert_eq!(remote.size, 123);
+        assert!(remote.supports_ranges);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn cancellation_retains_valid_state_and_the_next_attempt_resumes() {
+        use std::io::{BufRead as _, BufReader, Write as _};
+        use std::net::TcpListener;
+
+        let payload = vec![b'x'; 64 * 1024];
+        let digest = {
+            let mut hasher = Sha256::new();
+            hasher.update(&payload);
+            format!("{:x}", hasher.finalize())
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server_payload = payload.clone();
+        let server_digest = digest.clone();
+        let resumed_starts = Arc::new(Mutex::new(Vec::new()));
+        let server_resumed_starts = Arc::clone(&resumed_starts);
+        let server = std::thread::spawn(move || {
+            for request_index in 0..4 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut request = String::new();
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                        break;
+                    }
+                    request.push_str(&line);
+                }
+                if request_index == 0 || request_index == 2 {
+                    write!(
+                        stream,
+                        "HTTP/1.1 206 Partial Content\r\nContent-Length: 1\r\nContent-Range: bytes 0-0/{}\r\nX-Linked-Size: {}\r\nX-Linked-ETag: \"{}\"\r\nAccept-Ranges: bytes\r\nConnection: close\r\n\r\n",
+                        server_payload.len(),
+                        server_payload.len(),
+                        server_digest,
+                    )
+                    .unwrap();
+                    stream.write_all(&server_payload[..1]).unwrap();
+                } else {
+                    let start = request
+                        .lines()
+                        .find(|line| line.to_ascii_lowercase().starts_with("range:"))
+                        .and_then(|line| line.split('=').nth(1))
+                        .and_then(|range| range.split('-').next())
+                        .and_then(|value| value.trim().parse::<usize>().ok())
+                        .unwrap();
+                    let response_start = if request_index == 1 { 0 } else { start };
+                    let body = &server_payload[response_start..];
+                    write!(
+                        stream,
+                        "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {}-{}/{}\r\nX-Linked-ETag: \"{}\"\r\nConnection: close\r\n\r\n",
+                        body.len(),
+                        response_start,
+                        server_payload.len() - 1,
+                        server_payload.len(),
+                        server_digest,
+                    )
+                    .unwrap();
+                    if request_index == 1 {
+                        stream.write_all(&server_payload[..4096]).unwrap();
+                        stream.flush().unwrap();
+                        std::thread::sleep(Duration::from_secs(1));
+                    } else {
+                        server_resumed_starts.lock().unwrap().push(start as u64);
+                        stream.write_all(body).unwrap();
+                    }
+                }
+            }
+        });
+
+        let root = std::env::temp_dir().join(format!(
+            "localmotive-cancelled-download-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let target = root.join("runtime.zip");
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_after_partial = Arc::clone(&cancel);
+        let canceller = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            cancel_after_partial.store(true, Ordering::Relaxed);
+        });
+
+        let error = download_file(
+            &format!("http://{address}/runtime.zip"),
+            &target,
+            "test artifact",
+            payload.len() as u64,
+            &digest,
+            None,
+            1,
+            Arc::clone(&cancel),
+            Arc::new(AtomicU64::new(0)),
+            |_, _| {},
+        )
+        .unwrap_err();
+
+        canceller.join().unwrap();
+        assert!(error.to_ascii_lowercase().contains("cancel"), "{error}");
+        assert!(
+            !target.exists(),
+            "a cancelled download must not become final"
+        );
+        let (part, _) = part_paths(&target);
+        assert!(part.is_file(), "valid partial bytes must remain resumable");
+        let state = load_resume_state(&target).expect("resume state must be retained");
+        assert!(state.downloaded() >= 4096, "{state:?}");
+        assert!(state.downloaded() < payload.len() as u64, "{state:?}");
+        assert!(can_resume_from(
+            &state,
+            &format!("http://{address}/runtime.zip"),
+            payload.len() as u64,
+            &digest,
+            Some(&digest),
+            None,
+        ));
+
+        cancel.store(false, Ordering::Relaxed);
+        let resumed = download_file(
+            &format!("http://{address}/runtime.zip"),
+            &target,
+            "test artifact",
+            payload.len() as u64,
+            &digest,
+            None,
+            1,
+            cancel,
+            Arc::new(AtomicU64::new(0)),
+            |_, _| {},
+        )
+        .expect("the retained bytes must resume");
+        server.join().unwrap();
+        assert_eq!(std::fs::read(resumed).unwrap(), payload);
+        assert!(
+            resumed_starts
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|start| *start >= 4096),
+            "the resumed request must not restart at byte zero"
+        );
+        assert!(load_resume_state(&target).is_none());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_server_that_ignores_ranges_restarts_a_partial_file_from_zero() {
+        use std::io::{BufRead as _, BufReader, Write as _};
+        use std::net::TcpListener;
+
+        let payload = vec![b'r'; 16 * 1024];
+        let digest = {
+            let mut hasher = Sha256::new();
+            hasher.update(&payload);
+            format!("{:x}", hasher.finalize())
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let server_stop = Arc::clone(&stop);
+        let server_payload = payload.clone();
+        let server_digest = digest.clone();
+        let transfer_starts = Arc::new(Mutex::new(Vec::new()));
+        let server_transfer_starts = Arc::clone(&transfer_starts);
+        let server = std::thread::spawn(move || {
+            let mut request_index = 0_usize;
+            while !server_stop.load(Ordering::Relaxed) {
+                let (mut stream, _) = match listener.accept() {
+                    Ok(accepted) => accepted,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(5));
+                        continue;
+                    }
+                    Err(error) => panic!("server accept failed: {error}"),
+                };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut request = String::new();
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                        break;
+                    }
+                    request.push_str(&line);
+                }
+                if request_index > 0 {
+                    let start = request
+                        .lines()
+                        .find(|line| line.to_ascii_lowercase().starts_with("range:"))
+                        .and_then(|line| line.split('=').nth(1))
+                        .and_then(|range| range.split('-').next())
+                        .and_then(|value| value.trim().parse::<u64>().ok())
+                        .unwrap();
+                    server_transfer_starts.lock().unwrap().push(start);
+                }
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nETag: \"{}\"\r\nConnection: close\r\n\r\n",
+                    server_payload.len(),
+                    server_digest,
+                )
+                .unwrap();
+                stream.write_all(&server_payload).unwrap();
+                request_index += 1;
+            }
+        });
+
+        let root =
+            std::env::temp_dir().join(format!("localmotive-range-restart-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let target = root.join("runtime.zip");
+        let (part, _) = part_paths(&target);
+        let mut partial = vec![0_u8; payload.len()];
+        partial[..128].copy_from_slice(&payload[..128]);
+        std::fs::write(&part, partial).unwrap();
+        let url = format!("http://{address}/runtime.zip");
+        save_resume_state(
+            &target,
+            &ResumeState {
+                url: url.clone(),
+                size: payload.len() as u64,
+                expected_sha256: digest.clone(),
+                etag: Some(digest.clone()),
+                last_modified: None,
+                chunks: vec![Chunk {
+                    start: 0,
+                    end: payload.len() as u64 - 1,
+                    done: 128,
+                }],
+            },
+        )
+        .unwrap();
+
+        let result = download_file(
+            &url,
+            &target,
+            "test artifact",
+            payload.len() as u64,
+            &digest,
+            None,
+            4,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicU64::new(0)),
+            |_, _| {},
+        );
+        stop.store(true, Ordering::Relaxed);
+        server.join().unwrap();
+
+        let downloaded = result.expect("the ignored range must restart safely");
+        assert_eq!(std::fs::read(downloaded).unwrap(), payload);
+        assert_eq!(transfer_starts.lock().unwrap().as_slice(), &[0]);
+        assert!(load_resume_state(&target).is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn stalled_http_probe_stops_at_the_configured_deadline() {
+        use std::io::Write as _;
+        use std::net::TcpListener;
+        use std::time::Instant;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            std::thread::sleep(Duration::from_secs(1));
+            let _ = stream.write_all(
+                b"HTTP/1.1 206 Partial Content\r\nContent-Length: 1\r\nContent-Range: bytes 0-0/1\r\n\r\nx",
+            );
+        });
+
+        let started = Instant::now();
+        let result = probe(
+            &format!("http://{address}/runtime.zip"),
+            None,
+            "test artifact",
+        );
+        assert!(result.is_err());
+        assert!(started.elapsed() < Duration::from_millis(900));
+    }
 
     #[test]
     fn chunks_tile_the_file_exactly_with_no_gap_or_overlap() {
@@ -992,6 +1598,75 @@ mod tests {
         assert!(!entry_is_unsafe_for_writes(false, 0));
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn hard_links_are_never_safe_write_targets() {
+        let root = std::env::temp_dir().join(format!(
+            "localmotive-download-hard-link-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let victim = root.join("victim.bin");
+        let target = root.join("artifact.part");
+        std::fs::write(&victim, b"do not modify").unwrap();
+        std::fs::hard_link(&victim, &target).unwrap();
+
+        assert!(ensure_safe_write_entry(&target).is_err());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn opened_download_files_report_their_hard_link_count() {
+        let root =
+            std::env::temp_dir().join(format!("localmotive-open-hard-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("victim.bin"), b"bounded").unwrap();
+        std::fs::hard_link(root.join("victim.bin"), root.join("artifact.part")).unwrap();
+        let directory = open_download_directory(&root).unwrap();
+        let file = directory.open("artifact.part").unwrap();
+
+        assert_eq!(open_file_hard_link_count(&file).unwrap(), 2);
+
+        drop(file);
+        drop(directory);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn resume_sidecar_never_overwrites_a_precreated_hard_link() {
+        let root = std::env::temp_dir().join(format!(
+            "localmotive-resume-hard-link-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let target = root.join("model.gguf");
+        let entries = open_download_entries(&target).unwrap();
+        let victim = root.join("victim.txt");
+        let predictable = root.join("model.gguf.part.json.next");
+        std::fs::write(&victim, b"do not modify").unwrap();
+        std::fs::hard_link(&victim, &predictable).unwrap();
+        let state = ResumeState {
+            url: "https://example.invalid/model.gguf".into(),
+            size: 1,
+            expected_sha256: "0".repeat(64),
+            etag: None,
+            last_modified: None,
+            chunks: plan_chunks(1, 1),
+        };
+
+        let _ = save_resume_state_in(&entries, &state);
+        assert_eq!(std::fs::read(&victim).unwrap(), b"do not modify");
+
+        drop(entries);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn an_open_download_directory_cannot_be_redirected_by_path_replacement() {
         let root =
@@ -1045,7 +1720,9 @@ mod tests {
         let state = ResumeState {
             url: "u".into(),
             size: 1000,
+            expected_sha256: "0".repeat(64),
             etag: Some("abc".into()),
+            last_modified: None,
             chunks: plan_chunks(1000, 1),
         };
         assert!(!can_resume(&state, 1000, None));
@@ -1058,13 +1735,99 @@ mod tests {
     }
 
     #[test]
+    fn resume_geometry_rejects_overflowing_overlapping_spans() {
+        // A writable sidecar must not wrap u64::MAX back to zero and make an
+        // overlapping second span appear contiguous.
+        let chunks = [
+            Chunk {
+                start: 0,
+                end: u64::MAX,
+                done: 0,
+            },
+            Chunk {
+                start: 0,
+                end: 0,
+                done: 0,
+            },
+        ];
+        assert!(!resume_chunks_are_valid(&chunks, 1, 2));
+    }
+
+    #[test]
+    fn oversized_resume_sidecar_is_rejected_before_deserialization() {
+        let root = std::env::temp_dir().join(format!(
+            "localmotive-oversized-resume-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let target = root.join("model.gguf");
+        let entries = open_download_entries(&target).unwrap();
+        let state = ResumeState {
+            url: "https://example.invalid/model.gguf".into(),
+            size: 1,
+            expected_sha256: "0".repeat(64),
+            etag: None,
+            last_modified: None,
+            chunks: plan_chunks(1, 1),
+        };
+        let mut bytes = serde_json::to_vec(&state).unwrap();
+        bytes.resize(1024 * 1024, b' ');
+        std::fs::write(root.join("model.gguf.part.json"), bytes).unwrap();
+
+        assert!(load_resume_state_in(&entries).is_none());
+
+        drop(entries);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn resume_identity_binds_digest_and_last_modified() {
+        let state = ResumeState {
+            url: "https://example.invalid/runtime.zip".into(),
+            size: 1000,
+            expected_sha256: "a".repeat(64),
+            etag: Some("etag-a".into()),
+            last_modified: Some("Sat, 05 Sep 2026 00:00:00 GMT".into()),
+            chunks: plan_chunks(1000, 1),
+        };
+
+        assert!(can_resume_from(
+            &state,
+            &state.url,
+            1000,
+            &"a".repeat(64),
+            Some("etag-a"),
+            Some("Sat, 05 Sep 2026 00:00:00 GMT"),
+        ));
+        assert!(!can_resume_from(
+            &state,
+            &state.url,
+            1000,
+            &"b".repeat(64),
+            Some("etag-a"),
+            Some("Sat, 05 Sep 2026 00:00:00 GMT"),
+        ));
+        assert!(!can_resume_from(
+            &state,
+            &state.url,
+            1000,
+            &"a".repeat(64),
+            Some("etag-a"),
+            Some("Sun, 06 Sep 2026 00:00:00 GMT"),
+        ));
+    }
+
+    #[test]
     fn resume_without_an_etag_still_requires_the_same_url() {
         // Small/non-LFS Hub objects may not expose an ETag. A same-sized file
         // at another revision must never inherit those unverified bytes.
         let state = ResumeState {
             url: "https://huggingface.co/owner/repo/resolve/main/model.gguf".into(),
             size: 10,
+            expected_sha256: "0".repeat(64),
             etag: None,
+            last_modified: None,
             chunks: vec![Chunk {
                 start: 0,
                 end: 9,
@@ -1075,6 +1838,8 @@ mod tests {
             &state,
             "https://huggingface.co/owner/repo/resolve/other/model.gguf",
             10,
+            &"0".repeat(64),
+            None,
             None,
         ));
     }
@@ -1085,6 +1850,31 @@ mod tests {
         assert!(!content_range_matches("bytes 0-19/100", 10, 19, 100));
         assert!(!content_range_matches("bytes 10-20/100", 10, 19, 100));
         assert!(!content_range_matches("bytes 10-19/101", 10, 19, 100));
+        assert!(!content_range_matches("bytes 20-19/100", 20, 19, 100));
+        assert!(!content_range_matches("bytes 0-100/100", 0, 100, 100));
+        assert!(!content_range_matches("bytes 0-0/0", 0, 0, 0));
+    }
+
+    #[test]
+    fn every_transfer_response_must_match_all_probed_validators() {
+        assert!(response_validators_match(
+            Some("etag-a"),
+            Some("Sat, 05 Sep 2026 00:00:00 GMT"),
+            Some("\"etag-a\""),
+            Some("Sat, 05 Sep 2026 00:00:00 GMT"),
+        ));
+        assert!(!response_validators_match(
+            Some("etag-a"),
+            Some("Sat, 05 Sep 2026 00:00:00 GMT"),
+            Some("\"etag-a\""),
+            Some("Sun, 06 Sep 2026 00:00:00 GMT"),
+        ));
+        assert!(!response_validators_match(
+            Some("etag-a"),
+            None,
+            Some("\"etag-b\""),
+            None,
+        ));
     }
 
     #[test]
@@ -1110,13 +1900,81 @@ mod tests {
     }
 
     #[test]
+    fn transfer_permits_only_two_retries_after_the_initial_request() {
+        use std::io::{BufRead as _, BufReader, Write as _};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let done = Arc::new(AtomicBool::new(false));
+        let server_done = Arc::clone(&done);
+        let requests = Arc::new(AtomicU64::new(0));
+        let server_requests = Arc::clone(&requests);
+        let server = std::thread::spawn(move || {
+            while !server_done.load(Ordering::Relaxed) {
+                let (mut stream, _) = match listener.accept() {
+                    Ok(value) => value,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
+                    Err(error) => panic!("server accept failed: {error}"),
+                };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" || line.is_empty() {
+                        break;
+                    }
+                }
+                let request = server_requests.fetch_add(1, Ordering::Relaxed);
+                if request == 0 {
+                    stream
+                        .write_all(b"HTTP/1.1 206 Partial Content\r\nContent-Length: 1\r\nContent-Range: bytes 0-0/1024\r\nAccept-Ranges: bytes\r\nETag: \"fixture\"\r\nConnection: close\r\n\r\nx")
+                        .unwrap();
+                } else {
+                    stream
+                        .write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                        .unwrap();
+                }
+            }
+        });
+
+        let root =
+            std::env::temp_dir().join(format!("localmotive-retry-limit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let result = download_file(
+            &format!("http://{address}/runtime.zip"),
+            &root.join("runtime.zip"),
+            "fixture",
+            1024,
+            &"0".repeat(64),
+            None,
+            1,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicU64::new(0)),
+            |_, _| {},
+        );
+        done.store(true, Ordering::Relaxed);
+        server.join().unwrap();
+        assert!(result.is_err());
+        assert_eq!(requests.load(Ordering::Relaxed) - 1, 3);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn resume_is_refused_when_the_remote_file_changed() {
         // Splicing bytes from two different revisions would silently corrupt the
         // model, so any disagreement must restart the download.
         let state = ResumeState {
             url: "u".into(),
             size: 1000,
+            expected_sha256: "0".repeat(64),
             etag: Some("abc".into()),
+            last_modified: None,
             chunks: plan_chunks(1000, 1),
         };
         assert!(can_resume(&state, 1000, Some("abc")));
@@ -1297,7 +2155,9 @@ mod tests {
         let mut state = ResumeState {
             url: "https://example/x".into(),
             size: MIN_CHUNK_BYTES * 4,
+            expected_sha256: "a".repeat(64),
             etag: Some("a".repeat(64)),
+            last_modified: Some("Sat, 05 Sep 2026 00:00:00 GMT".into()),
             chunks: plan_chunks(MIN_CHUNK_BYTES * 4, 4),
         };
         state.chunks[0].done = 128;
@@ -1430,6 +2290,8 @@ mod tests {
                 .any(|(done, total)| *done == *total && *total == payload.len() as u64),
             "progress must reach 100%: {samples:?}"
         );
+        assert!(samples.iter().all(|(done, total)| done <= total));
+        assert!(samples.windows(2).all(|pair| pair[0].0 <= pair[1].0));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1447,7 +2309,9 @@ mod tests {
         let mut state = ResumeState {
             url: "https://example/model.gguf".into(),
             size,
+            expected_sha256: "b".repeat(64),
             etag: Some("b".repeat(64)),
+            last_modified: None,
             chunks: plan_chunks(size, 2),
         };
         state.chunks[0].done = state.chunks[0].len(); // first half already fetched

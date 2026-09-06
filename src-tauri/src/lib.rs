@@ -6,6 +6,7 @@ mod core;
 mod download;
 pub mod evidence;
 mod gguf;
+mod health;
 pub mod measurement;
 pub mod preflight;
 mod proc;
@@ -28,12 +29,56 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{Emitter, Manager};
 
 struct ManagedServer {
-    child: Child,
+    child: proc::ContainedProcess,
     profile: LaunchProfile,
     command: String,
     validation: LaunchValidation,
     log_path: String,
     started_at: u64,
+}
+
+trait HealthProcess {
+    fn id(&self) -> u32;
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>>;
+}
+
+impl HealthProcess for Child {
+    fn id(&self) -> u32 {
+        Child::id(self)
+    }
+
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        Child::try_wait(self)
+    }
+}
+
+impl HealthProcess for proc::ContainedProcess {
+    fn id(&self) -> u32 {
+        proc::ContainedProcess::id(self)
+    }
+
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        proc::ContainedProcess::try_wait(self)
+    }
+}
+
+struct ExclusiveOperation<'a> {
+    active: &'a AtomicBool,
+}
+
+impl<'a> ExclusiveOperation<'a> {
+    fn acquire(active: &'a AtomicBool, operation: &str) -> Result<Self, String> {
+        active
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| format!("A {operation} request is already active"))?;
+        Ok(Self { active })
+    }
+}
+
+impl Drop for ExclusiveOperation<'_> {
+    fn drop(&mut self) {
+        self.active.store(false, Ordering::Release);
+    }
 }
 
 #[derive(Default)]
@@ -45,6 +90,12 @@ struct AppState {
     catalog: Mutex<Option<catalog::Catalog>>,
     /// Cancel flags for in-flight downloads, keyed by normalized target path.
     downloads: Mutex<std::collections::HashMap<String, Arc<AtomicBool>>>,
+    /// One managed-runtime installation may run at a time.
+    runtime_install: Mutex<Option<Arc<AtomicBool>>>,
+    /// One approved runtime catalog request may run at a time.
+    runtime_catalog: AtomicBool,
+    /// One managed-runtime seven-stage health run may execute at a time.
+    runtime_health: Mutex<Option<Arc<AtomicBool>>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -358,6 +409,7 @@ fn unverified_companion_requirements(profile: &LaunchProfile) -> Vec<String> {
 
 fn prepare_launch(profile: &LaunchProfile) -> Result<LaunchValidation, String> {
     validate_profile_paths(profile)?;
+    runtime::verify_managed_runtime_for_launch(Path::new(&profile.runtime))?;
     let artifacts = validate_profile_artifacts(profile)?;
     let runtime = core::inspect_runtime(Path::new(&profile.runtime))?;
     let arguments = core::validate_launch_arguments(profile, &runtime)?;
@@ -477,7 +529,7 @@ fn validate_profile_paths(profile: &LaunchProfile) -> Result<(), String> {
 fn spawn_server(
     profile: &LaunchProfile,
     log_name: &str,
-) -> Result<(Child, LaunchValidation, String), String> {
+) -> Result<(proc::ContainedProcess, LaunchValidation, String), String> {
     let validation = prepare_launch(profile)
         .map_err(|message| launch_failure("validation", message, "", None, false))?;
 
@@ -513,21 +565,21 @@ fn spawn_server(
             false,
         )
     })?;
-    let child = proc::hidden_command(&profile.runtime)
+    let mut command = proc::hidden_command(&profile.runtime);
+    command
         .args(&validation.arguments.effective_args)
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout))
-        .stderr(Stdio::from(stderr))
-        .spawn()
-        .map_err(|error| {
-            launch_failure(
-                "spawn",
-                format!("Could not start llama-server: {error}"),
-                &log_path_text,
-                None,
-                false,
-            )
-        })?;
+        .stderr(Stdio::from(stderr));
+    let child = proc::spawn_contained_process(&mut command).map_err(|error| {
+        launch_failure(
+            "spawn",
+            format!("Could not start llama-server: {error}"),
+            &log_path_text,
+            None,
+            false,
+        )
+    })?;
     Ok((child, validation, log_path_text))
 }
 
@@ -934,7 +986,7 @@ fn launch_failure_evidence(
 
 /// Block until `/health` answers 200, the child exits, or the deadline passes.
 fn wait_until_healthy(
-    child: &mut Child,
+    child: &mut impl HealthProcess,
     host: &str,
     port: u16,
     log_path: &str,
@@ -944,7 +996,7 @@ fn wait_until_healthy(
 }
 
 fn wait_until_healthy_cancellable(
-    child: &mut Child,
+    child: &mut impl HealthProcess,
     host: &str,
     port: u16,
     log_path: &str,
@@ -955,7 +1007,7 @@ fn wait_until_healthy_cancellable(
 }
 
 fn wait_until_healthy_inner(
-    child: &mut Child,
+    child: &mut impl HealthProcess,
     host: &str,
     port: u16,
     log_path: &str,
@@ -1080,7 +1132,9 @@ fn scan_models(root: String) -> Result<Vec<LogicalModel>, String> {
 
 #[tauri::command]
 fn inspect_runtime(path: String) -> Result<RuntimeCapabilities, String> {
-    core::inspect_runtime(Path::new(&path))
+    let path = Path::new(&path);
+    runtime::verify_managed_runtime_for_launch(path)?;
+    core::inspect_runtime(path)
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -1107,7 +1161,10 @@ fn check_runtime_health(
 
 #[tauri::command]
 fn describe_runtime(path: String) -> runtime::RuntimeIdentity {
-    runtime::describe_runtime(Path::new(&path))
+    let path = Path::new(&path);
+    let mut identity = runtime::describe_runtime(path);
+    identity.managed_verified = runtime::managed_runtime_verified(path).unwrap_or(false);
+    identity
 }
 
 #[tauri::command]
@@ -1383,8 +1440,7 @@ fn start_server(
         &log_path,
         Duration::from_secs(600),
     ) {
-        let _ = child.kill();
-        let _ = child.wait();
+        let _ = child.terminate_and_wait();
         return Err(error);
     }
     let observed_at_ms = SystemTime::now()
@@ -1422,8 +1478,9 @@ fn stop_server(state: tauri::State<AppState>) -> Result<ServerStatus, String> {
         .lock()
         .map_err(|_| "Server state is unavailable")?;
     if let Some(server) = slot.as_mut() {
-        server.child.kill().map_err(|e| e.to_string())?;
-        let _ = server.child.wait();
+        if !server.child.terminate_and_wait() {
+            return Err("The contained llama-server process tree did not stop".into());
+        }
     }
     *slot = None;
     Ok(status_from(&mut slot))
@@ -1583,17 +1640,6 @@ fn benchmark_compatibility_key_from_snapshot(
     })
 }
 
-fn terminate_child(child: &mut Child) -> Result<(), String> {
-    match child.try_wait().map_err(|error| error.to_string())? {
-        Some(_) => Ok(()),
-        None => {
-            child.kill().map_err(|error| error.to_string())?;
-            child.wait().map_err(|error| error.to_string())?;
-            Ok(())
-        }
-    }
-}
-
 fn run_benchmark_snapshot(
     server_pid: u32,
     profile: LaunchProfile,
@@ -1720,15 +1766,15 @@ fn run_benchmark_snapshot(
                 timing.peak_process_rss_bytes = runtime::process_peak_working_set(child.id());
                 Ok(timing)
             });
-            let cleanup = terminate_child(&mut child);
+            let cleanup = child.terminate_and_wait();
             match (attempt, cleanup) {
-                (Ok(timing), Ok(())) => Ok(timing),
-                (Err(error), Ok(())) => Err(error),
-                (Ok(_), Err(error)) => Err(format!(
-                    "Could not stop the fresh benchmark runtime: {error}"
-                )),
-                (Err(error), Err(cleanup_error)) => Err(format!(
-                    "{error}; fresh runtime cleanup also failed: {cleanup_error}"
+                (Ok(timing), true) => Ok(timing),
+                (Err(error), true) => Err(error),
+                (Ok(_), false) => {
+                    Err("Could not stop the contained fresh benchmark runtime tree".into())
+                }
+                (Err(error), false) => Err(format!(
+                    "{error}; contained fresh runtime tree cleanup also failed"
                 )),
             }
         })?
@@ -1859,15 +1905,15 @@ async fn benchmark_v2(
                 }
                 slot.take().expect("validated server was present")
             };
-            if let Err(error) = terminate_child(&mut managed.child) {
+            if !managed.child.terminate_and_wait() {
                 let mut slot = state
                     .server
                     .lock()
                     .map_err(|_| "Server state is unavailable")?;
                 *slot = Some(managed);
-                return Err(format!(
-                    "Could not stop the validated server for cold benchmarking: {error}"
-                ));
+                return Err(
+                    "Could not stop the contained server tree for cold benchmarking".into(),
+                );
             }
         }
         let task_cancelled = cancelled.clone();
@@ -2121,19 +2167,112 @@ fn write_share_export(
     Ok(written.to_string_lossy().into_owned())
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeSetupResponse {
+    hardware: runtime::HardwareInfo,
+    catalog: Option<runtime::RuntimeCatalog>,
+    catalog_error: Option<runtime::RuntimeCatalogError>,
+    runtime_root: String,
+    managed_runtimes: Vec<runtime::ManagedRuntimeRecord>,
+}
+
+#[tauri::command]
+async fn load_runtime_setup(
+    state: tauri::State<'_, AppState>,
+    adapter_id: Option<String>,
+) -> Result<RuntimeSetupResponse, String> {
+    let (hardware, runtime_root, managed_runtimes) = tauri::async_runtime::spawn_blocking(|| {
+        Ok::<_, String>((
+            runtime::detect_hardware(),
+            runtime::managed_runtime_root()?
+                .to_string_lossy()
+                .into_owned(),
+            runtime::list_managed_runtimes()?,
+        ))
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    if let Some(adapter_id) = adapter_id.as_deref() {
+        if adapter_id.len() > 256
+            || !hardware
+                .adapters
+                .iter()
+                .any(|adapter| adapter.adapter_id == adapter_id)
+        {
+            return Err("Selected adapter is not in the current hardware snapshot".into());
+        }
+    }
+    let catalog_result =
+        match ExclusiveOperation::acquire(&state.runtime_catalog, "runtime catalog") {
+            Ok(_active) => runtime::fetch_catalog(&hardware).await.map(|mut catalog| {
+                runtime::recommend_catalog_for_adapter(
+                    &mut catalog,
+                    &hardware,
+                    adapter_id.as_deref(),
+                );
+                catalog
+            }),
+            Err(message) => Err(runtime::RuntimeCatalogError {
+                kind: runtime::RuntimeCatalogErrorKind::Busy,
+                message,
+                retry_after_seconds: None,
+            }),
+        };
+    let (catalog, catalog_error) = match catalog_result {
+        Ok(catalog) => (Some(catalog), None),
+        Err(error) => (None, Some(error)),
+    };
+    Ok(RuntimeSetupResponse {
+        hardware,
+        catalog,
+        catalog_error,
+        runtime_root,
+        managed_runtimes,
+    })
+}
+
 #[tauri::command]
 fn detect_hardware() -> runtime::HardwareInfo {
     runtime::detect_hardware()
 }
 
 #[tauri::command]
-async fn fetch_runtime_catalog() -> Result<runtime::RuntimeCatalog, String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let hardware = runtime::detect_hardware();
-        runtime::fetch_catalog(&hardware)
-    })
-    .await
-    .map_err(|error| error.to_string())?
+async fn fetch_runtime_catalog(
+    state: tauri::State<'_, AppState>,
+    adapter_id: Option<String>,
+) -> Result<runtime::RuntimeCatalog, runtime::RuntimeCatalogError> {
+    let _active = ExclusiveOperation::acquire(&state.runtime_catalog, "runtime catalog").map_err(
+        |message| runtime::RuntimeCatalogError {
+            kind: runtime::RuntimeCatalogErrorKind::Busy,
+            message,
+            retry_after_seconds: None,
+        },
+    )?;
+    let hardware = tauri::async_runtime::spawn_blocking(runtime::detect_hardware)
+        .await
+        .map_err(|error| runtime::RuntimeCatalogError {
+            kind: runtime::RuntimeCatalogErrorKind::InvalidResponse,
+            message: format!("Hardware detection task failed: {error}"),
+            retry_after_seconds: None,
+        })?;
+    if let Some(adapter_id) = adapter_id.as_deref() {
+        if adapter_id.len() > 256
+            || !hardware
+                .adapters
+                .iter()
+                .any(|adapter| adapter.adapter_id == adapter_id)
+        {
+            return Err(runtime::RuntimeCatalogError {
+                kind: runtime::RuntimeCatalogErrorKind::InvalidResponse,
+                message: "Selected adapter is not in the current hardware snapshot".into(),
+                retry_after_seconds: None,
+            });
+        }
+    }
+    let mut catalog = runtime::fetch_catalog(&hardware).await?;
+    runtime::recommend_catalog_for_adapter(&mut catalog, &hardware, adapter_id.as_deref());
+    Ok(catalog)
 }
 
 #[tauri::command]
@@ -2145,12 +2284,100 @@ fn managed_runtime_root() -> Result<String, String> {
 
 #[tauri::command]
 async fn install_managed_runtime(
-    tag: String,
-    option: runtime::RuntimeOption,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    request: runtime::RuntimeInstallRequest,
 ) -> Result<runtime::InstalledRuntime, String> {
-    tauri::async_runtime::spawn_blocking(move || runtime::install_runtime(&tag, &option))
-        .await
-        .map_err(|error| error.to_string())?
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut active = state.runtime_install.lock().unwrap();
+        if active.is_some() {
+            return Err("A managed runtime installation is already active".into());
+        }
+        *active = Some(Arc::clone(&cancel));
+    }
+    let event_app = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        runtime::install_runtime(request, cancel, move |progress| {
+            let _ = event_app.emit("runtime-install-progress", progress);
+        })
+    })
+    .await;
+    *state.runtime_install.lock().unwrap() = None;
+    result.map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+fn cancel_managed_runtime_install(state: tauri::State<'_, AppState>) -> bool {
+    let active = state.runtime_install.lock().unwrap();
+    if let Some(cancel) = active.as_ref() {
+        cancel.store(true, Ordering::Relaxed);
+        true
+    } else {
+        false
+    }
+}
+
+#[tauri::command]
+async fn check_managed_runtime_health(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    request: health::ManagedHealthRequest,
+) -> Result<health::HealthRunResult, String> {
+    let runtime_id = request.install_key.clone();
+    let progress_runtime_id = request.install_key.clone();
+    let adapter_id = request.adapter_id.clone();
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut active = state.runtime_health.lock().unwrap();
+        if active.is_some() {
+            return Err("A managed runtime health run is already active".into());
+        }
+        *active = Some(Arc::clone(&cancel));
+    }
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let context = match runtime::managed_health_context(&request) {
+            Ok(context) => context,
+            Err(error) => {
+                return health::trust_failure_result(runtime_id, adapter_id, error);
+            }
+        };
+        let model_cancel = Arc::clone(&cancel);
+        if let Err(error) =
+            runtime::ensure_pinned_health_model(model_cancel, |downloaded, total| {
+                let _ = app.emit(
+                    "health-model-progress",
+                    health::HealthModelProgress {
+                        install_key: progress_runtime_id.clone(),
+                        downloaded,
+                        total,
+                    },
+                );
+            })
+        {
+            let reason = if cancel.load(Ordering::Relaxed) {
+                health::HealthFailureReason::Cancelled
+            } else {
+                health::HealthFailureReason::TrustFailure
+            };
+            return health::model_setup_failure_result(&context, reason, error);
+        }
+        health::run_managed_health(context, cancel.as_ref())
+    })
+    .await;
+    *state.runtime_health.lock().unwrap() = None;
+    result.map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn cancel_managed_runtime_health(state: tauri::State<'_, AppState>) -> bool {
+    let active = state.runtime_health.lock().unwrap();
+    if let Some(cancel) = active.as_ref() {
+        cancel.store(true, Ordering::Relaxed);
+        true
+    } else {
+        false
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2289,8 +2516,7 @@ impl tune::Bench for LiveBench<'_> {
             }
             core::benchmark_server(&profile.host, profile.port, self.tokens, self.repeats)
         })();
-        let _ = child.kill();
-        let _ = child.wait();
+        let _ = child.terminate_and_wait();
         // Give the OS a moment to release the port before the next launch.
         std::thread::sleep(Duration::from_millis(600));
         result.map(|summary| (summary, command))
@@ -2798,10 +3024,14 @@ pub fn run() {
             review_external_evidence,
             build_share_export,
             write_share_export,
+            load_runtime_setup,
             detect_hardware,
             fetch_runtime_catalog,
             managed_runtime_root,
             install_managed_runtime,
+            cancel_managed_runtime_install,
+            check_managed_runtime_health,
+            cancel_managed_runtime_health,
             cloud_providers,
             cloud_credential_status,
             cloud_save_credential,
@@ -2831,6 +3061,39 @@ pub fn run() {
 #[cfg(test)]
 mod release_security_tests {
     use super::*;
+
+    #[test]
+    fn inspect_runtime_command_verifies_managed_trust_before_probe() {
+        // A forged runtime.json inside the managed root must not cause the
+        // inspect command to execute attacker-controlled bytes.
+        let source = include_str!("lib.rs");
+        let command = source
+            .split("fn inspect_runtime(path: String)")
+            .nth(1)
+            .unwrap()
+            .split("struct RuntimeHealthRequest")
+            .next()
+            .unwrap();
+        let trust_check = command
+            .find("runtime::verify_managed_runtime_for_launch")
+            .expect("inspect_runtime must enforce managed-runtime trust");
+        let probe = command
+            .find("core::inspect_runtime")
+            .expect("inspect_runtime must call the runtime probe");
+        assert!(
+            trust_check < probe,
+            "managed trust must be checked before execution"
+        );
+    }
+
+    #[test]
+    fn catalog_request_gate_permits_only_one_active_request() {
+        let active = AtomicBool::new(false);
+        let first = ExclusiveOperation::acquire(&active, "runtime catalog").unwrap();
+        assert!(ExclusiveOperation::acquire(&active, "runtime catalog").is_err());
+        drop(first);
+        assert!(ExclusiveOperation::acquire(&active, "runtime catalog").is_ok());
+    }
 
     fn put_test_string(bytes: &mut Vec<u8>, value: &str) {
         bytes.extend((value.len() as u64).to_le_bytes());
@@ -3306,6 +3569,8 @@ mod release_security_tests {
         let spawn_source = &source[spawn_start..spawn_end];
 
         assert!(!spawn_source.contains("TcpListener::bind"));
+        assert!(spawn_source.contains("proc::spawn_contained_process"));
+        assert!(!spawn_source.contains(".spawn()"));
     }
 
     #[test]
@@ -3767,7 +4032,7 @@ mod release_security_tests {
         let error = require_regular_non_reparse_file("Runtime", &junction.join("llama-server.exe"))
             .unwrap_err();
 
-        assert!(error.contains("reparse point"));
+        assert!(error.contains("reparse-point"), "unexpected error: {error}");
         std::fs::remove_dir(junction).unwrap();
         std::fs::remove_dir_all(root).unwrap();
         std::fs::remove_dir_all(outside).unwrap();
@@ -3806,7 +4071,7 @@ mod release_security_tests {
 
         let error = prepare_launch(&profile).unwrap_err();
 
-        assert!(error.contains("reparse point"), "unexpected error: {error}");
+        assert!(error.contains("reparse-point"), "unexpected error: {error}");
         std::fs::remove_dir(junction).unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }

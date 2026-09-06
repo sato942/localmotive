@@ -1,6 +1,6 @@
 [package]
 name = "localmotive"
-version = "0.4.0"
+version = "0.4.1"
 description = "A public Windows desktop control plane for local GGUF inference"
 authors = ["Localmotive contributors"]
 edition = "2021"
@@ -34,8 +34,10 @@ base64 = "0.22"
 rand = "0.8"
 cap-std = "4.0.3"
 ed25519-dalek = { version = "2.2", features = ["std"] }
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_Storage_FileSystem", "Win32_System_ProcessStatus", "Win32_System_SystemInformation", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_ProcessStatus", "Win32_System_SystemInformation", "Win32_System_Threading"] }
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common"] }
+windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_System_Threading"] }
+windows-version = "=0.1.7"
+process-wrap = { version = "=10.0.0", default-features = false, features = ["std", "job-object", "creation-flags"] }
 

@@ -206,6 +206,34 @@ pub(crate) fn is_reparse_point(_metadata: &fs::Metadata) -> bool {
     false
 }
 
+pub(crate) fn validate_no_reparse_ancestors(label: &str, path: &Path) -> Result<(), String> {
+    if path.as_os_str().is_empty() {
+        return Err(format!("{label} path is empty"));
+    }
+    for component_path in path
+        .ancestors()
+        .filter(|entry| !entry.as_os_str().is_empty())
+    {
+        let component_metadata = match fs::symlink_metadata(component_path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(format!(
+                    "Could not inspect {label} path component {}: {error}",
+                    component_path.display()
+                ));
+            }
+        };
+        if component_metadata.file_type().is_symlink() || is_reparse_point(&component_metadata) {
+            return Err(format!(
+                "{label} path contains a symlink or reparse-point ancestor: {}",
+                component_path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_regular_non_reparse_file(label: &str, path: &Path) -> Result<(), String> {
     if path.as_os_str().is_empty() {
         return Err(format!("{label} path is empty"));
@@ -215,24 +243,7 @@ pub(crate) fn validate_regular_non_reparse_file(label: &str, path: &Path) -> Res
     if !metadata.is_file() {
         return Err(format!("{label} is not a regular file: {}", path.display()));
     }
-    for component_path in path
-        .ancestors()
-        .filter(|entry| !entry.as_os_str().is_empty())
-    {
-        let component_metadata = fs::symlink_metadata(component_path).map_err(|error| {
-            format!(
-                "Could not inspect {label} path component {}: {error}",
-                component_path.display()
-            )
-        })?;
-        if component_metadata.file_type().is_symlink() || is_reparse_point(&component_metadata) {
-            return Err(format!(
-                "{label} path contains a symlink or reparse point: {}",
-                component_path.display()
-            ));
-        }
-    }
-    Ok(())
+    validate_no_reparse_ancestors(label, path)
 }
 
 pub fn sha256_path(path: &Path) -> Result<String, String> {

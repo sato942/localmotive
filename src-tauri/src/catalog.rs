@@ -8,6 +8,7 @@
 //! refreshes — while the model bytes come straight from Hugging Face.
 
 use serde::{Deserialize, Serialize};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -20,6 +21,22 @@ const CATALOG_VERIFYING_KEY: [u8; 32] = [
     234, 194, 139, 46, 191, 202, 36, 78, 104, 245, 230, 170, 90, 67, 238, 61, 1, 162, 242, 207,
     116, 254, 217, 3, 74, 69, 78, 102, 199, 170, 8, 119,
 ];
+const MAX_CATALOG_BODY_BYTES: usize = 4 * 1024 * 1024;
+const MAX_CATALOG_SIGNATURE_BYTES: usize = 16 * 1024;
+const MAX_CATALOG_CACHE_BYTES: u64 = 5 * 1024 * 1024;
+
+fn read_bounded_catalog_body(mut reader: impl Read, limit: usize) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::with_capacity(limit.min(64 * 1024));
+    reader
+        .by_ref()
+        .take((limit as u64).saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("Could not read the catalog response: {error}"))?;
+    if bytes.len() > limit {
+        return Err(format!("Catalog response exceeds the {limit} byte limit"));
+    }
+    Ok(bytes)
+}
 
 /// Highest schema version this build understands. The loader accepts anything
 /// at or below it so an older app keeps working after the catalog moves on.
@@ -374,7 +391,12 @@ fn cache_path(root: &Path) -> PathBuf {
 
 fn load_cache_record(root: &Path) -> Option<CacheRecord> {
     let _guard = CATALOG_CACHE_WRITE_LOCK.lock().ok()?;
-    let text = std::fs::read_to_string(cache_path(root)).ok()?;
+    let path = cache_path(root);
+    let metadata = std::fs::metadata(&path).ok()?;
+    if !metadata.is_file() || metadata.len() > MAX_CATALOG_CACHE_BYTES {
+        return None;
+    }
+    let text = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&text).ok()
 }
 
@@ -395,6 +417,9 @@ fn save_cache_record(
         signature: signature.to_string(),
     })
     .map_err(|error| format!("Could not serialize the catalog cache: {error}"))?;
+    if record.len() as u64 > MAX_CATALOG_CACHE_BYTES {
+        return Err("The catalog cache exceeds its size limit".into());
+    }
     let cache = cache_path(root);
     let temp = root.join(format!("catalog-cache.{}.tmp", std::process::id()));
     {
@@ -454,15 +479,37 @@ pub fn fetch_catalog(url: &str, cache_root: &Path) -> Result<CatalogSnapshot, St
                     url: url.to_string(),
                 });
             }
-            let body = response
-                .text()
-                .map_err(|error| format!("Could not read the catalog: {error}"))?;
+            if response
+                .content_length()
+                .is_some_and(|length| length > MAX_CATALOG_BODY_BYTES as u64)
+            {
+                return fallback(
+                    cached_body.map(str::to_string),
+                    url,
+                    "the catalog response exceeds its size limit".into(),
+                );
+            }
+            let body =
+                String::from_utf8(read_bounded_catalog_body(response, MAX_CATALOG_BODY_BYTES)?)
+                    .map_err(|_| "The catalog response is not UTF-8".to_string())?;
             let signature_url = format!("{url}.sig");
             let signature = match client.get(&signature_url).send() {
                 Ok(signature_response) if signature_response.status().is_success() => {
-                    signature_response
-                        .text()
-                        .map_err(|error| format!("Could not read the catalog signature: {error}"))?
+                    if signature_response
+                        .content_length()
+                        .is_some_and(|length| length > MAX_CATALOG_SIGNATURE_BYTES as u64)
+                    {
+                        return fallback(
+                            cached_body.map(str::to_string),
+                            url,
+                            "the catalog signature exceeds its size limit".into(),
+                        );
+                    }
+                    String::from_utf8(read_bounded_catalog_body(
+                        signature_response,
+                        MAX_CATALOG_SIGNATURE_BYTES,
+                    )?)
+                    .map_err(|_| "The catalog signature is not UTF-8".to_string())?
                 }
                 Ok(signature_response) => {
                     return fallback(
@@ -713,6 +760,12 @@ pub fn clear_hf_token() -> Result<TokenStatus, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_catalog_reader_rejects_limit_plus_one() {
+        let bytes = vec![b'x'; 33];
+        assert!(read_bounded_catalog_body(std::io::Cursor::new(bytes), 32).is_err());
+    }
 
     fn sample() -> Catalog {
         parse_catalog(
