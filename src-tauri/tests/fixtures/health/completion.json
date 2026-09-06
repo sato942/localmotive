@@ -1,0 +1,9 @@
+{
+  "choices": [
+    {
+      "text": " blue",
+      "finish_reason": "length"
+    }
+  ],
+  "tokens_predicted": 1
+}

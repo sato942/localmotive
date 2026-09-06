@@ -1,0 +1,255 @@
+{
+  "observedAt": "2026-09-05T09:30:48Z",
+  "source": "https://api.github.com/repos/ggml-org/llama.cpp/commits/427291b5b34cd914a31b3fd3b61a68f6184f4b9f/check-runs",
+  "releaseTag": "b10816",
+  "releaseCommit": "427291b5b34cd914a31b3fd3b61a68f6184f4b9f",
+  "totalCheckRuns": 117,
+  "requiredJobs": [
+    {
+      "backend": "cpu",
+      "name": "windows-cpu / x64",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/ggml-org/llama.cpp/actions/runs/33907000691/job/101151806978",
+      "completedAt": "2026-09-04T19:48:30Z",
+      "installKeys": [
+        "cpu"
+      ],
+      "platforms": [
+        "windows-x64"
+      ],
+      "hardwareClasses": [
+        "windows-11-26100-x64-cpu"
+      ]
+    },
+    {
+      "backend": "cuda",
+      "name": "windows-cuda (12.4, x64)",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/ggml-org/llama.cpp/actions/runs/33907000691/job/101150676915",
+      "completedAt": "2026-09-04T19:54:21Z",
+      "installKeys": [
+        "cuda-12.4"
+      ],
+      "platforms": [
+        "windows-x64"
+      ],
+      "hardwareClasses": [
+        "windows-11-26100-x64-nvidia"
+      ]
+    },
+    {
+      "backend": "cuda",
+      "name": "windows-cuda (13.3, x64)",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/ggml-org/llama.cpp/actions/runs/33907000691/job/101150677140",
+      "completedAt": "2026-09-04T19:40:59Z",
+      "installKeys": [
+        "cuda-13.3"
+      ],
+      "platforms": [
+        "windows-x64"
+      ],
+      "hardwareClasses": [
+        "windows-11-26100-x64-nvidia"
+      ]
+    },
+    {
+      "backend": "cuda",
+      "name": "server-cuda",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/ggml-org/llama.cpp/actions/runs/33906999326/job/101134163906",
+      "completedAt": "2026-09-04T18:55:18Z",
+      "installKeys": [
+        "cuda-12.4",
+        "cuda-13.3"
+      ],
+      "platforms": [
+        "windows-x64"
+      ],
+      "hardwareClasses": [
+        "windows-11-26100-x64-nvidia"
+      ]
+    },
+    {
+      "backend": "vulkan",
+      "name": "windows (vulkan, x64, -DGGML_VULKAN=ON, ggml-vulkan)",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/ggml-org/llama.cpp/actions/runs/33907000691/job/101150676913",
+      "completedAt": "2026-09-04T19:44:07Z",
+      "installKeys": [
+        "vulkan"
+      ],
+      "platforms": [
+        "windows-x64"
+      ],
+      "hardwareClasses": [
+        "windows-11-26100-x64-nvidia"
+      ]
+    },
+    {
+      "backend": "vulkan",
+      "name": "gpu-vulkan-nvidia-cm",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/ggml-org/llama.cpp/actions/runs/33906999330/job/101134163989",
+      "completedAt": "2026-09-04T21:47:32Z",
+      "installKeys": [
+        "vulkan"
+      ],
+      "platforms": [
+        "windows-x64"
+      ],
+      "hardwareClasses": [
+        "windows-11-26100-x64-nvidia"
+      ]
+    },
+    {
+      "backend": "rocm",
+      "name": "windows-rocm (10.0.0, gfx1010;gfx1011;gfx1012;gfx1030;gfx1031;gfx1032;gfx1033;gfx1034;gfx1035;gfx...",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/ggml-org/llama.cpp/actions/runs/33907000691/job/101150676837",
+      "completedAt": "2026-09-04T19:46:17Z",
+      "installKeys": [
+        "rocm"
+      ],
+      "platforms": [
+        "windows-x64"
+      ],
+      "hardwareClasses": [
+        "windows-x64-amd-matrix"
+      ]
+    },
+    {
+      "backend": "rocm",
+      "name": "gpu-rocm",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/ggml-org/llama.cpp/actions/runs/33906999330/job/101134164062",
+      "completedAt": "2026-09-04T18:50:50Z",
+      "installKeys": [
+        "rocm"
+      ],
+      "platforms": [
+        "windows-x64"
+      ],
+      "hardwareClasses": [
+        "windows-x64-amd-matrix"
+      ]
+    },
+    {
+      "backend": "sycl",
+      "name": "windows-sycl",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/ggml-org/llama.cpp/actions/runs/33907000691/job/101150676811",
+      "completedAt": "2026-09-04T19:46:16Z",
+      "installKeys": [
+        "sycl"
+      ],
+      "platforms": [
+        "windows-x64"
+      ],
+      "hardwareClasses": [
+        "windows-x64-intel-matrix"
+      ]
+    },
+    {
+      "backend": "openvino",
+      "name": "windows-openvino",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/ggml-org/llama.cpp/actions/runs/33907000691/job/101151806829",
+      "completedAt": "2026-09-04T19:52:49Z",
+      "installKeys": [
+        "openvino"
+      ],
+      "platforms": [
+        "windows-x64"
+      ],
+      "hardwareClasses": [
+        "windows-x64-intel-matrix"
+      ]
+    },
+    {
+      "backend": "openvino",
+      "name": "gpu-openvino-low-perf",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/ggml-org/llama.cpp/actions/runs/33906999330/job/101134164139",
+      "completedAt": "2026-09-05T07:23:56Z",
+      "installKeys": [
+        "openvino"
+      ],
+      "platforms": [
+        "windows-x64"
+      ],
+      "hardwareClasses": [
+        "windows-x64-intel-matrix"
+      ]
+    }
+  ],
+  "nonRequiredUnresolvedJobs": [
+    {
+      "name": "make-release",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/ggml-org/llama.cpp/actions/runs/33913598554/job/101155541874",
+      "appliesToShippingCandidates": false,
+      "reason": "The job does not gate the approved Windows x64 release archive and mapped hardware tuple."
+    },
+    {
+      "name": "macos",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/ggml-org/llama.cpp/actions/runs/33907000534/job/101134166150",
+      "appliesToShippingCandidates": false,
+      "reason": "The job does not gate the approved Windows x64 release archive and mapped hardware tuple."
+    },
+    {
+      "name": "gpu-webgpu-nvidia",
+      "status": "queued",
+      "conclusion": "",
+      "url": "https://github.com/ggml-org/llama.cpp/actions/runs/33906999330/job/101134164227",
+      "appliesToShippingCandidates": false,
+      "reason": "The job does not gate the approved Windows x64 release archive and mapped hardware tuple."
+    },
+    {
+      "name": "gpu-cuda",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/ggml-org/llama.cpp/actions/runs/33906999330/job/101134164037",
+      "appliesToShippingCandidates": false,
+      "reason": "The job does not gate the approved Windows x64 release archive and mapped hardware tuple."
+    },
+    {
+      "name": "windows",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/ggml-org/llama.cpp/actions/runs/33906999041/job/101134163988",
+      "appliesToShippingCandidates": false,
+      "reason": "The job does not gate the approved Windows x64 release archive and mapped hardware tuple."
+    },
+    {
+      "name": "gpu-vulkan-nvidia-cm2",
+      "status": "queued",
+      "conclusion": "",
+      "url": "https://github.com/ggml-org/llama.cpp/actions/runs/33906999330/job/101134163948",
+      "appliesToShippingCandidates": false,
+      "reason": "The job does not gate the approved Windows x64 release archive and mapped hardware tuple."
+    },
+    {
+      "name": "gpu-vulkan-apple",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/ggml-org/llama.cpp/actions/runs/33906999330/job/101134163808",
+      "appliesToShippingCandidates": false,
+      "reason": "The job does not gate the approved Windows x64 release archive and mapped hardware tuple."
+    }
+  ]
+}

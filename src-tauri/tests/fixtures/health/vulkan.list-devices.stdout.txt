@@ -1,0 +1,2 @@
+Available devices:
+  Vulkan0: NVIDIA GeForce RTX 5090 (32187 MiB, 31419 MiB free)

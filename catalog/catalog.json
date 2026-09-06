@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-09-02",
-  "source": "https://github.com/sato942/gguf-pilot/blob/main/catalog/catalog.json",
-  "note": "Curated list of GGUF builds. GGUF Pilot downloads directly from Hugging Face; this file only decides what is offered.",
+  "updated": "2026-09-05",
+  "source": "https://github.com/sato942/localmotive/blob/main/catalog/catalog.json",
+  "note": "Curated list of GGUF builds. Localmotive downloads directly from Hugging Face; this file only decides what is offered.",
   "models": [
     {
       "id": "unsloth-qwen3-coder-30b-a3b-instruct-gguf",

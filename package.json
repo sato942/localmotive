@@ -1,17 +1,23 @@
 {
   "name": "localmotive",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.4.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "vitest run",
+    "test": "vitest run && node --test scripts/tests/release-gates.test.mjs",
     "catalog:validate": "node scripts/validate_catalog.mjs catalog/catalog.json",
     "catalog:refresh": "node scripts/build_catalog.mjs --write",
-    "check": "tsc --noEmit -p tsconfig.json && npm test && npm run catalog:validate && npm run build",
-    "tauri": "tauri"
+    "icon:generate": "tauri icon assets/app-icon.svg",
+    "icon:verify": "node scripts/verify_icons.mjs",
+    "branding:verify": "node scripts/verify_branding.mjs",
+    "qualification:verify": "node scripts/verify_qualification.mjs",
+    "research:verify-anchor": "node scripts/verify_research_anchor.mjs",
+    "check": "tsc --noEmit -p tsconfig.json && npm test && npm run catalog:validate && npm run branding:verify && npm run research:verify-anchor && npm run qualification:verify && npm run icon:verify && npm run build",
+    "tauri": "tauri",
+    "tauri:build:signed": "tauri build --config src-tauri/tauri.signing.conf.json"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -26,8 +32,11 @@
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
+    "ajv": "8.18.0",
     "typescript": "~5.8.3",
     "vite": "^7.0.4",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "ws": "8.21.3",
+    "yaml": "2.9.0"
   }
 }

@@ -1,0 +1,24 @@
+[
+  {
+    "name": "server-cuda",
+    "backend": "cuda",
+    "conclusion": "failure",
+    "status": "completed",
+    "url": "https://github.com/ggml-org/llama.cpp/actions/runs/33837461477/job/100912786608",
+    "completedAt": "2026-09-04T05:48:36Z",
+    "installKeys": ["cuda-12.4", "cuda-13.3"],
+    "platforms": ["windows-x64"],
+    "hardwareClasses": ["windows-11-26100-x64-nvidia"]
+  },
+  {
+    "name": "gpu-openvino-low-perf",
+    "backend": "openvino",
+    "conclusion": "",
+    "status": "queued",
+    "url": "https://github.com/ggml-org/llama.cpp/actions/runs/33837461527/job/100912786495",
+    "completedAt": "",
+    "installKeys": ["openvino"],
+    "platforms": ["windows-x64"],
+    "hardwareClasses": ["windows-x64-intel-matrix"]
+  }
+]

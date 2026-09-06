@@ -62,7 +62,7 @@ and computer hardware.
 
 1. Start Localmotive.
 2. Open **Runtime**.
-3. Install a recommended `llama.cpp` build or select an existing runtime.
+3. Review the evidence label, then install the recommended `llama.cpp` build or select an existing runtime.
 4. Open **Inventory**.
 5. Select the folder that contains the GGUF files.
 6. Select a complete model.
@@ -87,13 +87,14 @@ If the preferred port is unavailable, Localmotive scans a bounded port range.
 ### Runtime management
 
 - Detect the Windows architecture and graphics adapters.
-- Read official Windows release assets from `ggml-org/llama.cpp` on GitHub.
-- Recommend a backend from detected hardware and available release assets.
+- Read the exact approved `ggml-org/llama.cpp` release from GitHub.
+- Recommend an accelerator only when an exact L4 compatibility record matches.
+- Recommend CPU with an explicit reason when no exact accelerator record matches.
 - Show the other release asset choices.
 - Pair CUDA runtime archives with the matching `cudart` archive.
-- Check each asset size when GitHub provides a nonzero size.
-- Check each asset SHA-256 when GitHub provides a `sha256:` digest.
-- Reject ZIP entries that do not have an enclosed archive path.
+- Require each approved asset's exact size and SHA-256.
+- Reject traversal, links, junction escapes, duplicate paths, and archive resource-limit violations.
+- Verify every extracted file against a compiled exact-content manifest.
 - Remove a failed installation's staging directory.
 - Install managed runtimes under `%LOCALAPPDATA%\Localmotive\runtimes`.
 - Keep runtime versions and backend variants in separate directories.
@@ -101,10 +102,11 @@ If the preferred port is unavailable, Localmotive scans a bounded port range.
 - Read supported options from the selected runtime's `--help` output.
 - Omit generated options that the selected runtime does not advertise.
 
-The available release can include CUDA, ROCm, SYCL, OpenVINO, Vulkan,
-OpenCL, CPU, or ARM64 assets.
+The approved release contains x64 CPU, CUDA, ROCm, SYCL, OpenVINO, and Vulkan assets.
 
 Localmotive shows only assets that match the running application architecture.
+
+The 0.4.1 ARM64 assets remain dormant and do not create install options.
 
 ### Model inventory and profiles
 
@@ -273,25 +275,47 @@ or agent options supplied through extra arguments.
 
 Review the generated command before launch.
 
+## Supported platforms
+
+Windows x64 has been qualification-tested on AMD Zen 5 and NVIDIA Blackwell (RTX 50-series class), including clean-account NSIS/MSI install, launch, uninstall, and update-from-0.4.0 checks in Windows Sandbox when release evidence is present for that version.
+
+The validated host uses Ryzen 9 9950X3D and GeForce RTX 5090.
+
+A support claim applies to one version only when release evidence is present for that version.
+
+Night jobs run on self-hosted runner `DESKTOP-HPTF57N-zen5-blackwell` during 01:00-06:00 Asia/Dubai.
+
+Other Windows hardware may work but remains untested and unsupported until packaged attestations exist.
+
+macOS remains out of scope for this matrix.
+
+Code signing status is SignPath Foundation application submitted.
+
+Windows installers remain unsigned until SignPath approval and wiring complete.
+
 ## Current limitations
 
 - The current application release provides Windows x64 artifacts only.
-- The runtime manager can discover ARM64 assets on an ARM64 build.
-- This repository does not publish an ARM64 Localmotive application build.
+- Windows 10 and most hardware classes do not have L4 product evidence.
+- [Microsoft ended normal Windows 10 support on October 14, 2025](https://support.microsoft.com/en-us/help/3207828); use an applicable supported servicing or ESU policy.
+- Missing P0 rows are disclosed and do not receive support claims.
+- This repository does not publish an ARM64 Localmotive application or runtime option.
 - Localmotive supervises one model server at a time.
-- Stop terminates the directly owned child process.
-- Windows Job Object containment is not implemented.
+- Windows child processes enter a kill-on-close Job Object before execution resumes.
+- Stop and cancellation terminate the complete contained process tree.
 - Catalog downloads support single-file GGUF entries only.
 - Inventory scanning supports split GGUF files already on disk.
 - Application updates require a newer manual installation or executable.
-- The current release files are not Authenticode-signed.
+- Localmotive 0.4.1 publication requires valid timestamped Authenticode signatures.
+- Until SignPath approval and wiring complete, files remain unsigned and the signature gate remains blocked.
 
 ## Troubleshooting
 
 ### SmartScreen shows a warning
 
-The current release is unsigned.
-Verify the SHA-256 value before you decide whether to run the file.
+Verify the Authenticode signer and the published SHA-256 value.
+
+A valid signature does not guarantee immediate SmartScreen reputation.
 
 ### A model is incomplete
 

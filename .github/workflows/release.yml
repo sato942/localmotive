@@ -11,9 +11,14 @@ on:
       tag:
         description: "Tag to build and release (e.g. v0.2.4)"
         required: true
+      publish:
+        description: "Publish the verified candidate after all gates pass"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   rust-audit:
@@ -22,20 +27,23 @@ jobs:
       contents: read
       checks: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
       - name: Rust dependency advisory audit
-        uses: rustsec/audit-check@v2.0.0
+        uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           working-directory: src-tauri
 
-  release:
+  quality:
     needs: rust-audit
     runs-on: windows-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
           fetch-depth: 0
@@ -47,23 +55,11 @@ jobs:
           RAW_TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           raw="$RAW_TAG"
-          [[ "$raw" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-            || { echo "::error::Release tag must match vMAJOR.MINOR.PATCH"; exit 1; }
+          test "$raw" = "v0.4.1" \
+            || { echo "::error::This workflow builds only v0.4.1"; exit 1; }
           version="${raw#v}"
           echo "tag=v${version}" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
-
-      - name: Verify the tag matches the manifests
-        shell: bash
-        run: |
-          version="${{ steps.version.outputs.version }}"
-          pkg=$(node -p "require('./package.json').version")
-          lock=$(node -p "require('./package-lock.json').version")
-          conf=$(node -p "require('./src-tauri/tauri.conf.json').version")
-          cargo=$(grep -m1 '^version = ' src-tauri/Cargo.toml | cut -d'"' -f2)
-          echo "tag=$version package.json=$pkg package-lock.json=$lock tauri.conf.json=$conf Cargo.toml=$cargo"
-          test "$pkg" = "$version" && test "$lock" = "$version" && test "$conf" = "$version" && test "$cargo" = "$version" \
-            || { echo "::error::Version mismatch between the tag and the manifests"; exit 1; }
 
       - name: Verify release commit is on main
         shell: bash
@@ -73,86 +69,185 @@ jobs:
           git merge-base --is-ancestor "$release_commit" origin/main \
             || { echo "::error::Release tags must point to a commit on main"; exit 1; }
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable reviewed 2026-09-05
         with:
           components: clippy, rustfmt
 
-      - uses: swatinem/rust-cache@v2
+      - uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2 peeled commit
         with:
           workspaces: src-tauri
 
       - run: npm ci
 
-      - name: Frontend checks
-        run: |
-          npm run check
-          npm audit --omit=dev --audit-level=high
+      - name: Verify manifest and lockfile versions
+        run: node scripts/verify_versions.mjs 0.4.1
 
-      - name: Rust checks
+      - name: Verify immutable workflow action references
+        run: node scripts/verify_workflow_pins.mjs
+
+      - name: Verify fail-fast workflow gates
+        run: node scripts/verify_workflow_gates.mjs
+
+      - name: Test deterministic release gates
+        run: node --test scripts/tests/release-gates.test.mjs
+
+      - name: Frontend checks
+        run: npm run check
+
+      - name: Frontend dependency audit
+        run: npm audit --audit-level=moderate
+
+      - name: Rust formatting
         working-directory: src-tauri
-        run: |
-          cargo fmt --check
-          cargo clippy --locked --all-targets -- -D warnings
-          cargo test --locked
-          $env:RUSTDOCFLAGS = "-D warnings"
-          cargo test --locked --doc
+        run: cargo fmt --check
+
+      - name: Rust linting
+        working-directory: src-tauri
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test --locked
+
+      - name: Rust documentation tests
+        working-directory: src-tauri
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo test --locked --doc
+
+  package:
+    needs: [rust-audit, quality]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Resolve exact source revision
+        shell: bash
+        run: echo "LOCALMOTIVE_SOURCE_REVISION=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable reviewed 2026-09-05
+
+      - uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2 peeled commit
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
 
       - name: Build installers and portable executable
         run: npm run tauri build
 
-      - name: Smoke-test the packaged executable
+      - name: Verify the packaged executable
         shell: pwsh
         run: |
           $portable = "src-tauri/target/release/localmotive.exe"
           if (-not (Test-Path $portable)) { throw "Portable executable was not built" }
+          New-Item -ItemType Directory -Force -Path "artifacts" | Out-Null
+          $isolatedRoot = Join-Path $env:RUNNER_TEMP "localmotive-verify-appdata"
+          $profile = Join-Path $env:RUNNER_TEMP "localmotive-verify-webview2"
+          New-Item -ItemType Directory -Force -Path $isolatedRoot | Out-Null
+          $env:LOCALAPPDATA = $isolatedRoot
+          $env:LOCALMOTIVE_VERIFY_ISOLATED_ROOT = $isolatedRoot
+          $env:WEBVIEW2_USER_DATA_FOLDER = $profile
+          $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=10041 --user-data-dir=$profile"
           $process = Start-Process $portable -PassThru
-          Start-Sleep -Seconds 8
-          if ($process.HasExited) { throw "Packaged app exited during startup with code $($process.ExitCode)" }
-          Stop-Process -Id $process.Id -Force
+          try {
+            node scripts/verify_041.mjs 10041 $portable "artifacts/packaged-verification-0.4.1.json"
+            if ($LASTEXITCODE -ne 0) { throw "verify_041 failed with code $LASTEXITCODE" }
+            $record = Get-Content "artifacts/packaged-verification-0.4.1.json" -Raw | ConvertFrom-Json
+            if ($record.overall_status -ne "PASS") { throw "Packaged verification record is not PASS" }
+          } finally {
+            if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+          }
 
       - name: Stage release artifacts
-        id: stage
         shell: bash
+        env:
+          VERSION: ${{ needs.quality.outputs.version }}
         run: |
-          version="${{ steps.version.outputs.version }}"
           mkdir -p artifacts
-          cp "src-tauri/target/release/bundle/msi/Localmotive_${version}_x64_en-US.msi" \
-             "artifacts/Localmotive_${version}_x64.msi"
-          cp "src-tauri/target/release/bundle/nsis/Localmotive_${version}_x64-setup.exe" \
-             "artifacts/Localmotive_${version}_x64-setup.exe"
-          cp "src-tauri/target/release/localmotive.exe" \
-             "artifacts/Localmotive_${version}_x64-portable.exe"
-          for required in \
-            "artifacts/Localmotive_${version}_x64.msi" \
-            "artifacts/Localmotive_${version}_x64-setup.exe" \
-            "artifacts/Localmotive_${version}_x64-portable.exe"; do
-            test -s "$required" || { echo "::error::Missing or empty release artifact: $required"; exit 1; }
-          done
-          ls -l artifacts
-          # Publish checksums so downloads can be verified.
-          (cd artifacts && sha256sum * > "SHA256SUMS-${version}.txt" && cat "SHA256SUMS-${version}.txt")
-          test "$(wc -l < "artifacts/SHA256SUMS-${version}.txt")" -eq 3 \
-            || { echo "::error::Checksums must cover exactly the MSI, NSIS, and portable artifacts"; exit 1; }
+          cp "src-tauri/target/release/bundle/msi/Localmotive_${VERSION}_x64_en-US.msi" "artifacts/Localmotive_${VERSION}_x64.msi"
+          cp "src-tauri/target/release/bundle/nsis/Localmotive_${VERSION}_x64-setup.exe" "artifacts/Localmotive_${VERSION}_x64-setup.exe"
+          cp "src-tauri/target/release/localmotive.exe" "artifacts/Localmotive_${VERSION}_x64-portable.exe"
+          test -s "artifacts/Localmotive_${VERSION}_x64.msi"
+          test -s "artifacts/Localmotive_${VERSION}_x64-setup.exe"
+          test -s "artifacts/Localmotive_${VERSION}_x64-portable.exe"
+          (cd artifacts && sha256sum Localmotive_* > "SHA256SUMS-${VERSION}.txt")
+          test "$(wc -l < "artifacts/SHA256SUMS-${VERSION}.txt")" -eq 3
+
+      - name: Verify and record the exact candidate inventory
+        shell: bash
+        env:
+          VERSION: ${{ needs.quality.outputs.version }}
+        run: node scripts/verify_candidate_inventory.mjs artifacts "$VERSION" "artifacts/candidate-inventory-${VERSION}.json"
+
+      - name: Retain verified release candidates
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: localmotive-${{ needs.quality.outputs.version }}-verified
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    needs: [rust-audit, quality, package]
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Retrieve verified release candidates
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: localmotive-${{ needs.quality.outputs.version }}-verified
+          path: artifacts
+
+      - name: Block publication unless every candidate has a valid Authenticode signature
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.quality.outputs.version }}
+        run: |
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
+            Sort-Object FullName |
+            Select-Object -Last 1
+          if (-not $signtool) { throw "signtool.exe is unavailable" }
+          $files = @(
+            "artifacts/Localmotive_${env:VERSION}_x64.msi",
+            "artifacts/Localmotive_${env:VERSION}_x64-setup.exe",
+            "artifacts/Localmotive_${env:VERSION}_x64-portable.exe"
+          )
+          foreach ($file in $files) {
+            & $signtool.FullName verify /pa /all $file
+            if ($LASTEXITCODE -ne 0) { throw "Authenticode verification failed for $file" }
+            $signature = Get-AuthenticodeSignature -LiteralPath $file
+            if ($signature.Status -ne "Valid") { throw "PowerShell rejected the Authenticode signature for $file" }
+            if ($null -eq $signature.TimeStamperCertificate) { throw "Authenticode timestamp is missing for $file" }
+          }
 
       - name: Extract this version's changelog section
-        id: notes
         shell: bash
+        env:
+          VERSION: ${{ needs.quality.outputs.version }}
         run: |
-          version="${{ steps.version.outputs.version }}"
-          section=$(awk -v v="## ${version}" '
-            $0 == v {found=1; next}
-            found && /^## / {exit}
-            found {print}
-          ' CHANGELOG.md)
-          test -n "$(printf '%s' "$section" | tr -d '[:space:]')" \
-            || { echo "::error::CHANGELOG.md has no section for ${version}"; exit 1; }
+          section=$(awk -v v="## ${VERSION}" '$0 == v {found=1; next} found && /^## / {exit} found {print}' CHANGELOG.md)
+          test -n "$(printf '%s' "$section" | tr -d '[:space:]')"
           {
-            echo "## Localmotive ${version}"
+            echo "## Localmotive ${VERSION}"
             echo
             printf '%s\n' "$section"
             echo
@@ -160,20 +255,67 @@ jobs:
             echo
             echo "| File | Use |"
             echo "|---|---|"
-            echo "| \`Localmotive_${version}_x64-setup.exe\` | Recommended installer (NSIS) |"
-            echo "| \`Localmotive_${version}_x64.msi\` | MSI installer for managed deployment |"
-            echo "| \`Localmotive_${version}_x64-portable.exe\` | Portable executable, no installation |"
-            echo "| \`SHA256SUMS-${version}.txt\` | Checksums for the files above |"
+            echo "| \`Localmotive_${VERSION}_x64-setup.exe\` | Recommended installer (NSIS) |"
+            echo "| \`Localmotive_${VERSION}_x64.msi\` | MSI installer for managed deployment |"
+            echo "| \`Localmotive_${VERSION}_x64-portable.exe\` | Portable executable, no installation |"
+            echo "| \`SHA256SUMS-${VERSION}.txt\` | Executable and installer SHA-256 inventory |"
+            echo "| \`packaged-verification-0.4.1.json\` | Packaged behavior evidence |"
+            echo "| \`candidate-inventory-${VERSION}.json\` | Candidate size and digest evidence |"
             echo
-            echo "Windows 10/11 x64. The installers are not Authenticode-signed, so SmartScreen may warn on first run."
+            echo "Target scope: Windows 10 and Windows 11 x64. See the qualification limitations above."
+            echo "The executable and installer assets passed the Authenticode verification gate above."
           } > release-notes.md
-          cat release-notes.md
 
-      - name: Publish release
-        uses: softprops/action-gh-release@v2
+      - name: Publish the explicitly approved release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: Localmotive ${{ steps.version.outputs.version }}
+          tag_name: ${{ needs.quality.outputs.tag }}
+          name: Localmotive ${{ needs.quality.outputs.version }}
           body_path: release-notes.md
-          files: artifacts/*
+          files: |
+            artifacts/Localmotive_${{ needs.quality.outputs.version }}_x64-setup.exe
+            artifacts/Localmotive_${{ needs.quality.outputs.version }}_x64-portable.exe
+            artifacts/Localmotive_${{ needs.quality.outputs.version }}_x64.msi
+            artifacts/SHA256SUMS-${{ needs.quality.outputs.version }}.txt
+            artifacts/packaged-verification-0.4.1.json
+            artifacts/candidate-inventory-${{ needs.quality.outputs.version }}.json
           fail_on_unmatched_files: true
+
+      - name: Read back and verify the public release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.quality.outputs.tag }}
+          VERSION: ${{ needs.quality.outputs.version }}
+        run: |
+          rm -rf public-readback
+          mkdir public-readback
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --json tagName,name,isDraft,isPrerelease,assets,body \
+            > public-readback/release.json
+          test "$(jq -r '.tagName' public-readback/release.json)" = "$TAG"
+          test "$(jq -r '.name' public-readback/release.json)" = "Localmotive $VERSION"
+          test "$(jq -r '.isDraft' public-readback/release.json)" = "false"
+          test "$(jq -r '.isPrerelease' public-readback/release.json)" = "false"
+          test "$(jq '.assets | length' public-readback/release.json)" -eq 6
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --dir public-readback --clobber
+          for name in \
+            "Localmotive_${VERSION}_x64-setup.exe" \
+            "Localmotive_${VERSION}_x64-portable.exe" \
+            "Localmotive_${VERSION}_x64.msi" \
+            "SHA256SUMS-${VERSION}.txt" \
+            "packaged-verification-0.4.1.json" \
+            "candidate-inventory-${VERSION}.json"; do
+            test -s "public-readback/$name"
+          done
+          cmp "artifacts/SHA256SUMS-${VERSION}.txt" "public-readback/SHA256SUMS-${VERSION}.txt"
+          (cd public-readback && sha256sum -c "SHA256SUMS-${VERSION}.txt")
+
+      - name: Retain public release read-back evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: localmotive-${{ needs.quality.outputs.version }}-public-readback
+          path: public-readback/*
+          if-no-files-found: error
+          retention-days: 90

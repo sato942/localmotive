@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 1,
+  "release": "0.4.1",
+  "recordedAt": "2026-09-05T15:57:18Z",
+  "updatedAt": "2026-09-05T23:38:27Z",
+  "sourceRevision": "ca07483574f2b7d4be17f7704fe2dcabaa8cd6b8",
+  "sourceWorktreeClean": false,
+  "approvalSource": "Interactive user selections in the Hermes desktop session",
+  "approver": "sato942",
+  "decisions": [
+    {
+      "id": "managed-runtime-pin",
+      "status": "APPROVED",
+      "decision": "Use ggml-org/llama.cpp tag b10816 at commit 427291b5b34cd914a31b3fd3b61a68f6184f4b9f.",
+      "conditions": []
+    },
+    {
+      "id": "canonical-icon",
+      "status": "APPROVED",
+      "decision": "Use the current square terminal-style LM vector and its generated Windows icons.",
+      "conditions": []
+    },
+    {
+      "id": "windows-publisher",
+      "status": "APPROVED",
+      "decision": "Use Localmotive contributors as the exact MSI publisher and manufacturer text.",
+      "conditions": []
+    },
+    {
+      "id": "windows-support-scope",
+      "status": "APPROVED_AS_PRODUCT_SCOPE",
+      "decision": "Target Windows 10 and Windows 11 x64.",
+      "conditions": [
+        "Do not convert unavailable platform evidence into a verification pass.",
+        "Disclose every untested Windows version or build in the release limitations."
+      ]
+    },
+    {
+      "id": "phase-0a-rebaseline",
+      "status": "APPROVED_WITH_CONDITIONS",
+      "decision": "Create a formal Phase 0A rebaseline.",
+      "conditions": [
+        "All research checks must pass.",
+        "A new tracked freeze anchor must exist."
+      ]
+    },
+    {
+      "id": "missing-p0-hardware-evidence",
+      "status": "RISK_ACCEPTED_WITH_DISCLOSURE",
+      "decision": "Publication may proceed without all P0 hardware evidence.",
+      "conditions": [
+        "List every missing P0 evidence row in the release limitations.",
+        "Do not claim that a missing or untested row passed qualification.",
+        "Do not claim L4 or L5 qualification for an unverified row."
+      ]
+    },
+    {
+      "id": "authenticode-signing",
+      "status": "USER_CONFIRMED_BLOCKED_PENDING_INSTALLATION",
+      "decision": "Keep signing blocked until the user installs the approved code-signing certificate in CurrentUser\\My.",
+      "selection": "Keep signing blocked until I install a certificate",
+      "conditions": [
+        "Block publication until signature verification passes against the approved identity.",
+        "Record timestamp and certificate identity evidence without exposing secrets.",
+        "Do not export or print the private key."
+      ],
+      "observation": "No private-key certificate was present in CurrentUser\\My at 2026-09-05T23:38:27Z. The user selected the blocked-until-installation option."
+    },
+    {
+      "id": "v0.4.0-corrective-note",
+      "status": "PUBLICATION_APPROVED_WITH_CONDITION",
+      "decision": "Publish the prepared corrective v0.4.0 release note only when v0.4.1 is ready.",
+      "conditions": [
+        "Do not edit the public v0.4.0 release before every non-waived v0.4.1 release gate passes."
+      ]
+    },
+    {
+      "id": "installer-lifecycle-environment",
+      "status": "APPROVED_FOR_WINDOWS_SANDBOX",
+      "decision": "Run the required destructive installer lifecycle tests in Windows Sandbox.",
+      "selection": "Run Windows Sandbox lifecycle tests",
+      "conditions": [
+        "Prefer free environments when the evidence quality is sufficient.",
+        "Compare the lowest-cost reliable alternatives when free environments are insufficient.",
+        "Request separate approval before creating paid resources or incurring charges.",
+        "Use disposable Windows environments for destructive installer lifecycle testing."
+      ],
+      "observation": "WindowsSandbox.exe is present on Windows 11 build 26100. The latest Sandbox package has CBS CurrentState 0x70. The DISM feature-state query required elevation."
+    },
+    {
+      "id": "catalog-signing",
+      "status": "VERIFIED_COMPLETED",
+      "decision": "Use an interim temporary signing branch and a GitHub artifact-only workflow to sign the corrected catalog.",
+      "conditions": [
+        "Do not print, persist, or expose private key material.",
+        "Verify the detached signature against the compiled public key before accepting the corrected catalog.",
+        "Do not let the signing workflow push to main or publish a release.",
+        "Delete the temporary signing branch after the verified signature returns."
+      ],
+      "observation": "GitHub Actions run 33983819073 returned artifact 9974531483. The signing process used the repository secret without exposing it. The artifact catalog matched the candidate, the detached signature passed the compiled public-key verifier, and the temporary branch was deleted. No secret value was exposed to the assistant or recorded.",
+      "evidence": "release-evidence/0.4.1/catalog-signing.json"
+    },
+    {
+      "id": "conditional-release-authorization",
+      "status": "APPROVED_WITH_CONDITIONS",
+      "decision": "Commit, push, tag, and publish v0.4.1 after the approved release requirements are complete.",
+      "conditions": [
+        "Honor the explicit P0 evidence disclosure exception.",
+        "Pass every other material gate.",
+        "Publish only the exact signed and verified candidate.",
+        "Verify the public release after publication."
+      ]
+    }
+  ]
+}

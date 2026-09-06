@@ -24,12 +24,26 @@ Unlike chat-first local-model apps, Localmotive treats runtime build capability,
 
 ## Operating Context
 
-Windows 10/11 x64 and ARM64. Model folders and runtimes are user-selected. The app can obtain official Windows CPU, CUDA, ROCm, SYCL, Vulkan, OpenVINO, and applicable ARM64 builds from ggml-org releases, while preserving support for custom executables required by experimental model families. The built-in llama-server WebUI remains the chat surface after the control plane starts a server.
+Localmotive 0.4.1 targets Windows 10 and Windows 11 x64.
+
+The target scope is not a tested compatibility claim.
+
+The approved catalog exposes reviewed x64 CPU, CUDA, ROCm, SYCL, Vulkan, and OpenVINO archives.
+
+Each row remains unvalidated until one exact L4 product attestation matches its complete qualification key.
+
+ARM64 assets remain dormant and are not part of the 0.4.1 product scope.
+
+The app preserves support for user-supplied executables required by experimental model families.
+
+The built-in llama-server WebUI remains the chat surface after the control plane starts a server.
 
 ## Capabilities and Constraints
 
 - GGUF only.
-- Detect Windows architecture and GPU vendor, recommend compatible official release assets, and keep CPU/Vulkan fallbacks visible.
+- Detect Windows architecture and each GPU adapter without treating vendor names as compatibility proof.
+- Recommend an accelerator only after one exact L4 compatibility record matches.
+- Recommend CPU with an explicit reason when no exact accelerator record matches.
 - Download and verify official runtimes into versioned application-managed storage; pair CUDA binaries with matching cudart archives.
 - Scan a user-selected folder recursively while grouping split shards and recognizing draft, MTP, DSpark, DFlash, EAGLE-3 and mmproj companions.
 - Register multiple llama-server executables and detect capabilities from `--version`, `--help`, and `--list-devices`.
@@ -44,7 +58,8 @@ Windows 10/11 x64 and ARM64. Model folders and runtimes are user-selected. The a
 
 - `LLAMA-SERVER-README.md` is the local option and endpoint reference.
 - The official GitHub releases API publishes Windows runtime asset names, sizes, and SHA-256 digests where available.
-- The test suite includes representative NVIDIA, AMD, x64, and ARM64 release-selection cases.
+- The test suite includes representative NVIDIA, AMD, Intel, x64, and dormant ARM64 catalog cases.
+- Test fixtures and upstream checks do not establish product support.
 - No commercial claims, external customers, or production-availability claims exist and none should be invented.
 
 ## Product Principles

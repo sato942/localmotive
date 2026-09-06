@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "release": "0.4.1",
+  "catalog": {
+    "path": "catalog/catalog.json",
+    "sha256": "cabc457f38d3831aa60497e54a4d6218a7ffdf14e84ea3f74caac07a143d593c"
+  },
+  "signature": {
+    "path": "catalog/catalog.json.sig",
+    "sha256": "8cdb1f66266da1703c6008ff53804e9b82191fbb124ce73d52daba8593e65c6d",
+    "algorithm": "Ed25519",
+    "compiledPublicKeyVerification": "PASS"
+  },
+  "workflow": {
+    "repository": "sato942/localmotive",
+    "runId": 33983819073,
+    "runUrl": "https://github.com/sato942/localmotive/actions/runs/33983819073",
+    "jobId": 101353638680,
+    "jobUrl": "https://github.com/sato942/localmotive/actions/runs/33983819073/job/101353638680",
+    "headBranch": "catalog-sign-v0.4.1",
+    "headSha": "91c7899e9bd744482305f057f8f2eba778cdd466",
+    "conclusion": "success",
+    "artifactId": 9974531483,
+    "artifactName": "localmotive-0.4.1-catalog-signature",
+    "artifactSizeBytes": 2263
+  },
+  "verification": {
+    "artifactCatalogEqualsCandidate": true,
+    "artifactChecksumsMatch": true,
+    "localCatalogValidator": "PASS"
+  },
+  "secretHandling": {
+    "secretName": "CATALOG_SIGNING_KEY_PEM",
+    "workflowSigningProcessAccessedSecret": true,
+    "secretValueExposedToAssistant": false,
+    "secretValueRecorded": false
+  },
+  "published": false
+}

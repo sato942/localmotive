@@ -1,4 +1,5 @@
 ---
+version: alpha
 name: Localmotive
 description: A machine-room control cabinet for local GGUF inference — matte graphite panels, engraved plates, and instrument-grade readouts.
 colors:
@@ -439,6 +440,20 @@ Only two lighting effects exist, and both are lamps rather than elevation:
 ## Shapes
 
 Every rectangle in the system has `border-radius: 0`. Buttons, inputs, selects, panels, tags, chips, plates, wells, and the brand mark are all hard-cornered — including form controls, which explicitly reset `border-radius: 0` against browser defaults. The only curve in the product is a circle: status dots and plate lights at `border-radius: 50%`, which read as physical indicator lamps rather than rounded UI.
+
+### Canonical application icon
+
+Use `assets/app-icon.svg` as the only editable application-icon source.
+
+The icon uses the rail field `#1d2122` behind a cream `#d5d1c5` frame and `LM` path monogram.
+
+The icon uses a `#9edc72` status square with a `#1d2122` outline.
+
+Keep the source square and font-independent.
+
+Run `npm run icon:generate` to regenerate every Tauri derivative in `src-tauri/icons/`.
+
+Inspect the native 16, 24, and 32 pixel ICO layers after each source change.
 
 Borders do the structural work. `1px solid #424849` bounds an instrument or panel; `1px solid #34393a` divides rows inside one; brighter hue-matched borders (`#426243`, `#6f5425`, `#824a46`) bound lit tags and destructive controls. The brand mark is a 48 × 48 square with a 2 px plate-colored stroke and a 6 px green square notched into its top-right corner — a plate with a lamp in it, and the one piece of pure identity geometry in the product.
 

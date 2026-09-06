@@ -1,0 +1,3 @@
+Available devices:
+  CPU: Generic CPU
+  Vulkan0: NVIDIA GeForce RTX 5090

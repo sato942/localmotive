@@ -1,5 +1,72 @@
 # Changelog
 
+## 0.4.1
+
+### Evidence-bound managed runtimes
+
+- Pins `ggml-org/llama.cpp` tag `b10816` at commit `427291b5b34cd914a31b3fd3b61a68f6184f4b9f`.
+- Resolves runtime URLs, sizes, digests, backends, architecture, and content manifests only inside Rust.
+- Uses bounded resumable downloads with validator checks, cancellation, retry limits, and verified finalization.
+- Verifies every managed runtime file before reuse and before launch.
+- Runs the seven-stage health contract with the pinned SmolLM2 model, loopback networking, bounded output, and process-tree cleanup.
+- Recommends an accelerator only when an exact L4 compatibility record matches every qualification-key field.
+- Uses CPU as the conservative fallback when no exact compatibility record matches.
+- Keeps each runtime row at `DIRECT RUNTIME · L2 EVIDENCE CEILING` unless product qualification supplies stronger evidence.
+
+### 0.4.0 claim correction
+
+The three 0.4.0 rows marked `Supported` had L2 direct-runtime evidence only.
+
+Those rows did not establish Localmotive product support.
+
+The 0.4.0 `Windows 10/11 x64` statement described intended scope, not tested compatibility.
+
+The 0.4.0 release did not run its packaged verifier before publication.
+
+See `release-evidence/0.4.1/v0.4.0-corrective-note.md` for the proposed public correction.
+
+### Qualification limitations
+
+Localmotive 0.4.1 targets Windows 10 and Windows 11 x64.
+
+Do not interpret the target scope as a tested compatibility claim.
+
+[Microsoft ended normal Windows 10 support on October 14, 2025](https://support.microsoft.com/en-us/help/3207828).
+
+Windows 10 use requires an applicable supported servicing or ESU policy.
+
+The release owner accepted publication without complete P0 hardware evidence, with explicit disclosure and no unsupported L4 claims.
+
+The following P0 rows still lack complete L4 product evidence:
+
+- AMD Ryzen 9 9950X3D with CPU;
+- AMD Zen 2 with CPU;
+- AMD Zen 4 with CPU;
+- Intel pre-AVX2 with CPU;
+- Intel AVX2 with CPU;
+- NVIDIA Pascal with CUDA 12.4;
+- NVIDIA Turing with CUDA 12.4 and CUDA 13.3;
+- NVIDIA Ampere with CUDA 12.4 and CUDA 13.3;
+- NVIDIA Ada with CUDA 12.4 and CUDA 13.3;
+- NVIDIA RTX 5090 with CUDA 13.3;
+- NVIDIA RTX 5090 with Vulkan;
+- AMD RDNA 2 with Vulkan;
+- AMD RDNA 3 with ROCm;
+- AMD RDNA 4 with ROCm;
+- AMD Ryzen AI RDNA 3.5 APU with ROCm and Vulkan;
+- Intel Iris Xe with Vulkan and OpenVINO;
+- Intel Arc A-series with SYCL and Vulkan;
+- Intel Arc B-series with SYCL and Vulkan;
+- a clean Windows x64 account without developer toolkits.
+
+The candidate also lacks completed Windows 10 lifecycle evidence, clean-account NSIS and MSI evidence, upgrade evidence, and uninstaller evidence.
+
+`cargo audit` reports no vulnerability advisory.
+
+RustSec still reports unmaintained transitive crates from Tauri's Windows-irrelevant GTK graph and current `urlpattern` Unicode data dependencies.
+
+Publication remains blocked until every non-waived release gate passes, including Authenticode verification.
+
 ## 0.4.0
 
 ### Validated scope only: approved runtimes, device evidence, explicit selection

@@ -1,0 +1,1 @@
+backend=Vulkan device=Vulkan0 tests=42 passed=42 failed=0

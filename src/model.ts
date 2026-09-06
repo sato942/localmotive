@@ -667,6 +667,7 @@ export type SystemMemoryInfo = {
 
 export type GpuAdapterInfo = {
   adapterId: string;
+  compatibilityId: string;
   name: string;
   vendor: string;
   driver: Evidence<string>;
@@ -755,11 +756,134 @@ export type RuntimeOption = {
   recommended: boolean;
 };
 
+export type RuntimeInstallRequest = {
+  installKey: string;
+  adapterId: string | null;
+};
+
+export type ManagedHealthRequest = RuntimeInstallRequest;
+
+export type HealthModelProgress = {
+  installKey: string;
+  downloaded: number;
+  total: number;
+};
+
+export type RuntimeInstallProgress = {
+  installKey: string;
+  assetName: string;
+  downloaded: number;
+  total: number;
+};
+
+export function runtimeInstallRequest(
+  option: Pick<RuntimeOption, "backend" | "installKey">,
+  selectedAdapterId: string,
+): RuntimeInstallRequest {
+  if (option.backend === "cpu") {
+    return { installKey: option.installKey, adapterId: null };
+  }
+  const adapterId = selectedAdapterId.trim();
+  if (!adapterId || adapterId.length > 256) {
+    throw new Error("Select one detected GPU adapter before installing this runtime.");
+  }
+  return { installKey: option.installKey, adapterId };
+}
+
+export function managedHealthRequest(
+  option: Pick<RuntimeOption, "backend" | "installKey">,
+  selectedAdapterId: string,
+): ManagedHealthRequest {
+  return runtimeInstallRequest(option, selectedAdapterId);
+}
+
 export type RuntimeCatalog = {
   tag: string;
   publishedAt: string;
   options: RuntimeOption[];
+  availability: Array<{
+    installKey: string;
+    backend: string;
+    status: "available" | "blocked" | "dormant";
+    reason: string;
+    blockingJobs: string[];
+    evidenceUrls: string[];
+  }>;
+  origin: "network" | "cache";
+  warning: string | null;
+  recommendationReason: string;
 };
+
+export type RuntimeCatalogError = {
+  kind: "busy" | "timeout" | "rate_limited" | "http" | "body_too_large" | "invalid_response" | "trust_failure" | "cache_failure";
+  message: string;
+  retryAfterSeconds: number | null;
+};
+
+const runtimeCatalogErrorKinds = new Set<RuntimeCatalogError["kind"]>([
+  "busy",
+  "timeout",
+  "rate_limited",
+  "http",
+  "body_too_large",
+  "invalid_response",
+  "trust_failure",
+  "cache_failure",
+]);
+
+export function runtimeCatalogErrorFromUnknown(value: unknown): RuntimeCatalogError {
+  if (typeof value === "string") {
+    try {
+      return runtimeCatalogErrorFromUnknown(JSON.parse(value));
+    } catch {
+      return { kind: "invalid_response", message: value, retryAfterSeconds: null };
+    }
+  }
+  if (value && typeof value === "object") {
+    const candidate = value as Partial<RuntimeCatalogError>;
+    if (
+      typeof candidate.kind === "string"
+      && runtimeCatalogErrorKinds.has(candidate.kind as RuntimeCatalogError["kind"])
+      && typeof candidate.message === "string"
+      && candidate.message.trim()
+      && (candidate.retryAfterSeconds === null
+        || (Number.isInteger(candidate.retryAfterSeconds) && (candidate.retryAfterSeconds ?? -1) >= 0))
+    ) {
+      return {
+        kind: candidate.kind as RuntimeCatalogError["kind"],
+        message: candidate.message.trim(),
+        retryAfterSeconds: candidate.retryAfterSeconds ?? null,
+      };
+    }
+  }
+  return {
+    kind: "invalid_response",
+    message: "The runtime catalog request failed without a structured error.",
+    retryAfterSeconds: null,
+  };
+}
+
+export type RuntimeCatalogViewState =
+  | { kind: "idle" }
+  | { kind: "loading" }
+  | { kind: "ready"; catalog: RuntimeCatalog }
+  | { kind: "empty"; catalog: RuntimeCatalog }
+  | { kind: "error"; error: RuntimeCatalogError };
+
+export function runtimeCatalogViewState(input: {
+  loading: boolean;
+  catalog: RuntimeCatalog | null;
+  error: RuntimeCatalogError | null;
+}): RuntimeCatalogViewState {
+  if (input.loading) return { kind: "loading" };
+  if (input.error) return { kind: "error", error: input.error };
+  if (input.catalog) {
+    return input.catalog.options.length > 0
+      ? { kind: "ready", catalog: input.catalog }
+      : { kind: "empty", catalog: input.catalog };
+  }
+  return { kind: "idle" };
+}
 
 export type InstalledRuntime = {
   tag: string;
@@ -769,6 +893,59 @@ export type InstalledRuntime = {
   reused: boolean;
 };
 
+export type HealthStage =
+  | "device_enumeration"
+  | "backend_operations"
+  | "pinned_model_load"
+  | "loopback_server_health"
+  | "deterministic_completion"
+  | "cancellation"
+  | "process_and_temporary_file_cleanup";
+
+export type HealthFailureReason =
+  | "timeout"
+  | "spawn"
+  | "nonzero_exit"
+  | "output_limit"
+  | "malformed_output"
+  | "mismatch"
+  | "cancelled"
+  | "trust_failure";
+
+export type HealthStageResult = {
+  stage: HealthStage;
+  status: "PASS" | "FAIL" | "SKIPPED";
+  durationMs: number;
+  failureReason: HealthFailureReason | null;
+  detail: string;
+  completion: {
+    temperature: number;
+    requestedTokens: number;
+    observedTokens: number;
+    expectedOutputSha256: string;
+    observedOutputSha256: string;
+  } | null;
+};
+
+export type ManagedHealthResult = {
+  runtimeId: string;
+  modelSha256: string;
+  adapterId: string | null;
+  startedAt: number;
+  finishedAt: number;
+  passed: boolean;
+  stages: HealthStageResult[];
+};
+
+export type ManagedHealthOutcome = "passed" | "failed" | "cancelled";
+
+export function managedHealthOutcome(result: ManagedHealthResult): ManagedHealthOutcome {
+  if (result.passed) return "passed";
+  return result.stages.some((stage) => stage.failureReason === "cancelled")
+    ? "cancelled"
+    : "failed";
+}
+
 export type RuntimeIdentity = {
   path: string;
   backend: string;
@@ -776,6 +953,7 @@ export type RuntimeIdentity = {
   tag: string | null;
   installKey: string | null;
   source: "manifest" | "dlls" | "none" | string;
+  managedVerified: boolean;
 };
 
 export type ManagedRuntimeRecord = {
@@ -786,107 +964,20 @@ export type ManagedRuntimeRecord = {
   installRoot: string;
 };
 
+export type RuntimeSetupResponse = {
+  hardware: HardwareInfo;
+  catalog: RuntimeCatalog | null;
+  catalogError: RuntimeCatalogError | null;
+  runtimeRoot: string;
+  managedRuntimes: ManagedRuntimeRecord[];
+};
+
 export type RuntimeOptionState =
   | { kind: "install" }
   | { kind: "active" }
   | { kind: "update"; from: string }
   | { kind: "mismatch"; detail: string }
   | { kind: "use"; runtimePath: string };
-
-/**
- * Product support scope for one runtime catalog option: the exact
- * configuration the release compatibility table can validate. This is a
- * presentation label only; the backend gate is the approved manifest plus
- * the device evidence in `HardwareInfo`. Upstream capability without a
- * table row stays `Experimental` or `Not validated`, never `Supported`.
- * Finding A-01 records this risk.
- */
-export type SupportScope = {
-  os: string;
-  architecture: string;
-  deviceClass: string;
-  driverBranch: string | null;
-  backend: string;
-  runtimeRevision: string;
-};
-
-/** Product support level for one runtime catalog option. */
-export type SupportLevel = "Supported" | "Experimental" | "Not validated";
-
-/**
- * The release compatibility-table row for one runtime catalog option.
- * `level` is `Supported` only when the row carries local or attested
- * Phase 3 evidence at the pinned revision; untested configurations use
- * `Experimental` or `Not validated` per the TODO-0.4 support contract.
- */
-export type SupportStatus = {
-  level: SupportLevel;
-  scope: SupportScope;
-  evidence: string | null;
-};
-
-const SUPPORT_STATUSES: Record<string, SupportStatus> = {
-  "cpu": {
-    level: "Supported",
-    scope: {
-      os: "Windows 11",
-      architecture: "x64",
-      deviceClass: "AMD Ryzen 9 9950X3D",
-      driverBranch: null,
-      backend: "cpu",
-      runtimeRevision: "b10796",
-    },
-    evidence: "research/0.4/evidence/attestations/local-windows-x64-cpu.json",
-  },
-  "cuda-13.3": {
-    level: "Supported",
-    scope: {
-      os: "Windows 11",
-      architecture: "x64",
-      deviceClass: "NVIDIA GeForce RTX 5090",
-      driverBranch: "610.74",
-      backend: "cuda",
-      runtimeRevision: "b10796",
-    },
-    evidence: "research/0.4/evidence/attestations/local-windows-x64-cuda.json",
-  },
-  "vulkan": {
-    level: "Supported",
-    scope: {
-      os: "Windows 11",
-      architecture: "x64",
-      deviceClass: "NVIDIA GeForce RTX 5090",
-      driverBranch: "610.74",
-      backend: "vulkan",
-      runtimeRevision: "b10796",
-    },
-    evidence: "research/0.4/evidence/attestations/local-windows-x64-vulkan.json",
-  },
-};
-
-/**
- * Product support status for one runtime catalog option. Known install
- * keys return their compatibility-table row; every other key is an
- * untested configuration and returns `Not validated` with a null
- * evidence path, so the interface can never show `Supported` without
- * scope, level, OS, architecture, backend, and runtime revision.
- */
-export function supportStatusForOption(option: RuntimeOption): SupportStatus {
-  const known = SUPPORT_STATUSES[option.installKey];
-  if (known) return known;
-  return {
-    level: "Not validated",
-    scope: {
-      os: "Windows 11",
-      architecture: "x64",
-      deviceClass: "Untested configuration",
-      driverBranch: null,
-      backend: option.backend,
-      runtimeRevision: "b10796",
-    },
-    evidence: null,
-  };
-}
 
 export function tagBuild(tag: string | null | undefined): number | null {
   if (!tag) return null;

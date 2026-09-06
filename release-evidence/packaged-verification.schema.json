@@ -1,0 +1,111 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/sato942/localmotive/blob/v0.4.1/release-evidence/packaged-verification.schema.json",
+  "title": "Localmotive packaged verification record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "verifier",
+    "source_revision",
+    "source_dirty",
+    "artifact",
+    "host_class",
+    "started_at",
+    "finished_at",
+    "checks",
+    "overall_status"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "verifier": { "const": "scripts/verify_041.mjs" },
+    "source_revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "source_dirty": { "type": "boolean" },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "size_bytes", "sha256"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "size_bytes": { "type": "integer", "minimum": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "host_class": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platform", "release", "architecture", "cpu_model", "logical_cpus", "memory_bytes", "adapters"],
+      "properties": {
+        "platform": { "type": "string", "minLength": 1 },
+        "release": { "type": "string", "minLength": 1 },
+        "architecture": { "type": "string", "minLength": 1 },
+        "cpu_model": { "type": "string" },
+        "logical_cpus": { "type": "integer", "minimum": 1 },
+        "memory_bytes": { "type": "integer", "minimum": 1 },
+        "adapters": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "vendor", "driver_version"],
+            "properties": {
+              "name": { "type": "string" },
+              "vendor": { "type": ["string", "null"] },
+              "driver_version": { "type": ["string", "null"] }
+            }
+          }
+        }
+      }
+    },
+    "started_at": { "type": "string", "pattern": "Z$" },
+    "finished_at": { "type": "string", "pattern": "Z$" },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "criterion", "status", "evidence", "reason"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]+$" },
+          "criterion": { "type": "string", "minLength": 1 },
+          "status": { "enum": ["PASS", "FAIL"] },
+          "evidence": { "type": "object" },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "overall_status": { "enum": ["PASS", "FAIL"] }
+  },
+  "if": {
+    "properties": {
+      "overall_status": { "const": "PASS" }
+    }
+  },
+  "then": {
+    "properties": {
+      "checks": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "status": { "const": "PASS" }
+          }
+        }
+      }
+    }
+  },
+  "else": {
+    "properties": {
+      "checks": {
+        "type": "array",
+        "contains": {
+          "type": "object",
+          "properties": {
+            "status": { "const": "FAIL" }
+          }
+        }
+      }
+    }
+  }
+}

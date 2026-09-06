@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import * as modelModule from "./model";
 import {
   artifactReadyForLaunch,
   calibrationState,
@@ -12,6 +13,7 @@ import {
   downloadReadiness,
   errorText,
   keepLatestRequest,
+  managedHealthRequest,
   manualGpuOverride,
   retainOrDisposeListener,
   etaLabel,
@@ -20,9 +22,10 @@ import {
   qualityPassRate,
   rateLabel,
   runtimeIdentityMismatch,
+  runtimeInstallRequest,
+  runtimeCatalogViewState,
   runtimeOptionState,
   suggestedProfile,
-  supportStatusForOption,
   validateWorkload,
   type ArtifactInspection,
   type BenchmarkRunResult,
@@ -38,6 +41,112 @@ import {
   type QualitySuiteResult,
   type StorageVolumeEvidence,
 } from "./model";
+
+describe("runtime catalog presentation", () => {
+  it("preserves typed rate-limit retry metadata from IPC", () => {
+    const error = {
+      kind: "rate_limited" as const,
+      message: "Retry later",
+      retryAfterSeconds: 120,
+    };
+
+    const parser = (
+      modelModule as typeof modelModule & {
+        runtimeCatalogErrorFromUnknown?: (value: unknown) => unknown;
+      }
+    ).runtimeCatalogErrorFromUnknown ?? (() => null);
+    expect(parser(error)).toEqual(error);
+  });
+
+  it("shows a catalog error after loading stops", () => {
+    const error = {
+      kind: "rate_limited" as const,
+      message: "Catalog request was rate limited",
+      retryAfterSeconds: 120,
+    };
+    expect(
+      runtimeCatalogViewState({
+        loading: false,
+        catalog: null,
+        error,
+      }),
+    ).toEqual({ kind: "error", error });
+  });
+
+  it("uses an explicit empty state when an approved catalog has no installable options", () => {
+    const catalog = {
+      tag: "b10816",
+      publishedAt: "2026-09-04T00:00:00Z",
+      options: [],
+      availability: [],
+      origin: "network" as const,
+      warning: null,
+      recommendationReason: "CPU fallback fixture",
+    };
+
+    expect(
+      runtimeCatalogViewState({
+        loading: false,
+        catalog,
+        error: null,
+      }),
+    ).toEqual({ kind: "empty", catalog });
+  });
+
+  it("sends only the immutable install key and exact selected adapter", () => {
+    const cpu = { backend: "cpu", installKey: "cpu" } as RuntimeOption;
+    const cuda = { backend: "cuda", installKey: "cuda-13.3" } as RuntimeOption;
+
+    expect(runtimeInstallRequest(cpu, "ignored-adapter")).toEqual({
+      installKey: "cpu",
+      adapterId: null,
+    });
+    expect(runtimeInstallRequest(cuda, "gpu-7")).toEqual({
+      installKey: "cuda-13.3",
+      adapterId: "gpu-7",
+    });
+    expect(() => runtimeInstallRequest(cuda, "")).toThrow(/adapter/i);
+  });
+
+  it("sends only immutable managed-health authority while the backend owns the model pin", () => {
+    const cpu = { backend: "cpu", installKey: "cpu" } as RuntimeOption;
+    const cuda = { backend: "cuda", installKey: "cuda-13.3" } as RuntimeOption;
+
+    expect(managedHealthRequest(cpu, "ignored")).toEqual({
+      installKey: "cpu",
+      adapterId: null,
+    });
+    expect(managedHealthRequest(cuda, "gpu-7")).toEqual({
+      installKey: "cuda-13.3",
+      adapterId: "gpu-7",
+    });
+  });
+});
+
+describe("managed health presentation", () => {
+  it("presents an interrupted health contract as cancelled rather than failed", () => {
+    const classify = (
+      modelModule as typeof modelModule & {
+        managedHealthOutcome?: (value: modelModule.ManagedHealthResult) => string;
+      }
+    ).managedHealthOutcome ?? (() => "failed");
+    const result = {
+      passed: false,
+      stages: [
+        {
+          stage: "device_enumeration" as const,
+          status: "FAIL" as const,
+          durationMs: 1,
+          failureReason: "cancelled" as const,
+          detail: "Cancelled by the user",
+          completion: null,
+        },
+      ],
+    } as modelModule.ManagedHealthResult;
+
+    expect(classify(result)).toBe("cancelled");
+  });
+});
 
 describe("launch failure presentation", () => {
   it("shows the message and bounded log tail from structured launch evidence", () => {
@@ -371,6 +480,7 @@ describe("hardware evidence", () => {
     };
     const adapter: GpuAdapterInfo = {
       adapterId: "luid:1",
+      compatibilityId: "pci:10de:0001:00000000:00",
       name: "Fixture GPU",
       vendor: "nvidia",
       driver: {
@@ -522,6 +632,7 @@ const identity = (over: Partial<RuntimeIdentity>): RuntimeIdentity => ({
   tag: null,
   installKey: null,
   source: "none",
+  managedVerified: false,
   ...over,
 });
 
@@ -577,38 +688,6 @@ describe("runtimeOptionState", () => {
     expect(state).toEqual({ kind: "mismatch", detail: "Installed files disagree with the install record" });
   });
 });
-
-describe("supportStatusForOption", () => {
-  // Phase 5 RED: the interface must never show `Supported` without
-  // scope, level, OS, architecture, backend, and runtime revision.
-  // Locally validated rows (cpu, cuda-13.3, vulkan on the Phase 3 host)
-  // carry full scope plus an attestation path; every untested key
-  // (ROCm, SYCL, OpenVINO, CUDA 12.4, Arm64) returns `Not validated`
-  // with null evidence. Finding A-01 records this risk.
-  it("marks the three locally validated rows Supported with full scope and evidence", () => {
-    for (const [key, backend] of [["cpu", "cpu"], ["cuda-13.3", "cuda"], ["vulkan", "vulkan"]] as const) {
-      const status = supportStatusForOption(option(key, backend));
-      expect(status.level).toBe("Supported");
-      expect(status.scope.os).toBe("Windows 11");
-      expect(status.scope.architecture).toBe("x64");
-      expect(status.scope.backend).toBe(backend);
-      expect(status.scope.runtimeRevision).toBe("b10796");
-      expect(status.scope.deviceClass.length).toBeGreaterThan(0);
-      expect(status.evidence).toMatch(/attestations\/local-windows-x64-/);
-    }
-  });
-
-  it("marks untested backends Not validated with null evidence", () => {
-    for (const [key, backend] of [["rocm-10.0", "rocm"], ["sycl", "sycl"], ["openvino-2026.3.1", "openvino"], ["cuda-12.4", "cuda"]] as const) {
-      const status = supportStatusForOption(option(key, backend));
-      expect(status.level).toBe("Not validated");
-      expect(status.evidence).toBeNull();
-      expect(status.scope.backend).toBe(backend);
-      expect(status.scope.runtimeRevision).toBe("b10796");
-    }
-  });
-});
-
 
 describe("HF catalog download rules", () => {
   const base = {

@@ -1,0 +1,51 @@
+[
+  {
+    "action": "actions/checkout",
+    "reviewedRef": "v4",
+    "sha": "11d5960a326750d5838078e36cf38b85af677262",
+    "sourceUrl": "https://github.com/actions/checkout/commit/11d5960a326750d5838078e36cf38b85af677262"
+  },
+  {
+    "action": "actions/setup-node",
+    "reviewedRef": "v4",
+    "sha": "49933ea5288caeca8642d1e84afbd3f7d6820020",
+    "sourceUrl": "https://github.com/actions/setup-node/commit/49933ea5288caeca8642d1e84afbd3f7d6820020"
+  },
+  {
+    "action": "dtolnay/rust-toolchain",
+    "reviewedRef": "stable at 2026-09-05",
+    "sha": "6bed0761d98439e5a578e2877258200ad565ba87",
+    "sourceUrl": "https://github.com/dtolnay/rust-toolchain/commit/6bed0761d98439e5a578e2877258200ad565ba87"
+  },
+  {
+    "action": "swatinem/rust-cache",
+    "reviewedRef": "v2",
+    "sha": "6323deb102c322ba6fcbdcafc7e3dddab59af2b6",
+    "tagObjectSha": "49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c",
+    "sourceUrl": "https://github.com/swatinem/rust-cache/commit/6323deb102c322ba6fcbdcafc7e3dddab59af2b6"
+  },
+  {
+    "action": "rustsec/audit-check",
+    "reviewedRef": "v2.0.0",
+    "sha": "69366f33c96575abad1ee0dba8212993eecbe998",
+    "sourceUrl": "https://github.com/rustsec/audit-check/commit/69366f33c96575abad1ee0dba8212993eecbe998"
+  },
+  {
+    "action": "actions/upload-artifact",
+    "reviewedRef": "v4",
+    "sha": "ea165f8d65b6e75b540449e92b4886f43607fa02",
+    "sourceUrl": "https://github.com/actions/upload-artifact/commit/ea165f8d65b6e75b540449e92b4886f43607fa02"
+  },
+  {
+    "action": "actions/download-artifact",
+    "reviewedRef": "v4",
+    "sha": "d3f86a106a0bac45b974a628896c90dbdf5c8093",
+    "sourceUrl": "https://github.com/actions/download-artifact/commit/d3f86a106a0bac45b974a628896c90dbdf5c8093"
+  },
+  {
+    "action": "softprops/action-gh-release",
+    "reviewedRef": "v2",
+    "sha": "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
+    "sourceUrl": "https://github.com/softprops/action-gh-release/commit/3bb12739c298aeb8a4eeaf626c5b8d85266b0e65"
+  }
+]

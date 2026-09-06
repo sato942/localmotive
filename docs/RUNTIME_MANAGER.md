@@ -2,25 +2,40 @@
 
 Localmotive does not bundle llama.cpp. It obtains official binaries at first run or accepts a user-supplied executable.
 
-## Release discovery
+## Approved release identity
 
-The app queries:
+Localmotive 0.4.1 approves only `ggml-org/llama.cpp` tag `b10816`.
 
-`https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=20`
+The approved commit is `427291b5b34cd914a31b3fd3b61a68f6184f4b9f`.
 
-Stable semantic releases may contain only release notes. Localmotive therefore chooses the newest non-draft release in that response that actually publishes Windows runtime ZIP assets.
+The app queries the exact release endpoint for that tag.
+
+The app rejects another tag, commit, release identifier, asset name, size, digest, or URL.
+
+The frontend sends only an immutable install key and an optional selected adapter identifier.
 
 ## Windows recommendation policy
 
-| Detected platform | Recommendation | Visible fallbacks |
-|---|---|---|
-| NVIDIA with driver CUDA 13+ | Newest compatible CUDA 13 asset | CUDA 12, Vulkan, CPU |
-| NVIDIA with older compatible driver | Newest CUDA asset not exceeding driver CUDA major | Vulkan, CPU |
-| AMD Radeon | ROCm/HIP Windows asset | Vulkan, CPU |
-| Intel GPU | SYCL Windows asset | OpenVINO, Vulkan, CPU |
-| Other Windows GPU | Vulkan | CPU |
-| No supported GPU | CPU | Vulkan when published |
-| Windows ARM64 | Matching ARM64 assets only | CPU and vendor assets when published |
+Localmotive recommends an accelerator only after one exact L4 compatibility record matches.
+
+The key contains:
+
+- Windows build;
+- architecture;
+- stable adapter compatibility identifier;
+- adapter driver;
+- required firmware, or explicit `not-applicable`;
+- backend;
+- install key;
+- runtime commit;
+- asset name and SHA-256;
+- attestation and expiry identity.
+
+Vendor names are discovery hints only.
+
+If no exact record matches, Localmotive recommends CPU and explains the fallback.
+
+If several adapters exist, select one adapter before an accelerator can match.
 
 CUDA installation always pairs the main `llama-...-win-cuda-...zip` archive with the matching `cudart-llama-...zip` archive.
 
@@ -30,38 +45,73 @@ CUDA installation always pairs the main `llama-...-win-cuda-...zip` archive with
 
 CUDA variants include their toolkit version in the folder name (for example `cuda-13.3`), so CUDA 12 and CUDA 13 builds can coexist.
 
-Each install has `runtime.json` recording the release, backend, source asset, companion asset, and relative path to `llama-server.exe`.
+Each install has `runtime.json` recording the backend-owned immutable identity.
 
-## Product support contract (0.4)
+Each active install key also binds one compiled exact-content manifest.
 
-Localmotive targets Windows x64. Runtime availability depends on exact processor, accelerator, driver, and llama.cpp artifact. Only configurations in the release compatibility table carry validation.
+## Product support contract (0.4.1)
 
-| Level | Scope (OS, arch, device, driver, backend, revision) | Evidence |
-|---|---|---|
-| Supported | Windows 11, x64, AMD Ryzen 9 9950X3D, CPU, b10796 | research/0.4/evidence/attestations/local-windows-x64-cpu.json |
-| Supported | Windows 11, x64, NVIDIA GeForce RTX 5090, driver 610.74, CUDA, b10796 | research/0.4/evidence/attestations/local-windows-x64-cuda.json |
-| Supported | Windows 11, x64, NVIDIA GeForce RTX 5090, driver 610.74, Vulkan, b10796 | research/0.4/evidence/attestations/local-windows-x64-vulkan.json |
-| Not validated | Every other catalog entry (ROCm, SYCL, OpenVINO, CUDA 12.4, Arm64) | None, untested configuration |
+Localmotive targets Windows 10 and Windows 11 x64.
 
-Upstream capability is not product support: ROCm, SYCL, OpenVINO, CUDA 12.4, and Arm64 archives parse as catalog entries but ship no automatic preference and no Supported label until a compatibility-table row with Phase 3 evidence exists. The interface renders this through supportStatusForOption in src/model.ts (level plus full scope plus evidence path, or Not validated with null evidence). The managed runtime screen shows one SUPPORTED or NOT VALIDATED tag plus a scope line per option. A manifest-dll-mismatch identity shows MISMATCH and REINSTALL with a reinstall action before launch.
+The target scope is not a tested compatibility claim.
+
+Every 0.4.1 catalog row remains `Not validated` unless an exact L4 compatibility record exists.
+
+The approved manifest currently contains no L4 compatibility records.
+
+Direct `llama.cpp` evidence has an L2 ceiling.
+
+Upstream CI evidence does not establish Localmotive product support.
+
+The interface shows blocking upstream jobs and public evidence URLs without linking local research paths.
 
 ## Identity and completeness
 
-describe_runtime in src-tauri/src/runtime.rs derives identity from evidence beside the executable, never from its filename: the managed runtime.json manifest when present, otherwise the shipped ggml and CUDA DLLs. A manifest that disagrees with the sibling DLLs (wrong backend, wrong CUDA major, or missing companion such as cudart64_<major>.dll) reports backend mismatch with source manifest-dll-mismatch. The completeness rule per backend (backend_dependencies_are_complete): CUDA needs ggml-cuda.dll plus the matching cudart64_<major>.dll; ROCm needs ggml-hip.dll or ggml-rocm.dll; SYCL needs ggml-sycl.dll; OpenVINO needs ggml-openvino.dll; Vulkan needs ggml-vulkan.dll; Arm64 OpenCL needs ggml-opencl.dll; CPU needs ggml-cpu or ggml.dll.
+Managed runtime acceptance compares every regular file against the compiled content manifest.
+
+The comparison rejects missing files, additional files, changed sizes, changed SHA-256 values, links, and reparse-point ancestors.
+
+Localmotive verifies fresh installs, reused installs, and managed runtimes before launch.
+
+Every content manifest requires `llama-server.exe`, `llama-cli.exe`, and `llama-bench.exe`.
 
 ## Integrity and failure handling
 
-1. Download over HTTPS from the official GitHub asset URL.
-2. Verify exact byte size when GitHub publishes it.
-3. Verify SHA-256 when the API publishes a `sha256:` digest.
-4. Extract into a staging directory.
-5. Reject ZIP entries whose enclosed path would escape staging.
-6. Require `llama-server.exe` to exist after extraction.
-7. Write the manifest.
-8. Atomically rename staging into the versioned runtime folder.
-9. Remove staging on any failure.
+1. Resolve every artifact field from the compiled approved manifest.
+2. Probe with a bounded HTTP client.
+3. Bind resume state to URL, size, SHA-256, ETag presence, and last-modified value.
+4. Limit each request to eight MiB.
+5. Retry at most twice after the initial request.
+6. Restart from byte zero if a server ignores a valid range request.
+7. Verify exact archive size and SHA-256 before extraction.
+8. Extract into a unique staging directory.
+9. Reject traversal, links, duplicate paths, and archive resource-limit violations.
+10. Verify the complete extracted inventory against the compiled content manifest.
+11. Write trusted runtime metadata.
+12. Replace the destination atomically on one volume.
+13. Remove staging on cancellation or failure.
 
 Existing versioned installs are reused rather than downloaded again. Installing a newer release does not delete older runtimes.
+
+On Windows, `process-wrap` 10.0.0 creates each managed child suspended.
+
+The child enters a kill-on-close Job Object before its primary thread resumes.
+
+Cancellation terminates and waits for the complete contained process tree.
+
+## Windows signing
+
+The ordinary `npm run tauri build` command produces unsigned test candidates.
+
+The release candidate must use `npm run tauri:build:signed`.
+
+The signed build requires an approved `CurrentUser\My` certificate thumbprint.
+
+The signed build also requires an approved HTTPS timestamp endpoint.
+
+`scripts/sign-windows.ps1` checks code-signing usage, private-key access, expiry, signing success, and Authenticode verification.
+
+Do not record or export private-key material.
 
 ## User-supplied runtimes
 

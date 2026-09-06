@@ -1,0 +1,411 @@
+{
+  "schemaVersion": 1,
+  "releaseTag": "b10816",
+  "releaseCommit": "427291b5b34cd914a31b3fd3b61a68f6184f4b9f",
+  "installKey": "openvino",
+  "backend": "openvino",
+  "artifacts": [
+    {
+      "name": "llama-b10816-bin-win-openvino-2026.3.1-x64.zip",
+      "bytes": 80318411,
+      "sha256": "625e7688d376b415562d414e0b5d8ec6fa50f0b18268e9c186e34a5bb3e38e92"
+    }
+  ],
+  "files": [
+    {
+      "path": "LICENSE",
+      "bytes": 1099,
+      "sha256": "bcd8ec749126d45cb06737d0690295d73df4b6e7e194205bcf91190368f27285"
+    },
+    {
+      "path": "OpenCL.dll",
+      "bytes": 56320,
+      "sha256": "5bbd9b36f32ca16f7e147e6397ff2988a96ddd6cd79719a07066f732854ea92f"
+    },
+    {
+      "path": "cache.json",
+      "bytes": 8840377,
+      "sha256": "0b2ad2a99516a3411ce3fef274e8ae2880b41a6f00c9bac6768cd4a94b87c41c"
+    },
+    {
+      "path": "ggml-base.dll",
+      "bytes": 671232,
+      "sha256": "6e6e64cbe0186fdf202a18f817d0363ff94f889c3c64209b714f004f01e54102"
+    },
+    {
+      "path": "ggml-cpu.dll",
+      "bytes": 1055232,
+      "sha256": "aa18f9aeacf66e8b2b40240e3a48d17d1f73d248d9bf6c348781ca9430a09669"
+    },
+    {
+      "path": "ggml-openvino.dll",
+      "bytes": 1058816,
+      "sha256": "18913b5ed4e02e968afaa0eb45ac9a0cf0c1903634a82ff336ca9a54e23d23b9"
+    },
+    {
+      "path": "ggml-rpc-server.exe",
+      "bytes": 86016,
+      "sha256": "f510b953c7708221c258ab135da29c14dfbf1365d4d6900888c4157e9d127738"
+    },
+    {
+      "path": "ggml-rpc.dll",
+      "bytes": 146432,
+      "sha256": "651ac07a8ba4425badf78cbbb4e33765ad3ead2aa2fac1c2d93858643c93cd7d"
+    },
+    {
+      "path": "ggml.dll",
+      "bytes": 61952,
+      "sha256": "1ff249a656e100af9e194ad52f40c6c8b5481f47bfc19cb4331702781a0f6615"
+    },
+    {
+      "path": "llama-batched-bench-impl.dll",
+      "bytes": 54784,
+      "sha256": "c58d347d4e94a26bc140542905dad3d0fc2e07e7b8457babb06cb1ffb4cef5db"
+    },
+    {
+      "path": "llama-batched-bench.exe",
+      "bytes": 10752,
+      "sha256": "25f37271d6596daa8aed3e02133a029d65b7b29e8ba5d9d91d2763070fcdb258"
+    },
+    {
+      "path": "llama-bench-impl.dll",
+      "bytes": 355328,
+      "sha256": "b68e086e1df80e44c14e0783bab8a783c95ff6dc40a9455973e08d3e9e3a1b3a"
+    },
+    {
+      "path": "llama-bench.exe",
+      "bytes": 10752,
+      "sha256": "a4adb058201449e9d7c2757a87d9ef2b65f481123c35a5eeb9551a50f994e790"
+    },
+    {
+      "path": "llama-cli-impl.dll",
+      "bytes": 1644544,
+      "sha256": "77b2642277d6521f8627885eb54e4a9ff09b213797ea119afc466a92df3b9c49"
+    },
+    {
+      "path": "llama-cli.exe",
+      "bytes": 10752,
+      "sha256": "397dbf2c57b9555169117e92128d035b8c55228572fc4b927954d3b738041a52"
+    },
+    {
+      "path": "llama-common.dll",
+      "bytes": 4681728,
+      "sha256": "a459a7bd3aac9f55c162423622295baefc88fd20af60809422f703257684fee6"
+    },
+    {
+      "path": "llama-completion-impl.dll",
+      "bytes": 117760,
+      "sha256": "7017d03f3b7b0bd8ea6193a34865291a00b865f4967cacb3e7ceb9afa3ffad3d"
+    },
+    {
+      "path": "llama-completion.exe",
+      "bytes": 10752,
+      "sha256": "986a5ee623e7e8ecd71f832d9ae3cc20d25f6803e9fbc95424f4ec2e78691e48"
+    },
+    {
+      "path": "llama-cvector-generator.exe",
+      "bytes": 91136,
+      "sha256": "7fb9e9f5538315b83533241c9c3b6bb917028da1101f554089cbe8a33c04a079"
+    },
+    {
+      "path": "llama-export-lora.exe",
+      "bytes": 68096,
+      "sha256": "91e1d20bfd5b751070a5a16a53e6013e713f548372b983d0a415a019c662aeba"
+    },
+    {
+      "path": "llama-fit-params-impl.dll",
+      "bytes": 36864,
+      "sha256": "a5ad78151b0f548f5c74481731113be61b9aa87dee702d99b2b0fe3d962df802"
+    },
+    {
+      "path": "llama-fit-params.exe",
+      "bytes": 10752,
+      "sha256": "5066e011d4aba0c5c3a61330b84dee48cbcd11519a5f438433cd4777d5e3dc4a"
+    },
+    {
+      "path": "llama-gemma3-cli.exe",
+      "bytes": 26624,
+      "sha256": "60003846f8d637f284c16118b57937321f845634f2cc48b8d75931f17e2763f8"
+    },
+    {
+      "path": "llama-gguf-split.exe",
+      "bytes": 49152,
+      "sha256": "ed86dd7ffa32b01cf5a05aef617483ea618b27a83248bfcbb54cb7458ebe8e75"
+    },
+    {
+      "path": "llama-imatrix.exe",
+      "bytes": 196096,
+      "sha256": "09213728aaff193c46e5cb1daed3c24159b74e4e890a8ee5c227e6c00f4c8242"
+    },
+    {
+      "path": "llama-llava-cli.exe",
+      "bytes": 26624,
+      "sha256": "877cd67fcfe6aba02ada4894256c0a4d81bf495f50df28f086b2af9910d1a859"
+    },
+    {
+      "path": "llama-minicpmv-cli.exe",
+      "bytes": 26624,
+      "sha256": "877cd67fcfe6aba02ada4894256c0a4d81bf495f50df28f086b2af9910d1a859"
+    },
+    {
+      "path": "llama-mtmd-cli.exe",
+      "bytes": 75264,
+      "sha256": "ec5a23fd0fee2f88ff3a51cd797043d6d9b0b577b298dd3d74b5bf116e8a9557"
+    },
+    {
+      "path": "llama-mtmd-debug.exe",
+      "bytes": 44544,
+      "sha256": "cd716df3b21348a0436b3d1e1dbfa3f9630af402ff585cd976fd2f723dab6194"
+    },
+    {
+      "path": "llama-perplexity-impl.dll",
+      "bytes": 166400,
+      "sha256": "da980edad4fef1ec95e5010da92f7e0bb5bf79218d92cdd5d8c4d5a6fb867354"
+    },
+    {
+      "path": "llama-perplexity.exe",
+      "bytes": 10752,
+      "sha256": "ff9228aaeb47cde1c53c12bb3752d064f6cb2ec4e004d29856e312ade58de5cd"
+    },
+    {
+      "path": "llama-quantize-impl.dll",
+      "bytes": 131584,
+      "sha256": "734ef84b67776584c382c106d5bde326e3e32fe1dab28fd39785b38095536e19"
+    },
+    {
+      "path": "llama-quantize.exe",
+      "bytes": 10752,
+      "sha256": "90cf65a78b233126fbf41d7f89fbaf92d4513c8d99ba676bc962ba83ed184457"
+    },
+    {
+      "path": "llama-qwen2vl-cli.exe",
+      "bytes": 26624,
+      "sha256": "ffadc843122856130af46fa7f941ff88f1b5a413f5ba0821aeecb038c59008be"
+    },
+    {
+      "path": "llama-results.exe",
+      "bytes": 37376,
+      "sha256": "1b002031da9caf09ceb6b9aed815bc9ee92a7023400eaeee198994f9d42ea703"
+    },
+    {
+      "path": "llama-server-impl.dll",
+      "bytes": 6365696,
+      "sha256": "078c362518800ecaac75661a7fa509da542d6f4dffa4d96f350f8069d492b60a"
+    },
+    {
+      "path": "llama-server.exe",
+      "bytes": 10752,
+      "sha256": "1fb07e40f1e1c945d617a3277c2b542caa2fd1253339df71c4cc3524647d2215"
+    },
+    {
+      "path": "llama-tokenize.exe",
+      "bytes": 52224,
+      "sha256": "0630035fd664e049ac8ca3d810f387436d03825d2a8baf5364281615d0abafb0"
+    },
+    {
+      "path": "llama-tts.exe",
+      "bytes": 33792,
+      "sha256": "263193f978c7aeed62926f90a75e36bf39e17dc50cd3f406c6916d4cb29b5c77"
+    },
+    {
+      "path": "llama.dll",
+      "bytes": 2608128,
+      "sha256": "747ca0f82000f5e1f3344880e289131be28b07b35bc8e4ae9e6ff9ecf304e0af"
+    },
+    {
+      "path": "llama.exe",
+      "bytes": 67584,
+      "sha256": "205f14f355c011ad1392c5ab00d3959a0b0d63fd9b5d3b29a3bfdb4d6d25aefa"
+    },
+    {
+      "path": "mtmd.dll",
+      "bytes": 1424384,
+      "sha256": "0cb7e19b1a1cb38d9914f54858cc215ea1b2688c990890ab6f99b37d77ea05bc"
+    },
+    {
+      "path": "openvino-licensing/Apache_license.txt",
+      "bytes": 11357,
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "path": "openvino-licensing/EULA.htm",
+      "bytes": 9412,
+      "sha256": "e733f8ad078e6eefe5b9870d3914f6696327b373fd4b99df16c3fda8cb2e715d"
+    },
+    {
+      "path": "openvino-licensing/EULA.rtf",
+      "bytes": 9702,
+      "sha256": "0f85950202f88001daafe82234e57b78036e2e9d4bfd0eae568b2d0253c8185f"
+    },
+    {
+      "path": "openvino-licensing/EULA.txt",
+      "bytes": 7741,
+      "sha256": "2ef6a5d67fc91a095fe753745c02be03e91847816add25bf82a02752aa1be151"
+    },
+    {
+      "path": "openvino-licensing/LICENSE",
+      "bytes": 11357,
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "path": "openvino-licensing/OpenVINOsupport.txt",
+      "bytes": 628,
+      "sha256": "a001e1e6b1f92fc9e04ebd6fd74b91195fb0773af61b85ddd0cd1f81772f764a"
+    },
+    {
+      "path": "openvino-licensing/documentation-third-party-programs.txt",
+      "bytes": 38807,
+      "sha256": "413561ece8a76b7ee9bb3f2f255589689c8615aead1dca9b6e9aaa6effd244b8"
+    },
+    {
+      "path": "openvino-licensing/onednn_third-party-programs.txt",
+      "bytes": 28475,
+      "sha256": "f1b16991dfe8488f3f5f07cccba575c31c91175a9f2c8d9e1569665f86e0b2f6"
+    },
+    {
+      "path": "openvino-licensing/onetbb_third-party-programs.txt",
+      "bytes": 46979,
+      "sha256": "b10997cc50652ba6ab365e3bc43e13057681cd4a56533b46171529bd249749f3"
+    },
+    {
+      "path": "openvino-licensing/readme.txt",
+      "bytes": 1957,
+      "sha256": "86ee3bb13c5781c3c245a8ac87b5e6c68434c77b0048599374bdfd4570c8de04"
+    },
+    {
+      "path": "openvino-licensing/redist.txt",
+      "bytes": 1808,
+      "sha256": "ee34242c138f42d2d24399c72212fb88be4dd46bee9f5845380acb6c19355d1d"
+    },
+    {
+      "path": "openvino-licensing/runtime-third-party-programs.txt",
+      "bytes": 118919,
+      "sha256": "21ccba6916a7f99278d7b111ce2ce448377750362341f638e24fc336aaf85806"
+    },
+    {
+      "path": "openvino.dll",
+      "bytes": 16199440,
+      "sha256": "bcd54bd866c1ffdf378fa34bd006d81ece0f960fa3c24973f67e1e7cc85d0f5d"
+    },
+    {
+      "path": "openvino_auto_batch_plugin.dll",
+      "bytes": 208144,
+      "sha256": "d4ba5ecad07ea8860180210e20af6c77fe04868a9a9ce551a5450d5b007afa4d"
+    },
+    {
+      "path": "openvino_auto_plugin.dll",
+      "bytes": 502544,
+      "sha256": "63225bc8d2fbd844738d79a9f12afca5c55ae1e454c8836385dbc38537a23fd7"
+    },
+    {
+      "path": "openvino_c.dll",
+      "bytes": 222480,
+      "sha256": "3808885c1935e8b217f0f8c3a576f533124e703d2862fb408b84de4382f88330"
+    },
+    {
+      "path": "openvino_hetero_plugin.dll",
+      "bytes": 493328,
+      "sha256": "bfc1b8c9c64fed19358fdcc9438cfd20d0a8e3c5f76fa907a79ccb5d1c993d03"
+    },
+    {
+      "path": "openvino_intel_cpu_plugin.dll",
+      "bytes": 46298384,
+      "sha256": "f2813fe0a12c8c349d94673bccd99662b8980c3c0821ea686252cb57f9e2ea4b"
+    },
+    {
+      "path": "openvino_intel_gpu_plugin.dll",
+      "bytes": 33987344,
+      "sha256": "7744135b5ed5080db080ac350aefbcea3ace1a039eb728248f96f9469e5ecb9b"
+    },
+    {
+      "path": "openvino_intel_npu_compiler.dll",
+      "bytes": 82401040,
+      "sha256": "b34404e27ab935d178706160cfe789658e8a6398ee8343143692beb150514a89"
+    },
+    {
+      "path": "openvino_intel_npu_compiler_loader.dll",
+      "bytes": 548104,
+      "sha256": "c854b0eba42e10389f9b2612c335d34564167654cb543500df6e352a493c29bf"
+    },
+    {
+      "path": "openvino_intel_npu_plugin.dll",
+      "bytes": 7240464,
+      "sha256": "6c58e7f35bc0329f7b2ec56d5be2b055a1a5c438230b1d6df1d14630c9125b29"
+    },
+    {
+      "path": "openvino_intel_npu_vm_runtime.dll",
+      "bytes": 461576,
+      "sha256": "ae7ef92b9b2754597b96362516771bfde92beffd1b7188799c7b921c1623e59d"
+    },
+    {
+      "path": "openvino_ir_frontend.dll",
+      "bytes": 474888,
+      "sha256": "4453b1d0c4b934bfa7e6adf046c2df76fcbc4d565577788739cdf12955d1d1bf"
+    },
+    {
+      "path": "openvino_onnx_frontend.dll",
+      "bytes": 4810512,
+      "sha256": "89f15924734c967b1bcf3b4ddafcaa2a4e58f920616768e83afd39e5d51f4345"
+    },
+    {
+      "path": "openvino_paddle_frontend.dll",
+      "bytes": 1491216,
+      "sha256": "347463de6fd1cf0c490b72d0166f4f775d739ea7881e47296e8f469f193cb213"
+    },
+    {
+      "path": "openvino_pytorch_frontend.dll",
+      "bytes": 2701064,
+      "sha256": "26dc73655b665464355ca205566ac48230bb6b837a64cd2c106d367d719b2e02"
+    },
+    {
+      "path": "openvino_tensorflow_frontend.dll",
+      "bytes": 4051720,
+      "sha256": "32f4faffb1e91d35f8ec7dbe3621b841a6a4bed6ec59247bdbb5ee7dec087ccd"
+    },
+    {
+      "path": "openvino_tensorflow_lite_frontend.dll",
+      "bytes": 1263368,
+      "sha256": "f7de0244461aa521c179f7c5507cde99001442e5c3b9d5f7de7bca46a584ac6f"
+    },
+    {
+      "path": "tbb12.dll",
+      "bytes": 225544,
+      "sha256": "eab460174ace7c024cd53490c8897d089b93bc73ebb8c7ffa82e5d608fe86389"
+    },
+    {
+      "path": "tbb12_debug.dll",
+      "bytes": 905480,
+      "sha256": "970c592d57f6630c5554988836d5ba8c802f2f0d3bf75c192cdf947be40863df"
+    },
+    {
+      "path": "tbbbind_2_5.dll",
+      "bytes": 208656,
+      "sha256": "a72295cad35a9496f9479d54434e517aa73c3ef6e9900bb6f232366b3abc2ab6"
+    },
+    {
+      "path": "tbbbind_2_5_debug.dll",
+      "bytes": 452360,
+      "sha256": "996bdde87265f508593860c45a9463f112c701dd582121b82878c82027ab0527"
+    },
+    {
+      "path": "tbbmalloc.dll",
+      "bytes": 121096,
+      "sha256": "9511d1ecfb278856f9434083f38e437c600419e2de43515d43c803f7c3a32860"
+    },
+    {
+      "path": "tbbmalloc_debug.dll",
+      "bytes": 374024,
+      "sha256": "781b5188252e00ac14d88f3f14641fa52a1ec38d1d1b7a6a4c670126c26ba4c9"
+    },
+    {
+      "path": "tbbmalloc_proxy.dll",
+      "bytes": 41736,
+      "sha256": "63f366c2102436608bf3900fd40da8dfdcf44796afb32df5d2370fd47897be4f"
+    },
+    {
+      "path": "tbbmalloc_proxy_debug.dll",
+      "bytes": 124176,
+      "sha256": "145db48f1427e99e0471ff5f102127b6134c2a82e5e58a43c43005b63295316b"
+    }
+  ]
+}
