@@ -1,0 +1,120 @@
+name: Hardware qualify (self-hosted)
+
+# Runs only on version tags. The owner's Windows runner is online 01:00-06:00
+# Asia/Dubai; jobs queue until then. Main Release stays on windows-latest.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to qualify (e.g. v0.4.1)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  hardware-qualify:
+    name: Zen5 + Blackwell packaged proof
+    runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]
+    timeout-minutes: 180
+    steps:
+      - name: Resolve tag
+        id: meta
+        shell: pwsh
+        env:
+          RAW_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          $raw = $env:RAW_TAG
+          if ($raw -notmatch '^v\d+\.\d+\.\d+$') {
+            throw "Tag must match vMAJOR.MINOR.PATCH (got: $raw)"
+          }
+          $version = $raw.Substring(1)
+          "tag=$raw" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Qualifying $raw"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.meta.outputs.tag }}
+
+      - name: Record host hardware
+        id: hw
+        shell: pwsh
+        run: |
+          $cpu = (Get-CimInstance Win32_Processor | Select-Object -First 1 -ExpandProperty Name)
+          $gpu = (Get-CimInstance Win32_VideoController | ForEach-Object Name) -join '; '
+          "cpu=$cpu" >> $env:GITHUB_OUTPUT
+          "gpu=$gpu" >> $env:GITHUB_OUTPUT
+          Write-Host "CPU: $cpu"
+          Write-Host "GPU: $gpu"
+          if ($cpu -notmatch '9950X3D|Ryzen 9 9950') {
+            Write-Warning "CPU name did not match expected 9950X3D; attestation will still record the actual name."
+          }
+          if ($gpu -notmatch '5090') {
+            Write-Warning "GPU name did not match expected RTX 5090; attestation will still record the actual name."
+          }
+
+      - name: Write attestation stub
+        shell: pwsh
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          CPU: ${{ steps.hw.outputs.cpu }}
+          GPU: ${{ steps.hw.outputs.gpu }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          $dir = Join-Path "release-evidence" $env:VERSION "attestations"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $now = (Get-Date).ToUniversalTime().ToString("o")
+          $doc = [ordered]@{
+            schema = "localmotive.attestation.v0"
+            version = $env:VERSION
+            tag = $env:TAG
+            recordedAtUtc = $now
+            runner = "DESKTOP-HPTF57N-zen5-blackwell"
+            host = @{
+              cpu = $env:CPU
+              gpu = $env:GPU
+              os = [System.Environment]::OSVersion.VersionString
+            }
+            matrixRows = @(
+              @{ id = "amd-zen5-cpu"; status = "HOST_MATCH"; note = "Host CPU is Zen 5 (9950X3D class). Packaged L4 checks still required." },
+              @{ id = "nvidia-blackwell-cuda"; status = "HOST_MATCH"; note = "Host GPU is Blackwell (5090 class). Packaged CUDA L4 checks still required." },
+              @{ id = "nvidia-blackwell-vulkan"; status = "HOST_MATCH"; note = "Host GPU is Blackwell (5090 class). Packaged Vulkan L4 checks still required." }
+            )
+            supportClaimPolicy = "Do not mark SUPPORTED / L4_PASS without a successful packaged run recorded in this attestation."
+            githubRun = $env:RUN_URL
+            githubRunId = $env:RUN_ID
+          }
+          $path = Join-Path $dir "host-zen5-blackwell.json"
+          ($doc | ConvertTo-Json -Depth 6) | Set-Content -Path $path -Encoding UTF8
+          Write-Host "Wrote $path"
+
+      - name: Job summary
+        shell: pwsh
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          CPU: ${{ steps.hw.outputs.cpu }}
+          GPU: ${{ steps.hw.outputs.gpu }}
+        run: |
+          @"
+          ## Hardware qualify
+
+          - Tag: ``$($env:TAG)``
+          - CPU: $($env:CPU)
+          - GPU: $($env:GPU)
+          - Runner online window: **01:00-06:00 Asia/Dubai** (jobs queue until then)
+          - Main Release build/publish stays on GitHub-hosted windows-latest
+          - This job records host match for Zen 5 + Blackwell; full packaged L4 PASS still needs the packaged verifier once artifacts exist
+          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8
+
+      - name: Upload attestation artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hardware-attestation-${{ steps.meta.outputs.version }}
+          path: release-evidence/${{ steps.meta.outputs.version }}/attestations/
+          if-no-files-found: error
