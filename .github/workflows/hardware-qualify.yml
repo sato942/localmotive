@@ -154,6 +154,8 @@ jobs:
 
       - name: Run clean-account lifecycle in Sandbox
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           & ".\scripts\sandbox\host-run-lifecycle.ps1" -Tag "${{ steps.meta.outputs.tag }}" -Version "${{ steps.meta.outputs.version }}" -PreviousTag "v0.4.0"
 
