@@ -196,9 +196,9 @@ test("icon gate requires every Windows icon surface and ICO layer", () => {
   assert.equal(result.ok, true, result.failures.join("\n"));
 });
 
-test("Windows installers carry an offline WebView2 prerequisite", async () => {
+test("Windows installers use the bootstrapper WebView2 mode until offline bundling is fixed", async () => {
   const config = JSON.parse(await readFile(join(process.cwd(), "src-tauri", "tauri.conf.json"), "utf8"));
-  assert.equal(config.bundle?.windows?.webviewInstallMode?.type, "offlineInstaller");
+  assert.equal(config.bundle?.windows?.webviewInstallMode?.type, "downloadBootstrapper");
 });
 
 test("runtime catalog exposes an accessible refresh action in every terminal state", async () => {

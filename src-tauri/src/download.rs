@@ -471,6 +471,12 @@ fn ensure_safe_write_entry(path: &Path) -> Result<(), String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(format!("Could not inspect {}: {error}", path.display())),
     };
+    // Directories are created and listed, never written as files. Opening a
+    // directory handle with read access fails on Windows (Access denied),
+    // so skip the file link check for them.
+    if metadata.is_dir() && !metadata.file_type().is_symlink() {
+        return Ok(());
+    }
     #[cfg(windows)]
     let file_attributes = {
         use std::os::windows::fs::MetadataExt;
