@@ -4,9 +4,17 @@ param(
   [Parameter(Mandatory=$true)][string]$Version,
   [string]$PreviousTag = "v0.4.0",
   [string]$Repo = "sato942/localmotive",
+  [string]$CandidateDir = "",
+  [int]$ReleaseWaitMinutes = 5,
   [int]$TimeoutMinutes = 45
 )
 $ErrorActionPreference = "Stop"
+
+if (-not $env:GH_TOKEN -and -not $env:GITHUB_TOKEN) {
+  throw "GH_TOKEN (or GITHUB_TOKEN) is required so gh can download release assets in Actions. Set env.GH_TOKEN: `${{ github.token }} on the workflow step."
+}
+if (-not $env:GH_TOKEN -and $env:GITHUB_TOKEN) { $env:GH_TOKEN = $env:GITHUB_TOKEN }
+
 $Root = Join-Path $env:TEMP ("localmotive-sandbox-" + $Version + "-" + (Get-Date -Format "yyyyMMddHHmmss"))
 $Shared = Join-Path $Root "shared"
 New-Item -ItemType Directory -Force -Path $Shared | Out-Null
@@ -20,30 +28,48 @@ function Download-Asset([string]$RelTag, [string]$Name, [string]$OutPath) {
   if ($downloaded -ne $OutPath) { Move-Item -Force $downloaded $OutPath }
 }
 
-# Wait for current release assets (Release workflow may still be publishing)
-$deadline = (Get-Date).AddMinutes(30)
 $currentSetup = "Localmotive_${Version}_x64-setup.exe"
 $currentMsi = "Localmotive_${Version}_x64.msi"
 $prevVersion = $PreviousTag.TrimStart("v")
 $previousSetup = "Localmotive_${prevVersion}_x64-setup.exe"
 
-while ($true) {
-  try {
-    $assets = gh release view $Tag -R $Repo --json assets --jq ".assets[].name"
-    if (($assets -match [regex]::Escape($currentSetup)) -and ($assets -match [regex]::Escape($currentMsi))) { break }
-    Write-Host "Waiting for release assets on $Tag ..."
-  } catch {
-    Write-Host "Release $Tag not visible yet: $($_.Exception.Message)"
+$haveLocal = $false
+if ($CandidateDir -and (Test-Path $CandidateDir)) {
+  $localSetup = Join-Path $CandidateDir $currentSetup
+  $localMsi = Join-Path $CandidateDir $currentMsi
+  if ((Test-Path $localSetup) -and (Test-Path $localMsi)) {
+    Write-Host "Using local candidates from $CandidateDir"
+    Copy-Item $localSetup (Join-Path $Shared $currentSetup) -Force
+    Copy-Item $localMsi (Join-Path $Shared $currentMsi) -Force
+    $haveLocal = $true
   }
-  if ((Get-Date) -gt $deadline) { throw "Timed out waiting for $Tag assets ($currentSetup, $currentMsi)" }
-  Start-Sleep -Seconds 30
 }
 
-Download-Asset $Tag $currentSetup (Join-Path $Shared $currentSetup)
-Download-Asset $Tag $currentMsi (Join-Path $Shared $currentMsi)
+if (-not $haveLocal) {
+  $deadline = (Get-Date).AddMinutes($ReleaseWaitMinutes)
+  while ($true) {
+    try {
+      $assets = gh release view $Tag -R $Repo --json assets --jq ".assets[].name"
+      if (($assets -match [regex]::Escape($currentSetup)) -and ($assets -match [regex]::Escape($currentMsi))) { break }
+      Write-Host "Waiting for release assets on $Tag ..."
+    } catch {
+      Write-Host "Release $Tag not visible yet: $($_.Exception.Message)"
+    }
+    if ((Get-Date) -gt $deadline) {
+      throw @"
+Timed out after $ReleaseWaitMinutes minute(s) waiting for GitHub Release $Tag assets ($currentSetup, $currentMsi).
+This usually means the Release workflow did not publish (e.g. quality gate blocked) — Sandbox cannot download installers that do not exist.
+Fix: publish unsigned release assets for $Tag, or pass -CandidateDir with local setup+msi files.
+"@
+    }
+    Start-Sleep -Seconds 20
+  }
+  Download-Asset $Tag $currentSetup (Join-Path $Shared $currentSetup)
+  Download-Asset $Tag $currentMsi (Join-Path $Shared $currentMsi)
+}
+
 Download-Asset $PreviousTag $previousSetup (Join-Path $Shared $previousSetup)
 
-# Copy in-sandbox script from repo checkout if present, else expect it beside this script
 $here = $PSScriptRoot
 $inScriptSrc = Join-Path $here "run-lifecycle-in-sandbox.ps1"
 if (-not (Test-Path $inScriptSrc)) { throw "Missing $inScriptSrc" }
@@ -96,14 +122,13 @@ while ((Get-Date) -lt $waitUntil) {
       if (Test-Path (Join-Path $Shared "lifecycle.log")) { Get-Content (Join-Path $Shared "lifecycle.log") | Write-Host }
       throw "Clean-account lifecycle FAILED: $($result.error)"
     }
-    # expose for workflow
     $outDir = Join-Path $PWD "release-evidence\$Version\attestations"
     New-Item -ItemType Directory -Force -Path $outDir | Out-Null
     Copy-Item $resultPath (Join-Path $outDir "sandbox-clean-account-lifecycle.json") -Force
     if (Test-Path (Join-Path $Shared "lifecycle.log")) {
       Copy-Item (Join-Path $Shared "lifecycle.log") (Join-Path $outDir "sandbox-clean-account-lifecycle.log") -Force
     }
-    Write-Host "PASS — evidence copied to $outDir"
+    Write-Host "PASS - evidence copied to $outDir"
     exit 0
   }
   Start-Sleep -Seconds 5
