@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   hardware-qualify:
-    name: Zen5 + Blackwell packaged proof
+    name: Zen5 + Blackwell host proof
     runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]
     timeout-minutes: 180
     steps:
@@ -118,3 +118,68 @@ jobs:
           name: hardware-attestation-${{ steps.meta.outputs.version }}
           path: release-evidence/${{ steps.meta.outputs.version }}/attestations/
           if-no-files-found: error
+
+  clean-account-lifecycle:
+    name: Clean-account install/update/uninstall (Sandbox)
+    runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]
+    needs: hardware-qualify
+    timeout-minutes: 120
+    steps:
+      - name: Resolve tag
+        id: meta
+        shell: pwsh
+        env:
+          RAW_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          $raw = $env:RAW_TAG
+          if ($raw -notmatch '^v\d+\.\d+\.\d+$') {
+            throw "Tag must match vMAJOR.MINOR.PATCH (got: $raw)"
+          }
+          $version = $raw.Substring(1)
+          "tag=$raw" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.meta.outputs.tag }}
+
+      - name: Ensure Windows Sandbox is available
+        shell: pwsh
+        run: |
+          $exe = Join-Path $env:WINDIR "System32\WindowsSandbox.exe"
+          if (-not (Test-Path $exe)) {
+            throw "Windows Sandbox is not available on this PC. Enable it (Windows Features) then re-run."
+          }
+          Write-Host "Found $exe"
+
+      - name: Run clean-account lifecycle in Sandbox
+        shell: pwsh
+        run: |
+          & ".\scripts\sandbox\host-run-lifecycle.ps1" -Tag "${{ steps.meta.outputs.tag }}" -Version "${{ steps.meta.outputs.version }}" -PreviousTag "v0.4.0"
+
+      - name: Job summary
+        if: always()
+        shell: pwsh
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          $evidence = "release-evidence/$($env:VERSION)/attestations/sandbox-clean-account-lifecycle.json"
+          $status = if (Test-Path $evidence) { (Get-Content $evidence -Raw | ConvertFrom-Json).status } else { "MISSING" }
+          @"
+          ## Clean-account lifecycle (Windows Sandbox)
+
+          - Tag: ``$($env:TAG)``
+          - Update baseline: ``v0.4.0``
+          - Checks: NSIS install/launch/uninstall, MSI install/launch/uninstall, NSIS update from 0.4.0
+          - Result: **$status**
+          - Runs only on the night self-hosted runner window (01:00-06:00 Asia/Dubai)
+          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8
+
+      - name: Upload sandbox evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-lifecycle-${{ steps.meta.outputs.version }}
+          path: release-evidence/${{ steps.meta.outputs.version }}/attestations/
+          if-no-files-found: ignore
