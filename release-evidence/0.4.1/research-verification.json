@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "release": "0.4.1",
+  "observedAt": "2026-09-06T02:25:43Z",
+  "baseCommit": "ca07483574f2b7d4be17f7704fe2dcabaa8cd6b8",
+  "commands": [
+    "python -m unittest discover -s research/0.4/tests -v",
+    "python research/0.4/verify_research.py --core-evidence",
+    "python research/0.4.1/freeze_research.py check --allow-product-changes --expected-manifest-sha256 7a906c7f7ab1efd7b2db57e56f92afa0592121fce84c67bde6531abb288cdec6",
+    "node scripts/verify_research_anchor.mjs",
+    "python research/0.4/verify_research.py"
+  ],
+  "unitTests": {
+    "status": "PASS",
+    "passed": 101,
+    "failed": 0,
+    "skipped": 0
+  },
+  "researchVerifier": {
+    "status": "PASS",
+    "corePassed": 63,
+    "passed": 65,
+    "failed": 0,
+    "unknown": 0
+  },
+  "freeze": {
+    "status": "PASS",
+    "manifestSha256": "7a906c7f7ab1efd7b2db57e56f92afa0592121fce84c67bde6531abb288cdec6",
+    "treeSha256": "5bc3fd3357883956683e662075d099a286007cdbc18fbe372e3758115bd594bb",
+    "files": 3840,
+    "bytes": 1740909016,
+    "productScopeSha256": "878a1a161f93fba7d5655f27702d9ea5dc65c2496ecc799e60aff1baef267337"
+  },
+  "cleanCheckoutCoverage": {
+    "researchDirectoryIntentionallyIgnored": true,
+    "trackedManifestAndAnchorGate": "PASS",
+    "fullResearchReexecutionInGitHubActions": "UNAVAILABLE",
+    "reason": "The approved research policy keeps the 1.7 GiB research tree outside Git. CI verifies the tracked exact-file manifest and independent anchor."
+  },
+  "independentReview": {
+    "status": "PENDING",
+    "reason": "The final independent review is pending for manifest 7a906c7f7ab1efd7b2db57e56f92afa0592121fce84c67bde6531abb288cdec6."
+  }
+}

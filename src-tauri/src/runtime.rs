@@ -1,14 +1,18 @@
-use crate::artifact::is_reparse_point;
+use crate::artifact::{is_reparse_point, validate_no_reparse_ancestors};
 use crate::evidence::{Evidence, EvidenceLevel, EvidenceSource, EvidenceSourceKind};
+use cap_std::ambient_authority;
+use cap_std::fs::{Dir as CapDir, OpenOptions as CapOpenOptions};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const RELEASES_URL: &str = "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=20";
+const RELEASE_BY_TAG_URL: &str = "https://api.github.com/repos/ggml-org/llama.cpp/releases/tags";
 
 fn observed_at_ms() -> u64 {
     SystemTime::now()
@@ -116,6 +120,8 @@ pub fn process_peak_working_set(_process_id: u32) -> Evidence<u64> {
 #[derive(Clone, Debug, Deserialize)]
 pub struct GithubRelease {
     pub tag_name: String,
+    #[serde(default)]
+    pub target_commitish: String,
     #[serde(default)]
     pub published_at: Option<String>,
     #[serde(default)]
@@ -347,6 +353,7 @@ pub struct CapacityObservation {
 #[serde(rename_all = "camelCase")]
 pub struct GpuAdapterInfo {
     pub adapter_id: String,
+    pub compatibility_id: String,
     pub name: String,
     pub vendor: String,
     pub driver: Evidence<String>,
@@ -438,6 +445,10 @@ pub fn detect_dxgi_adapters() -> Result<Vec<GpuAdapterInfo>, String> {
             "luid:{:08x}{:08x}",
             description.AdapterLuid.HighPart as u32, description.AdapterLuid.LowPart
         );
+        let compatibility_id = format!(
+            "pci:{:04x}:{:04x}:{:08x}:{:02x}",
+            description.VendorId, description.DeviceId, description.SubSysId, description.Revision
+        );
         let dedicated_bytes = observed_value(
             description.DedicatedVideoMemory as u64,
             description_source.clone(),
@@ -528,6 +539,7 @@ pub fn detect_dxgi_adapters() -> Result<Vec<GpuAdapterInfo>, String> {
         ];
         adapters.push(GpuAdapterInfo {
             adapter_id,
+            compatibility_id,
             name,
             vendor: vendor.clone(),
             driver: unknown_value(
@@ -568,12 +580,130 @@ pub struct RuntimeOption {
     pub recommended: bool,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CompatibilityKey {
+    pub os_build: String,
+    pub architecture: String,
+    pub adapter_id: String,
+    pub driver: String,
+    pub firmware: String,
+    pub backend: String,
+    pub install_key: String,
+    pub release_commit: String,
+    pub asset_name: String,
+    pub asset_sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CompatibilityRecord {
+    pub key: CompatibilityKey,
+    pub evidence_level: String,
+    pub attestation_id: String,
+    pub expiry_identity: String,
+}
+
+fn compatibility_expiry_identity(key: &CompatibilityKey) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"localmotive-compatibility-v1\0");
+    for value in [
+        &key.os_build,
+        &key.architecture,
+        &key.adapter_id,
+        &key.driver,
+        &key.firmware,
+        &key.backend,
+        &key.install_key,
+        &key.release_commit,
+        &key.asset_name,
+        &key.asset_sha256,
+    ] {
+        digest.update((value.len() as u64).to_be_bytes());
+        digest.update(value.as_bytes());
+    }
+    format!("compatibility-v1:sha256:{}", hex::encode(digest.finalize()))
+}
+
+fn compatibility_record_matches(
+    record: &CompatibilityRecord,
+    option: &RuntimeOption,
+    adapter: &GpuAdapterInfo,
+    os_build: &str,
+    firmware: Option<&str>,
+    architecture: &str,
+    release_commit: &str,
+) -> bool {
+    let key = &record.key;
+    let driver_is_direct = matches!(
+        adapter.driver.level,
+        EvidenceLevel::Exact | EvidenceLevel::Observed
+    );
+    let firmware_matches = if key.firmware == "not-applicable" {
+        firmware.is_none() || firmware == Some("not-applicable")
+    } else {
+        firmware == Some(key.firmware.as_str())
+    };
+    record.evidence_level == "L4_PRODUCT"
+        && !record.attestation_id.trim().is_empty()
+        && record.attestation_id.len() <= 256
+        && record.expiry_identity == compatibility_expiry_identity(key)
+        && key.os_build == os_build
+        && key.architecture == architecture
+        && key.adapter_id == adapter.compatibility_id
+        && driver_is_direct
+        && adapter.driver.value.as_deref() == Some(key.driver.as_str())
+        && firmware_matches
+        && key.backend == option.backend
+        && key.install_key == option.install_key
+        && key.release_commit == release_commit
+        && key.asset_name == option.asset.name
+        && option.asset.digest.as_deref() == Some(format!("sha256:{}", key.asset_sha256).as_str())
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RuntimeInstallRequest {
+    pub install_key: String,
+    pub adapter_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum BackendAvailabilityStatus {
+    Available,
+    Blocked,
+    Dormant,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BackendAvailability {
+    pub install_key: String,
+    pub backend: String,
+    pub status: BackendAvailabilityStatus,
+    pub reason: String,
+    pub blocking_jobs: Vec<String>,
+    pub evidence_urls: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum RuntimeCatalogOrigin {
+    Network,
+    Cache,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeCatalog {
     pub tag: String,
     pub published_at: String,
     pub options: Vec<RuntimeOption>,
+    pub availability: Vec<BackendAvailability>,
+    pub origin: RuntimeCatalogOrigin,
+    pub warning: Option<String>,
+    pub recommendation_reason: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -584,6 +714,15 @@ pub struct InstalledRuntime {
     pub runtime_path: String,
     pub install_root: String,
     pub reused: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeInstallProgress {
+    pub install_key: String,
+    pub asset_name: String,
+    pub downloaded: u64,
+    pub total: u64,
 }
 
 /// What an executable on disk *is*, derived from evidence beside it rather than
@@ -602,6 +741,8 @@ pub struct RuntimeIdentity {
     pub install_key: Option<String>,
     /// `manifest`, `dlls`, or `none`.
     pub source: String,
+    /// True only after the backend validates the managed root and compiled content manifest.
+    pub managed_verified: bool,
 }
 
 /// One managed installation found under the runtime root.
@@ -618,6 +759,7 @@ pub struct ManagedRuntimeRecord {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RuntimeManifest {
+    #[serde(alias = "releaseTag")]
     tag: String,
     backend: String,
     #[serde(default)]
@@ -811,6 +953,7 @@ pub fn describe_runtime(path: &Path) -> RuntimeIdentity {
             tag: None,
             install_key: None,
             source: "none".into(),
+            managed_verified: false,
         };
     };
     if let Some(manifest) = read_manifest(dir)
@@ -844,6 +987,7 @@ pub fn describe_runtime(path: &Path) -> RuntimeIdentity {
                 tag: Some(manifest.tag),
                 install_key,
                 source: "manifest-dll-mismatch".into(),
+                managed_verified: false,
             };
         }
         return RuntimeIdentity {
@@ -853,6 +997,7 @@ pub fn describe_runtime(path: &Path) -> RuntimeIdentity {
             tag: Some(manifest.tag),
             install_key,
             source: "manifest".into(),
+            managed_verified: false,
         };
     }
 
@@ -867,6 +1012,7 @@ pub fn describe_runtime(path: &Path) -> RuntimeIdentity {
         tag: None,
         install_key: None,
         source: source.into(),
+        managed_verified: false,
     }
 }
 
@@ -896,6 +1042,9 @@ pub fn list_managed_runtimes_in(root: &Path) -> Vec<ManagedRuntimeRecord> {
             let Some(runtime_path) = manifest_runtime_path(&install_dir, &manifest.runtime) else {
                 continue;
             };
+            if managed_runtime_verified_in(&runtime_path, root) != Ok(true) {
+                continue;
+            }
             records.push(ManagedRuntimeRecord {
                 tag: manifest.tag,
                 backend: manifest.backend.clone(),
@@ -1016,17 +1165,26 @@ fn merge_nvidia_probe_observations(
     }
 }
 
+const HARDWARE_DETECTION_NOTICE: &str =
+    "Hardware detection does not establish product support; use the approved catalog recommendation.";
+
 pub fn detect_hardware() -> HardwareInfo {
+    const HARDWARE_PROBE_TIMEOUT: Duration = Duration::from_secs(30);
+    const HARDWARE_PROBE_STREAM_LIMIT: usize = 1024 * 1024;
     let architecture = architecture();
     let system_memory = detect_system_memory();
     let mut adapters = detect_dxgi_adapters().unwrap_or_default();
     let hardware_observed_at_ms = observed_at_ms();
-    let nvidia_query = crate::proc::hidden_command("nvidia-smi.exe")
-        .args([
-            "--query-gpu=name,driver_version,memory.total,memory.used",
-            "--format=csv,noheader,nounits",
-        ])
-        .output();
+    let mut nvidia_query_command = crate::proc::hidden_command("nvidia-smi.exe");
+    nvidia_query_command.args([
+        "--query-gpu=name,driver_version,memory.total,memory.used",
+        "--format=csv,noheader,nounits",
+    ]);
+    let nvidia_query = crate::proc::output_with_timeout(
+        &mut nvidia_query_command,
+        HARDWARE_PROBE_TIMEOUT,
+        HARDWARE_PROBE_STREAM_LIMIT,
+    );
     if let Ok(output) = nvidia_query {
         if output.status.success() {
             let rows = parse_nvidia_probe_rows(&String::from_utf8_lossy(&output.stdout));
@@ -1037,11 +1195,15 @@ pub fn detect_hardware() -> HardwareInfo {
                 .unwrap_or_default();
             if !gpu_names.is_empty() {
                 merge_nvidia_probe_observations(&mut adapters, &rows, hardware_observed_at_ms);
-                let smi = crate::proc::hidden_command("nvidia-smi.exe")
-                    .output()
-                    .ok()
-                    .map(|result| String::from_utf8_lossy(&result.stdout).to_string())
-                    .unwrap_or_default();
+                let mut smi_command = crate::proc::hidden_command("nvidia-smi.exe");
+                let smi = crate::proc::output_with_timeout(
+                    &mut smi_command,
+                    HARDWARE_PROBE_TIMEOUT,
+                    HARDWARE_PROBE_STREAM_LIMIT,
+                )
+                .ok()
+                .map(|result| String::from_utf8_lossy(&result.stdout).to_string())
+                .unwrap_or_default();
                 let cuda_major = cuda_major_from_smi(&smi);
                 return HardwareInfo {
                     architecture,
@@ -1050,10 +1212,7 @@ pub fn detect_hardware() -> HardwareInfo {
                     cuda_major,
                     driver_version,
                     detection_status: "NVIDIA GPU and driver reported by nvidia-smi".into(),
-                    recommendation: match cuda_major {
-                        Some(major) if major >= 13 => "CUDA 13 is the best match for this NVIDIA driver".into(),
-                        _ => "CUDA 12 is the compatible NVIDIA choice; Vulkan remains available as a fallback".into(),
-                    },
+                    recommendation: HARDWARE_DETECTION_NOTICE.into(),
                     system_memory,
                     adapters,
                     manual_overrides: Vec::new(),
@@ -1063,21 +1222,25 @@ pub fn detect_hardware() -> HardwareInfo {
     }
 
     let script = "Get-CimInstance Win32_VideoController | ForEach-Object { \"$($_.Name)`t$($_.DriverVersion)\" }";
-    let adapter_rows = crate::proc::hidden_command("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| {
-            String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .map(str::trim)
-                .filter(|line| !line.is_empty())
-                .map(|line| line.split_once('\t').unwrap_or((line, "")))
-                .map(|(name, driver)| (name.trim().to_string(), driver.trim().to_string()))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    let mut cim_command = crate::proc::hidden_command("powershell.exe");
+    cim_command.args(["-NoProfile", "-NonInteractive", "-Command", script]);
+    let adapter_rows = crate::proc::output_with_timeout(
+        &mut cim_command,
+        HARDWARE_PROBE_TIMEOUT,
+        HARDWARE_PROBE_STREAM_LIMIT,
+    )
+    .ok()
+    .filter(|output| output.status.success())
+    .map(|output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(|line| line.split_once('\t').unwrap_or((line, "")))
+            .map(|(name, driver)| (name.trim().to_string(), driver.trim().to_string()))
+            .collect::<Vec<_>>()
+    })
+    .unwrap_or_default();
     let gpu_names = adapter_rows
         .iter()
         .map(|(name, _)| name.clone())
@@ -1105,14 +1268,7 @@ pub fn detect_hardware() -> HardwareInfo {
     } else {
         "other"
     };
-    let recommendation = match vendor {
-        "nvidia" => "CUDA is available when driver branch and CUDA major match; Vulkan remains available as a fallback",
-        "amd" => "ROCm needs an exact AMD matrix match; otherwise use Vulkan or CPU",
-        "intel" => "SYCL needs Arc or Xe device evidence; otherwise use Vulkan or CPU",
-        "qualcomm" => "OpenCL is dormant capability on Windows x64; use Vulkan or CPU",
-        "cpu" => "No supported GPU runtime was detected; use the CPU build",
-        _ => "Use the Vulkan build for broad Windows GPU compatibility",
-    };
+
     let detection_status = if gpu_names.is_empty() {
         "No graphics adapter reported by Windows CIM"
     } else {
@@ -1125,7 +1281,7 @@ pub fn detect_hardware() -> HardwareInfo {
         cuda_major: None,
         driver_version,
         detection_status: detection_status.into(),
-        recommendation: recommendation.into(),
+        recommendation: HARDWARE_DETECTION_NOTICE.into(),
         system_memory,
         adapters,
         manual_overrides: Vec::new(),
@@ -1163,29 +1319,29 @@ fn label_and_description(backend: &str, name: &str) -> (String, String, String) 
                 .unwrap_or("current");
             (
                 format!("NVIDIA CUDA {version}"),
-                "Fastest path for supported NVIDIA GPUs".into(),
-                "Requires an NVIDIA driver compatible with this CUDA major version".into(),
+                "Optional NVIDIA acceleration package".into(),
+                "Requires an exact L4 product compatibility record for this adapter, driver, and CUDA package".into(),
             )
         }
         "rocm" => (
             "AMD ROCm".into(),
-            "Native AMD GPU acceleration for supported Radeon hardware".into(),
-            "If the GPU is unsupported, install Vulkan instead".into(),
+            "Optional AMD acceleration package".into(),
+            "Requires an exact L4 product compatibility record for this adapter, driver, and ROCm package".into(),
         ),
         "sycl" => (
             "Intel SYCL".into(),
-            "Intel Arc/Xe GPU acceleration".into(),
-            "Requires current Intel graphics drivers".into(),
+            "Optional Intel acceleration package".into(),
+            "Requires an exact L4 product compatibility record for this adapter, driver, and SYCL package".into(),
         ),
         "openvino" => (
             "Intel OpenVINO".into(),
-            "Alternative Intel CPU/GPU inference backend".into(),
-            "Useful when SYCL is unavailable or OpenVINO is preferred".into(),
+            "Optional Intel inference package".into(),
+            "Requires an exact L4 product compatibility record before recommendation".into(),
         ),
         "vulkan" => (
             "Vulkan".into(),
-            "Broad Windows GPU compatibility across AMD, Intel, and NVIDIA".into(),
-            "Usually slower than a vendor-native backend but easier to run".into(),
+            "Optional cross-vendor GPU package".into(),
+            "Requires an exact L4 product compatibility record before recommendation".into(),
         ),
         "opencl" => (
             "OpenCL".into(),
@@ -1194,8 +1350,8 @@ fn label_and_description(backend: &str, name: &str) -> (String, String, String) 
         ),
         _ => (
             "CPU".into(),
-            "Portable CPU-only Windows build".into(),
-            "Works without a supported GPU; performance depends on CPU and memory bandwidth".into(),
+            "CPU-only Windows x64 package".into(),
+            "Requires no GPU; product support still depends on an exact qualified Windows and CPU row".into(),
         ),
     }
 }
@@ -1214,7 +1370,7 @@ fn cuda_version(_name: &str) -> u16 {
 /// input: selection rejects an asset whose name, size, URL, or digest
 /// differs from the manifest entry.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ApprovedRuntimeAsset {
     pub name: String,
     pub url: String,
@@ -1223,9 +1379,13 @@ pub struct ApprovedRuntimeAsset {
     pub backend: String,
     pub arch: String,
     #[serde(default)]
+    pub dormant: bool,
+    #[serde(default)]
     pub cuda_version: Option<String>,
     #[serde(default)]
     pub companion_name: Option<String>,
+    #[serde(default)]
+    pub content_manifest_sha256: Option<String>,
 }
 
 /// One required upstream hardware job that gates a backend.
@@ -1234,13 +1394,17 @@ pub struct ApprovedRuntimeAsset {
 /// remains queued. Release `b10796` exposes 95 successes, five failures,
 /// and one queued check.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RequiredUpstreamJob {
     pub name: String,
     pub backend: String,
     pub conclusion: String,
     pub status: String,
     pub url: String,
+    pub completed_at: String,
+    pub install_keys: Vec<String>,
+    pub platforms: Vec<String>,
+    pub hardware_classes: Vec<String>,
 }
 
 fn approved_digest_is_sha256(digest: &str) -> bool {
@@ -1308,42 +1472,302 @@ pub fn bind_asset_to_manifest<'a>(
 
 const APPROVED_RUNTIMES: &str = include_str!("../approved_runtimes.json");
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-struct ApprovedRuntimeManifest {
-    release_tag: String,
-    #[allow(dead_code)]
-    #[serde(default)]
-    schema_version: u32,
-    #[allow(dead_code)]
-    #[serde(default)]
-    release_commit: String,
-    #[allow(dead_code)]
-    #[serde(default)]
-    published_at: String,
-    #[serde(default)]
-    assets: Vec<ApprovedRuntimeAsset>,
-    #[serde(default)]
-    required_jobs: Vec<RequiredUpstreamJob>,
-    #[allow(dead_code)]
-    #[serde(default)]
-    approval: Option<ApprovedManifestGate>,
+pub struct ApprovedRuntimeIdentity {
+    pub release_tag: String,
+    pub release_commit: String,
+    pub manifest_sha256: String,
+    pub published_at: String,
+    pub observed_at: String,
+    pub source: String,
+    pub supported_windows: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ApprovedManifestGate {
-    #[allow(dead_code)]
-    #[serde(default)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ApprovedRuntimeManifest {
+    schema_version: u32,
     release_tag: String,
-    #[allow(dead_code)]
-    #[serde(default)]
     release_commit: String,
-    #[allow(dead_code)]
-    #[serde(default)]
+    published_at: String,
+    observed_at: String,
+    source: String,
+    supported_windows: Vec<String>,
+    assets: Vec<ApprovedRuntimeAsset>,
+    required_jobs: Vec<RequiredUpstreamJob>,
+    compatibility_records: Vec<CompatibilityRecord>,
+    approval: ApprovedManifestGate,
+}
+
+fn valid_utc_timestamp(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 20
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes[10] == b'T'
+        && bytes[13] == b':'
+        && bytes[16] == b':'
+        && bytes[19] == b'Z'
+        && bytes.iter().enumerate().all(|(index, byte)| {
+            matches!(index, 4 | 7 | 10 | 13 | 16 | 19) || byte.is_ascii_digit()
+        })
+}
+
+fn approved_asset_install_key(entry: &ApprovedRuntimeAsset) -> Result<Option<String>, String> {
+    if entry.backend == "cuda-companion" {
+        return Ok(None);
+    }
+    if entry.backend == "cuda" {
+        let version = entry
+            .cuda_version
+            .as_deref()
+            .ok_or_else(|| format!("Approved CUDA asset {} lacks cudaVersion", entry.name))?;
+        return Ok(Some(format!("cuda-{version}")));
+    }
+    Ok(Some(entry.backend.clone()))
+}
+
+fn parse_approved_manifest(text: &str) -> Result<ApprovedRuntimeManifest, String> {
+    let manifest: ApprovedRuntimeManifest = serde_json::from_str(text)
+        .map_err(|error| format!("Approved runtime manifest is invalid: {error}"))?;
+    if manifest.schema_version != 3 {
+        return Err(format!(
+            "Approved runtime manifest schema {} is unsupported",
+            manifest.schema_version
+        ));
+    }
+    if manifest.release_tag.is_empty()
+        || manifest.release_commit.len() != 40
+        || !manifest
+            .release_commit
+            .chars()
+            .all(|character| character.is_ascii_hexdigit() && !character.is_ascii_uppercase())
+    {
+        return Err("Approved runtime release identity is malformed".into());
+    }
+    let expected_source = format!("{RELEASE_BY_TAG_URL}/{}", manifest.release_tag);
+    if manifest.source != expected_source
+        || !valid_utc_timestamp(&manifest.published_at)
+        || !valid_utc_timestamp(&manifest.observed_at)
+        || manifest.supported_windows.is_empty()
+    {
+        return Err("Approved runtime identity lacks publication or Windows support scope".into());
+    }
+    if manifest.assets.is_empty() {
+        return Err("Approved runtime manifest contains no assets".into());
+    }
+
+    let mut asset_names = HashSet::new();
+    let mut active_install_keys = std::collections::HashMap::new();
+    for asset in &manifest.assets {
+        if !asset_names.insert(asset.name.clone()) {
+            return Err(format!(
+                "Approved runtime asset {} is duplicated",
+                asset.name
+            ));
+        }
+        let expected_url = format!(
+            "https://github.com/ggml-org/llama.cpp/releases/download/{}/{}",
+            manifest.release_tag, asset.name
+        );
+        if asset.url != expected_url
+            || asset.bytes == 0
+            || !approved_digest_is_sha256(&asset.digest)
+            || !matches!(asset.arch.as_str(), "x64" | "arm64")
+        {
+            return Err(format!(
+                "Approved runtime asset {} is malformed",
+                asset.name
+            ));
+        }
+        if let Some(install_key) = approved_asset_install_key(asset)? {
+            let valid_content_anchor =
+                asset
+                    .content_manifest_sha256
+                    .as_deref()
+                    .is_some_and(|digest| {
+                        digest.len() == 64
+                            && digest.chars().all(|character| {
+                                character.is_ascii_hexdigit() && !character.is_ascii_uppercase()
+                            })
+                    });
+            if !asset.dormant && asset.backend != "cuda-companion" && !valid_content_anchor {
+                return Err(format!(
+                    "Approved install key {install_key} lacks a content-manifest anchor"
+                ));
+            }
+            if (asset.dormant || asset.backend == "cuda-companion")
+                && asset.content_manifest_sha256.is_some()
+            {
+                return Err(format!(
+                    "Non-installable asset {} must not carry a content-manifest anchor",
+                    asset.name
+                ));
+            }
+            if !asset.dormant
+                && active_install_keys
+                    .insert(install_key.clone(), asset.backend.clone())
+                    .is_some()
+            {
+                return Err(format!(
+                    "Approved install key {install_key} maps to multiple active assets"
+                ));
+            }
+        }
+    }
+
+    for asset in manifest
+        .assets
+        .iter()
+        .filter(|asset| asset.backend == "cuda")
+    {
+        let companion_name = asset
+            .companion_name
+            .as_deref()
+            .ok_or_else(|| format!("Approved CUDA asset {} lacks a companion", asset.name))?;
+        let companion = manifest
+            .assets
+            .iter()
+            .find(|candidate| candidate.name == companion_name)
+            .ok_or_else(|| format!("Approved CUDA companion {companion_name} is absent"))?;
+        if companion.backend != "cuda-companion"
+            || companion.arch != asset.arch
+            || companion.cuda_version != asset.cuda_version
+            || companion.dormant != asset.dormant
+        {
+            return Err(format!(
+                "Approved CUDA companion {companion_name} does not match {}",
+                asset.name
+            ));
+        }
+    }
+
+    let mut job_names = HashSet::new();
+    let mut job_urls = HashSet::new();
+    let mut mapped_active_keys = HashSet::new();
+    let mut blocked_backends = HashSet::new();
+    for job in &manifest.required_jobs {
+        if !job_names.insert(job.name.clone()) || !job_urls.insert(job.url.clone()) {
+            return Err(format!(
+                "Approved manifest has duplicate required job {}",
+                job.name
+            ));
+        }
+        if job.status != "completed"
+            || job.conclusion.is_empty()
+            || !valid_utc_timestamp(&job.completed_at)
+            || !job
+                .url
+                .starts_with("https://github.com/ggml-org/llama.cpp/actions/")
+            || job.install_keys.is_empty()
+            || job.platforms.is_empty()
+            || job.hardware_classes.is_empty()
+        {
+            return Err(format!(
+                "Required job {} is not terminal or complete",
+                job.name
+            ));
+        }
+        if job.conclusion != "success" {
+            blocked_backends.insert(job.backend.clone());
+        }
+        for install_key in &job.install_keys {
+            let Some(asset_backend) = active_install_keys.get(install_key) else {
+                return Err(format!(
+                    "Required job {} maps unknown active install key {install_key}",
+                    job.name
+                ));
+            };
+            if asset_backend != &job.backend {
+                return Err(format!(
+                    "Required job {} ambiguously maps {install_key} to backend {}",
+                    job.name, job.backend
+                ));
+            }
+            mapped_active_keys.insert(install_key.clone());
+        }
+    }
+    if mapped_active_keys.len() != active_install_keys.len() {
+        return Err("At least one active install key lacks a required-job mapping".into());
+    }
+    let declared_blocked = manifest
+        .approval
+        .blocked_backends
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    if declared_blocked != blocked_backends || manifest.approval.note.trim().is_empty() {
+        return Err("Approval gate does not match terminal required-job results".into());
+    }
+    let mut compatibility_keys = HashSet::new();
+    for record in &manifest.compatibility_records {
+        let key = &record.key;
+        let asset = manifest
+            .assets
+            .iter()
+            .find(|asset| asset.name == key.asset_name)
+            .ok_or_else(|| {
+                format!(
+                    "Compatibility record {} maps an unknown asset",
+                    record.attestation_id
+                )
+            })?;
+        let install_key = approved_asset_install_key(asset)?;
+        let serialized_key = serde_json::to_string(key)
+            .map_err(|error| format!("Compatibility key serialization failed: {error}"))?;
+        if !compatibility_keys.insert(serialized_key)
+            || record.evidence_level != "L4_PRODUCT"
+            || record.attestation_id.trim().is_empty()
+            || record.attestation_id.len() > 256
+            || record.expiry_identity != compatibility_expiry_identity(key)
+            || key.os_build.trim().is_empty()
+            || !matches!(key.architecture.as_str(), "x64" | "arm64")
+            || key.adapter_id.trim().is_empty()
+            || key.driver.trim().is_empty()
+            || key.firmware.trim().is_empty()
+            || key.backend != asset.backend
+            || install_key.as_deref() != Some(key.install_key.as_str())
+            || key.release_commit != manifest.release_commit
+            || key.asset_sha256.len() != 64
+            || !key
+                .asset_sha256
+                .chars()
+                .all(|character| character.is_ascii_hexdigit() && !character.is_ascii_uppercase())
+            || asset.digest != format!("sha256:{}", key.asset_sha256)
+            || asset.dormant
+        {
+            return Err(format!(
+                "Compatibility record {} is malformed or expired",
+                record.attestation_id
+            ));
+        }
+    }
+    Ok(manifest)
+}
+
+pub fn approved_runtime_identity() -> Result<ApprovedRuntimeIdentity, String> {
+    let manifest = parse_approved_manifest(APPROVED_RUNTIMES)?;
+    Ok(ApprovedRuntimeIdentity {
+        release_tag: manifest.release_tag,
+        release_commit: manifest.release_commit,
+        manifest_sha256: hex::encode(Sha256::digest(APPROVED_RUNTIMES.as_bytes())),
+        published_at: manifest.published_at,
+        observed_at: manifest.observed_at,
+        source: manifest.source,
+        supported_windows: manifest.supported_windows,
+    })
+}
+
+pub fn approved_release_url() -> Result<String, String> {
+    let identity = approved_runtime_identity()?;
+    Ok(format!("{RELEASE_BY_TAG_URL}/{}", identity.release_tag))
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ApprovedManifestGate {
     blocked_backends: Vec<String>,
-    #[allow(dead_code)]
-    #[serde(default)]
     note: String,
 }
 
@@ -1353,18 +1777,12 @@ struct ApprovedManifestGate {
 /// absent, so selection can never run without an approved pin.
 pub fn approved_manifest() -> Result<(Vec<ApprovedRuntimeAsset>, Vec<RequiredUpstreamJob>), String>
 {
-    let manifest: ApprovedRuntimeManifest = serde_json::from_str(APPROVED_RUNTIMES)
-        .map_err(|error| format!("Approved runtime manifest is invalid: {error}"))?;
-    if manifest.release_tag != "b10796" {
-        return Err(format!(
-            "Approved runtime manifest pins {}, want b10796",
-            manifest.release_tag
-        ));
-    }
-    if manifest.assets.is_empty() {
-        return Err("Approved runtime manifest contains no assets".into());
-    }
+    let manifest = parse_approved_manifest(APPROVED_RUNTIMES)?;
     Ok((manifest.assets, manifest.required_jobs))
+}
+
+fn approved_compatibility_records() -> Result<Vec<CompatibilityRecord>, String> {
+    Ok(parse_approved_manifest(APPROVED_RUNTIMES)?.compatibility_records)
 }
 
 /// Report whether a required upstream job blocks a backend.
@@ -1372,6 +1790,7 @@ pub fn approved_manifest() -> Result<(Vec<ApprovedRuntimeAsset>, Vec<RequiredUps
 /// A job blocks when it names the backend and its conclusion is not
 /// `success`, or when its status is not `completed`. A queued or failed
 /// job therefore blocks the runtime update for that backend.
+#[cfg(test)]
 pub fn upstream_job_blocks_backend(job: &RequiredUpstreamJob, backend: &str) -> bool {
     if job.backend != backend {
         return false;
@@ -1380,9 +1799,19 @@ pub fn upstream_job_blocks_backend(job: &RequiredUpstreamJob, backend: &str) -> 
 }
 
 /// Report whether any required job blocks a backend.
+#[cfg(test)]
 pub fn backend_is_blocked_by_upstream(jobs: &[RequiredUpstreamJob], backend: &str) -> bool {
     jobs.iter()
         .any(|job| upstream_job_blocks_backend(job, backend))
+}
+
+fn jobs_for_install_key<'a>(
+    jobs: &'a [RequiredUpstreamJob],
+    install_key: &str,
+) -> Vec<&'a RequiredUpstreamJob> {
+    jobs.iter()
+        .filter(|job| job.install_keys.iter().any(|key| key == install_key))
+        .collect()
 }
 
 fn approved_manifest_tag(approved: &[ApprovedRuntimeAsset]) -> Option<String> {
@@ -1412,14 +1841,33 @@ pub fn build_approved_catalog(
     if approved.is_empty() {
         return Err("Approved runtime manifest contains no assets".into());
     }
-    let manifest_tag = approved_manifest_tag(approved).unwrap_or("b10796".to_string());
+    let manifest_tag = approved_manifest_tag(approved).ok_or_else(|| {
+        "Approved assets do not contain one authoritative release tag".to_string()
+    })?;
     if release.tag_name != manifest_tag {
         return Err(format!(
             "Release {} is not the approved runtime {}",
             release.tag_name, manifest_tag
         ));
     }
+    for entry in approved
+        .iter()
+        .filter(|entry| entry.arch == hardware.architecture)
+    {
+        let asset = release
+            .assets
+            .iter()
+            .find(|asset| asset.name == entry.name)
+            .ok_or_else(|| {
+                format!(
+                    "Approved runtime asset {} is missing from release {}",
+                    entry.name, release.tag_name
+                )
+            })?;
+        bind_asset_to_manifest(asset, approved)?;
+    }
     let mut options = Vec::new();
+    let mut availability = Vec::new();
     for asset in release.assets.iter().filter(|asset| {
         let lower = asset.name.to_ascii_lowercase();
         lower.starts_with("llama-")
@@ -1440,11 +1888,6 @@ pub fn build_approved_catalog(
             return Err(format!(
                 "Runtime asset {} backend {backend} differs from approved {}",
                 asset.name, entry.backend
-            ));
-        }
-        if backend_is_blocked_by_upstream(jobs, backend) {
-            return Err(format!(
-                "Runtime backend {backend} is blocked: a required upstream job failed or remains queued"
             ));
         }
         let (label, description, compatibility) = label_and_description(backend, &asset.name);
@@ -1476,6 +1919,49 @@ pub fn build_approved_catalog(
         } else {
             backend.to_string()
         };
+        let required_jobs = jobs_for_install_key(jobs, &install_key);
+        let evidence_urls = required_jobs
+            .iter()
+            .map(|job| job.url.clone())
+            .collect::<Vec<_>>();
+        if entry.dormant {
+            availability.push(BackendAvailability {
+                install_key,
+                backend: backend.into(),
+                status: BackendAvailabilityStatus::Dormant,
+                reason: "The approved asset is retained for identity checks but is not enabled for installation."
+                    .into(),
+                blocking_jobs: Vec::new(),
+                evidence_urls,
+            });
+            continue;
+        }
+        let blocking_jobs = required_jobs
+            .iter()
+            .filter(|job| job.status != "completed" || job.conclusion != "success")
+            .collect::<Vec<_>>();
+        if !blocking_jobs.is_empty() {
+            availability.push(BackendAvailability {
+                install_key,
+                backend: backend.into(),
+                status: BackendAvailabilityStatus::Blocked,
+                reason: format!(
+                    "{} required upstream job(s) failed or remain queued.",
+                    blocking_jobs.len()
+                ),
+                blocking_jobs: blocking_jobs.iter().map(|job| job.name.clone()).collect(),
+                evidence_urls: blocking_jobs.iter().map(|job| job.url.clone()).collect(),
+            });
+            continue;
+        }
+        availability.push(BackendAvailability {
+            install_key: install_key.clone(),
+            backend: backend.into(),
+            status: BackendAvailabilityStatus::Available,
+            reason: "Every mapped upstream job completed successfully.".into(),
+            blocking_jobs: Vec::new(),
+            evidence_urls,
+        });
         options.push(RuntimeOption {
             id: format!("{}:{install_key}", release.tag_name),
             label,
@@ -1488,7 +1974,7 @@ pub fn build_approved_catalog(
             recommended: false,
         });
     }
-    if options.is_empty() {
+    if availability.is_empty() {
         return Err(format!(
             "Release {} has no approved Windows {} runtime archives",
             release.tag_name, hardware.architecture
@@ -1498,127 +1984,135 @@ pub fn build_approved_catalog(
         tag: release.tag_name.clone(),
         published_at: release.published_at.clone().unwrap_or_default(),
         options,
+        availability,
+        origin: RuntimeCatalogOrigin::Network,
+        warning: None,
+        recommendation_reason: "Recommendation has not been evaluated.".into(),
     })
 }
 
-/// Recommend one approved catalog entry from device evidence.
+/// Recommend one approved catalog entry from exact product evidence.
 ///
-/// Vendor detection is a hint only. ROCm requires exact AMD matrix
-/// evidence. SYCL requires Intel Arc or Xe device evidence. CUDA requires
-/// a compatible driver branch plus a matching CUDA major version. Unknown
-/// combinations fall back to Vulkan or CPU. OpenVINO and OpenCL stay
-/// catalog entries without automatic preference. Arm64 assets stay
-/// dormant on x64 hosts.
-pub fn recommend_capability_option<'a>(
+/// An accelerator requires an exact L4 compatibility record.
+/// Every unlisted or mismatched configuration falls back to CPU.
+#[cfg(test)]
+fn recommend_capability_option<'a>(
     options: &'a mut [RuntimeOption],
     hardware: &HardwareInfo,
 ) -> Option<&'a RuntimeOption> {
-    let recommended_index = if device_adapters(hardware).is_empty() {
-        options.iter().position(|option| option.backend == "cpu")
-    } else {
-        capability_recommendation_index(options, hardware)
-            .or_else(|| options.iter().position(|option| option.backend == "vulkan"))
-            .or_else(|| options.iter().position(|option| option.backend == "cpu"))
-    };
+    apply_capability_recommendation(options, hardware, None);
+    options.iter().find(|option| option.recommended)
+}
+
+fn apply_capability_recommendation(
+    options: &mut [RuntimeOption],
+    hardware: &HardwareInfo,
+    selected_adapter_id: Option<&str>,
+) -> String {
+    for option in options.iter_mut() {
+        option.recommended = false;
+    }
+    let exact_index = compatibility_recommendation_index(options, hardware, selected_adapter_id);
+    let recommended_index = exact_index
+        .or_else(|| options.iter().position(|option| option.backend == "cpu"))
+        .or_else(|| options.iter().position(|option| option.backend == "vulkan"));
     if let Some(index) = recommended_index {
         options[index].recommended = true;
     }
     options.sort_by_key(|option| (!option.recommended, option.backend.clone()));
-    options.iter().find(|option| option.recommended)
+    if exact_index.is_some() {
+        "Exact L4 product compatibility record matched the selected adapter, Windows build, driver, runtime commit, and asset digest."
+            .into()
+    } else if hardware.adapters.len() > 1 && selected_adapter_id.is_none() {
+        "CPU fallback: select one adapter before Localmotive checks exact L4 product compatibility records."
+            .into()
+    } else if selected_adapter_id.is_some() {
+        "CPU fallback: the selected adapter has no exact L4 product compatibility record for this Windows build, driver, firmware, runtime commit, and asset."
+            .into()
+    } else if hardware.adapters.is_empty() {
+        "CPU fallback: no accelerator with direct per-adapter evidence was detected.".into()
+    } else {
+        "CPU fallback: the detected adapter has no exact L4 product compatibility record for this Windows build, driver, firmware, runtime commit, and asset."
+            .into()
+    }
 }
 
-fn capability_recommendation_index(
+pub fn recommend_catalog_for_adapter(
+    catalog: &mut RuntimeCatalog,
+    hardware: &HardwareInfo,
+    selected_adapter_id: Option<&str>,
+) {
+    catalog.recommendation_reason =
+        apply_capability_recommendation(&mut catalog.options, hardware, selected_adapter_id);
+}
+
+fn compatibility_recommendation_index(
     options: &[RuntimeOption],
     hardware: &HardwareInfo,
+    selected_adapter_id: Option<&str>,
 ) -> Option<usize> {
-    if hardware.architecture != "x64" {
-        return None;
-    }
-    let adapters = device_adapters(hardware);
-    if require_explicit_device_selection(&adapters, None).is_err() {
-        return None;
-    }
-    let adapter = adapters.first()?;
-    match adapter_vendor(adapter, hardware) {
-        VendorClass::Nvidia => nvidia_cuda_index(options, hardware),
-        VendorClass::Amd => amd_backend_index(options, adapter),
-        VendorClass::Intel => intel_backend_index(options, adapter),
-        VendorClass::Qualcomm => None,
-        VendorClass::Other => None,
-    }
+    let os_build = current_windows_build()?;
+    let identity = approved_runtime_identity().ok()?;
+    let records = approved_compatibility_records().ok()?;
+    compatibility_recommendation_index_for_evidence(
+        options,
+        hardware,
+        selected_adapter_id,
+        &os_build,
+        &records,
+        &identity.release_commit,
+    )
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum VendorClass {
-    Nvidia,
-    Amd,
-    Intel,
-    Qualcomm,
-    Other,
-}
-
-fn adapter_vendor(adapter: &str, hardware: &HardwareInfo) -> VendorClass {
-    let combined = format!("{} {}", adapter, hardware.vendor).to_ascii_lowercase();
-    if combined.contains("nvidia") || combined.contains("geforce") || combined.contains("quadro") {
-        VendorClass::Nvidia
-    } else if combined.contains("qualcomm") || combined.contains("adreno") {
-        VendorClass::Qualcomm
-    } else if combined.contains("amd") || combined.contains("radeon") {
-        VendorClass::Amd
-    } else if combined.contains("intel")
-        || combined.contains("arc")
-        || combined.contains("iris")
-        || combined.contains("uhd")
-        || combined.contains("hd graphics")
-    {
-        VendorClass::Intel
-    } else {
-        VendorClass::Other
-    }
-}
-
-fn device_adapters(hardware: &HardwareInfo) -> Vec<String> {
-    if !hardware.adapters.is_empty() {
-        return hardware
+fn compatibility_recommendation_index_for_evidence(
+    options: &[RuntimeOption],
+    hardware: &HardwareInfo,
+    selected_adapter_id: Option<&str>,
+    os_build: &str,
+    records: &[CompatibilityRecord],
+    release_commit: &str,
+) -> Option<usize> {
+    let adapter = match selected_adapter_id {
+        Some(adapter_id) => hardware
             .adapters
             .iter()
-            .map(|adapter| adapter.name.clone())
-            .collect();
-    }
-    hardware.gpu_names.clone()
+            .find(|adapter| adapter.adapter_id == adapter_id)?,
+        None if hardware.adapters.len() == 1 => hardware.adapters.first()?,
+        None => return None,
+    };
+    options.iter().enumerate().find_map(|(index, option)| {
+        records
+            .iter()
+            .any(|record| {
+                compatibility_record_matches(
+                    record,
+                    option,
+                    adapter,
+                    os_build,
+                    None,
+                    &hardware.architecture,
+                    release_commit,
+                )
+            })
+            .then_some(index)
+    })
 }
 
-fn mixed_adapter_vendors(adapters: &[String]) -> bool {
-    let mut kinds = std::collections::HashSet::new();
-    for adapter in adapters {
-        let lower = adapter.to_ascii_lowercase();
-        if lower.contains("nvidia") || lower.contains("geforce") || lower.contains("quadro") {
-            kinds.insert("nvidia");
-        } else if lower.contains("amd") || lower.contains("radeon") {
-            kinds.insert("amd");
-        } else if lower.contains("intel")
-            || lower.contains("arc")
-            || lower.contains("iris")
-            || lower.contains("uhd")
-        {
-            kinds.insert("intel");
-        } else if lower.contains("qualcomm") || lower.contains("adreno") {
-            kinds.insert("qualcomm");
-        } else {
-            kinds.insert("other");
-        }
-    }
-    kinds.len() > 1
+#[cfg(windows)]
+fn current_windows_build() -> Option<String> {
+    Some(windows_version::OsVersion::current().build.to_string())
+}
+
+#[cfg(not(windows))]
+fn current_windows_build() -> Option<String> {
+    None
 }
 
 /// Require explicit device selection on multi-adapter systems.
 ///
-/// Returns the selected adapter name when exactly one accelerator
-/// vendor is present, or when the caller names one observed adapter
-/// explicitly. Refuses automatic preference when two accelerator
-/// vendors are present without an explicit choice, so selection never
-/// discards a second adapter silently. Finding A-07 records this gap.
-pub fn require_explicit_device_selection(
+/// Return one adapter only after an explicit multi-adapter selection.
+#[cfg(test)]
+fn require_explicit_device_selection(
     adapters: &[String],
     selected: Option<&str>,
 ) -> Result<String, String> {
@@ -1637,136 +2131,10 @@ pub fn require_explicit_device_selection(
                 format!("Selected adapter {choice} is not in the detected adapter list")
             });
     }
-    if mixed_adapter_vendors(adapters) {
-        return Err(
-            "Multiple accelerator vendors were detected; choose one adapter explicitly before installing a runtime"
-                .into(),
-        );
-    }
-    Ok(adapters[0].clone())
-}
-
-fn nvidia_cuda_index(options: &[RuntimeOption], hardware: &HardwareInfo) -> Option<usize> {
-    let major = hardware.cuda_major?;
-    options
-        .iter()
-        .enumerate()
-        .filter(|(_, option)| option.backend == "cuda")
-        .filter(|(_, option)| {
-            manifest_cuda_major(option).is_some_and(|runtime_major| runtime_major <= major)
-        })
-        .filter(|(_, option)| cuda_driver_branch_supports(hardware, option))
-        .max_by_key(|(_, option)| manifest_cuda_major(option).unwrap_or(0))
-        .map(|(index, _)| index)
-}
-
-fn manifest_cuda_major(option: &RuntimeOption) -> Option<u16> {
-    option
-        .install_key
-        .strip_prefix("cuda-")?
-        .split('.')
-        .next()?
-        .parse()
-        .ok()
-}
-
-fn cuda_driver_branch_supports(hardware: &HardwareInfo, option: &RuntimeOption) -> bool {
-    let Some(runtime_major) = manifest_cuda_major(option) else {
-        return false;
-    };
-    let Some(driver_branch) = driver_branch(&hardware.driver_version) else {
-        return false;
-    };
-    match runtime_major {
-        13 => driver_branch >= 580,
-        12 => driver_branch >= 525,
-        _ => false,
-    }
-}
-
-fn driver_branch(version: &str) -> Option<u32> {
-    version
-        .split(|c: char| !c.is_ascii_digit())
-        .find(|part| !part.is_empty())?
-        .parse()
-        .ok()
-}
-
-/// Require exact AMD matrix evidence before ROCm preference.
-///
-/// Supported families come from the AMD ROCm 7.14 compatibility snapshot
-/// in `research/0.4/evidence/vendor/amd-rocm-compatibility.md`: RDNA 2
-/// (`gfx1030`), RDNA 3 (`gfx1100`/`gfx1101`/`gfx1102`), RDNA 4
-/// (`gfx1200`/`gfx1201`), RDNA 3.5 APUs (`gfx1150`-`gfx1153`, `gfx1103`),
-/// and listed Instinct cards on Windows 11. Anything else keeps Vulkan
-/// or CPU fallback.
-fn amd_backend_index(options: &[RuntimeOption], adapter: &str) -> Option<usize> {
-    if amd_matrix_supports_rocm(adapter) {
-        options.iter().position(|option| option.backend == "rocm")
-    } else {
-        None
-    }
-}
-
-fn amd_matrix_supports_rocm(adapter: &str) -> bool {
-    let lower = adapter.to_ascii_lowercase();
-    if lower.contains("instinct") {
-        return lower.contains("mi350")
-            || lower.contains("mi300")
-            || lower.contains("mi200")
-            || lower.contains("mi100");
-    }
-    if lower.contains("radeon ai pro")
-        || lower.contains("radeon pro")
-        || lower.contains("radeon rx")
-        || lower.contains("ryzen ai")
-    {
-        return true;
-    }
-    if lower.contains("radeon 8")
-        || lower.contains("radeon 7")
-        || lower.contains("radeon 6")
-        || lower.contains("rdna")
-    {
-        return true;
-    }
-    lower.contains("gfx1030")
-        || lower.contains("gfx1100")
-        || lower.contains("gfx1101")
-        || lower.contains("gfx1102")
-        || lower.contains("gfx1150")
-        || lower.contains("gfx1151")
-        || lower.contains("gfx1152")
-        || lower.contains("gfx1153")
-        || lower.contains("gfx1103")
-        || lower.contains("gfx1200")
-        || lower.contains("gfx1201")
-}
-
-/// Require Intel Arc or Xe device evidence before SYCL preference.
-///
-/// Families come from the OpenVINO 2026 system-requirements snapshot in
-/// `research/0.4/evidence/vendor/intel-openvino-requirements.md`. Arc,
-/// Iris Xe, UHD, HD Graphics, Flex, and Max cards qualify. Unknown Intel
-/// names keep Vulkan or CPU fallback.
-fn intel_backend_index(options: &[RuntimeOption], adapter: &str) -> Option<usize> {
-    if intel_matrix_supports_sycl(adapter) {
-        options.iter().position(|option| option.backend == "sycl")
-    } else {
-        None
-    }
-}
-
-fn intel_matrix_supports_sycl(adapter: &str) -> bool {
-    let lower = adapter.to_ascii_lowercase();
-    lower.contains("arc")
-        || lower.contains("iris xe")
-        || lower.contains("iris")
-        || lower.contains("uhd")
-        || lower.contains("hd graphics")
-        || lower.contains("flex")
-        || lower.contains("max")
-        || lower.contains("xe")
+    Err(
+        "Multiple accelerators were detected; choose one adapter explicitly before installing a runtime"
+            .into(),
+    )
 }
 
 /// Recommend one approved catalog entry from already-bound options.
@@ -1840,53 +2208,454 @@ fn managed_runtime_root_in(primary: &Path, legacy: &Path) -> Result<PathBuf, Str
     Ok(legacy.to_path_buf())
 }
 
-fn github_client() -> Result<reqwest::blocking::Client, String> {
+const RUNTIME_CATALOG_CACHE_SCHEMA: u32 = 2;
+const MAX_RUNTIME_CATALOG_BYTES: usize = 2 * 1024 * 1024;
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RuntimeCatalogCacheRecord {
+    schema_version: u32,
+    url: String,
+    release_tag: String,
+    release_commit: String,
+    manifest_sha256: String,
+    etag: Option<String>,
+    observed_at_ms: u64,
+    body_sha256: String,
+    body: String,
+}
+
+fn catalog_cache_record(
+    identity: &ApprovedRuntimeIdentity,
+    etag: Option<String>,
+    body: String,
+) -> RuntimeCatalogCacheRecord {
+    RuntimeCatalogCacheRecord {
+        schema_version: RUNTIME_CATALOG_CACHE_SCHEMA,
+        url: identity.source.clone(),
+        release_tag: identity.release_tag.clone(),
+        release_commit: identity.release_commit.clone(),
+        manifest_sha256: identity.manifest_sha256.clone(),
+        etag,
+        observed_at_ms: observed_at_ms(),
+        body_sha256: hex::encode(Sha256::digest(body.as_bytes())),
+        body,
+    }
+}
+
+fn validate_catalog_cache(
+    bytes: &[u8],
+    identity: &ApprovedRuntimeIdentity,
+) -> Result<RuntimeCatalogCacheRecord, String> {
+    if bytes.len() > MAX_RUNTIME_CATALOG_BYTES {
+        return Err("Runtime catalog cache exceeds the 2 MiB limit".into());
+    }
+    let record: RuntimeCatalogCacheRecord = serde_json::from_slice(bytes)
+        .map_err(|error| format!("Runtime catalog cache is invalid: {error}"))?;
+    if record.schema_version != RUNTIME_CATALOG_CACHE_SCHEMA
+        || record.url != identity.source
+        || record.release_tag != identity.release_tag
+        || record.release_commit != identity.release_commit
+        || record.manifest_sha256 != identity.manifest_sha256
+        || record.observed_at_ms == 0
+    {
+        return Err("Runtime catalog cache key does not match the approved release".into());
+    }
+    let actual_digest = hex::encode(Sha256::digest(record.body.as_bytes()));
+    if actual_digest != record.body_sha256 {
+        return Err("Runtime catalog cache body digest does not match".into());
+    }
+    let release: GithubRelease = serde_json::from_str(&record.body)
+        .map_err(|error| format!("Runtime catalog cache body is invalid: {error}"))?;
+    if release.tag_name != identity.release_tag
+        || release.target_commitish != identity.release_commit
+    {
+        return Err("Runtime catalog cache release identity does not match approval".into());
+    }
+    Ok(record)
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeCatalogErrorKind {
+    Busy,
+    Timeout,
+    RateLimited,
+    Http,
+    BodyTooLarge,
+    InvalidResponse,
+    TrustFailure,
+    CacheFailure,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeCatalogError {
+    pub kind: RuntimeCatalogErrorKind,
+    pub message: String,
+    pub retry_after_seconds: Option<u64>,
+}
+
+impl RuntimeCatalogError {
+    fn new(kind: RuntimeCatalogErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+            retry_after_seconds: None,
+        }
+    }
+}
+
+impl std::fmt::Display for RuntimeCatalogError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+#[derive(Debug)]
+enum CatalogHttpResponse {
+    NotModified,
+    Body { body: String, etag: Option<String> },
+}
+
+const RUNTIME_CATALOG_TIMEOUT: Duration = Duration::from_secs(15);
+
+fn runtime_catalog_client(timeout: Duration) -> Result<reqwest::Client, RuntimeCatalogError> {
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(
         reqwest::header::ACCEPT,
         reqwest::header::HeaderValue::from_static("application/vnd.github+json"),
     );
-    reqwest::blocking::Client::builder()
+    reqwest::Client::builder()
         .user_agent(format!("Localmotive/{}", env!("CARGO_PKG_VERSION")))
         .default_headers(headers)
-        .connect_timeout(Duration::from_secs(20))
-        .timeout(Duration::from_secs(900))
+        .connect_timeout(timeout.min(Duration::from_secs(5)))
+        .timeout(timeout)
         .build()
-        .map_err(|error| error.to_string())
+        .map_err(|error| {
+            RuntimeCatalogError::new(
+                RuntimeCatalogErrorKind::Http,
+                format!("Could not create the runtime catalog client: {error}"),
+            )
+        })
 }
 
-pub fn fetch_catalog(hardware: &HardwareInfo) -> Result<RuntimeCatalog, String> {
-    let (approved, jobs) = approved_manifest()?;
-    let body = github_client()?
-        .get(RELEASES_URL)
-        .send()
-        .and_then(reqwest::blocking::Response::error_for_status)
-        .map_err(|error| format!("GitHub release lookup failed: {error}"))?
-        .text()
-        .map_err(|error| format!("GitHub release body could not be read: {error}"))?;
-    let releases = serde_json::from_str::<Vec<GithubRelease>>(&body)
-        .map_err(|error| format!("GitHub release response was invalid at {error}"))?;
-    let manifest_tag = approved_manifest_tag(&approved).unwrap_or("b10796".to_string());
-    let release = releases
-        .iter()
-        .find(|release| release.tag_name == manifest_tag)
-        .ok_or_else(|| {
-            format!("Approved runtime {manifest_tag} is not in the recent GitHub releases")
-        })?;
-    let catalog = build_approved_catalog(release, hardware, &approved, &jobs)?;
-    if catalog.options.is_empty() {
-        return Err(format!(
-            "Release {} has no Windows {} runtime archives",
-            catalog.tag, hardware.architecture
+async fn fetch_catalog_http(
+    client: &reqwest::Client,
+    url: &str,
+    etag: Option<&str>,
+) -> Result<CatalogHttpResponse, RuntimeCatalogError> {
+    let mut request = client.get(url);
+    if let Some(etag) = etag {
+        request = request.header(reqwest::header::IF_NONE_MATCH, etag);
+    }
+    let mut response = request.send().await.map_err(|error| {
+        let kind = if error.is_timeout() {
+            RuntimeCatalogErrorKind::Timeout
+        } else {
+            RuntimeCatalogErrorKind::Http
+        };
+        RuntimeCatalogError::new(kind, format!("Runtime catalog request failed: {error}"))
+    })?;
+    if response.status() == reqwest::StatusCode::NOT_MODIFIED {
+        return Ok(CatalogHttpResponse::NotModified);
+    }
+    if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        let retry_after_seconds = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse().ok());
+        let mut error = RuntimeCatalogError::new(
+            RuntimeCatalogErrorKind::RateLimited,
+            "GitHub rate-limited the runtime catalog request. Retry after the indicated delay.",
+        );
+        error.retry_after_seconds = retry_after_seconds;
+        return Err(error);
+    }
+    if !response.status().is_success() {
+        return Err(RuntimeCatalogError::new(
+            RuntimeCatalogErrorKind::Http,
+            format!(
+                "GitHub returned HTTP {} for the approved runtime catalog.",
+                response.status().as_u16()
+            ),
         ));
     }
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_RUNTIME_CATALOG_BYTES as u64)
+    {
+        return Err(RuntimeCatalogError::new(
+            RuntimeCatalogErrorKind::BodyTooLarge,
+            "Runtime catalog metadata exceeds the 2 MiB limit.",
+        ));
+    }
+    let etag = response
+        .headers()
+        .get(reqwest::header::ETAG)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|error| {
+        let kind = if error.is_timeout() {
+            RuntimeCatalogErrorKind::Timeout
+        } else {
+            RuntimeCatalogErrorKind::Http
+        };
+        RuntimeCatalogError::new(kind, format!("Runtime catalog body failed: {error}"))
+    })? {
+        if body
+            .len()
+            .checked_add(chunk.len())
+            .is_none_or(|length| length > MAX_RUNTIME_CATALOG_BYTES)
+        {
+            return Err(RuntimeCatalogError::new(
+                RuntimeCatalogErrorKind::BodyTooLarge,
+                "Runtime catalog metadata exceeds the 2 MiB limit.",
+            ));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    let body = String::from_utf8(body).map_err(|_| {
+        RuntimeCatalogError::new(
+            RuntimeCatalogErrorKind::InvalidResponse,
+            "Runtime catalog metadata is not UTF-8.",
+        )
+    })?;
+    Ok(CatalogHttpResponse::Body { body, etag })
+}
+
+fn runtime_catalog_cache_path() -> Result<PathBuf, String> {
+    let runtime_root = runtime_data_dir("Localmotive");
+    let product_root = runtime_root
+        .parent()
+        .ok_or_else(|| "Could not resolve the Localmotive data directory".to_string())?;
+    Ok(product_root.join("cache").join("runtime-catalog-v1.json"))
+}
+
+fn read_catalog_cache(
+    path: &Path,
+    identity: &ApprovedRuntimeIdentity,
+) -> Result<Option<RuntimeCatalogCacheRecord>, String> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("Could not inspect runtime catalog cache: {error}")),
+    };
+    if !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || is_reparse_point(&metadata)
+        || metadata.len() > MAX_RUNTIME_CATALOG_BYTES as u64
+    {
+        return Err("Runtime catalog cache is not a bounded regular file".into());
+    }
+    let bytes = fs::read(path).map_err(|error| format!("Could not read catalog cache: {error}"))?;
+    validate_catalog_cache(&bytes, identity).map(Some)
+}
+
+fn write_catalog_cache(path: &Path, record: &RuntimeCatalogCacheRecord) -> Result<(), String> {
+    let bytes = serde_json::to_vec(record)
+        .map_err(|error| format!("Could not serialize runtime catalog cache: {error}"))?;
+    if bytes.len() > MAX_RUNTIME_CATALOG_BYTES {
+        return Err("Runtime catalog cache exceeds the 2 MiB limit".into());
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| "Runtime catalog cache has no parent directory".to_string())?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("Could not create runtime catalog cache directory: {error}"))?;
+    let parent_metadata = fs::symlink_metadata(parent)
+        .map_err(|error| format!("Could not inspect runtime catalog cache directory: {error}"))?;
+    if !parent_metadata.is_dir()
+        || parent_metadata.file_type().is_symlink()
+        || is_reparse_point(&parent_metadata)
+    {
+        return Err("Runtime catalog cache directory is a link or reparse point".into());
+    }
+    if fs::symlink_metadata(path).is_ok_and(|metadata| {
+        !metadata.is_file() || metadata.file_type().is_symlink() || is_reparse_point(&metadata)
+    }) {
+        return Err("Runtime catalog cache target is not a regular file".into());
+    }
+    let temporary = parent.join(format!(
+        ".runtime-catalog-{}-{}.tmp",
+        std::process::id(),
+        observed_at_ms()
+    ));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .map_err(|error| format!("Could not create runtime catalog cache: {error}"))?;
+    let result = (|| {
+        io::Write::write_all(&mut file, &bytes)
+            .map_err(|error| format!("Could not write runtime catalog cache: {error}"))?;
+        file.sync_all()
+            .map_err(|error| format!("Could not flush runtime catalog cache: {error}"))?;
+        drop(file);
+        if path.exists() {
+            fs::remove_file(path)
+                .map_err(|error| format!("Could not replace runtime catalog cache: {error}"))?;
+        }
+        fs::rename(&temporary, path)
+            .map_err(|error| format!("Could not publish runtime catalog cache: {error}"))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+fn catalog_from_release(
+    release: &GithubRelease,
+    hardware: &HardwareInfo,
+    approved: &[ApprovedRuntimeAsset],
+    jobs: &[RequiredUpstreamJob],
+    origin: RuntimeCatalogOrigin,
+    warning: Option<String>,
+) -> Result<RuntimeCatalog, String> {
+    let identity = approved_runtime_identity()?;
+    if release.tag_name != identity.release_tag
+        || release.target_commitish != identity.release_commit
+        || release.published_at.as_deref() != Some(identity.published_at.as_str())
+    {
+        return Err(format!(
+            "Approved runtime release tag, commit, or publication identity changed for {}",
+            identity.release_tag
+        ));
+    }
+    let catalog = build_approved_catalog(release, hardware, approved, jobs)?;
     let mut options = catalog.options;
-    recommend_capability_option(&mut options, hardware);
+    let recommendation_reason = apply_capability_recommendation(&mut options, hardware, None);
     Ok(RuntimeCatalog {
         tag: catalog.tag,
         published_at: catalog.published_at,
         options,
+        availability: catalog.availability,
+        origin,
+        warning,
+        recommendation_reason,
     })
+}
+
+fn cache_catalog(
+    record: &RuntimeCatalogCacheRecord,
+    hardware: &HardwareInfo,
+    approved: &[ApprovedRuntimeAsset],
+    jobs: &[RequiredUpstreamJob],
+    warning: String,
+) -> Result<RuntimeCatalog, RuntimeCatalogError> {
+    let release = serde_json::from_str::<GithubRelease>(&record.body).map_err(|error| {
+        RuntimeCatalogError::new(
+            RuntimeCatalogErrorKind::CacheFailure,
+            format!("Validated runtime catalog cache could not be parsed: {error}"),
+        )
+    })?;
+    catalog_from_release(
+        &release,
+        hardware,
+        approved,
+        jobs,
+        RuntimeCatalogOrigin::Cache,
+        Some(warning),
+    )
+    .map_err(|error| RuntimeCatalogError::new(RuntimeCatalogErrorKind::TrustFailure, error))
+}
+
+pub async fn fetch_catalog(hardware: &HardwareInfo) -> Result<RuntimeCatalog, RuntimeCatalogError> {
+    let (approved, jobs) = approved_manifest()
+        .map_err(|error| RuntimeCatalogError::new(RuntimeCatalogErrorKind::TrustFailure, error))?;
+    let identity = approved_runtime_identity()
+        .map_err(|error| RuntimeCatalogError::new(RuntimeCatalogErrorKind::TrustFailure, error))?;
+    let cache_path = runtime_catalog_cache_path()
+        .map_err(|error| RuntimeCatalogError::new(RuntimeCatalogErrorKind::CacheFailure, error))?;
+    let (cached, cache_warning) = match read_catalog_cache(&cache_path, &identity) {
+        Ok(record) => (record, None),
+        Err(error) => (
+            None,
+            Some(format!("The saved runtime catalog was rejected: {error}")),
+        ),
+    };
+    let client = runtime_catalog_client(RUNTIME_CATALOG_TIMEOUT)?;
+    let url = approved_release_url()
+        .map_err(|error| RuntimeCatalogError::new(RuntimeCatalogErrorKind::TrustFailure, error))?;
+    let response = fetch_catalog_http(
+        &client,
+        &url,
+        cached.as_ref().and_then(|record| record.etag.as_deref()),
+    )
+    .await;
+    match response {
+        Ok(CatalogHttpResponse::NotModified) => {
+            let record = cached.ok_or_else(|| {
+                RuntimeCatalogError::new(
+                    RuntimeCatalogErrorKind::InvalidResponse,
+                    "GitHub returned 304 without a validated runtime catalog cache.",
+                )
+            })?;
+            cache_catalog(
+                &record,
+                hardware,
+                &approved,
+                &jobs,
+                "GitHub confirmed the saved runtime catalog is current.".into(),
+            )
+        }
+        Ok(CatalogHttpResponse::Body { body, etag }) => {
+            let release = serde_json::from_str::<GithubRelease>(&body).map_err(|error| {
+                RuntimeCatalogError::new(
+                    RuntimeCatalogErrorKind::InvalidResponse,
+                    format!("GitHub release response was invalid: {error}"),
+                )
+            })?;
+            let mut catalog = catalog_from_release(
+                &release,
+                hardware,
+                &approved,
+                &jobs,
+                RuntimeCatalogOrigin::Network,
+                cache_warning,
+            )
+            .map_err(|error| {
+                RuntimeCatalogError::new(RuntimeCatalogErrorKind::TrustFailure, error)
+            })?;
+            let record = catalog_cache_record(&identity, etag, body);
+            if let Err(error) = write_catalog_cache(&cache_path, &record) {
+                catalog.warning = Some(match catalog.warning {
+                    Some(existing) => format!("{existing} Could not save catalog cache: {error}"),
+                    None => format!("Could not save catalog cache: {error}"),
+                });
+            }
+            Ok(catalog)
+        }
+        Err(error) => {
+            if let Some(record) = cached {
+                return cache_catalog(
+                    &record,
+                    hardware,
+                    &approved,
+                    &jobs,
+                    format!("Using the validated saved catalog because refresh failed: {error}"),
+                );
+            }
+            Err(error)
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn fetch_runtime_setup_with<D, F>(
+    detect: D,
+    fetch: F,
+) -> Result<(HardwareInfo, RuntimeCatalog), String>
+where
+    D: FnOnce() -> HardwareInfo,
+    F: FnOnce(&HardwareInfo) -> Result<RuntimeCatalog, String>,
+{
+    let hardware = detect();
+    let catalog = fetch(&hardware)?;
+    Ok((hardware, catalog))
 }
 
 fn expected_sha256(asset: &GithubAsset) -> Option<&str> {
@@ -1895,6 +2664,7 @@ fn expected_sha256(asset: &GithubAsset) -> Option<&str> {
 
 const MAX_RUNTIME_DOWNLOAD_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 
+#[cfg(test)]
 fn copy_download_with_limit<R: Read, W: io::Write>(
     reader: &mut R,
     writer: &mut W,
@@ -1926,60 +2696,6 @@ fn copy_download_with_limit<R: Read, W: io::Write>(
     Ok((written, hex::encode(hasher.finalize())))
 }
 
-fn download_asset(
-    client: &reqwest::blocking::Client,
-    asset: &GithubAsset,
-    destination: &Path,
-) -> Result<(), String> {
-    if asset.size > MAX_RUNTIME_DOWNLOAD_BYTES {
-        return Err(format!("Runtime asset is too large: {}", asset.name));
-    }
-    let mut response = client
-        .get(&asset.browser_download_url)
-        .send()
-        .and_then(reqwest::blocking::Response::error_for_status)
-        .map_err(|error| format!("Download failed for {}: {error}", asset.name))?;
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(destination)
-        .map_err(|error| error.to_string())?;
-    let copy_result = copy_download_with_limit(
-        &mut response,
-        &mut file,
-        if asset.size > 0 {
-            asset.size
-        } else {
-            MAX_RUNTIME_DOWNLOAD_BYTES
-        },
-    );
-    let (written, actual_sha256) = match copy_result {
-        Ok(result) => result,
-        Err(error) => {
-            drop(file);
-            let _ = fs::remove_file(destination);
-            return Err(error);
-        }
-    };
-    file.sync_all().map_err(|error| error.to_string())?;
-    if asset.size > 0 && written != asset.size {
-        drop(file);
-        let _ = fs::remove_file(destination);
-        return Err(format!(
-            "Download size mismatch for {}: expected {}, received {}",
-            asset.name, asset.size, written
-        ));
-    }
-    if let Some(expected) = expected_sha256(asset) {
-        if !actual_sha256.eq_ignore_ascii_case(expected) {
-            drop(file);
-            let _ = fs::remove_file(destination);
-            return Err(format!("SHA-256 mismatch for {}", asset.name));
-        }
-    }
-    Ok(())
-}
-
 #[derive(Clone, Copy)]
 struct ArchiveLimits {
     max_entries: usize,
@@ -1995,13 +2711,28 @@ const RUNTIME_ARCHIVE_LIMITS: ArchiveLimits = ArchiveLimits {
     max_path_bytes: 1_024,
 };
 
-fn extract_zip_with_limits(
+fn open_verified_capability_directory(path: &Path, label: &str) -> Result<CapDir, String> {
+    validate_no_reparse_ancestors(label, path)?;
+    let canonical =
+        fs::canonicalize(path).map_err(|error| format!("Could not resolve {label}: {error}"))?;
+    let directory = CapDir::open_ambient_dir(path, ambient_authority())
+        .map_err(|error| format!("Could not securely open {label}: {error}"))?;
+    if !crate::download::opened_directory_matches(&directory, &canonical)? {
+        return Err(format!("Opened {label} does not match the validated path"));
+    }
+    Ok(directory)
+}
+
+fn extract_zip_with_limits_and_cancel(
     archive_path: &Path,
     destination: &Path,
     limits: ArchiveLimits,
+    cancel: Option<&AtomicBool>,
 ) -> Result<(), String> {
     let file = File::open(archive_path).map_err(|error| error.to_string())?;
     let mut archive = zip::ZipArchive::new(file).map_err(|error| error.to_string())?;
+    let destination_dir =
+        open_verified_capability_directory(destination, "runtime extraction directory")?;
     if archive.len() > limits.max_entries {
         return Err(format!(
             "Archive entry count {} exceeds the limit {}",
@@ -2012,8 +2743,16 @@ fn extract_zip_with_limits(
     let mut paths = HashSet::new();
     let mut total_bytes = 0_u64;
     for index in 0..archive.len() {
+        if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+            return Err("Runtime installation cancelled during archive extraction".into());
+        }
         let mut entry = archive.by_index(index).map_err(|error| error.to_string())?;
         let raw_name = entry.name().to_string();
+        if raw_name.contains(':') {
+            return Err(format!(
+                "NTFS alternate data stream paths are not allowed in runtime archives: {raw_name}"
+            ));
+        }
         let relative = entry
             .enclosed_name()
             .ok_or_else(|| format!("Unsafe path in archive: {raw_name}"))?;
@@ -2059,23 +2798,29 @@ fn extract_zip_with_limits(
         {
             return Err("Archive decompressed size exceeds the configured limit".into());
         }
-        let output = destination.join(&relative);
         if entry.is_dir() {
-            fs::create_dir_all(&output).map_err(|error| error.to_string())?;
+            destination_dir
+                .create_dir_all(&relative)
+                .map_err(|error| error.to_string())?;
             continue;
         }
-        if let Some(parent) = output.parent() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        if let Some(parent) = relative.parent() {
+            destination_dir
+                .create_dir_all(parent)
+                .map_err(|error| error.to_string())?;
         }
-        let mut target = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&output)
+        let mut options = CapOpenOptions::new();
+        options.write(true).create_new(true);
+        let mut target = destination_dir
+            .open_with(&relative, &options)
             .map_err(|error| error.to_string())?;
         let mut entry_bytes = 0_u64;
         let mut buffer = [0_u8; 64 * 1024];
         let copy_result = (|| -> Result<(), String> {
             loop {
+                if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+                    return Err("Runtime installation cancelled during archive extraction".into());
+                }
                 let count = entry.read(&mut buffer).map_err(|error| error.to_string())?;
                 if count == 0 {
                     break;
@@ -2096,15 +2841,72 @@ fn extract_zip_with_limits(
         })();
         if let Err(error) = copy_result {
             drop(target);
-            let _ = fs::remove_file(&output);
+            let _ = destination_dir.remove_file(&relative);
             return Err(error);
         }
     }
     Ok(())
 }
 
-fn extract_zip(archive_path: &Path, destination: &Path) -> Result<(), String> {
-    extract_zip_with_limits(archive_path, destination, RUNTIME_ARCHIVE_LIMITS)
+#[cfg(test)]
+fn extract_zip_with_limits(
+    archive_path: &Path,
+    destination: &Path,
+    limits: ArchiveLimits,
+) -> Result<(), String> {
+    extract_zip_with_limits_and_cancel(archive_path, destination, limits, None)
+}
+
+/// Verify the archive file identity before extraction.
+///
+/// The downloader already checks size and SHA-256, but the file sits on disk
+/// between download and extraction. A replaced file with the same size would
+/// otherwise extract without detection, so re-hash here and refuse on mismatch.
+#[cfg(test)]
+fn extract_verified_zip_with_limits_and_cancel(
+    archive_path: &Path,
+    destination: &Path,
+    limits: ArchiveLimits,
+    cancel: Option<&AtomicBool>,
+    expected_size: u64,
+    expected_sha256_hex: &str,
+) -> Result<(), String> {
+    let metadata = fs::metadata(archive_path).map_err(|error| error.to_string())?;
+    if metadata.len() != expected_size {
+        return Err(format!(
+            "Runtime archive size mismatch: expected {expected_size} bytes, found {} bytes (SHA-256 identity check failed)",
+            metadata.len()
+        ));
+    }
+    let mut file = File::open(archive_path).map_err(|error| error.to_string())?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+            return Err("Runtime installation cancelled during archive verification".into());
+        }
+        let count = file.read(&mut buffer).map_err(|error| error.to_string())?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+    let actual = hex::encode(hasher.finalize());
+    if !actual.eq_ignore_ascii_case(expected_sha256_hex) {
+        return Err(format!(
+            "Runtime archive SHA-256 mismatch: expected {expected_sha256_hex}, found {actual}"
+        ));
+    }
+    extract_zip_with_limits_and_cancel(archive_path, destination, limits, cancel)
+}
+
+fn extract_zip(archive_path: &Path, destination: &Path, cancel: &AtomicBool) -> Result<(), String> {
+    extract_zip_with_limits_and_cancel(
+        archive_path,
+        destination,
+        RUNTIME_ARCHIVE_LIMITS,
+        Some(cancel),
+    )
 }
 
 fn find_runtime(path: &Path) -> Option<PathBuf> {
@@ -2124,68 +2926,896 @@ fn find_runtime(path: &Path) -> Option<PathBuf> {
     None
 }
 
-pub fn install_runtime(tag: &str, option: &RuntimeOption) -> Result<InstalledRuntime, String> {
-    let root = managed_runtime_root()?;
-    fs::create_dir_all(&root).map_err(|error| error.to_string())?;
-    let final_dir = root.join(managed_runtime_relative_path(tag, &option.install_key));
-    if let Some(runtime) = find_runtime(&final_dir) {
-        return Ok(InstalledRuntime {
-            tag: tag.into(),
-            backend: option.backend.clone(),
-            runtime_path: runtime.to_string_lossy().to_string(),
-            install_root: final_dir.to_string_lossy().to_string(),
-            reused: true,
-        });
+#[derive(Clone, Debug)]
+struct ResolvedRuntimeInstall {
+    tag: String,
+    release_commit: String,
+    architecture: String,
+    backend: String,
+    install_key: String,
+    asset: GithubAsset,
+    companion_asset: Option<GithubAsset>,
+    content_manifest_sha256: String,
+}
+
+fn github_asset_from_approval(asset: &ApprovedRuntimeAsset) -> GithubAsset {
+    GithubAsset {
+        name: asset.name.clone(),
+        browser_download_url: asset.url.clone(),
+        size: asset.bytes,
+        digest: Some(asset.digest.clone()),
+    }
+}
+
+fn resolve_approved_install(install_key: &str) -> Result<ResolvedRuntimeInstall, String> {
+    if install_key.is_empty()
+        || install_key.len() > 64
+        || !install_key.chars().all(|character| {
+            character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || matches!(character, '-' | '.')
+        })
+    {
+        return Err("Runtime install key is malformed".into());
+    }
+    let manifest = parse_approved_manifest(APPROVED_RUNTIMES)?;
+    let asset = manifest
+        .assets
+        .iter()
+        .filter(|asset| !asset.dormant)
+        .find(|asset| {
+            approved_asset_install_key(asset).ok().flatten().as_deref() == Some(install_key)
+        })
+        .ok_or_else(|| format!("Runtime install key {install_key} is not approved"))?;
+    let blocking_jobs = jobs_for_install_key(&manifest.required_jobs, install_key)
+        .into_iter()
+        .filter(|job| job.status != "completed" || job.conclusion != "success")
+        .map(|job| job.name.clone())
+        .collect::<Vec<_>>();
+    if !blocking_jobs.is_empty() {
+        return Err(format!(
+            "Runtime install key {install_key} is blocked by required jobs: {}",
+            blocking_jobs.join(", ")
+        ));
+    }
+    let companion_asset = match asset.companion_name.as_deref() {
+        Some(name) => Some(
+            manifest
+                .assets
+                .iter()
+                .find(|candidate| candidate.name == name && !candidate.dormant)
+                .map(github_asset_from_approval)
+                .ok_or_else(|| format!("Approved companion {name} is unavailable"))?,
+        ),
+        None => None,
+    };
+    Ok(ResolvedRuntimeInstall {
+        tag: manifest.release_tag,
+        release_commit: manifest.release_commit,
+        architecture: asset.arch.clone(),
+        backend: asset.backend.clone(),
+        install_key: install_key.to_string(),
+        asset: github_asset_from_approval(asset),
+        companion_asset,
+        content_manifest_sha256: asset
+            .content_manifest_sha256
+            .clone()
+            .ok_or_else(|| format!("Runtime install key {install_key} lacks a content manifest"))?,
+    })
+}
+
+fn validate_install_adapter(
+    option: &ResolvedRuntimeInstall,
+    adapter_id: Option<&str>,
+    architecture: &str,
+    adapters: &[GpuAdapterInfo],
+) -> Result<(), String> {
+    if option.architecture != architecture {
+        return Err(format!(
+            "Runtime {} requires architecture {}, but this computer reports {}",
+            option.install_key, option.architecture, architecture
+        ));
     }
 
-    let staging = root.join(format!(
-        ".installing-{}-{}-{}",
-        sanitize_component(tag),
-        sanitize_component(&option.install_key),
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&staging);
-    fs::create_dir_all(&staging).map_err(|error| error.to_string())?;
-    let client = github_client()?;
-    let install = (|| {
-        for (index, asset) in std::iter::once(&option.asset)
-            .chain(option.companion_asset.iter())
-            .enumerate()
-        {
-            let archive = staging.join(format!("download-{index}.zip"));
-            download_asset(&client, asset, &archive)?;
-            extract_zip(&archive, &staging)?;
-            fs::remove_file(archive).map_err(|error| error.to_string())?;
+    if option.backend == "cpu" {
+        if adapter_id.is_some() {
+            return Err("The CPU runtime install request must not select a GPU adapter".into());
         }
+        return Ok(());
+    }
+
+    let adapter_id = adapter_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && value.len() <= 256)
+        .ok_or_else(|| "The selected runtime requires one bounded GPU adapter ID".to_string())?;
+    let adapter = adapters
+        .iter()
+        .find(|candidate| candidate.adapter_id == adapter_id)
+        .ok_or_else(|| {
+            format!("GPU adapter {adapter_id} is not present in current hardware data")
+        })?;
+    let vendor = adapter.vendor.to_ascii_lowercase();
+    let compatible = match option.backend.as_str() {
+        "cuda" => vendor == "nvidia",
+        "rocm" => vendor == "amd",
+        "openvino" | "sycl" => vendor == "intel",
+        "vulkan" => matches!(vendor.as_str(), "nvidia" | "amd" | "intel"),
+        _ => false,
+    };
+    if !compatible {
+        return Err(format!(
+            "GPU adapter {adapter_id} ({vendor}) is incompatible with the {} runtime",
+            option.backend
+        ));
+    }
+    Ok(())
+}
+
+fn approved_content_manifest_bytes(install_key: &str) -> Result<&'static [u8], String> {
+    match install_key {
+        "cpu" => Ok(include_bytes!("../runtime-content-manifests/cpu.json")),
+        "cuda-12.4" => Ok(include_bytes!(
+            "../runtime-content-manifests/cuda-12.4.json"
+        )),
+        "cuda-13.3" => Ok(include_bytes!(
+            "../runtime-content-manifests/cuda-13.3.json"
+        )),
+        "openvino" => Ok(include_bytes!("../runtime-content-manifests/openvino.json")),
+        "rocm" => Ok(include_bytes!("../runtime-content-manifests/rocm.json")),
+        "sycl" => Ok(include_bytes!("../runtime-content-manifests/sycl.json")),
+        "vulkan" => Ok(include_bytes!("../runtime-content-manifests/vulkan.json")),
+        _ => Err(format!(
+            "Runtime install key {install_key} has no compiled content manifest"
+        )),
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ApprovedContentManifest {
+    schema_version: u32,
+    release_tag: String,
+    release_commit: String,
+    install_key: String,
+    backend: String,
+    artifacts: Vec<ApprovedContentArtifact>,
+    files: Vec<ApprovedContentFile>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ApprovedContentArtifact {
+    name: String,
+    bytes: u64,
+    sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ApprovedContentFile {
+    path: String,
+    bytes: u64,
+    sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RuntimeInstallRecord {
+    schema_version: u32,
+    release_tag: String,
+    release_commit: String,
+    backend: String,
+    install_key: String,
+    artifacts: Vec<String>,
+    runtime: String,
+    content_manifest_sha256: String,
+}
+
+fn install_artifact_names(install: &ResolvedRuntimeInstall) -> Vec<String> {
+    std::iter::once(&install.asset)
+        .chain(install.companion_asset.iter())
+        .map(|asset| asset.name.clone())
+        .collect()
+}
+
+fn path_from_manifest(value: &str) -> Result<PathBuf, String> {
+    if value.is_empty() || value.contains('\\') || value.contains(':') {
+        return Err("Approved content manifest contains a malformed path".into());
+    }
+    let mut result = PathBuf::new();
+    for component in value.split('/') {
+        if component.is_empty() || matches!(component, "." | "..") {
+            return Err("Approved content manifest contains an unsafe path".into());
+        }
+        result.push(component);
+    }
+    Ok(result)
+}
+
+#[cfg(windows)]
+fn open_managed_file_for_verification(path: &Path) -> Result<File, String> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
+
+    OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(path)
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(not(windows))]
+fn open_managed_file_for_verification(path: &Path) -> Result<File, String> {
+    File::open(path).map_err(|error| error.to_string())
+}
+
+#[cfg(windows)]
+fn managed_file_link_count(file: &File) -> Result<u32, String> {
+    use std::mem::MaybeUninit;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+
+    let mut information = MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+    // SAFETY: `file` owns a valid handle and `information` points to writable storage.
+    let result =
+        unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, information.as_mut_ptr()) };
+    if result == 0 {
+        return Err(format!(
+            "Could not inspect managed file links: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    // SAFETY: a successful Win32 call initialized the complete output structure.
+    Ok(unsafe { information.assume_init() }.nNumberOfLinks)
+}
+
+#[cfg(not(windows))]
+fn managed_file_link_count(_file: &File) -> Result<u32, String> {
+    Ok(1)
+}
+
+#[cfg(windows)]
+fn reject_managed_file_alternate_streams(path: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{GetLastError, ERROR_HANDLE_EOF, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        FindClose, FindFirstStreamW, FindNextStreamW, FindStreamInfoStandard,
+        WIN32_FIND_STREAM_DATA,
+    };
+
+    let wide = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let mut data = WIN32_FIND_STREAM_DATA::default();
+    // SAFETY: `wide` is NUL-terminated and `data` points to writable storage.
+    let handle = unsafe {
+        FindFirstStreamW(
+            wide.as_ptr(),
+            FindStreamInfoStandard,
+            (&mut data as *mut WIN32_FIND_STREAM_DATA).cast(),
+            0,
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(format!(
+            "Could not enumerate managed file streams: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let first_end = data
+        .cStreamName
+        .iter()
+        .position(|value| *value == 0)
+        .unwrap_or(data.cStreamName.len());
+    let first = String::from_utf16_lossy(&data.cStreamName[..first_end]);
+    let mut second = WIN32_FIND_STREAM_DATA::default();
+    // SAFETY: `handle` is valid and `second` points to writable storage.
+    let has_second =
+        unsafe { FindNextStreamW(handle, (&mut second as *mut WIN32_FIND_STREAM_DATA).cast()) };
+    // SAFETY: `handle` came from `FindFirstStreamW` and is closed exactly once.
+    unsafe { FindClose(handle) };
+    if first != "::$DATA" || has_second != 0 {
+        return Err("Managed file contains an alternate data stream".into());
+    }
+    // SAFETY: `FindNextStreamW` returned false, so `GetLastError` describes termination.
+    let last_error = unsafe { GetLastError() };
+    if last_error != ERROR_HANDLE_EOF {
+        return Err(format!(
+            "Managed file stream enumeration failed: {}",
+            std::io::Error::from_raw_os_error(last_error as i32)
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn reject_managed_file_alternate_streams(_path: &Path) -> Result<(), String> {
+    Ok(())
+}
+
+fn digest_regular_file(path: &Path, relative: &str) -> Result<(u64, String), String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("Could not inspect managed file {relative}: {error}"))?;
+    if !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || is_reparse_point(&metadata)
+        || metadata.len() > RUNTIME_ARCHIVE_LIMITS.max_entry_bytes
+    {
+        return Err(format!(
+            "Managed file {relative} is not a bounded regular file"
+        ));
+    }
+    let mut file = open_managed_file_for_verification(path)
+        .map_err(|error| format!("Could not open managed file {relative}: {error}"))?;
+    if managed_file_link_count(&file)? != 1 {
+        return Err(format!("Managed file {relative} has multiple hard links"));
+    }
+    reject_managed_file_alternate_streams(path)?;
+    let opened_metadata = file
+        .metadata()
+        .map_err(|error| format!("Could not inspect open managed file {relative}: {error}"))?;
+    if !opened_metadata.is_file() || opened_metadata.len() != metadata.len() {
+        return Err(format!(
+            "Managed file {relative} changed during verification"
+        ));
+    }
+    let mut hasher = Sha256::new();
+    let mut read = 0_u64;
+    let mut buffer = [0_u8; 1024 * 1024];
+    loop {
+        let count = file
+            .read(&mut buffer)
+            .map_err(|error| format!("Could not hash managed file {relative}: {error}"))?;
+        if count == 0 {
+            break;
+        }
+        read = read
+            .checked_add(count as u64)
+            .ok_or_else(|| format!("Managed file {relative} size overflowed"))?;
+        if read > RUNTIME_ARCHIVE_LIMITS.max_entry_bytes {
+            return Err(format!("Managed file {relative} exceeds the size limit"));
+        }
+        hasher.update(&buffer[..count]);
+    }
+    let final_metadata = file
+        .metadata()
+        .map_err(|error| format!("Could not recheck managed file {relative}: {error}"))?;
+    if final_metadata.len() != read || read != metadata.len() {
+        return Err(format!(
+            "Managed file {relative} changed during verification"
+        ));
+    }
+    Ok((read, hex::encode(hasher.finalize())))
+}
+
+fn collect_install_files(root: &Path) -> Result<Vec<String>, String> {
+    validate_no_reparse_ancestors("Managed runtime", root)?;
+    let metadata = fs::symlink_metadata(root)
+        .map_err(|error| format!("Could not inspect managed runtime root: {error}"))?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
+        return Err("Managed runtime root is a link or reparse point".into());
+    }
+    let mut pending = vec![root.to_path_buf()];
+    let mut files = Vec::new();
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(&directory)
+            .map_err(|error| format!("Could not enumerate managed runtime: {error}"))?
+        {
+            let entry = entry.map_err(|error| format!("Managed runtime entry failed: {error}"))?;
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path)
+                .map_err(|error| format!("Could not inspect managed runtime entry: {error}"))?;
+            if metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
+                return Err("Managed runtime contains a link or reparse point".into());
+            }
+            if metadata.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            if !metadata.is_file() {
+                return Err("Managed runtime contains a non-regular entry".into());
+            }
+            let relative = path
+                .strip_prefix(root)
+                .map_err(|_| "Managed runtime entry escaped its root")?
+                .components()
+                .map(|component| component.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
+            if relative != "runtime.json" {
+                files.push(relative);
+            }
+            if files.len() > RUNTIME_ARCHIVE_LIMITS.max_entries {
+                return Err("Managed runtime contains too many files".into());
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+fn write_runtime_install_record(
+    root: &Path,
+    install: &ResolvedRuntimeInstall,
+    runtime: &Path,
+    content_manifest_sha256: &str,
+) -> Result<(), String> {
+    let runtime = runtime
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/");
+    path_from_manifest(&runtime)?;
+    let record = RuntimeInstallRecord {
+        schema_version: 1,
+        release_tag: install.tag.clone(),
+        release_commit: install.release_commit.clone(),
+        backend: install.backend.clone(),
+        install_key: install.install_key.clone(),
+        artifacts: install_artifact_names(install),
+        runtime,
+        content_manifest_sha256: content_manifest_sha256.to_string(),
+    };
+    let bytes = serde_json::to_vec_pretty(&record)
+        .map_err(|error| format!("Could not encode runtime install record: {error}"))?;
+    fs::write(root.join("runtime.json"), bytes)
+        .map_err(|error| format!("Could not write runtime install record: {error}"))
+}
+
+fn validate_content_manifest_authority(
+    install: &ResolvedRuntimeInstall,
+    trusted_content_bytes: &[u8],
+) -> Result<ApprovedContentManifest, String> {
+    if trusted_content_bytes.len() > MAX_RUNTIME_CATALOG_BYTES {
+        return Err("Approved content manifest exceeds the 2 MiB limit".into());
+    }
+    let actual_manifest_digest = hex::encode(Sha256::digest(trusted_content_bytes));
+    if actual_manifest_digest != install.content_manifest_sha256 {
+        return Err("Compiled content-manifest digest does not match its approval anchor".into());
+    }
+    let trusted: ApprovedContentManifest = serde_json::from_slice(trusted_content_bytes)
+        .map_err(|error| format!("Approved content manifest is invalid: {error}"))?;
+    if trusted.schema_version != 1
+        || trusted.release_tag != install.tag
+        || trusted.release_commit != install.release_commit
+        || trusted.backend != install.backend
+        || trusted.install_key != install.install_key
+    {
+        return Err("Approved content manifest identity does not match the install key".into());
+    }
+    let expected_artifacts = std::iter::once(&install.asset)
+        .chain(install.companion_asset.iter())
+        .map(|asset| ApprovedContentArtifact {
+            name: asset.name.clone(),
+            bytes: asset.size,
+            sha256: expected_sha256(asset).unwrap_or_default().to_string(),
+        })
+        .collect::<Vec<_>>();
+    if trusted.artifacts != expected_artifacts {
+        return Err("Approved content manifest artifact identity does not match approval".into());
+    }
+    if trusted.files.is_empty() || trusted.files.len() > RUNTIME_ARCHIVE_LIMITS.max_entries {
+        return Err("Approved content manifest has an invalid file count".into());
+    }
+    let mut previous_path: Option<&str> = None;
+    let mut total = 0_u64;
+    let mut runtime_count = 0_usize;
+    for file in &trusted.files {
+        path_from_manifest(&file.path)?;
+        if file.path == "runtime.json"
+            || previous_path.is_some_and(|previous| previous >= file.path.as_str())
+        {
+            return Err("Approved content manifest paths are duplicated or unsorted".into());
+        }
+        if file.sha256.len() != 64
+            || !file
+                .sha256
+                .chars()
+                .all(|value| value.is_ascii_hexdigit() && !value.is_ascii_uppercase())
+            || file.bytes > RUNTIME_ARCHIVE_LIMITS.max_entry_bytes
+        {
+            return Err("Approved content manifest contains invalid file identity".into());
+        }
+        if file.path.ends_with("llama-server.exe") {
+            runtime_count += 1;
+        }
+        total = total
+            .checked_add(file.bytes)
+            .ok_or("Approved content-manifest size overflowed")?;
+        if total > RUNTIME_ARCHIVE_LIMITS.max_total_bytes {
+            return Err("Approved content manifest exceeds the total size limit".into());
+        }
+        previous_path = Some(&file.path);
+    }
+    if runtime_count != 1 {
+        return Err("Approved content manifest must contain one llama-server.exe".into());
+    }
+    Ok(trusted)
+}
+
+fn verify_installed_runtime(
+    root: &Path,
+    install: &ResolvedRuntimeInstall,
+    trusted_content_bytes: &[u8],
+    trusted_content_sha256: &str,
+) -> Result<PathBuf, String> {
+    if trusted_content_sha256 != install.content_manifest_sha256 {
+        return Err("Runtime install record used a non-approved content-manifest anchor".into());
+    }
+    let trusted = validate_content_manifest_authority(install, trusted_content_bytes)?;
+    let manifest_path = root.join("runtime.json");
+    let (manifest_bytes, _) = {
+        let metadata = fs::symlink_metadata(&manifest_path)
+            .map_err(|error| format!("Managed runtime record is unavailable: {error}"))?;
+        if !metadata.is_file()
+            || metadata.file_type().is_symlink()
+            || is_reparse_point(&metadata)
+            || metadata.len() > 64 * 1024
+        {
+            return Err("Managed runtime record is not a bounded regular file".into());
+        }
+        let bytes = fs::read(&manifest_path)
+            .map_err(|error| format!("Could not read managed runtime record: {error}"))?;
+        (bytes, metadata)
+    };
+    let record: RuntimeInstallRecord = serde_json::from_slice(&manifest_bytes)
+        .map_err(|error| format!("Managed runtime record is invalid: {error}"))?;
+    if record.schema_version != 1
+        || record.release_tag != install.tag
+        || record.release_commit != install.release_commit
+        || record.backend != install.backend
+        || record.install_key != install.install_key
+        || record.artifacts != install_artifact_names(install)
+        || record.content_manifest_sha256 != trusted_content_sha256
+    {
+        return Err("Managed runtime record does not match compiled approval".into());
+    }
+    let actual_files = collect_install_files(root)?;
+    let expected_files = trusted
+        .files
+        .iter()
+        .map(|file| file.path.clone())
+        .collect::<Vec<_>>();
+    if actual_files != expected_files {
+        return Err("Managed runtime file inventory does not match compiled approval".into());
+    }
+    for file in &trusted.files {
+        let relative = path_from_manifest(&file.path)?;
+        let (bytes, digest) = digest_regular_file(&root.join(relative), &file.path)?;
+        if bytes != file.bytes || digest != file.sha256 {
+            return Err(format!(
+                "Managed file {} failed content verification",
+                file.path
+            ));
+        }
+    }
+    let relative_runtime = path_from_manifest(&record.runtime)?;
+    if !expected_files.contains(&record.runtime) || !record.runtime.ends_with("llama-server.exe") {
+        return Err("Managed runtime record names an unapproved executable".into());
+    }
+    Ok(root.join(relative_runtime))
+}
+
+fn managed_runtime_verified_in(runtime_path: &Path, root: &Path) -> Result<bool, String> {
+    let lexical_managed = runtime_path.starts_with(root);
+    let canonical_managed = match (fs::canonicalize(runtime_path), fs::canonicalize(root)) {
+        (Ok(runtime), Ok(root)) => runtime.starts_with(root),
+        _ => false,
+    };
+    if !lexical_managed && !canonical_managed {
+        return Ok(false);
+    }
+    if !safe_directory(root) {
+        return Err("Managed runtime root is unavailable or untrusted".into());
+    }
+    let mut directory = runtime_path
+        .parent()
+        .ok_or("Managed runtime executable has no parent directory")?;
+    while directory.starts_with(root) && directory != root {
+        if directory.join("runtime.json").exists() {
+            let record_bytes = fs::read(directory.join("runtime.json"))
+                .map_err(|error| format!("Could not read managed runtime record: {error}"))?;
+            if record_bytes.len() > 64 * 1024 {
+                return Err("Managed runtime record exceeds the size limit".into());
+            }
+            let record: RuntimeInstallRecord = serde_json::from_slice(&record_bytes)
+                .map_err(|error| format!("Managed runtime record is invalid: {error}"))?;
+            let install = resolve_approved_install(&record.install_key)?;
+            let expected_directory = root.join(managed_runtime_relative_path(
+                &install.tag,
+                &install.install_key,
+            ));
+            if directory != expected_directory {
+                return Err("Managed runtime directory does not match compiled approval".into());
+            }
+            let content = approved_content_manifest_bytes(&install.install_key)?;
+            let verified = verify_installed_runtime(
+                directory,
+                &install,
+                content,
+                &install.content_manifest_sha256,
+            )?;
+            let requested = fs::canonicalize(runtime_path)
+                .map_err(|error| format!("Could not resolve managed runtime path: {error}"))?;
+            let verified = fs::canonicalize(verified)
+                .map_err(|error| format!("Could not resolve verified runtime path: {error}"))?;
+            if requested != verified {
+                return Err("Requested executable is not the approved managed runtime".into());
+            }
+            return Ok(true);
+        }
+        directory = directory
+            .parent()
+            .ok_or("Managed runtime path escaped its root")?;
+    }
+    Err("Managed runtime has no trusted installation record".into())
+}
+
+pub fn managed_runtime_verified(runtime_path: &Path) -> Result<bool, String> {
+    managed_runtime_verified_in(runtime_path, &runtime_data_dir("Localmotive"))
+}
+
+pub fn verify_managed_runtime_for_launch(runtime_path: &Path) -> Result<(), String> {
+    let primary = runtime_data_dir("Localmotive");
+    if managed_runtime_verified_in(runtime_path, &primary)? {
+        return Ok(());
+    }
+    let legacy = runtime_data_dir("GGUF Pilot");
+    if runtime_path.starts_with(&legacy)
+        || fs::canonicalize(runtime_path)
+            .ok()
+            .zip(fs::canonicalize(&legacy).ok())
+            .is_some_and(|(runtime, root)| runtime.starts_with(root))
+    {
+        return Err(
+            "Legacy managed runtimes lack compiled content approval. Install a current runtime."
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+fn create_runtime_staging(root: &Path, tag: &str, install_key: &str) -> Result<PathBuf, String> {
+    validate_no_reparse_ancestors("Managed runtime staging root", root)?;
+    for _ in 0..8 {
+        let path = root.join(format!(
+            ".installing-{}-{}-{:016x}",
+            sanitize_component(tag),
+            sanitize_component(install_key),
+            rand::random::<u64>()
+        ));
+        match fs::create_dir(&path) {
+            Ok(()) => {
+                if let Err(error) =
+                    validate_no_reparse_ancestors("Managed runtime staging directory", &path)
+                {
+                    let _ = fs::remove_dir(&path);
+                    return Err(error);
+                }
+                return Ok(path);
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!(
+                    "Could not create runtime staging directory: {error}"
+                ))
+            }
+        }
+    }
+    Err("Could not allocate a unique runtime staging directory".into())
+}
+
+fn runtime_download_target(
+    root: &Path,
+    install: &ResolvedRuntimeInstall,
+    asset: &GithubAsset,
+) -> Result<PathBuf, String> {
+    if asset.name.is_empty()
+        || asset.name.len() > 256
+        || Path::new(&asset.name)
+            .file_name()
+            .and_then(|name| name.to_str())
+            != Some(asset.name.as_str())
+    {
+        return Err("Approved runtime asset name is not a bounded filename".into());
+    }
+    Ok(root
+        .join(".downloads")
+        .join(sanitize_component(&install.tag))
+        .join(sanitize_component(&install.install_key))
+        .join(&asset.name))
+}
+
+fn replace_verified_runtime_directory(staging: &Path, destination: &Path) -> Result<(), String> {
+    let root = staging
+        .parent()
+        .ok_or_else(|| "Managed runtime staging directory has no parent".to_string())?;
+    validate_no_reparse_ancestors("Managed runtime root", root)?;
+    validate_no_reparse_ancestors("Managed runtime staging directory", staging)?;
+    validate_no_reparse_ancestors("Managed runtime destination", destination)?;
+    let canonical_root = fs::canonicalize(root)
+        .map_err(|error| format!("Could not resolve managed runtime root: {error}"))?;
+    let directory = CapDir::open_ambient_dir(root, ambient_authority())
+        .map_err(|error| format!("Could not securely open managed runtime root: {error}"))?;
+    if !crate::download::opened_directory_matches(&directory, &canonical_root)? {
+        return Err("Opened managed runtime root does not match the validated path".into());
+    }
+    let staging_relative = staging
+        .strip_prefix(root)
+        .map_err(|_| "Managed runtime staging directory escaped its root".to_string())?;
+    let destination_relative = destination
+        .strip_prefix(root)
+        .map_err(|_| "Managed runtime destination escaped its root".to_string())?;
+    let destination_parent = destination_relative
+        .parent()
+        .ok_or_else(|| "Managed runtime destination has no relative parent".to_string())?;
+    directory
+        .create_dir_all(destination_parent)
+        .map_err(|error| error.to_string())?;
+    if directory.symlink_metadata(destination_relative).is_err() {
+        return directory
+            .rename(staging_relative, &directory, destination_relative)
+            .map_err(|error| error.to_string());
+    }
+
+    let backup_relative = (0..8)
+        .map(|_| PathBuf::from(format!(".replacing-{:016x}", rand::random::<u64>())))
+        .find(|candidate| directory.symlink_metadata(candidate).is_err())
+        .ok_or_else(|| "Could not allocate a unique runtime replacement backup".to_string())?;
+    directory
+        .rename(destination_relative, &directory, &backup_relative)
+        .map_err(|error| {
+            format!("Could not preserve the existing runtime before repair: {error}")
+        })?;
+    if let Err(error) = directory.rename(staging_relative, &directory, destination_relative) {
+        let rollback = directory.rename(&backup_relative, &directory, destination_relative);
+        return match rollback {
+            Ok(()) => Err(format!("Could not publish the repaired runtime: {error}")),
+            Err(rollback_error) => Err(format!(
+                "Could not publish the repaired runtime: {error}; rollback also failed: {rollback_error}"
+            )),
+        };
+    }
+    directory
+        .remove_dir_all(&backup_relative)
+        .map_err(|error| format!("Could not remove the replaced runtime backup: {error}"))?;
+    Ok(())
+}
+
+pub fn install_runtime(
+    request: RuntimeInstallRequest,
+    cancel: Arc<AtomicBool>,
+    mut on_progress: impl FnMut(RuntimeInstallProgress) + Send,
+) -> Result<InstalledRuntime, String> {
+    let option = resolve_approved_install(&request.install_key)?;
+    let hardware = detect_hardware();
+    validate_install_adapter(
+        &option,
+        request.adapter_id.as_deref(),
+        &hardware.architecture,
+        &hardware.adapters,
+    )?;
+    let tag = &option.tag;
+    let trusted_content = approved_content_manifest_bytes(&option.install_key)?;
+    validate_content_manifest_authority(&option, trusted_content)?;
+    let root = managed_runtime_root()?;
+    fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    validate_no_reparse_ancestors("Managed runtime root", &root)?;
+    let root_metadata = fs::symlink_metadata(&root)
+        .map_err(|error| format!("Could not inspect managed runtime root: {error}"))?;
+    if !root_metadata.is_dir()
+        || root_metadata.file_type().is_symlink()
+        || is_reparse_point(&root_metadata)
+    {
+        return Err("Managed runtime root is a link or reparse point".into());
+    }
+    let final_dir = root.join(managed_runtime_relative_path(tag, &option.install_key));
+    validate_no_reparse_ancestors("Managed runtime destination", &final_dir)?;
+    if final_dir.exists() {
+        if let Ok(runtime) = verify_installed_runtime(
+            &final_dir,
+            &option,
+            trusted_content,
+            &option.content_manifest_sha256,
+        ) {
+            return Ok(InstalledRuntime {
+                tag: tag.clone(),
+                backend: option.backend.clone(),
+                runtime_path: runtime.to_string_lossy().to_string(),
+                install_root: final_dir.to_string_lossy().to_string(),
+                reused: true,
+            });
+        }
+    }
+
+    let staging = create_runtime_staging(&root, tag, &option.install_key)?;
+    let install = (|| {
+        let assets = std::iter::once(&option.asset)
+            .chain(option.companion_asset.iter())
+            .collect::<Vec<_>>();
+        let total = assets.iter().try_fold(0_u64, |sum, asset| {
+            sum.checked_add(asset.size)
+                .ok_or_else(|| "Runtime download size overflowed".to_string())
+        })?;
+        let mut completed = 0_u64;
+        for asset in assets {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(
+                    "Runtime installation cancelled. Partial download state was kept for resume."
+                        .to_string(),
+                );
+            }
+            if asset.size == 0 || asset.size > MAX_RUNTIME_DOWNLOAD_BYTES {
+                return Err(format!("Runtime asset has an invalid size: {}", asset.name));
+            }
+            let expected = expected_sha256(asset)
+                .ok_or_else(|| format!("Runtime asset {} lacks an approved SHA-256", asset.name))?;
+            let archive = runtime_download_target(&root, &option, asset)?;
+            let parent = archive
+                .parent()
+                .ok_or_else(|| "Runtime download target has no parent directory".to_string())?;
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            validate_no_reparse_ancestors("Runtime download directory", parent)?;
+            let downloaded = Arc::new(AtomicU64::new(0));
+            let progress_install_key = option.install_key.clone();
+            let progress_asset_name = asset.name.clone();
+            crate::download::download_file(
+                &asset.browser_download_url,
+                &archive,
+                "official llama.cpp release",
+                asset.size,
+                expected,
+                None,
+                4,
+                Arc::clone(&cancel),
+                downloaded,
+                |asset_downloaded, _| {
+                    on_progress(RuntimeInstallProgress {
+                        install_key: progress_install_key.clone(),
+                        asset_name: progress_asset_name.clone(),
+                        downloaded: completed.saturating_add(asset_downloaded),
+                        total,
+                    });
+                },
+            )?;
+            extract_zip(&archive, &staging, &cancel)?;
+            fs::remove_file(&archive).map_err(|error| error.to_string())?;
+            completed = completed.saturating_add(asset.size);
+        }
+        let staging_guard =
+            open_verified_capability_directory(&staging, "managed runtime staging directory")?;
         let runtime = find_runtime(&staging)
             .ok_or_else(|| "Downloaded archive did not contain llama-server.exe".to_string())?;
         let relative_runtime = runtime
             .strip_prefix(&staging)
             .map_err(|error| error.to_string())?
             .to_path_buf();
-        let manifest = serde_json::json!({
-            "tag": tag,
-            "backend": option.backend,
-            "installKey": option.install_key,
-            "asset": option.asset.name,
-            "companionAsset": option.companion_asset.as_ref().map(|asset| &asset.name),
-            "runtime": relative_runtime,
-        });
-        fs::write(
-            staging.join("runtime.json"),
-            serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| error.to_string())?;
-        if final_dir.exists() {
-            fs::remove_dir_all(&final_dir).map_err(|error| error.to_string())?;
-        }
-        if let Some(parent) = final_dir.parent() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        }
-        fs::rename(&staging, &final_dir).map_err(|error| error.to_string())?;
-        let runtime = final_dir.join(relative_runtime);
+        write_runtime_install_record(
+            &staging,
+            &option,
+            &relative_runtime,
+            &option.content_manifest_sha256,
+        )?;
+        verify_installed_runtime(
+            &staging,
+            &option,
+            trusted_content,
+            &option.content_manifest_sha256,
+        )?;
+        drop(staging_guard);
+        replace_verified_runtime_directory(&staging, &final_dir)?;
+        let runtime = verify_installed_runtime(
+            &final_dir,
+            &option,
+            trusted_content,
+            &option.content_manifest_sha256,
+        )?;
         Ok(InstalledRuntime {
-            tag: tag.into(),
+            tag: tag.clone(),
             backend: option.backend.clone(),
             runtime_path: runtime.to_string_lossy().to_string(),
             install_root: final_dir.to_string_lossy().to_string(),
@@ -2196,6 +3826,101 @@ pub fn install_runtime(tag: &str, option: &RuntimeOption) -> Result<InstalledRun
         let _ = fs::remove_dir_all(&staging);
     }
     install
+}
+
+fn pinned_health_model_path() -> Result<PathBuf, String> {
+    let pin = crate::core::pinned_model_load_pin();
+    let runtime_root = runtime_data_dir("Localmotive");
+    let product_root = runtime_root
+        .parent()
+        .ok_or_else(|| "Could not resolve the Localmotive data directory".to_string())?;
+    Ok(product_root
+        .join("health-models")
+        .join(&pin.sha256)
+        .join(&pin.name))
+}
+
+pub(crate) fn ensure_pinned_health_model(
+    cancel: Arc<AtomicBool>,
+    on_progress: impl FnMut(u64, u64) + Send,
+) -> Result<PathBuf, String> {
+    let pin = crate::core::pinned_model_load_pin();
+    let target = pinned_health_model_path()?;
+    if target.exists() {
+        crate::health::verify_pinned_model(&target, cancel.as_ref()).map_err(|(_, detail)| {
+            format!("Cached health model trust verification failed: {detail}")
+        })?;
+        return Ok(target);
+    }
+    let parent = target
+        .parent()
+        .ok_or_else(|| "The health model target has no parent directory".to_string())?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("Could not create the health model directory: {error}"))?;
+    validate_no_reparse_ancestors("Health model directory", parent)?;
+    let metadata = fs::symlink_metadata(parent)
+        .map_err(|error| format!("Could not inspect the health model directory: {error}"))?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
+        return Err("The health model directory is a link or reparse point".into());
+    }
+    crate::download::download_file(
+        &pin.url,
+        &target,
+        &pin.repository,
+        pin.bytes,
+        &pin.sha256,
+        None,
+        4,
+        cancel,
+        Arc::new(AtomicU64::new(0)),
+        on_progress,
+    )
+}
+
+pub(crate) fn managed_health_context(
+    request: &crate::health::ManagedHealthRequest,
+) -> Result<crate::health::ManagedHealthContext, String> {
+    let install = resolve_approved_install(&request.install_key)?;
+    let hardware = detect_hardware();
+    validate_install_adapter(
+        &install,
+        request.adapter_id.as_deref(),
+        &hardware.architecture,
+        &hardware.adapters,
+    )?;
+    let adapter_name = request.adapter_id.as_ref().and_then(|adapter_id| {
+        hardware
+            .adapters
+            .iter()
+            .find(|adapter| &adapter.adapter_id == adapter_id)
+            .map(|adapter| adapter.name.clone())
+    });
+    let root = managed_runtime_root()?;
+    let install_root = root.join(managed_runtime_relative_path(
+        &install.tag,
+        &install.install_key,
+    ));
+    let content = approved_content_manifest_bytes(&install.install_key)?;
+    validate_content_manifest_authority(&install, content)?;
+    let server_path = verify_installed_runtime(
+        &install_root,
+        &install,
+        content,
+        &install.content_manifest_sha256,
+    )
+    .map_err(|error| format!("Managed runtime health trust verification failed: {error}"))?;
+    let model_path = pinned_health_model_path()?;
+    let pin = crate::core::pinned_model_load_pin();
+    Ok(crate::health::ManagedHealthContext {
+        runtime_id: install.install_key,
+        install_root,
+        server_path,
+        backend: install.backend,
+        adapter_id: request.adapter_id.clone(),
+        adapter_name,
+        expected_model: format!("{}@{}/{}", pin.repository, pin.revision, pin.name),
+        model_path,
+    })
 }
 
 #[cfg(test)]
@@ -2243,6 +3968,8 @@ mod tests {
         let mut adapter_ids = std::collections::HashSet::new();
         for adapter in adapters {
             assert!(adapter_ids.insert(adapter.adapter_id.clone()));
+            assert!(adapter.compatibility_id.starts_with("pci:"));
+            assert_eq!(adapter.compatibility_id.split(':').count(), 5);
             assert!(!adapter.name.is_empty());
             assert_eq!(
                 adapter.dedicated_bytes.source.kind,
@@ -2367,9 +4094,11 @@ mod tests {
         Vec<RequiredUpstreamJob>,
     ) {
         let (approved, jobs) = approved_manifest().unwrap();
+        let identity = approved_runtime_identity().unwrap();
         let release = GithubRelease {
-            tag_name: "b10796".into(),
-            published_at: Some("2026-09-04T05:31:09Z".into()),
+            tag_name: identity.release_tag,
+            target_commitish: identity.release_commit,
+            published_at: Some(identity.published_at),
             assets: approved
                 .iter()
                 .filter(|entry| entry.backend != "cuda-companion")
@@ -2397,18 +4126,19 @@ mod tests {
 
     fn approved_sample_release() -> GithubRelease {
         GithubRelease {
-            tag_name: "b10796".into(),
-            published_at: Some("2026-09-04T05:31:09Z".into()),
+            tag_name: "b10816".into(),
+            target_commitish: "427291b5b34cd914a31b3fd3b61a68f6184f4b9f".into(),
+            published_at: Some("2026-09-04T19:57:56Z".into()),
             assets: vec![
-                GithubAsset::sample("llama-b10796-bin-win-cpu-x64.zip"),
-                GithubAsset::sample("llama-b10796-bin-win-vulkan-x64.zip"),
-                GithubAsset::sample("llama-b10796-bin-win-rocm-10.0-x64.zip"),
-                GithubAsset::sample("llama-b10796-bin-win-sycl-x64.zip"),
-                GithubAsset::sample("llama-b10796-bin-win-cuda-12.4-x64.zip"),
+                GithubAsset::sample("llama-b10816-bin-win-cpu-x64.zip"),
+                GithubAsset::sample("llama-b10816-bin-win-vulkan-x64.zip"),
+                GithubAsset::sample("llama-b10816-bin-win-rocm-10.0-x64.zip"),
+                GithubAsset::sample("llama-b10816-bin-win-sycl-x64.zip"),
+                GithubAsset::sample("llama-b10816-bin-win-cuda-12.4-x64.zip"),
                 GithubAsset::sample("cudart-llama-bin-win-cuda-12.4-x64.zip"),
-                GithubAsset::sample("llama-b10796-bin-win-cuda-13.3-x64.zip"),
+                GithubAsset::sample("llama-b10816-bin-win-cuda-13.3-x64.zip"),
                 GithubAsset::sample("cudart-llama-bin-win-cuda-13.3-x64.zip"),
-                GithubAsset::sample("llama-b10796-bin-win-cpu-arm64.zip"),
+                GithubAsset::sample("llama-b10816-bin-win-cpu-arm64.zip"),
             ],
         }
     }
@@ -2467,8 +4197,10 @@ mod tests {
                 .into(),
             backend: "cpu".into(),
             arch: "x64".into(),
+            dormant: false,
             cuda_version: None,
             companion_name: None,
+            content_manifest_sha256: None,
         }];
         let changed = GithubAsset {
             name: "llama-b10796-bin-win-cpu-x64.zip".into(),
@@ -2488,20 +4220,120 @@ mod tests {
     }
 
     #[test]
-    fn blocked_backend_update_stops_when_a_required_job_fails_or_queues() {
-        // Phase 1 RED: a runtime update blocks while a required upstream
-        // hardware job fails or remains queued. Release b10796 exposes
-        // five failures and one queued check. This test failed before
-        // with missing upstream_job_blocks_backend.
-        let jobs = approved_manifest().unwrap().1;
+    fn catalog_rejects_an_omitted_approved_asset() {
+        let (mut release, approved, jobs) = approved_release();
+        let omitted = approved
+            .iter()
+            .find(|entry| entry.arch == "x64" && entry.backend == "cpu" && !entry.dormant)
+            .unwrap()
+            .name
+            .clone();
+        release.assets.retain(|asset| asset.name != omitted);
+        let mut hardware = detect_hardware();
+        hardware.architecture = "x64".into();
 
-        assert!(backend_is_blocked_by_upstream(&jobs, "cuda"));
-        assert!(backend_is_blocked_by_upstream(&jobs, "rocm"));
-        assert!(backend_is_blocked_by_upstream(&jobs, "openvino"));
+        let error = build_approved_catalog(&release, &hardware, &approved, &jobs).unwrap_err();
+
+        assert!(error.contains(&omitted), "unexpected error: {error}");
     }
 
     #[test]
-    fn approved_manifest_loads_the_pinned_b10796_pin() {
+    fn catalog_rejects_changed_publication_identity() {
+        let (mut release, approved, jobs) = approved_release();
+        release.published_at = Some("2026-09-04T19:57:55Z".into());
+        let mut hardware = detect_hardware();
+        hardware.architecture = "x64".into();
+
+        let error = catalog_from_release(
+            &release,
+            &hardware,
+            &approved,
+            &jobs,
+            RuntimeCatalogOrigin::Network,
+            None,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("publication"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn blocked_backend_update_stops_when_a_required_job_fails_or_queues() {
+        let jobs: Vec<RequiredUpstreamJob> =
+            serde_json::from_str(include_str!("../tests/fixtures/runtime/blocked-jobs.json"))
+                .unwrap();
+
+        assert!(backend_is_blocked_by_upstream(&jobs, "cuda"));
+        assert!(backend_is_blocked_by_upstream(&jobs, "openvino"));
+        assert!(!backend_is_blocked_by_upstream(&jobs, "rocm"));
+    }
+
+    #[test]
+    fn failed_cuda_jobs_keep_independently_approved_cpu_and_vulkan_options() {
+        let (release, approved, mut jobs) = approved_release();
+        for job in &mut jobs {
+            if job.backend == "cuda" {
+                job.conclusion = "failure".into();
+            }
+        }
+        let mut hardware = detect_hardware();
+        hardware.architecture = "x64".into();
+
+        let catalog = build_approved_catalog(&release, &hardware, &approved, &jobs)
+            .expect("a CUDA failure must not discard unrelated approved backends");
+
+        assert!(catalog.options.iter().any(|option| option.backend == "cpu"));
+        assert!(catalog
+            .options
+            .iter()
+            .any(|option| option.backend == "vulkan"));
+        assert!(!catalog
+            .options
+            .iter()
+            .any(|option| option.backend == "cuda"));
+
+        let blocked = catalog
+            .availability
+            .iter()
+            .find(|availability| {
+                availability.backend == "cuda"
+                    && availability.status == BackendAvailabilityStatus::Blocked
+            })
+            .expect("the blocked CUDA option remains visible");
+        assert!(blocked
+            .blocking_jobs
+            .iter()
+            .any(|name| name == "server-cuda"));
+    }
+
+    #[test]
+    fn all_blocked_backends_return_an_empty_catalog_with_explanations() {
+        let (release, approved, mut jobs) = approved_release();
+        for job in &mut jobs {
+            job.conclusion = "failure".into();
+        }
+        let mut hardware = detect_hardware();
+        hardware.architecture = "x64".into();
+
+        let catalog = catalog_from_release(
+            &release,
+            &hardware,
+            &approved,
+            &jobs,
+            RuntimeCatalogOrigin::Network,
+            None,
+        )
+        .expect("blocked approved backends must remain present as availability explanations");
+
+        assert!(catalog.options.is_empty());
+        assert!(catalog
+            .availability
+            .iter()
+            .any(|entry| entry.status == BackendAvailabilityStatus::Blocked));
+    }
+
+    #[test]
+    fn approved_manifest_loads_the_pinned_b10816_pin() {
         // The manifest is a compile-time file. This test proves the pin
         // loads, so selection can never run without an approved release.
         let (approved, jobs) = approved_manifest().unwrap();
@@ -2512,7 +4344,493 @@ mod tests {
             .iter()
             .any(|entry| entry.name.contains("cuda-13.3")));
         assert!(jobs.iter().any(|job| job.name == "gpu-rocm"));
-        assert!(backend_is_blocked_by_upstream(&jobs, "rocm"));
+        assert!(!backend_is_blocked_by_upstream(&jobs, "rocm"));
+    }
+
+    #[test]
+    fn hardware_probe_does_not_claim_runtime_support_without_l4_evidence() {
+        let source = include_str!("runtime.rs");
+
+        assert!(!source.contains(concat!("CUDA 13", " is the best match")));
+        assert!(!source.contains(concat!("CUDA 12", " is the compatible NVIDIA choice")));
+        assert!(source.contains(
+            "Hardware detection does not establish product support; use the approved catalog recommendation."
+        ));
+    }
+
+    #[test]
+    fn approved_manifest_rejects_unknown_fields_and_ambiguous_job_mappings() {
+        let mut manifest: serde_json::Value = serde_json::from_str(APPROVED_RUNTIMES).unwrap();
+        manifest["unexpectedAuthority"] = serde_json::json!(true);
+        let unknown_error = parse_approved_manifest(&manifest.to_string()).unwrap_err();
+        assert!(unknown_error.contains("unknown field"));
+
+        let mut manifest: serde_json::Value = serde_json::from_str(APPROVED_RUNTIMES).unwrap();
+        let duplicate = manifest["requiredJobs"][0].clone();
+        manifest["requiredJobs"]
+            .as_array_mut()
+            .unwrap()
+            .push(duplicate);
+        let duplicate_error = parse_approved_manifest(&manifest.to_string()).unwrap_err();
+        assert!(duplicate_error.contains("duplicate required job"));
+    }
+
+    #[test]
+    fn approved_manifest_rejects_an_unbound_compatibility_record() {
+        let mut manifest: serde_json::Value = serde_json::from_str(APPROVED_RUNTIMES).unwrap();
+        let asset = manifest["assets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|asset| {
+                asset["backend"] == "cpu"
+                    && !asset
+                        .get("dormant")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false)
+            })
+            .unwrap()
+            .clone();
+        manifest["compatibilityRecords"] = serde_json::json!([{
+            "key": {
+                "osBuild": "26100",
+                "architecture": "x64",
+                "adapterId": "cpu:fixture",
+                "driver": "not-applicable",
+                "firmware": "not-applicable",
+                "backend": "cpu",
+                "installKey": "cpu",
+                "releaseCommit": manifest["releaseCommit"],
+                "assetName": asset["name"],
+                "assetSha256": asset["digest"].as_str().unwrap().strip_prefix("sha256:").unwrap()
+            },
+            "evidenceLevel": "L4_PRODUCT",
+            "attestationId": "fixture-attestation",
+            "expiryIdentity": "not-bound-to-key"
+        }]);
+
+        let error = parse_approved_manifest(&manifest.to_string()).unwrap_err();
+        assert!(
+            error.contains("malformed or expired"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn approved_manifest_identity_matches_the_frozen_b10816_release() {
+        #[derive(Deserialize)]
+        struct ReleaseFixture {
+            body: serde_json::Value,
+        }
+
+        let fixture: ReleaseFixture = serde_json::from_str(include_str!(
+            "../tests/fixtures/runtime/b10816-release.json"
+        ))
+        .unwrap();
+        let release: GithubRelease = serde_json::from_value(fixture.body).unwrap();
+        let identity = approved_runtime_identity().unwrap();
+
+        assert_eq!(identity.release_tag, "b10816");
+        assert_eq!(release.tag_name, identity.release_tag);
+        assert_eq!(
+            identity.release_commit,
+            "427291b5b34cd914a31b3fd3b61a68f6184f4b9f"
+        );
+        assert_eq!(release.target_commitish, identity.release_commit);
+        assert_eq!(
+            identity.supported_windows,
+            vec!["Windows 11 build 26100 x64"]
+        );
+    }
+
+    #[test]
+    fn every_manifest_asset_and_job_matches_the_frozen_b10816_fixtures() {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct ReleaseFixture {
+            observed_at: String,
+            body: GithubRelease,
+        }
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct JobsFixture {
+            observed_at: String,
+            release_tag: String,
+            release_commit: String,
+            required_jobs: Vec<RequiredUpstreamJob>,
+        }
+
+        let release: ReleaseFixture = serde_json::from_str(include_str!(
+            "../tests/fixtures/runtime/b10816-release.json"
+        ))
+        .unwrap();
+        let jobs: JobsFixture = serde_json::from_str(include_str!(
+            "../tests/fixtures/runtime/b10816-required-jobs.json"
+        ))
+        .unwrap();
+        let manifest = parse_approved_manifest(APPROVED_RUNTIMES).unwrap();
+
+        assert_eq!(manifest.observed_at, release.observed_at);
+        assert_eq!(manifest.observed_at, jobs.observed_at);
+        assert_eq!(manifest.release_tag, jobs.release_tag);
+        assert_eq!(manifest.release_commit, jobs.release_commit);
+        assert_eq!(manifest.required_jobs, jobs.required_jobs);
+        assert_eq!(manifest.assets.len(), 13);
+        for asset in &manifest.assets {
+            let remote = release
+                .body
+                .assets
+                .iter()
+                .find(|candidate| candidate.name == asset.name)
+                .unwrap_or_else(|| panic!("missing frozen asset {}", asset.name));
+            bind_asset_to_manifest(remote, &manifest.assets).unwrap();
+        }
+    }
+
+    #[test]
+    fn dormant_arm64_cuda_url_matches_the_frozen_exact_tag_release() {
+        #[derive(Deserialize)]
+        struct ReleaseFixture {
+            body: GithubRelease,
+        }
+
+        let fixture: ReleaseFixture = serde_json::from_str(include_str!(
+            "../tests/fixtures/runtime/b10816-release.json"
+        ))
+        .unwrap();
+        let approved = approved_manifest().unwrap().0;
+        let entry = approved
+            .iter()
+            .find(|asset| asset.name == "llama-b10816-bin-win-cuda-13.4-arm64.zip")
+            .unwrap();
+        let remote = fixture
+            .body
+            .assets
+            .iter()
+            .find(|asset| asset.name == entry.name)
+            .unwrap();
+
+        assert!(entry.dormant);
+        assert_eq!(entry.url, remote.browser_download_url);
+        assert!(bind_asset_to_manifest(remote, &approved).is_ok());
+    }
+
+    #[test]
+    fn approved_runtime_catalog_uses_the_exact_tag_endpoint() {
+        assert_eq!(
+            approved_release_url().unwrap(),
+            "https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/b10816"
+        );
+    }
+
+    #[test]
+    fn offline_catalog_cache_requires_the_exact_approved_identity_and_body_digest() {
+        let identity = approved_runtime_identity().unwrap();
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/runtime/b10816-release.json"
+        ))
+        .unwrap();
+        let body = serde_json::to_string(&fixture["body"]).unwrap();
+        let cache = catalog_cache_record(&identity, Some("fixture-etag".into()), body);
+        let bytes = serde_json::to_vec(&cache).unwrap();
+        let encoded: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let compiled_manifest_sha256 = hex::encode(Sha256::digest(APPROVED_RUNTIMES.as_bytes()));
+
+        assert_eq!(
+            encoded["manifestSha256"].as_str(),
+            Some(compiled_manifest_sha256.as_str())
+        );
+
+        assert!(validate_catalog_cache(&bytes, &identity).is_ok());
+
+        let mut wrong_identity = identity.clone();
+        wrong_identity.release_commit = "0000000000000000000000000000000000000000".into();
+        assert!(validate_catalog_cache(&bytes, &wrong_identity).is_err());
+
+        let mut tampered: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let changed_body = format!("{} ", tampered["body"].as_str().unwrap());
+        tampered["body"] = serde_json::Value::String(changed_body);
+        assert!(
+            validate_catalog_cache(&serde_json::to_vec(&tampered).unwrap(), &identity).is_err()
+        );
+    }
+
+    #[test]
+    fn catalog_http_deadline_returns_a_typed_timeout() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let _connection = listener.accept().unwrap();
+            std::thread::sleep(Duration::from_millis(500));
+        });
+        let client = runtime_catalog_client(Duration::from_millis(50)).unwrap();
+        let started = std::time::Instant::now();
+
+        let error = tauri::async_runtime::block_on(fetch_catalog_http(
+            &client,
+            &format!("http://{address}/release"),
+            None,
+        ))
+        .unwrap_err();
+
+        assert_eq!(error.kind, RuntimeCatalogErrorKind::Timeout);
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn immutable_install_key_resolves_all_artifact_authority_in_the_backend() {
+        let resolved = resolve_approved_install("cpu").unwrap();
+        let (approved, _) = approved_manifest().unwrap();
+        let expected = approved
+            .iter()
+            .find(|asset| asset.backend == "cpu" && !asset.dormant)
+            .unwrap();
+
+        assert_eq!(
+            resolved.tag,
+            approved_runtime_identity().unwrap().release_tag
+        );
+        assert_eq!(resolved.install_key, "cpu");
+        assert_eq!(resolved.backend, "cpu");
+        assert_eq!(resolved.asset.name, expected.name);
+        assert_eq!(resolved.asset.size, expected.bytes);
+        assert_eq!(resolved.asset.browser_download_url, expected.url);
+        assert_eq!(
+            resolved.asset.digest.as_deref(),
+            Some(expected.digest.as_str())
+        );
+        assert!(resolve_approved_install("attacker-controlled").is_err());
+        assert!(resolve_approved_install("cuda-12.4-arm64").is_err());
+    }
+
+    #[test]
+    fn install_request_rejects_frontend_artifact_overrides_and_requires_exact_adapter_id() {
+        let crafted = serde_json::json!({
+            "installKey": "cpu",
+            "adapterId": null,
+            "url": "https://attacker.invalid/runtime.zip",
+            "tag": "attacker",
+            "backend": "attacker",
+            "size": 1,
+            "digest": format!("sha256:{}", "0".repeat(64)),
+        });
+        assert!(serde_json::from_value::<RuntimeInstallRequest>(crafted).is_err());
+
+        let cuda = resolve_approved_install("cuda-13.3").unwrap();
+        assert!(validate_install_adapter(&cuda, None, "x64", &[]).is_err());
+        assert!(validate_install_adapter(&cuda, Some("missing"), "x64", &[]).is_err());
+        assert!(validate_install_adapter(&cuda, Some("missing"), "arm64", &[]).is_err());
+    }
+
+    #[test]
+    fn runtime_archive_resume_path_is_stable_and_separate_from_install_staging() {
+        let root = Path::new(r"C:\managed-runtimes");
+        let install = resolve_approved_install("cpu").unwrap();
+        let first = runtime_download_target(root, &install, &install.asset).unwrap();
+        let second = runtime_download_target(root, &install, &install.asset).unwrap();
+
+        assert_eq!(first, second);
+        assert!(first.starts_with(root.join(".downloads").join("b10816").join("cpu")));
+        assert_eq!(first.file_name().unwrap(), install.asset.name.as_str());
+        assert!(!first.to_string_lossy().contains(".installing-"));
+    }
+
+    #[test]
+    fn every_active_install_key_has_one_hash_anchored_compiled_content_manifest() {
+        for install_key in [
+            "cpu",
+            "cuda-12.4",
+            "cuda-13.3",
+            "openvino",
+            "rocm",
+            "sycl",
+            "vulkan",
+        ] {
+            let resolved = resolve_approved_install(install_key).unwrap();
+            let bytes = approved_content_manifest_bytes(install_key).unwrap();
+            let manifest = validate_content_manifest_authority(&resolved, bytes).unwrap();
+            assert!(!manifest.files.is_empty(), "{install_key}");
+            assert!(
+                manifest
+                    .files
+                    .iter()
+                    .any(|file| file.path.ends_with("llama-server.exe")),
+                "{install_key}"
+            );
+            let paths = manifest
+                .files
+                .iter()
+                .map(|file| file.path.as_str())
+                .collect::<Vec<_>>();
+            assert!(paths.windows(2).all(|pair| pair[0] < pair[1]));
+        }
+    }
+
+    #[test]
+    fn verified_staging_replaces_a_corrupt_regular_destination() {
+        let root = std::env::temp_dir().join(format!(
+            "localmotive-runtime-repair-{}-{}",
+            std::process::id(),
+            observed_at_ms()
+        ));
+        let destination = root.join("b10816").join("cpu");
+        let staging = root.join(".installing-cpu");
+        fs::create_dir_all(&destination).unwrap();
+        fs::create_dir_all(&staging).unwrap();
+        fs::write(destination.join("runtime.bin"), b"corrupt").unwrap();
+        fs::write(staging.join("runtime.bin"), b"approved").unwrap();
+
+        replace_verified_runtime_directory(&staging, &destination).unwrap();
+
+        assert_eq!(
+            fs::read(destination.join("runtime.bin")).unwrap(),
+            b"approved"
+        );
+        assert!(!staging.exists());
+        let names = fs::read_dir(&root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        assert!(!names.iter().any(|name| name.starts_with(".replacing-")));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn tampered_runtime_and_forged_local_metadata_cannot_bypass_compiled_content_manifest() {
+        let root = std::env::temp_dir().join(format!(
+            "localmotive-content-trust-{}-{}",
+            std::process::id(),
+            observed_at_ms()
+        ));
+        let bin = root.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(bin.join("llama-server.exe"), b"trusted executable").unwrap();
+        fs::write(bin.join("ggml-cpu.dll"), b"trusted backend").unwrap();
+        let trusted_content = format!(
+            concat!(
+                "{{\"schemaVersion\":1,\"releaseTag\":\"b10816\",",
+                "\"releaseCommit\":\"427291b5b34cd914a31b3fd3b61a68f6184f4b9f\",",
+                "\"installKey\":\"cpu\",\"backend\":\"cpu\",\"artifacts\":[",
+                "{{\"name\":\"cpu.zip\",\"bytes\":1,\"sha256\":\"{}\"}}],\"files\":[",
+                "{{\"path\":\"bin/ggml-cpu.dll\",\"bytes\":15,\"sha256\":\"{}\"}},",
+                "{{\"path\":\"bin/llama-server.exe\",\"bytes\":18,\"sha256\":\"{}\"}}]}}"
+            ),
+            "a".repeat(64),
+            hex::encode(Sha256::digest(b"trusted backend")),
+            hex::encode(Sha256::digest(b"trusted executable"))
+        );
+        let trusted_digest = hex::encode(Sha256::digest(trusted_content.as_bytes()));
+        let resolved = ResolvedRuntimeInstall {
+            tag: "b10816".into(),
+            release_commit: "427291b5b34cd914a31b3fd3b61a68f6184f4b9f".into(),
+            architecture: "x64".into(),
+            backend: "cpu".into(),
+            install_key: "cpu".into(),
+            asset: GithubAsset {
+                name: "cpu.zip".into(),
+                browser_download_url: "https://example.invalid/cpu.zip".into(),
+                size: 1,
+                digest: Some(format!("sha256:{}", "a".repeat(64))),
+            },
+            companion_asset: None,
+            content_manifest_sha256: trusted_digest.clone(),
+        };
+        write_runtime_install_record(
+            &root,
+            &resolved,
+            Path::new("bin/llama-server.exe"),
+            &trusted_digest,
+        )
+        .unwrap();
+        assert!(verify_installed_runtime(
+            &root,
+            &resolved,
+            trusted_content.as_bytes(),
+            &trusted_digest
+        )
+        .is_ok());
+
+        fs::write(bin.join("llama-server.exe"), b"attacker executable").unwrap();
+        let forged_content = trusted_content.replace(
+            &hex::encode(Sha256::digest(b"trusted executable")),
+            &hex::encode(Sha256::digest(b"attacker executable")),
+        );
+        let forged_digest = hex::encode(Sha256::digest(forged_content.as_bytes()));
+        write_runtime_install_record(
+            &root,
+            &resolved,
+            Path::new("bin/llama-server.exe"),
+            &forged_digest,
+        )
+        .unwrap();
+        assert!(verify_installed_runtime(
+            &root,
+            &resolved,
+            trusted_content.as_bytes(),
+            &trusted_digest
+        )
+        .is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn one_runtime_setup_uses_one_hardware_detection() {
+        let calls = std::cell::Cell::new(0_u8);
+
+        let (hardware, catalog) = fetch_runtime_setup_with(
+            || {
+                calls.set(calls.get() + 1);
+                detect_hardware()
+            },
+            |_hardware| {
+                Ok(RuntimeCatalog {
+                    tag: "fixture".into(),
+                    published_at: String::new(),
+                    options: Vec::new(),
+                    availability: Vec::new(),
+                    origin: RuntimeCatalogOrigin::Network,
+                    warning: None,
+                    recommendation_reason: "fixture".into(),
+                })
+            },
+        )
+        .unwrap();
+
+        assert_eq!(calls.get(), 1);
+        assert_eq!(hardware.architecture, architecture());
+        assert_eq!(catalog.tag, "fixture");
+    }
+
+    #[test]
+    fn every_b10816_required_job_maps_to_shipping_impact_and_is_green() {
+        let jobs = approved_manifest().unwrap().1;
+
+        assert_eq!(jobs.len(), 11);
+        for job in &jobs {
+            assert_eq!(job.status, "completed", "job {} status", job.name);
+            assert_eq!(job.conclusion, "success", "job {} conclusion", job.name);
+            assert!(
+                !job.install_keys.is_empty(),
+                "job {} install keys",
+                job.name
+            );
+            assert_eq!(
+                job.platforms,
+                vec!["windows-x64"],
+                "job {} platform",
+                job.name
+            );
+            assert!(
+                !job.hardware_classes.is_empty(),
+                "job {} hardware classes",
+                job.name
+            );
+            assert!(!job.completed_at.is_empty(), "job {} completion", job.name);
+        }
+        for backend in ["cpu", "cuda", "vulkan", "rocm", "sycl", "openvino"] {
+            assert!(jobs.iter().any(|job| job.backend == backend), "{backend}");
+            assert!(!backend_is_blocked_by_upstream(&jobs, backend), "{backend}");
+        }
     }
 
     #[test]
@@ -2545,7 +4863,7 @@ mod tests {
     }
 
     #[test]
-    fn nvidia_cuda_13_machine_gets_matching_recommendation_and_cudart() {
+    fn generic_nvidia_name_without_an_exact_record_falls_back_to_cpu() {
         let hardware = HardwareInfo {
             architecture: "x64".into(),
             gpu_names: vec!["NVIDIA GeForce RTX 5090".into()],
@@ -2564,15 +4882,17 @@ mod tests {
         let recommended = recommend_capability_option(&mut options, &hardware)
             .cloned()
             .unwrap();
-        assert_eq!(recommended.backend, "cuda");
-        assert!(recommended.asset.name.contains("cuda-13.3"));
+        assert_eq!(recommended.backend, "cpu");
         let cuda_keys = options
             .iter()
             .filter(|option| option.backend == "cuda")
             .map(|option| option.install_key.as_str())
             .collect::<std::collections::HashSet<_>>();
         assert_eq!(cuda_keys.len(), 2);
-        assert!(recommended
+        assert!(options
+            .iter()
+            .find(|option| option.install_key == "cuda-13.3")
+            .unwrap()
             .companion_asset
             .as_ref()
             .unwrap()
@@ -2584,9 +4904,158 @@ mod tests {
     }
 
     #[test]
-    fn supported_amd_hardware_keeps_rocm_preference() {
-        // Supported AMD hardware keeps ROCm preference through the
-        // capability gate. RDNA 3 (`RX 7900 XTX`) is in the AMD matrix.
+    fn compatibility_record_requires_every_exact_key_field() {
+        let source = EvidenceSource {
+            kind: EvidenceSourceKind::Policy,
+            detail: "test fixture".into(),
+        };
+        let bytes =
+            Evidence::known(1, EvidenceLevel::Observed, source.clone(), 1, Vec::new()).unwrap();
+        let adapter = GpuAdapterInfo {
+            adapter_id: "luid:00000001:00000002".into(),
+            compatibility_id: "pci:10de:2b85:00000000:a1".into(),
+            name: "NVIDIA fixture".into(),
+            vendor: "nvidia".into(),
+            driver: Evidence::known(
+                "610.74".into(),
+                EvidenceLevel::Observed,
+                source.clone(),
+                1,
+                Vec::new(),
+            )
+            .unwrap(),
+            backend: Evidence::known("cuda".into(), EvidenceLevel::Derived, source, 1, Vec::new())
+                .unwrap(),
+            dedicated_bytes: bytes.clone(),
+            shared_bytes: bytes.clone(),
+            budget_bytes: bytes.clone(),
+            current_usage_bytes: bytes.clone(),
+            available_budget_bytes: bytes.clone(),
+            available_for_reservation_bytes: bytes,
+            capacity_observations: Vec::new(),
+        };
+        let (release, approved, _) = approved_release();
+        let hardware = HardwareInfo {
+            architecture: "x64".into(),
+            gpu_names: vec![adapter.name.clone()],
+            vendor: "nvidia".into(),
+            cuda_major: Some(13),
+            driver_version: "610.74".into(),
+            detection_status: "test fixture".into(),
+            recommendation: String::new(),
+            system_memory: detect_system_memory(),
+            adapters: vec![adapter.clone()],
+            manual_overrides: Vec::new(),
+        };
+        let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
+        let option = catalog
+            .options
+            .iter()
+            .find(|option| option.install_key == "cuda-13.3")
+            .unwrap();
+        let identity = approved_runtime_identity().unwrap();
+        let key = CompatibilityKey {
+            os_build: "26100".into(),
+            architecture: "x64".into(),
+            adapter_id: adapter.compatibility_id.clone(),
+            driver: "610.74".into(),
+            firmware: "not-applicable".into(),
+            backend: option.backend.clone(),
+            install_key: option.install_key.clone(),
+            release_commit: identity.release_commit.clone(),
+            asset_name: option.asset.name.clone(),
+            asset_sha256: option
+                .asset
+                .digest
+                .as_deref()
+                .unwrap()
+                .strip_prefix("sha256:")
+                .unwrap()
+                .into(),
+        };
+        let record = CompatibilityRecord {
+            expiry_identity: compatibility_expiry_identity(&key),
+            key: key.clone(),
+            evidence_level: "L4_PRODUCT".into(),
+            attestation_id: "attestation:fixture".into(),
+        };
+        assert!(compatibility_record_matches(
+            &record,
+            option,
+            &adapter,
+            "26100",
+            None,
+            "x64",
+            &identity.release_commit,
+        ));
+        let exact_index = compatibility_recommendation_index_for_evidence(
+            &catalog.options,
+            &hardware,
+            Some(&adapter.adapter_id),
+            "26100",
+            std::slice::from_ref(&record),
+            &identity.release_commit,
+        )
+        .unwrap();
+        assert_eq!(catalog.options[exact_index].install_key, "cuda-13.3");
+        assert!(compatibility_recommendation_index_for_evidence(
+            &catalog.options,
+            &hardware,
+            Some("luid:wrong"),
+            "26100",
+            std::slice::from_ref(&record),
+            &identity.release_commit,
+        )
+        .is_none());
+
+        let mut mismatches = Vec::new();
+        let mut changed = key.clone();
+        changed.os_build = "22631".into();
+        mismatches.push(changed);
+        let mut changed = key.clone();
+        changed.adapter_id = "luid:other".into();
+        mismatches.push(changed);
+        let mut changed = key.clone();
+        changed.driver = "609.00".into();
+        mismatches.push(changed);
+        let mut changed = key.clone();
+        changed.backend = "vulkan".into();
+        mismatches.push(changed);
+        let mut changed = key.clone();
+        changed.install_key = "cuda-12.4".into();
+        mismatches.push(changed);
+        let mut changed = key.clone();
+        changed.release_commit = "0000000000000000000000000000000000000000".into();
+        mismatches.push(changed);
+        let mut changed = key.clone();
+        changed.asset_name = "wrong.zip".into();
+        mismatches.push(changed);
+        let mut changed = key;
+        changed.asset_sha256 = "0".repeat(64);
+        mismatches.push(changed);
+
+        for mismatch in mismatches {
+            let changed_record = CompatibilityRecord {
+                expiry_identity: compatibility_expiry_identity(&mismatch),
+                key: mismatch,
+                evidence_level: "L4_PRODUCT".into(),
+                attestation_id: "attestation:fixture".into(),
+            };
+            assert!(!compatibility_record_matches(
+                &changed_record,
+                option,
+                &adapter,
+                "26100",
+                None,
+                "x64",
+                &identity.release_commit,
+            ));
+        }
+    }
+
+    #[test]
+    fn generic_amd_name_without_an_exact_record_falls_back_to_cpu() {
+        // A family name does not bind the exact adapter and runtime evidence.
         let hardware = HardwareInfo {
             architecture: "x64".into(),
             gpu_names: vec!["AMD Radeon RX 7900 XTX".into()],
@@ -2607,14 +5076,13 @@ mod tests {
             .cloned()
             .unwrap();
 
-        assert_eq!(recommended.backend, "rocm");
+        assert_eq!(recommended.backend, "cpu");
         assert!(options.iter().any(|option| option.backend == "vulkan"));
     }
 
     #[test]
-    fn supported_intel_arc_hardware_keeps_sycl_preference() {
-        // Supported Intel hardware keeps SYCL preference through the
-        // capability gate. Arc A770 is in the OpenVINO requirements list.
+    fn generic_intel_name_without_an_exact_record_falls_back_to_cpu() {
+        // A family name does not bind the exact adapter and runtime evidence.
         let hardware = HardwareInfo {
             architecture: "x64".into(),
             gpu_names: vec!["Intel Arc A770".into()],
@@ -2635,7 +5103,7 @@ mod tests {
             .cloned()
             .unwrap();
 
-        assert_eq!(recommended.backend, "sycl");
+        assert_eq!(recommended.backend, "cpu");
         assert!(options.iter().any(|option| option.backend == "vulkan"));
     }
 
@@ -2667,13 +5135,8 @@ mod tests {
     }
 
     #[test]
-    fn pascal_through_blackwell_cuda_mapping_uses_driver_branch_gates() {
-        // Phase 2 RED: CUDA mapping must enforce driver branch 580 or
-        // later for CUDA 13.x and branch 525 or later for CUDA 12.x.
-        // NVIDIA minor-version snapshot pins these gates. Pascal keeps
-        // CUDA 12.4. Turing through Blackwell keep the highest compatible
-        // CUDA major. This test names the missing helper and must fail
-        // until the gate exists.
+    fn nvidia_family_and_driver_do_not_create_exact_qualification() {
+        // Family labels and driver branches do not bind an L4 product record.
         let (release, approved, _) = approved_release();
         for (adapter, major, driver, want) in [
             ("NVIDIA GeForce GTX 1080", 12_u16, "560.70", "cuda-12.4"),
@@ -2699,8 +5162,7 @@ mod tests {
             let recommended = recommend_capability_option(&mut options, &hardware)
                 .cloned()
                 .unwrap();
-            assert_eq!(recommended.backend, "cuda", "adapter {adapter}");
-            assert_eq!(recommended.install_key, want, "adapter {adapter}");
+            assert_eq!(recommended.backend, "cpu", "adapter {adapter}; {want}");
         }
         // Old driver branch rejects CUDA 13.x even with a Blackwell card.
         let hardware = HardwareInfo {
@@ -2720,7 +5182,7 @@ mod tests {
         let recommended = recommend_capability_option(&mut options, &hardware)
             .cloned()
             .unwrap();
-        assert_ne!(recommended.install_key, "cuda-13.3");
+        assert_eq!(recommended.backend, "cpu");
     }
 
     #[test]
@@ -2876,9 +5338,7 @@ mod tests {
     }
 
     #[test]
-    fn amd_machine_prefers_rocm_with_vulkan_fallback() {
-        // Retired Phase 1 vendor-only check. `supported_amd_hardware_keeps_rocm_preference`
-        // covers the capability gate now.
+    fn amd_machine_without_exact_evidence_prefers_cpu() {
         let hardware = HardwareInfo {
             architecture: "x64".into(),
             gpu_names: vec!["AMD Radeon RX 7900 XTX".into()],
@@ -2897,7 +5357,7 @@ mod tests {
         let recommended = recommend_capability_option(&mut options, &hardware)
             .cloned()
             .unwrap();
-        assert_eq!(recommended.backend, "rocm");
+        assert_eq!(recommended.backend, "cpu");
         assert!(options.iter().any(|option| option.backend == "vulkan"));
     }
 
@@ -2948,6 +5408,23 @@ mod tests {
     fn managed_runtime_relative_path_is_versioned_and_sanitized() {
         let path = managed_runtime_relative_path("b10736/../../bad", "cuda 13.3");
         assert_eq!(path.to_string_lossy(), "b10736_.._.._bad\\cuda_13.3");
+    }
+
+    #[test]
+    fn managed_runtime_trust_rejects_a_sibling_prefix_path() {
+        let root =
+            std::env::temp_dir().join(format!("localmotive-managed-root-{}", std::process::id()));
+        let sibling = root.with_file_name(format!(
+            "{}-evil",
+            root.file_name().unwrap().to_string_lossy()
+        ));
+        fs::create_dir_all(&sibling).unwrap();
+        let executable = sibling.join("llama-server.exe");
+        fs::write(&executable, b"not managed").unwrap();
+
+        assert!(!managed_runtime_verified_in(&executable, &root).unwrap());
+
+        fs::remove_dir_all(&sibling).unwrap();
     }
 
     #[test]
@@ -3017,7 +5494,7 @@ mod tests {
     }
 
     #[test]
-    fn arm64_machine_only_receives_arm64_assets() {
+    fn dormant_arm64_assets_never_become_install_options() {
         let hardware = HardwareInfo {
             architecture: "arm64".into(),
             gpu_names: vec![],
@@ -3030,13 +5507,14 @@ mod tests {
             adapters: Vec::new(),
             manual_overrides: Vec::new(),
         };
-        let (release, approved, _) = approved_release();
-        let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
-        assert_eq!(catalog.options.len(), 3);
+        let (release, approved, jobs) = approved_release();
+        let catalog = build_approved_catalog(&release, &hardware, &approved, &jobs).unwrap();
+        assert!(catalog.options.is_empty());
+        assert_eq!(catalog.availability.len(), 3);
         assert!(catalog
-            .options
+            .availability
             .iter()
-            .all(|option| option.asset.name.contains("arm64")));
+            .all(|item| item.status == BackendAvailabilityStatus::Dormant));
     }
 
     fn scratch(name: &str) -> PathBuf {
@@ -3044,6 +5522,35 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn managed_runtime_inventory_rejects_an_ancestor_junction() {
+        // A junction at the release-tag parent previously redirected install
+        // publication outside the managed runtime root.
+        let root = scratch("runtime-ancestor-junction");
+        let outside = root.join("outside");
+        let managed = root.join("managed");
+        let install = outside.join("b10816").join("cpu");
+        fs::create_dir_all(&install).unwrap();
+        fs::write(install.join("llama-server.exe"), b"fixture").unwrap();
+        let status = crate::proc::hidden_command("cmd.exe")
+            .args(["/D", "/C", "mklink", "/J"])
+            .arg(&managed)
+            .arg(&outside)
+            .status()
+            .unwrap();
+        assert!(status.success(), "could not create the junction fixture");
+
+        let error = collect_install_files(&managed.join("b10816").join("cpu")).unwrap_err();
+
+        assert!(error.contains("ancestor") || error.contains("reparse"));
+        let _ = crate::proc::hidden_command("cmd.exe")
+            .args(["/D", "/C", "rmdir"])
+            .arg(&managed)
+            .status();
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -3076,6 +5583,135 @@ mod tests {
         .unwrap_err();
 
         assert!(error.contains("entry count"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn archive_extraction_binds_the_approved_digest_to_the_parsed_file() {
+        use std::io::Write;
+
+        let root = scratch("archive-identity");
+        let archive_path = root.join("runtime.zip");
+        let destination = root.join("output");
+        fs::create_dir_all(&destination).unwrap();
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+
+        let write_archive = |payload: &[u8]| {
+            let file = File::create(&archive_path).unwrap();
+            let mut archive = zip::ZipWriter::new(file);
+            archive.start_file("runtime.dll", options).unwrap();
+            archive.write_all(payload).unwrap();
+            archive.finish().unwrap();
+        };
+
+        write_archive(b"approved");
+        let approved_bytes = fs::read(&archive_path).unwrap();
+        let approved_size = approved_bytes.len() as u64;
+        let approved_digest = hex::encode(Sha256::digest(&approved_bytes));
+        write_archive(b"replaced");
+        assert_eq!(fs::metadata(&archive_path).unwrap().len(), approved_size);
+
+        let error = extract_verified_zip_with_limits_and_cancel(
+            &archive_path,
+            &destination,
+            ArchiveLimits {
+                max_entries: 2,
+                max_entry_bytes: 64,
+                max_total_bytes: 64,
+                max_path_bytes: 64,
+            },
+            None,
+            approved_size,
+            &approved_digest,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("SHA-256"), "unexpected error: {error}");
+        assert!(!destination.join("runtime.dll").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn archive_extraction_rejects_ntfs_alternate_stream_entries() {
+        use std::io::Write;
+
+        let root = scratch("archive-ads-entry");
+        let archive_path = root.join("runtime.zip");
+        let destination = root.join("output");
+        fs::create_dir_all(&destination).unwrap();
+        let file = File::create(&archive_path).unwrap();
+        let mut archive = zip::ZipWriter::new(file);
+        archive
+            .start_file(
+                "llama-server.exe:hidden",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        archive.write_all(b"hidden stream").unwrap();
+        archive.finish().unwrap();
+
+        let error = extract_zip_with_limits(
+            &archive_path,
+            &destination,
+            ArchiveLimits {
+                max_entries: 4,
+                max_entry_bytes: 1024,
+                max_total_bytes: 4096,
+                max_path_bytes: 128,
+            },
+        )
+        .unwrap_err();
+
+        assert!(
+            error.contains("alternate data stream"),
+            "unexpected error: {error}"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn content_manifest_paths_reject_ntfs_alternate_streams() {
+        let error = path_from_manifest("bin/llama-server.exe:hidden").unwrap_err();
+        assert!(
+            error.contains("malformed path"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn managed_runtime_verification_rejects_hard_linked_files() {
+        let root = std::env::temp_dir().join(format!(
+            "localmotive-managed-hard-link-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let victim = root.join("victim.dll");
+        let linked = root.join("ggml.dll");
+        fs::write(&victim, b"do not trust").unwrap();
+        fs::hard_link(&victim, &linked).unwrap();
+
+        assert!(digest_regular_file(&linked, "ggml.dll").is_err());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn managed_runtime_verification_rejects_post_install_alternate_streams() {
+        let root =
+            std::env::temp_dir().join(format!("localmotive-managed-ads-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("ggml.dll");
+        fs::write(&file, b"trusted default stream").unwrap();
+        fs::write(format!("{}:hidden", file.display()), b"untrusted stream").unwrap();
+
+        assert!(digest_regular_file(&file, "ggml.dll").is_err());
+
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -3226,6 +5862,56 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("symlink"), "unexpected error: {error}");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn archive_extraction_rejects_a_preexisting_child_junction() {
+        use std::io::Write;
+
+        let root = scratch("archive-child-junction");
+        let archive_path = root.join("runtime.zip");
+        let destination = root.join("output");
+        let outside = root.join("outside");
+        fs::create_dir_all(&destination).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let junction = destination.join("redirect");
+        let status = crate::proc::hidden_command("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&outside)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let file = File::create(&archive_path).unwrap();
+        let mut archive = zip::ZipWriter::new(file);
+        archive
+            .start_file(
+                "redirect/escaped.dll",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        archive.write_all(b"must stay contained").unwrap();
+        archive.finish().unwrap();
+
+        let result = extract_zip_with_limits(
+            &archive_path,
+            &destination,
+            ArchiveLimits {
+                max_entries: 20_000,
+                max_entry_bytes: 4 * 1024 * 1024 * 1024,
+                max_total_bytes: 16 * 1024 * 1024 * 1024,
+                max_path_bytes: 1_024,
+            },
+        );
+
+        assert!(
+            result.is_err(),
+            "a child junction was followed during extraction"
+        );
+        assert!(!outside.join("escaped.dll").exists());
+        fs::remove_dir(junction).unwrap();
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -3485,7 +6171,7 @@ mod tests {
     }
 
     #[test]
-    fn lists_managed_runtimes_from_manifests() {
+    fn managed_runtime_listing_rejects_forged_writable_manifest() {
         let root = scratch("managed-root");
         let install = root.join("b10752").join("cuda-13.3");
         fs::create_dir_all(&install).unwrap();
@@ -3497,11 +6183,7 @@ mod tests {
         .unwrap();
         fs::create_dir_all(root.join(".installing-junk")).unwrap();
         let records = list_managed_runtimes_in(&root);
-        assert_eq!(records.len(), 1);
-        assert_eq!(records[0].tag, "b10752");
-        assert_eq!(records[0].install_key, "cuda-13.3");
-        assert_eq!(records[0].backend, "cuda");
-        assert!(records[0].runtime_path.ends_with("llama-server.exe"));
+        assert!(records.is_empty());
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "workflows": {
+    "catalog.yml": {
+      "gates": {
+        "verify": [
+          "node scripts/verify_workflow_pins.mjs",
+          "node scripts/verify_workflow_gates.mjs",
+          "npm run catalog:validate"
+        ]
+      },
+      "packageJobs": {},
+      "publicationJobs": {}
+    },
+    "ci.yml": {
+      "gates": {
+        "check": [
+          "node scripts/verify_versions.mjs 0.4.1",
+          "node scripts/verify_workflow_pins.mjs",
+          "node scripts/verify_workflow_gates.mjs",
+          "node --test scripts/tests/release-gates.test.mjs",
+          "npm run check",
+          "npm audit --audit-level=moderate",
+          "cargo fmt --check",
+          "cargo clippy --locked --all-targets -- -D warnings",
+          "cargo test --locked",
+          "cargo test --locked --doc"
+        ],
+        "rust-audit": []
+      },
+      "packageJobs": {
+        "package-smoke": ["check", "rust-audit"]
+      },
+      "requiredCommands": {
+        "package-smoke": ["npm run tauri build"]
+      },
+      "publicationJobs": {}
+    },
+    "release.yml": {
+      "gates": {
+        "quality": [
+          "node scripts/verify_versions.mjs 0.4.1",
+          "node scripts/verify_workflow_pins.mjs",
+          "node scripts/verify_workflow_gates.mjs",
+          "node --test scripts/tests/release-gates.test.mjs",
+          "npm run check",
+          "npm audit --audit-level=moderate",
+          "cargo fmt --check",
+          "cargo clippy --locked --all-targets -- -D warnings",
+          "cargo test --locked",
+          "cargo test --locked --doc"
+        ],
+        "rust-audit": []
+      },
+      "packageJobs": {
+        "package": ["quality", "rust-audit"]
+      },
+      "requiredCommands": {
+        "package": [
+          "npm run tauri build",
+          "node scripts/verify_041.mjs 10041 $portable \"artifacts/packaged-verification-0.4.1.json\"",
+          "node scripts/verify_candidate_inventory.mjs artifacts \"$VERSION\" \"artifacts/candidate-inventory-${VERSION}.json\""
+        ],
+        "publish": [
+          "& $signtool.FullName verify /pa /all $file"
+        ]
+      },
+      "publicationJobs": {
+        "publish": ["quality", "rust-audit", "package"]
+      }
+    },
+    "hardware-qualify.yml": {
+      "gates": {
+        "hardware-qualify": [],
+        "clean-account-lifecycle": []
+      },
+      "packageJobs": {
+        "clean-account-lifecycle": ["hardware-qualify"]
+      },
+      "publicationJobs": {}
+    }
+  }
+}

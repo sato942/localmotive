@@ -1,0 +1,17 @@
+# Preserve signed and hash-sensitive bytes on every checkout.
+catalog/catalog.json text eol=lf
+catalog/catalog.json.sig text eol=lf
+src-tauri/approved_runtimes.json text eol=lf
+src-tauri/runtime-content-manifests/*.json text eol=lf
+src-tauri/tests/fixtures/runtime/*.json text eol=lf
+src-tauri/tests/fixtures/health/*.json text eol=lf
+src-tauri/tests/fixtures/health/*.jsonl text eol=lf
+src-tauri/tests/fixtures/health/*.txt text eol=lf
+release-evidence/**/*.json text eol=lf
+release-evidence/**/*.md text eol=lf
+release-evidence/**/*.txt text eol=lf
+.github/workflows/*.yml text eol=lf
+scripts/*.mjs text eol=lf
+scripts/tests/*.mjs text eol=lf
+scripts/*.ps1 text eol=lf
+src-tauri/tauri.signing.conf.json text eol=lf
