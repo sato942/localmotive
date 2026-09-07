@@ -54,7 +54,7 @@ test("version gate accepts no fabricated browser About version", async () => {
 
 test("workflow pin gate rejects mutable action references", () => {
   const result = validatePinnedUses([
-    { file: "ci.yml", job: "test", step: 0, uses: "actions/checkout@v4" },
+    { file: "ci.yml", job: "test", step: 0, uses: "actions/checkout@v5.1.0" },
   ], []);
   assert.equal(result.ok, false);
   assert.match(result.failures.join("\n"), /full 40-character commit SHA/);
@@ -666,8 +666,8 @@ test("hardware qualify workflow pins every remote action and orders sandbox afte
   const workflow = await readFile(join(process.cwd(), ".github", "workflows", "hardware-qualify.yml"), "utf8");
   assert.doesNotMatch(workflow, /uses:\s*actions\/checkout@v/);
   assert.doesNotMatch(workflow, /uses:\s*actions\/upload-artifact@v/);
-  assert.match(workflow, /actions\/checkout@11d5960a326750d5838078e36cf38b85af677262/);
-  assert.match(workflow, /actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02/);
+  assert.match(workflow, /actions\/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09/);
+  assert.match(workflow, /actions\/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a/);
   assert.match(workflow, /needs:\s*hardware-qualify/);
   assert.match(workflow, /supportClaimPolicy = "Do not mark SUPPORTED \/ L4_PASS without a successful packaged run/);
 });
