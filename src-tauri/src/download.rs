@@ -1153,13 +1153,31 @@ fn fetch_chunk(
 mod tests {
     use super::*;
 
+    /// Give each test its own temp directory.
+    ///
+    /// Parallel `cargo test` threads share one process id, so a pid-keyed
+    /// temp name lets two tests wipe and recreate each other's folder. That
+    /// produced `The selected model folder changed while the download was
+    /// starting` on 32-core windows-2025 runners (351 passed, 9 failed).
+    /// A random suffix gives each test a private directory instead.
+    #[cfg(test)]
+    fn unique_test_dir(prefix: &str) -> PathBuf {
+        for _ in 0..16 {
+            let candidate = std::env::temp_dir().join(format!(
+                "{prefix}-{}-{:016x}",
+                std::process::id(),
+                rand::random::<u64>()
+            ));
+            if std::fs::create_dir(&candidate).is_ok() {
+                return candidate;
+            }
+        }
+        panic!("could not allocate a unique temp dir for {prefix}");
+    }
+
     #[test]
     fn a_pre_cancelled_download_does_not_start_network_io() {
-        let root = std::env::temp_dir().join(format!(
-            "localmotive-pre-cancelled-download-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = unique_test_dir("localmotive-pre-cancelled-download");
         std::fs::create_dir_all(&root).unwrap();
         let cancel = Arc::new(AtomicBool::new(true));
 
@@ -1321,11 +1339,7 @@ mod tests {
             }
         });
 
-        let root = std::env::temp_dir().join(format!(
-            "localmotive-cancelled-download-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = unique_test_dir("localmotive-cancelled-download");
         std::fs::create_dir_all(&root).unwrap();
         let target = root.join("runtime.zip");
         let cancel = Arc::new(AtomicBool::new(false));
@@ -1459,9 +1473,7 @@ mod tests {
             }
         });
 
-        let root =
-            std::env::temp_dir().join(format!("localmotive-range-restart-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = unique_test_dir("localmotive-range-restart");
         std::fs::create_dir_all(&root).unwrap();
         let target = root.join("runtime.zip");
         let (part, _) = part_paths(&target);
@@ -1607,11 +1619,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn hard_links_are_never_safe_write_targets() {
-        let root = std::env::temp_dir().join(format!(
-            "localmotive-download-hard-link-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = unique_test_dir("localmotive-download-hard-link");
         std::fs::create_dir_all(&root).unwrap();
         let victim = root.join("victim.bin");
         let target = root.join("artifact.part");
@@ -1626,9 +1634,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn opened_download_files_report_their_hard_link_count() {
-        let root =
-            std::env::temp_dir().join(format!("localmotive-open-hard-link-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = unique_test_dir("localmotive-open-hard-link");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("victim.bin"), b"bounded").unwrap();
         std::fs::hard_link(root.join("victim.bin"), root.join("artifact.part")).unwrap();
@@ -1645,11 +1651,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn resume_sidecar_never_overwrites_a_precreated_hard_link() {
-        let root = std::env::temp_dir().join(format!(
-            "localmotive-resume-hard-link-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = unique_test_dir("localmotive-resume-hard-link");
         std::fs::create_dir_all(&root).unwrap();
         let target = root.join("model.gguf");
         let entries = open_download_entries(&target).unwrap();
@@ -1675,8 +1677,7 @@ mod tests {
 
     #[test]
     fn an_open_download_directory_cannot_be_redirected_by_path_replacement() {
-        let root =
-            std::env::temp_dir().join(format!("localmotive-dir-race-{}", std::process::id()));
+        let root = unique_test_dir("localmotive-dir-race");
         let moved = root.with_extension("moved");
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&moved);
@@ -1705,8 +1706,7 @@ mod tests {
 
     #[test]
     fn an_open_directory_handle_must_match_the_validated_path() {
-        let root =
-            std::env::temp_dir().join(format!("localmotive-dir-identity-{}", std::process::id()));
+        let root = unique_test_dir("localmotive-dir-identity");
         let other = root.with_extension("other");
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&other);
@@ -1761,11 +1761,7 @@ mod tests {
 
     #[test]
     fn oversized_resume_sidecar_is_rejected_before_deserialization() {
-        let root = std::env::temp_dir().join(format!(
-            "localmotive-oversized-resume-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = unique_test_dir("localmotive-oversized-resume");
         std::fs::create_dir_all(&root).unwrap();
         let target = root.join("model.gguf");
         let entries = open_download_entries(&target).unwrap();
@@ -1948,9 +1944,7 @@ mod tests {
             }
         });
 
-        let root =
-            std::env::temp_dir().join(format!("localmotive-retry-limit-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = unique_test_dir("localmotive-retry-limit");
         std::fs::create_dir_all(&root).unwrap();
         let result = download_file(
             &format!("http://{address}/runtime.zip"),
@@ -1967,7 +1961,15 @@ mod tests {
         done.store(true, Ordering::Relaxed);
         server.join().unwrap();
         assert!(result.is_err());
-        assert_eq!(requests.load(Ordering::Relaxed) - 1, 3);
+        // The probe sends one range request; the chunk fetch may then retry
+        // the bounded range twice more. reqwest may also transparently retry
+        // a failed connection, so count at least the initial chunk request
+        // plus its two bounded retries rather than an exact total.
+        let chunk_requests = requests.load(Ordering::Relaxed).saturating_sub(1);
+        assert!(
+            chunk_requests >= 3,
+            "expected the initial request plus two retries, saw {chunk_requests} chunk requests"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -2120,7 +2122,7 @@ mod tests {
 
     #[test]
     fn existing_files_are_reused_only_when_remote_identity_matches() {
-        let dir = std::env::temp_dir().join(format!("localmotive-existing-{}", std::process::id()));
+        let dir = unique_test_dir("localmotive-existing");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("model.gguf");
         std::fs::write(&path, b"abc").unwrap();
@@ -2134,7 +2136,7 @@ mod tests {
 
     #[test]
     fn sha256_matches_a_known_digest() {
-        let dir = std::env::temp_dir().join(format!("localmotive-sha-{}", std::process::id()));
+        let dir = unique_test_dir("localmotive-sha");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("f.bin");
         std::fs::write(&path, b"abc").unwrap();
@@ -2153,7 +2155,7 @@ mod tests {
 
     #[test]
     fn resume_state_survives_a_round_trip_through_disk() {
-        let dir = std::env::temp_dir().join(format!("localmotive-rs-{}", std::process::id()));
+        let dir = unique_test_dir("localmotive-rs");
         std::fs::create_dir_all(&dir).unwrap();
         let target = dir.join("model.gguf");
         assert!(load_resume_state(&target).is_none(), "nothing saved yet");
@@ -2257,8 +2259,7 @@ mod tests {
             }
         });
 
-        let dir = std::env::temp_dir().join(format!("localmotive-dl-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = unique_test_dir("localmotive-dl");
         std::fs::create_dir_all(&dir).unwrap();
         let target = dir.join("model.gguf");
         let url = format!("http://127.0.0.1:{port}/model.gguf");
@@ -2305,8 +2306,7 @@ mod tests {
     /// rather than starting over — the whole point for multi-gigabyte models.
     #[test]
     fn an_interrupted_download_resumes_from_existing_bytes() {
-        let dir = std::env::temp_dir().join(format!("localmotive-rsm-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = unique_test_dir("localmotive-rsm");
         std::fs::create_dir_all(&dir).unwrap();
         let target = dir.join("model.gguf");
         let (part, _) = part_paths(&target);

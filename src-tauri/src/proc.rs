@@ -284,10 +284,28 @@ pub fn output_with_timeout(
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::time::{Duration, Instant};
+
+    /// Give each test its own temp directory: parallel `cargo test` threads
+    /// share one process id, so a pid-keyed name lets two tests wipe each
+    /// other's marker files and the descendant fixture never appears to start.
+    #[cfg(test)]
+    fn unique_test_dir(prefix: &str) -> PathBuf {
+        for _ in 0..16 {
+            let candidate = std::env::temp_dir().join(format!(
+                "{prefix}-{}-{:016x}",
+                std::process::id(),
+                rand::random::<u64>()
+            ));
+            if std::fs::create_dir(&candidate).is_ok() {
+                return candidate;
+            }
+        }
+        panic!("could not allocate a unique temp dir for {prefix}");
+    }
 
     /// Source-level invariant: no module may bypass `hidden_command`, because a
     /// single direct `Command::new` reintroduces the console flash.
@@ -384,11 +402,7 @@ mod tests {
     fn cancellation_terminates_descendant_processes() {
         use base64::Engine as _;
 
-        let root = std::env::temp_dir().join(format!(
-            "localmotive-process-tree-cancel-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = unique_test_dir("localmotive-process-tree-cancel");
         std::fs::create_dir_all(&root).unwrap();
         let started_marker = root.join("descendant-started.txt");
         let marker = root.join("descendant-survived.txt");
@@ -445,11 +459,7 @@ mod tests {
     fn dropping_a_contained_process_terminates_descendants() {
         use base64::Engine as _;
 
-        let root = std::env::temp_dir().join(format!(
-            "localmotive-process-tree-drop-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = unique_test_dir("localmotive-process-tree-drop");
         std::fs::create_dir_all(&root).unwrap();
         let started_marker = root.join("descendant-started.txt");
         let marker = root.join("descendant-survived.txt");
