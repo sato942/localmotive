@@ -90,7 +90,7 @@ $sharedXml = $Shared
 $wsb = @"
 <Configuration>
   <VGpu>Disable</VGpu>
-  <Networking>Disable</Networking>
+  <Networking>Enable</Networking>
   <MappedFolders>
     <MappedFolder>
       <HostFolder>$sharedXml</HostFolder>
@@ -108,6 +108,7 @@ Set-Content -Path $wsbPath -Value $wsb -Encoding UTF8
 $resultPath = Join-Path $Shared "result.json"
 if (Test-Path $resultPath) { Remove-Item $resultPath -Force }
 
+# Networking=Enable so WebView2 bootstrapper can download in Sandbox (Disable caused NSIS exit 2).
 Write-Host "Launching Windows Sandbox..."
 $sandbox = Start-Process -FilePath "$env:WINDIR\System32\WindowsSandbox.exe" -ArgumentList "`"$wsbPath`"" -PassThru
 
