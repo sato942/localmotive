@@ -141,7 +141,7 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ steps.meta.outputs.tag }}
+          ref: ${{ github.sha }}
 
       - name: Ensure Windows Sandbox is available
         shell: pwsh
@@ -175,7 +175,7 @@ jobs:
           - Update baseline: ``v0.4.0``
           - Checks: NSIS install/launch/uninstall, MSI install/launch/uninstall, NSIS update from 0.4.0
           - Result: **$status**
-          - Runs only on the night self-hosted runner window (01:00-06:00 Asia/Dubai)
+          - Runs on the owner interactive self-hosted runner (24/7 while logged in)
           "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8
 
       - name: Upload sandbox evidence
