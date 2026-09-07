@@ -43,8 +43,13 @@ function Launch-Smoke($exe) {
 }
 function Install-Nsis($setup) {
   Log "NSIS install: $setup"
+  if (-not (Test-Path $setup)) { throw "NSIS setup missing: $setup" }
   $p = Start-Process -FilePath $setup -ArgumentList "/S" -Wait -PassThru
-  if ($p.ExitCode -ne 0) { throw "NSIS install exit $($p.ExitCode)" }
+  if ($p.ExitCode -ne 0) {
+    $wv = $null
+    try { $wv = (Get-ItemProperty "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" -ErrorAction SilentlyContinue).pv } catch {}
+    throw "NSIS install exit $($p.ExitCode) (WebView2 pv=$wv; need Sandbox Networking=Enable or embedBootstrapper)"
+  }
   Start-Sleep -Seconds 2
 }
 function Uninstall-Nsis {
