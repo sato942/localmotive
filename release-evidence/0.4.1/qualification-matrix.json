@@ -244,12 +244,12 @@
       "os": "Windows 11 x64",
       "architecture": "x64",
       "backend": "all shipped",
-      "status": "UNKNOWN",
-      "supportClaim": false,
-      "evidenceLevel": "NONE",
-      "evidenceSummary": "No disposable clean-account installer lifecycle run is available.",
+      "status": "L4_PASS",
+      "supportClaim": true,
+      "evidenceLevel": "L4_PRODUCT",
+      "evidenceSummary": "Sandbox run 34108616687 PASS: NSIS install/launch/uninstall, MSI install/launch/uninstall, NSIS update from 0.4.0. Installer lifecycle only; no model inference in Sandbox.",
       "releaseNotesDisclosed": true,
-      "attestation": null
+      "attestation": "clean-account-lifecycle-0.4.1"
     }
   ]
 }

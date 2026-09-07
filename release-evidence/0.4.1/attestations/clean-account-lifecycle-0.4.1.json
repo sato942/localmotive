@@ -1,0 +1,37 @@
+{
+  "artifactDigest": "sha256:bba1c952727b4f3b3847bb68f46a0ccd906ae64581cf3510f0529fedb0d9139e",
+  "approver": "sato942",
+  "evidence": {
+    "path": "release-evidence/0.4.1/attestations/sandbox-clean-account-lifecycle.log",
+    "sha256": "868dfb8a6918b26dc6102a680e0764c9d050181f69074c4ce52680615efaa783"
+  },
+  "evidenceLevel": "L4_PRODUCT",
+  "executedAt": "2026-09-07T09:59:49Z",
+  "expiryIdentity": "compatibility-v1:sha256:46cd6a886cee1549b991064e3fcb3ec81ef59af632893cd843500b34182de996",
+  "id": "clean-account-lifecycle-0.4.1",
+  "limitations": [
+    "Clean-account installer lifecycle only: NSIS install/launch/uninstall, MSI install/launch/uninstall, NSIS update from 0.4.0.",
+    "Sandbox did not run model inference; modelDigest is the pinned SmolLM2 release identifier only.",
+    "Zen 5 and Blackwell host rows stay at DIRECT_L2 with supportClaim false; no HOST_MATCH promotion.",
+    "Unsigned test prerelease v0.4.1; SignPath Foundation approval and wiring still pending."
+  ],
+  "modelDigest": "sha256:e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5",
+  "p0Id": "win-x64-clean-account",
+  "qualificationKey": {
+    "osBuild": "26100",
+    "architecture": "x64",
+    "adapterId": "not-applicable",
+    "driver": "not-applicable",
+    "firmware": "not-applicable",
+    "backend": "cpu",
+    "installKey": "cpu",
+    "releaseCommit": "427291b5b34cd914a31b3fd3b61a68f6184f4b9f",
+    "assetName": "llama-b10816-bin-win-cpu-x64.zip",
+    "assetSha256": "b25d1044a9d6061129ce6f3439697b04996c63b9bdccf025a24a10d6d4954766"
+  },
+  "release": "0.4.1",
+  "result": "PASS",
+  "schemaVersion": 1,
+  "sourceRevision": "8e076697d164f3e50ba968e55867446f42800a8b",
+  "verifier": "scripts/sandbox/host-run-lifecycle.ps1 + run-lifecycle-in-sandbox.ps1, run 34108616687"
+}

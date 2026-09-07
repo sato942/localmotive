@@ -88,6 +88,19 @@
       "observation": "WindowsSandbox.exe is present on Windows 11 build 26100. The latest Sandbox package has CBS CurrentState 0x70. The DISM feature-state query required elevation."
     },
     {
+      "id": "clean-account-lifecycle-evidence",
+      "status": "APPROVED",
+      "decision": "Accept GitHub Actions run 34108616687 Sandbox PASS as L4_PRODUCT evidence for win-x64-clean-account installer lifecycle only (NSIS install/launch/uninstall, MSI install/launch/uninstall, NSIS update from 0.4.0).",
+      "conditions": [
+        "Scope stays installer lifecycle only; no Zen 5 or Blackwell promotion from HOST_MATCH to L4_PASS.",
+        "Sandbox did not run model inference; modelDigest is the pinned SmolLM2 release identifier only.",
+        "Zen 5 and Blackwell host rows stay at DIRECT_L2 with supportClaim false.",
+        "Official package may proceed unsigned with clear disclosure until SignPath approval and wiring complete."
+      ],
+      "observation": "Run 34108616687 on dc0c391: clean-account-lifecycle job success; sandbox-clean-account-lifecycle.json status PASS with 3 PASS steps; attestations staged under release-evidence/0.4.1/attestations/.",
+      "evidence": "release-evidence/0.4.1/attestations/clean-account-lifecycle-0.4.1.json"
+    },
+    {
       "id": "catalog-signing",
       "status": "VERIFIED_COMPLETED",
       "decision": "Use an interim temporary signing branch and a GitHub artifact-only workflow to sign the corrected catalog.",

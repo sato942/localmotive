@@ -324,7 +324,25 @@
       ]
     }
   ],
-  "compatibilityRecords": [],
+  "compatibilityRecords": [
+    {
+      "key": {
+        "osBuild": "26100",
+        "architecture": "x64",
+        "adapterId": "not-applicable",
+        "driver": "not-applicable",
+        "firmware": "not-applicable",
+        "backend": "cpu",
+        "installKey": "cpu",
+        "releaseCommit": "427291b5b34cd914a31b3fd3b61a68f6184f4b9f",
+        "assetName": "llama-b10816-bin-win-cpu-x64.zip",
+        "assetSha256": "b25d1044a9d6061129ce6f3439697b04996c63b9bdccf025a24a10d6d4954766"
+      },
+      "evidenceLevel": "L4_PRODUCT",
+      "attestationId": "clean-account-lifecycle-0.4.1",
+      "expiryIdentity": "compatibility-v1:sha256:46cd6a886cee1549b991064e3fcb3ec81ef59af632893cd843500b34182de996"
+    }
+  ],
   "approval": {
     "blockedBackends": [],
     "note": "All required upstream jobs mapped to approved Windows x64 candidates completed successfully. Product hardware qualification remains a separate gate."

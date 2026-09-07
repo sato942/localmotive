@@ -1,0 +1,18 @@
+[2026-09-07T09:55:45.2247660Z] Sandbox lifecycle starting
+[2026-09-07T09:55:45.4969475Z] NSIS install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.4.1_x64-setup.exe
+[2026-09-07T09:56:55.1955067Z] Launch smoke: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-07T09:57:05.4026122Z] Launch smoke OK
+[2026-09-07T09:57:05.4344653Z] NSIS uninstall: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\uninstall.exe
+[2026-09-07T09:57:09.6817603Z] NSIS fresh path PASS
+[2026-09-07T09:57:09.6974850Z] MSI install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.4.1_x64.msi
+[2026-09-07T09:59:13.5042978Z] Launch smoke: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-07T09:59:23.6744527Z] Launch smoke OK
+[2026-09-07T09:59:23.6763806Z] MSI uninstall via package: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.4.1_x64.msi
+[2026-09-07T09:59:29.5013784Z] MSI fresh path PASS
+[2026-09-07T09:59:29.5171552Z] NSIS install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.4.0_x64-setup.exe
+[2026-09-07T09:59:32.6255823Z] NSIS install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.4.1_x64-setup.exe
+[2026-09-07T09:59:35.7180475Z] Launch smoke: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-07T09:59:45.8888880Z] Launch smoke OK
+[2026-09-07T09:59:45.8900680Z] NSIS uninstall: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\uninstall.exe
+[2026-09-07T09:59:49.7376225Z] NSIS update path PASS
+[2026-09-07T09:59:49.7691086Z] ALL PASS
