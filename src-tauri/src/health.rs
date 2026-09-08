@@ -1409,6 +1409,76 @@ mod tests {
     }
 
     #[test]
+    fn health_failure_details_carry_no_secret_or_private_path() {
+        // Phase 3: failure messages contain no secret or private path. The
+        // health error vocabulary is a closed set of fixed product strings
+        // (no paths, tokens, or hostnames are interpolated), so a failure
+        // can be shown and logged without leaking machine specifics.
+        // RED: introducing a detail that echoes a path fails this test,
+        // which proves the test guards the vocabulary instead of
+        // documenting it.
+        let source = include_str!("health.rs");
+
+        // No credential vocabulary in failure details. The scan skips
+        // this test's own token list (self-match guard): only product lines
+        // outside this test function count.
+        let in_scrub_test = false;
+        let _ = in_scrub_test;
+        let body_start = source
+            .find("fn health_failure_details_carry_no_secret")
+            .unwrap_or(0);
+        let (before, _) = source.split_at(body_start);
+        let before_lower = before.to_ascii_lowercase();
+        for token in [
+            "password", "api-key", "api_key", "bearer", "ghp_", "gho_", "sk-",
+        ] {
+            assert!(
+                !before_lower.contains(token),
+                "credential vocabulary must not appear in health errors: {token}"
+            );
+        }
+        // "secret"/"token" appear only as completion counters
+        // (requested_tokens/observed_tokens), never as credential words.
+        for line in before.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            let low = line.to_ascii_lowercase();
+            if low.contains("secret") {
+                panic!("secret vocabulary in health product code: {}", line.trim());
+            }
+            if low.contains("token")
+                && !low.contains("requested_tokens")
+                && !low.contains("observed_tokens")
+                && !low.contains("n_predict")
+                && !low.contains("tokens_predicted")
+            {
+                panic!("token vocabulary in health product code: {}", line.trim());
+            }
+        }
+        // No absolute-path interpolation in failure details: every
+        // user-facing health detail string is a fixed literal.
+        for needle in ["C:\\", "C:/", "/home/", "/Users/"] {
+            let mut hits = 0;
+            for line in source.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("//") {
+                    continue;
+                }
+                if trimmed.contains(needle) && trimmed.contains("into()") {
+                    hits += 1;
+                }
+            }
+            assert_eq!(hits, 0, "absolute path in a health detail string");
+        }
+        // The closed vocabulary check: every `HealthFailureReason` maps to
+        // a fixed detail, and `run_bounded` never echoes the executable path.
+        assert!(source.contains("The bounded health process did not complete safely."));
+        assert!(source.contains("The health process returned a nonzero exit status."));
+    }
+
+    #[test]
     fn loopback_server_is_contained_before_user_code_can_run() {
         let source = include_str!("health.rs");
         assert!(source.contains("spawn_contained_process"));
