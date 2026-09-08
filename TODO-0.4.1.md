@@ -1030,19 +1030,31 @@ Check readability at 16, 24, and 32 pixels.
 
 #### Planned generation
 
-- [ ] Approve the canonical `LM` vector source.
-- [ ] Document the canonical source and generation rule in `DESIGN.md`.
-- [ ] Run `npx tauri icon assets/app-icon.svg`.
-- [ ] Regenerate all 17 Tauri icon derivatives.
-- [ ] Inspect `icon.ico` layer sizes.
-- [ ] Set NSIS `installerIcon` and `uninstallerIcon` to `icons/icon.ico`.
-- [ ] Build portable, NSIS, and MSI candidates.
-- [ ] Extract and inspect the portable executable icon.
-- [ ] Extract and inspect the NSIS installer and uninstaller icons.
-- [ ] Verify the MSI `ProductIcon` payload.
-- [ ] Inspect Explorer, taskbar, title bar, Start menu, and shortcuts.
-- [ ] Test from a clean account to avoid stale shell icon caches.
-- [ ] Confirm uninstall removes branded shortcuts correctly.
+- [x] Approve the canonical `LM` vector source.
+- [x] Document the canonical source and generation rule in `DESIGN.md`.
+- [x] Run `npx tauri icon assets/app-icon.svg`.
+- [x] Regenerate all 17 Tauri icon derivatives.
+- [x] Inspect `icon.ico` layer sizes.
+- [x] Set NSIS `installerIcon` and `uninstallerIcon` to `icons/icon.ico`.
+- [x] Build portable, NSIS, and MSI candidates.
+- [x] Extract and inspect the portable executable icon.
+- [x] Extract and inspect the NSIS installer and uninstaller icons.
+- [x] Verify the MSI `ProductIcon` payload.
+- [x] Inspect Explorer, taskbar, title bar, Start menu, and shortcuts.
+- [x] Test from a clean account to avoid stale shell icon caches.
+- [x] Confirm uninstall removes branded shortcuts correctly.
+
+Icon evidence (Phase 4, `icon:verify` ok): canonical `assets/app-icon.svg`
+(LM vector paths, no font dependency) approved in `approvals.json`
+(`canonical-icon` APPROVED); `DESIGN.md` canonical-icon entry with the
+generation rule; all 17 `src-tauri/icons/` derivatives regenerated;
+`icon.ico` carries 16/24/32/48/64/256 layers
+(`small icon layers remain readable at native resolution`, mutant-proven);
+NSIS installer plus uninstaller pinned to `icons/icon.ico`
+(`the packaged NSIS installer and uninstaller use the LM icon`);
+portable, NSIS, and MSI candidates built on the self-hosted runner
+(`package-smoke` green); clean-account Sandbox lifecycle plus uninstaller
+evidence in run 34108616687.
 
 Do not replace only `icon.ico`.
 
@@ -1126,6 +1138,25 @@ Write one JSON record with revision, artifact digest, host class, checks, eviden
 
 Run the verifier against the built candidate before release publication.
 
+Packaged-gate evidence (Phase 6): hermetic `scripts/verify_041.mjs` seeds
+state before each assertion, scopes DOM checks to one intended element
+(`runtime-role runtime-scope`, `entry.blockingJobs.map`), exercises
+`ipc.reject-*` overrides through packaged IPC, collects all failures,
+exits nonzero on any material failure, and writes the PASS/FAIL JSON
+record with revision plus artifact digest. The release workflow runs it
+against the built candidate and blocks publication on non-PASS; the
+`package-smoke` job rebuilds plus relaunches the portable binary on the
+self-hosted runner. The stale `verify_040` scope-selector defect is retired
+with `verify_041` (dedicated scope selector, multi-role-line coverage in
+`ui.catalog-loading`).
+
+Ledger evidence (F-041-11, Phase 0A plus Phase 5): the approved rebaseline
+repaired citations, smoke inventory, and attestations, then froze the tree
+with the tracked manifest plus independent anchor. The two post-freeze
+worktree additions are recorded with byte evidence in the Phase 5 notes;
+no tracked ledger file was modified to hide them, and the tracked anchor
+gate stays green.
+
 ### F-041-13 — The Rust release gate was false-green
 
 **Severity:** P0 release integrity
@@ -1180,13 +1211,27 @@ The two GitHub-only download failures need separate root-cause investigation.
 
 #### Required regression checks
 
-- [ ] A controlled nonzero native command produces a failed gate.
-- [ ] A clean clone contains every required test fixture.
-- [ ] The signed catalog validates after Windows checkout.
-- [ ] The signed catalog validates after LF checkout.
-- [ ] Both download-path tests pass on `windows-latest`.
-- [ ] No packaging job starts after a failed test gate.
-- [ ] The complete clean-checkout Rust suite has zero failures.
+- [x] A controlled nonzero native command produces a failed gate.
+- [x] A clean clone contains every required test fixture.
+- [x] The signed catalog validates after Windows checkout.
+- [x] The signed catalog validates after LF checkout.
+- [x] Both download-path tests pass on `windows-latest`.
+- [x] No packaging job starts after a failed test gate.
+- [x] The complete clean-checkout Rust suite has zero failures.
+
+Rust-gate evidence: `a controlled nonzero native command remains nonzero`
+(exit 23 stays 23, so no nonzero step can read green);
+`no_module_constructs_a_raw_command` (source scan fails on any raw
+`Command::new` outside `proc::hidden_command`, so no console-flash path
+bypasses the gate); CRLF checkout-invariant
+`shipped_signature_verifies_after_crlf_checkout_normalization`
+(mutant-proven); unique-temp-dir fixture isolation (PID-keyed collisions
+fixed, lasting fix, not the removed 4-thread pin); `cleanup` plus
+`workflow-gates.json` fail-fast steps with `package-smoke` depending on
+`check` plus `rust-audit`; self-hosted runs green on every landed commit.
+The two historical GitHub-only download-path failures were fixture races
+fixed by the unique-dir plus WouldBlock plus empty-head hardening, proven
+by 48 consecutive default-parallel green runs plus clean self-hosted CI.
 
 ### F-041-14 — Installation IPC accepts untrusted runtime metadata
 
@@ -1227,15 +1272,26 @@ Archive containment limits reduce extraction risk but do not restore artifact pr
 
 #### Required security checks
 
-- [ ] A frontend URL override is rejected before network access.
-- [ ] A frontend tag override is rejected.
-- [ ] A frontend backend override is rejected.
-- [ ] A missing or changed digest is rejected.
-- [ ] A zero or changed size is rejected.
-- [ ] An unknown install key is rejected.
-- [ ] A blocked install key is rejected.
-- [ ] A companion-asset substitution is rejected.
-- [ ] Only a Rust-resolved approved option reaches download.
+- [x] A frontend URL override is rejected before network access.
+- [x] A frontend tag override is rejected.
+- [x] A frontend backend override is rejected.
+- [x] A missing or changed digest is rejected.
+- [x] A zero or changed size is rejected.
+- [x] An unknown install key is rejected.
+- [x] A blocked install key is rejected.
+- [x] A companion-asset substitution is rejected.
+- [x] Only a Rust-resolved approved option reaches download.
+
+IPC evidence: `RuntimeInstallRequest` carries only `installKey` plus
+`adapterId` with `deny_unknown_fields`
+(`install_request_rejects_frontend_artifact_overrides_and_requires_exact_adapter_id`
+rejects the crafted URL/tag/backend/size/digest payload before any network
+access); `immutable_install_key_resolves_all_artifact_authority_in_the_backend`
+(tag, backend, URL, size, digest all resolved inside Rust, unknown keys
+rejected); `blocked_backends_are_never_installed_or_recommended` (blocked
+keys rejected); adapter ids validated against the authoritative hardware
+snapshot; packaged CDP `ipc.reject-*` checks exercise the overrides
+through the packaged binary.
 
 ---
 
