@@ -1679,47 +1679,58 @@ This exception does not convert an untested row into a pass.
 
 #### Tasks
 
-- [ ] Update every manifest and lockfile version to `0.4.1`.
-- [ ] Add `scripts/verify_versions.mjs` for every Localmotive version field.
-- [ ] Add `scripts/verify_workflow_pins.mjs` for every workflow `uses:` reference.
-- [ ] Add `scripts/verify_workflow_gates.mjs` for fail-fast steps and job dependencies.
-- [ ] Run the version check in both CI and release workflows.
-- [ ] Run the workflow-gate check in both CI and release workflows.
-- [ ] Put each native Rust command in a separate fail-fast step.
-- [ ] Make every package and publication job depend on every test gate.
-- [ ] Resolve and review every remote GitHub Action to a full commit SHA.
-- [ ] Pin every remote `uses:` reference in all workflows.
-- [ ] Record each action owner, reviewed version, and resolved SHA.
-- [ ] Update the changelog with corrections and known limitations.
-- [ ] Build the production frontend.
-- [ ] Run formatting, linting, unit, integration, and documentation tests.
-- [ ] Run the complete Rust suite from a clean checkout without `research/`.
-- [ ] Confirm raw logs contain no failed test summary.
-- [ ] Run locked Cargo tests and linting.
-- [ ] Build portable, NSIS, and MSI candidates.
-- [ ] Run `scripts/verify_041.mjs` against the packaged candidate.
-- [ ] Scope packaged DOM assertions to one intended element.
-- [ ] Exercise rejected installation overrides through packaged IPC.
-- [ ] Preserve all 19 frozen P0 classes from `TODO-0.4.md:108-133`.
+- [x] Update every manifest and lockfile version to `0.4.1`.
+- [x] Add `scripts/verify_versions.mjs` for every Localmotive version field.
+- [x] Add `scripts/verify_workflow_pins.mjs` for every workflow `uses:` reference.
+- [x] Add `scripts/verify_workflow_gates.mjs` for fail-fast steps and job dependencies.
+- [x] Run the version check in both CI and release workflows.
+- [x] Run the workflow-gate check in both CI and release workflows.
+- [x] Put each native Rust command in a separate fail-fast step.
+- [x] Make every package and publication job depend on every test gate.
+- [x] Resolve and review every remote GitHub Action to a full commit SHA.
+- [x] Pin every remote `uses:` reference in all workflows.
+- [x] Record each action owner, reviewed version, and resolved SHA.
+- [x] Update the changelog with corrections and known limitations.
+- [x] Build the production frontend.
+- [x] Run formatting, linting, unit, integration, and documentation tests.
+- [x] Run the complete Rust suite from a clean checkout without `research/`.
+- [x] Confirm raw logs contain no failed test summary.
+- [x] Run locked Cargo tests and linting.
+- [x] Build portable, NSIS, and MSI candidates.
+- [x] Run `scripts/verify_041.mjs` against the packaged candidate.
+- [x] Scope packaged DOM assertions to one intended element.
+- [x] Exercise rejected installation overrides through packaged IPC.
+- [x] Preserve all 19 frozen P0 classes from `TODO-0.4.md:108-133`.
 - [ ] Obtain L4 product evidence for every P0 class.
-- [ ] Add L4 rows for every additional public OS or hardware claim.
-- [ ] Record one accountable attestation for every P0 result and additional claim.
-- [ ] Validate every candidate attestation against the versioned release schema.
-- [ ] Key each attestation by runtime commit, artifact digest, OS, driver, required firmware, backend, and model digest.
-- [ ] Expire an attestation when any qualification-key field changes.
-- [ ] Install and launch NSIS on a clean Windows account.
-- [ ] Install and launch MSI on a clean Windows account.
+- [x] Add L4 rows for every additional public OS or hardware claim.
+- [x] Record one accountable attestation for every P0 result and additional claim.
+- [x] Validate every candidate attestation against the versioned release schema.
+- [x] Key each attestation by runtime commit, artifact digest, OS, driver, required firmware, backend, and model digest.
+- [x] Expire an attestation when any qualification-key field changes.
+- [x] Install and launch NSIS on a clean Windows account.
+- [x] Install and launch MSI on a clean Windows account.
 - [ ] Install and launch on every claimed Windows version.
-- [ ] Test update from 0.4.0.
-- [ ] Test cancellation and restart.
-- [ ] Test both uninstallers.
+- [x] Test update from 0.4.0.
+- [x] Test cancellation and restart.
+- [x] Test both uninstallers.
 - [ ] If signing authority is granted, sign and timestamp the exact candidates.
-- [ ] Inspect asset names, sizes, hashes, metadata, and signatures.
-- [ ] Record source revision, workflow run, artifact IDs, and checksums.
-- [ ] Record every known limitation in release notes.
-- [ ] Correct the public 0.4.0 verification claim after accountable approval.
+- [x] Inspect asset names, sizes, hashes, metadata, and signatures.
+- [x] Record source revision, workflow run, artifact IDs, and checksums.
+- [x] Record every known limitation in release notes.
+- [x] Correct the public 0.4.0 verification claim after accountable approval.
 - [ ] If authority is granted, publish only the verified candidate assets.
 - [ ] If publication occurs, read the public release back.
+
+Phase 6 task notes (HEAD `5e93576`, self-hosted CI `34287661275`
+completed success, all four jobs): versions, pins, gates, frontend, Rust,
+packaged, and qualification-mapping tasks are evidenced on HEAD. The five
+open tasks are owner- or SignPath-gated by design: full-P0 L4 (needs
+hardware owners or approved spend, covered by the filed risk exception),
+every-Windows-version install (needs a Windows 10 claim decision),
+signing plus publication plus read-back (need SignPath wiring and the
+explicit publish OK). The attestation `sourceRevision` (`632a67d`) is
+stale against HEAD by the known self-binding rule; refresh lands at true
+final HEAD only.
 
 #### Acceptance checks
 
@@ -1735,38 +1746,46 @@ Treat these checks as material automated checks:
 - production Tauri package build
 - packaged `verify_041` execution
 
-- [ ] Every material automated check passes.
-- [ ] `package.json` reports version `0.4.1`.
-- [ ] Both relevant `package-lock.json` version fields report `0.4.1`.
-- [ ] `src-tauri/Cargo.toml` reports version `0.4.1`.
-- [ ] The Localmotive `Cargo.lock` package entry reports version `0.4.1`.
-- [ ] `src-tauri/tauri.conf.json` reports version `0.4.1`.
-- [ ] Both workflows execute the deterministic version check.
-- [ ] Both workflows execute the workflow-gate check.
-- [ ] No remote workflow `uses:` reference uses a mutable tag or branch.
-- [ ] A controlled nonzero native command cannot produce a green test gate.
-- [ ] No package or release job runs after any failed test gate.
-- [ ] A clean Windows checkout has zero Rust test failures.
-- [ ] No source test reads a gitignored research fixture.
-- [ ] Locked Cargo tests and linting pass.
-- [ ] Every packaged verifier assertion passes.
-- [ ] Catalog error and rate-limit packaged tests pass.
-- [ ] Managed-runtime tamper packaged tests pass.
-- [ ] Crafted runtime metadata cannot cross installation IPC.
-- [ ] Portable, NSIS, MSI, and uninstaller surfaces use the approved icon.
-- [ ] All 19 frozen P0 rows have required product evidence, or the approved disclosure exception is enforced.
-- [ ] Every additional public OS or hardware claim has L4 product evidence.
-- [ ] Every release attestation passes the versioned schema.
-- [ ] No expired attestation contributes to a support claim.
-- [ ] No failed or unknown P0 row receives a support claim.
-- [ ] The P0 matrix states exact evidence for every row.
-- [ ] Published claims do not exceed the evidence level.
-- [ ] Release notes disclose unsigned status when applicable.
-- [ ] Version, tag, changelog, and installer metadata agree.
+- [x] Every material automated check passes.
+- [x] `package.json` reports version `0.4.1`.
+- [x] Both relevant `package-lock.json` version fields report `0.4.1`.
+- [x] `src-tauri/Cargo.toml` reports version `0.4.1`.
+- [x] The Localmotive `Cargo.lock` package entry reports version `0.4.1`.
+- [x] `src-tauri/tauri.conf.json` reports version `0.4.1`.
+- [x] Both workflows execute the deterministic version check.
+- [x] Both workflows execute the workflow-gate check.
+- [x] No remote workflow `uses:` reference uses a mutable tag or branch.
+- [x] A controlled nonzero native command cannot produce a green test gate.
+- [x] No package or release job runs after any failed test gate.
+- [x] A clean Windows checkout has zero Rust test failures.
+- [x] No source test reads a gitignored research fixture.
+- [x] Locked Cargo tests and linting pass.
+- [x] Every packaged verifier assertion passes.
+- [x] Catalog error and rate-limit packaged tests pass.
+- [x] Managed-runtime tamper packaged tests pass.
+- [x] Crafted runtime metadata cannot cross installation IPC.
+- [x] Portable, NSIS, MSI, and uninstaller surfaces use the approved icon.
+- [x] All 19 frozen P0 rows have required product evidence, or the approved disclosure exception is enforced.
+- [x] Every additional public OS or hardware claim has L4 product evidence.
+- [x] Every release attestation passes the versioned schema.
+- [x] No expired attestation contributes to a support claim.
+- [x] No failed or unknown P0 row receives a support claim.
+- [x] The P0 matrix states exact evidence for every row.
+- [x] Published claims do not exceed the evidence level.
+- [x] Release notes disclose unsigned status when applicable.
+- [x] Version, tag, changelog, and installer metadata agree.
 - [ ] Candidate checksums and signatures match the inventory.
 - [ ] Published asset names, sizes, and digests match the verified inventory.
-- [ ] No `L5 RELEASE` claim exists without signing and complete P0 evidence.
+- [x] No `L5 RELEASE` claim exists without signing and complete P0 evidence.
 - [ ] An accountable human approves public publication.
+
+Phase 6 acceptance notes: the checked boxes are evidenced on HEAD
+`5e93576` (gate outputs listed in the step report; self-hosted CI
+`34287661275` all four jobs success). The four open boxes need a signed
+candidate plus the explicit publish OK: inventory checksums plus
+signatures, public read-back, and publication approval. No `L5 RELEASE`
+claim exists anywhere; the unsigned status is disclosed in the changelog
+and the attestation limitations.
 
 Stop before signing or publication without explicit authority.
 
