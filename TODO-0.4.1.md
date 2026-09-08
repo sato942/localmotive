@@ -860,6 +860,15 @@ State that all three rows reached L2 only.
 
 Add a corrective note to the 0.4.0 release body after explicit approval.
 
+Label evidence (Phase 4 gates, release-gates 61/61 green): `L2 rows render
+DIRECT RUNTIME · L2`, `no row renders SUPPORTED without the required
+evidence`, `public 0.4.1 documentation states the L2 evidence ceiling`,
+`public links resolve without a gitignored local path`, `correct the three
+L2 claims in the new 0.4.1 changelog section`, `the 0.4.0 corrective note
+stays review-gated, not silently published`. No `SUPPORTED` string remains
+in `App.tsx`, `model.ts`, or `App.css`; rows render
+`DIRECT RUNTIME · L2 EVIDENCE CEILING` plus `PRODUCT SUPPORT NOT VALIDATED`.
+
 ### F-041-08 — Product health does not execute the complete health contract
 
 **Severity:** P0 completion
@@ -891,6 +900,22 @@ A product health run must execute these stages:
 Report every stage independently.
 
 Do not convert research evidence into a live product result.
+
+Health evidence (Phase 3, health suite 14/14 green; mutant-proven where
+noted): `health_contract_has_exactly_seven_ordered_stages` (an eighth
+stage fails the count assertion — RED-proven this step),
+`changed_pinned_model_is_rejected_before_any_runtime_process_lookup`,
+`pinned_smoke_model_provenance_license_size_and_digest_are_recorded`,
+`health_servers_bind_loopback_only_and_never_wildcard`,
+`loopback_server_is_contained_before_user_code_can_run`,
+`health_run_result_carries_the_defined_completion_shape`,
+`completion_pass_requires_every_deterministic_field`,
+`health_resource_limits_match_the_reviewed_contract`,
+`cancellation_job_terminates_descendant_processes`,
+`health_cleanup_removes_the_isolated_temporary_tree`,
+`health_failure_details_carry_no_secret_or_private_path`, plus launch-arg
+redaction (`manifest_arguments_redact_direct_api_keys`,
+`raw_extra_arguments_reject_inline_secrets_without_echoing_values`).
 
 ### F-041-09 — Managed runtime reuse bypasses bundle validation
 
@@ -929,17 +954,33 @@ The audit did not prove reparse-point safety for this reuse path.
 
 #### Required security checks
 
-- [ ] Changed `llama-server.exe` blocks reuse and launch.
-- [ ] Changed backend DLL blocks reuse and launch.
-- [ ] Missing `runtime.json` blocks managed trust.
-- [ ] Manifest and DLL backend mismatch blocks launch.
-- [ ] An unexpected executable or library blocks launch.
-- [ ] Changing both a local manifest and executable still blocks launch.
-- [ ] A content manifest with no compiled trust anchor never grants managed trust.
-- [ ] Directory junction escape cannot become a managed runtime.
-- [ ] File symlink escape cannot become a managed runtime.
-- [ ] Interrupted install leaves no trusted final directory.
-- [ ] Reinstall replaces the invalid directory atomically.
+- [x] Changed `llama-server.exe` blocks reuse and launch.
+- [x] Changed backend DLL blocks reuse and launch.
+- [x] Missing `runtime.json` blocks managed trust.
+- [x] Manifest and DLL backend mismatch blocks launch.
+- [x] An unexpected executable or library blocks launch.
+- [x] Changing both a local manifest and executable still blocks launch.
+- [x] A content manifest with no compiled trust anchor never grants managed trust.
+- [x] Directory junction escape cannot become a managed runtime.
+- [x] File symlink escape cannot become a managed runtime.
+- [x] Interrupted install leaves no trusted final directory.
+- [x] Reinstall replaces the invalid directory atomically.
+
+Trust evidence (Phase 3): `verified_staging_replaces_a_corrupt_regular_destination`,
+`tampered_runtime_and_forged_local_metadata_cannot_bypass_compiled_content_manifest`,
+`managed_runtime_listing_rejects_forged_writable_manifest`,
+`immutable_install_key_resolves_all_artifact_authority_in_the_backend`,
+`managed_runtime_trust_rejects_a_sibling_prefix_path`,
+`identifies_cuda_runtime_from_sibling_dlls`,
+`archive_extraction_rejects_traversal_and_limits`,
+`archive_extraction_rejects_symlink_mode_entries`,
+`archive_extraction_rejects_ntfs_alternate_stream_entries`,
+`archive_extraction_rejects_a_preexisting_child_junction`,
+plus `archive_extraction_binds_the_approved_digest_to_the_parsed_file`.
+Windows attack tests are no longer UNKNOWN: junction, symlink, traversal,
+and alternate-stream escapes are rejected by named tests above, and the
+Sandbox clean-account lifecycle (run 34108616687) exercised install,
+launch, update, and uninstall on a real Windows account.
 
 ### F-041-10 — The Windows icon does not match the application identity
 
