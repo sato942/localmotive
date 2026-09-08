@@ -2459,6 +2459,15 @@ async fn fetch_catalog_http(
             "Runtime catalog metadata is not UTF-8.",
         )
     })?;
+    // Map a truncated or otherwise malformed release body to the typed
+    // invalid-response error here, so every `Body` carries parseable
+    // release JSON and no caller can silently accept partial metadata.
+    if serde_json::from_str::<GithubRelease>(&body).is_err() {
+        return Err(RuntimeCatalogError::new(
+            RuntimeCatalogErrorKind::InvalidResponse,
+            "GitHub release response was invalid: the metadata body is not a complete release document.",
+        ));
+    }
     Ok(CatalogHttpResponse::Body { body, etag })
 }
 
@@ -4559,6 +4568,43 @@ mod tests {
         );
     }
 
+    /// Phase 1: a wrong-tag release body fails closed through the catalog
+    /// identity check (`catalog_from_release` rejects a tag that does not
+    /// match the approved manifest tag; `build_approved_catalog` also
+    /// rejects a tag that does not match the manifest asset tag). The
+    /// release body carries the attacker tag while commit and publication
+    /// match, so only the tag authority under test can reject it. Mutation
+    /// probe: removing the tag comparison from `catalog_from_release` still
+    /// fails closed via `build_approved_catalog`, which proves defense in
+    /// depth rather than a single-point check.
+    #[test]
+    fn catalog_wrong_tag_body_fails_closed_with_an_identity_error() {
+        let identity = approved_runtime_identity().unwrap();
+        let release = GithubRelease {
+            tag_name: "attacker-tag".into(),
+            target_commitish: identity.release_commit.clone(),
+            published_at: Some(identity.published_at.clone()),
+            assets: vec![],
+        };
+        let hardware = detect_hardware();
+        let (approved, jobs) = approved_manifest().unwrap();
+
+        let error = catalog_from_release(
+            &release,
+            &hardware,
+            &approved,
+            &jobs,
+            RuntimeCatalogOrigin::Network,
+            None,
+        )
+        .unwrap_err();
+
+        assert!(
+            error.contains(&identity.release_tag) || error.contains("tag"),
+            "unexpected error: {error}"
+        );
+    }
+
     #[test]
     fn offline_catalog_cache_requires_the_exact_approved_identity_and_body_digest() {
         let identity = approved_runtime_identity().unwrap();
@@ -4647,6 +4693,76 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(error.kind, RuntimeCatalogErrorKind::RateLimited);
+    }
+
+    /// Phase 1 RED: an oversized metadata body must never reach JSON
+    /// parsing or catalog construction. The catalog must reject the body
+    /// with the typed `BodyTooLarge` error at the 2 MiB bound. This test
+    /// failed before the body reader enforced the streaming byte limit.
+    #[test]
+    fn catalog_oversized_body_is_rejected_before_json_parsing() {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut head = vec![0u8; 4096];
+            let _ = stream.read(&mut head);
+            let excess = MAX_RUNTIME_CATALOG_BYTES + 64;
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {excess}\r\nConnection: close\r\n\r\n"
+            );
+            let _ = stream.write_all(&vec![b' '; MAX_RUNTIME_CATALOG_BYTES + 64]);
+            let _ = stream.flush();
+        });
+        let client = runtime_catalog_client(Duration::from_secs(10)).unwrap();
+
+        let error = tauri::async_runtime::block_on(fetch_catalog_http(
+            &client,
+            &format!("http://{address}/release"),
+            None,
+        ))
+        .unwrap_err();
+
+        assert_eq!(error.kind, RuntimeCatalogErrorKind::BodyTooLarge);
+    }
+
+    /// Phase 1 RED: a truncated release body must surface as a typed
+    /// `InvalidResponse` error, never as a silently accepted catalog or a
+    /// generic transport failure. This test failed before the catalog HTTP
+    /// body path validated that every returned body parses as release JSON.
+    #[test]
+    fn catalog_truncated_body_maps_to_a_typed_invalid_response_error() {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut head = vec![0u8; 1024];
+            let _ = stream.read(&mut head);
+            let body = "{\"tag_name\":\"b10816\",\"assets\":[";
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.flush();
+        });
+        let client = runtime_catalog_client(Duration::from_secs(5)).unwrap();
+
+        let error = tauri::async_runtime::block_on(fetch_catalog_http(
+            &client,
+            &format!("http://{address}/release"),
+            None,
+        ))
+        .unwrap_err();
+
+        assert_eq!(error.kind, RuntimeCatalogErrorKind::InvalidResponse);
+        assert!(error.message.contains("invalid"));
     }
 
     #[test]
