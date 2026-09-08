@@ -682,16 +682,39 @@ Those failed jobs cannot block a generic Vulkan candidate under the current comp
 
 #### Required regression checks
 
-- [ ] Compare every manifest asset with the exact-tag API.
-- [ ] Include dormant assets in the comparison.
-- [ ] Validate the top-level tag once.
-- [ ] Validate the release commit once.
-- [ ] Validate the publication time once.
-- [ ] Validate every approval backend mapping.
-- [ ] Reject duplicate asset names.
-- [ ] Reject cross-tag URLs.
-- [ ] Reject absent or malformed SHA-256 digests.
-- [ ] Reject nonterminal required jobs at final approval.
+- [x] Compare every manifest asset with the exact-tag API.
+- [x] Include dormant assets in the comparison.
+- [x] Validate the top-level tag once.
+- [x] Validate the release commit once.
+- [x] Validate the publication time once.
+- [x] Validate every approval backend mapping.
+- [x] Reject duplicate asset names.
+- [x] Reject cross-tag URLs.
+- [x] Reject absent or malformed SHA-256 digests.
+- [x] Reject nonterminal required jobs at final approval.
+
+Manifest evidence (lib 385/2 green; new tests mutant-proven):
+`every_manifest_asset_and_job_matches_the_frozen_b10816_fixtures` (all 13
+assets plus jobs match the frozen exact-tag fixtures, observed-time bound);
+`dormant_arm64_cuda_url_matches_the_frozen_exact_tag_release` (dormant
+Arm64 URL included in the comparison, corrected `-win-` URL);
+`manifest_tag_is_the_single_authoritative_release_tag` (top-level tag
+validated once, every URL embeds it);
+`approved_manifest_identity_matches_the_frozen_b10816_release` (commit
+`427291b…` validated once against the frozen release);
+`manifest_observation_time_is_a_valid_utc_timestamp` plus publication-time
+gate in `parse_approved_manifest` (times validated once);
+`approved_manifest_rejects_unknown_fields_and_ambiguous_job_mappings` and
+`manifest_rejects_an_ambiguous_job_to_install_key_mapping` (backend
+mappings validated, mutant-proven); new
+`manifest_rejects_a_duplicated_asset_name` (duplicate-name guard mutant
+fails at the `duplicated` assertion); new
+`manifest_rejects_a_cross_tag_asset_url` (cross-tag URL fails the
+`malformed` gate); new
+`manifest_rejects_an_absent_or_malformed_asset_digest` (empty plus
+malformed digests fail the `malformed` gate);
+`manifest_rejects_a_nonterminal_required_job_state` (nonterminal jobs fail
+final approval, mutant-proven).
 
 ### F-041-06 — Recommendation rules exceed exact evidence
 

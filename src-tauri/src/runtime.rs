@@ -4483,6 +4483,37 @@ mod tests {
     }
 
     #[test]
+    fn manifest_rejects_a_duplicated_asset_name() {
+        let mut manifest: serde_json::Value = serde_json::from_str(APPROVED_RUNTIMES).unwrap();
+        let duplicate = manifest["assets"][0].clone();
+        manifest["assets"].as_array_mut().unwrap().push(duplicate);
+        let error = parse_approved_manifest(&manifest.to_string()).unwrap_err();
+        assert!(error.contains("duplicated"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn manifest_rejects_a_cross_tag_asset_url() {
+        let mut manifest: serde_json::Value = serde_json::from_str(APPROVED_RUNTIMES).unwrap();
+        manifest["assets"][0]["url"] = serde_json::json!("https://github.com/ggml-org/llama.cpp/releases/download/attacker-tag/llama-b10816-bin-win-cpu-x64.zip");
+        let error = parse_approved_manifest(&manifest.to_string()).unwrap_err();
+        assert!(error.contains("malformed"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn manifest_rejects_an_absent_or_malformed_asset_digest() {
+        for digest in [
+            serde_json::json!(""),
+            serde_json::json!("ZZZ"),
+            serde_json::json!("abc"),
+        ] {
+            let mut manifest: serde_json::Value = serde_json::from_str(APPROVED_RUNTIMES).unwrap();
+            manifest["assets"][0]["digest"] = digest;
+            let error = parse_approved_manifest(&manifest.to_string()).unwrap_err();
+            assert!(error.contains("malformed"), "unexpected error: {error}");
+        }
+    }
+
+    #[test]
     fn approved_manifest_rejects_unknown_fields_and_ambiguous_job_mappings() {
         let mut manifest: serde_json::Value = serde_json::from_str(APPROVED_RUNTIMES).unwrap();
         manifest["unexpectedAuthority"] = serde_json::json!(true);
