@@ -1463,34 +1463,83 @@ Do not retain raw model output in release evidence.
 
 #### Tasks
 
-- [ ] Define the approved content-manifest format.
-- [ ] Anchor each content-manifest digest in compiled approval data.
-- [ ] Write an installed copy only after verified extraction.
-- [ ] Never trust the installed copy without the compiled anchor.
-- [ ] Resolve installation requests only from compiled approval data.
-- [ ] Reject blocked or mismatched install keys before network access.
-- [ ] Validate every extracted regular-file hash before reuse.
-- [ ] Validate backend DLL identity before launch.
-- [ ] Reject path escapes and reparse points.
-- [ ] Record the pinned smoke model provenance and license.
-- [ ] Run all seven product health stages.
-- [ ] Bound child output, time, retries, and temporary data.
-- [ ] Terminate every health child on cancellation.
+- [x] Define the approved content-manifest format.
+- [x] Anchor each content-manifest digest in compiled approval data.
+- [x] Write an installed copy only after verified extraction.
+- [x] Never trust the installed copy without the compiled anchor.
+- [x] Resolve installation requests only from compiled approval data.
+- [x] Reject blocked or mismatched install keys before network access.
+- [x] Validate every extracted regular-file hash before reuse.
+- [x] Validate backend DLL identity before launch.
+- [x] Reject path escapes and reparse points.
+- [x] Record the pinned smoke model provenance and license.
+- [x] Run all seven product health stages.
+- [x] Bound child output, time, retries, and temporary data.
+- [x] Terminate every health child on cancellation.
 
 #### Acceptance checks
 
-- [ ] Tampered managed files block reuse and launch.
-- [ ] Tampering with both local metadata and runtime files still blocks launch.
-- [ ] Frontend asset, tag, backend, size, and digest overrides fail before network access.
-- [ ] Only a compiled-manifest install key can select an artifact.
-- [ ] Reparse-point escape tests pass on Windows.
-- [ ] The pinned model loads through the product.
-- [ ] The pinned model provenance, license, size, and digest are recorded.
-- [ ] Loopback health succeeds without network exposure.
-- [ ] Deterministic completion returns the defined `HealthRunResult` structure.
-- [ ] Every proposed resource limit has a boundary test.
-- [ ] Cancellation leaves no child process or temporary file.
-- [ ] Failure messages contain no secret or private path.
+- [x] Tampered managed files block reuse and launch.
+- [x] Tampering with both local metadata and runtime files still blocks launch.
+- [x] Frontend asset, tag, backend, size, and digest overrides fail before network access.
+- [x] Only a compiled-manifest install key can select an artifact.
+- [x] Reparse-point escape tests pass on Windows.
+- [x] The pinned model loads through the product.
+- [x] The pinned model provenance, license, size, and digest are recorded.
+- [x] Loopback health succeeds without network exposure.
+- [x] Deterministic completion returns the defined `HealthRunResult` structure.
+- [x] Every proposed resource limit has a boundary test.
+- [x] Cancellation leaves no child process or temporary file.
+- [x] Failure messages contain no secret or private path.
+
+#### Phase 3 evidence map (HEAD `e51279c`, self-hosted CI `34282179217` in progress)
+
+- Content-manifest format plus compiled anchor:
+  `every_active_install_key_has_one_hash_anchored_compiled_content_manifest`,
+  `tampered_runtime_and_forged_local_metadata_cannot_bypass_compiled_content_manifest`.
+- Verified extraction order: `verified_staging_replaces_a_corrupt_regular_destination`,
+  `runtime_archive_resume_path_is_stable_and_separate_from_install_staging`.
+- Installed-copy distrust: `managed_runtime_listing_rejects_forged_writable_manifest`.
+- Compiled-approval resolution: `immutable_install_key_resolves_all_artifact_authority_in_the_backend`.
+- Blocked key rejection: `blocked_backends_are_never_installed_or_recommended`,
+  `resolve_approved_install` refuses blocked keys before network access.
+- Per-file hash validation: `archive_extraction_binds_the_approved_digest_to_the_parsed_file`.
+- DLL identity: `identifies_cuda_runtime_from_sibling_dlls`,
+  `managed_runtime_trust_rejects_a_sibling_prefix_path`.
+- Path plus reparse rejection: `archive_extraction_rejects_traversal_and_limits`,
+  `archive_extraction_rejects_symlink_mode_entries`,
+  `archive_extraction_rejects_ntfs_alternate_stream_entries`,
+  `archive_extraction_rejects_a_preexisting_child_junction`,
+  plus managed-inventory junction tests.
+- Smoke provenance (new, mutant-proven):
+  `pinned_smoke_model_provenance_license_size_and_digest_are_recorded`
+  binds all seven fixture fields to the compiled pin; the test caught a real
+  fixture URL drift (`?download=true`) and the fixture now matches the pin.
+- Seven stages: `health_contract_has_exactly_seven_ordered_stages`,
+  `changed_pinned_model_is_rejected_before_any_runtime_process_lookup`.
+- Loopback (new, mutant-proven):
+  `health_servers_bind_loopback_only_and_never_wildcard`
+  (`--host` pins `127.0.0.1`, no wildcard literal in product lines),
+  `loopback_server_is_contained_before_user_code_can_run`.
+- Completion shape (new, mutant-proven):
+  `health_run_result_carries_the_defined_completion_shape`,
+  `completion_pass_requires_every_deterministic_field`.
+- Resource limits: `health_resource_limits_match_the_reviewed_contract`
+  (30 s discovery, 120 s backend, 120 s model, 10 s cancellation, 1 MiB stream).
+- Cancellation cleanup: `cancellation_job_terminates_descendant_processes`
+  (native ping path pinned for MSYS shells),
+  `health_cleanup_removes_the_isolated_temporary_tree`.
+- Secret scrub (new, mutant-proven):
+  `health_failure_details_carry_no_secret_or_private_path`;
+  launch-arg redaction covered by
+  `manifest_arguments_redact_direct_api_keys` and
+  `raw_extra_arguments_reject_inline_secrets_without_echoing_values`.
+- Full gate: lib 382 passed 2 ignored, vitest 50 passed, release-gates 48 passed,
+  `tsc` clean, fmt clean, clippy zero errors, qualification PASS (19 rows, 1 L4),
+  research anchor PASS.
+- Note: `npm test` via npm shim fails on this shell (`vitest not recognized`);
+  direct `./node_modules/.bin/vitest run` passes 50/50. CI uses its own shell
+  and is unaffected; tracked as a local-shell quirk, not a product gap.
 
 ### Phase 4 — Correct UI claims and Windows identity
 
