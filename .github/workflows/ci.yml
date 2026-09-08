@@ -2,10 +2,11 @@ name: CI
 
 # Every push and PR to main: logic, schema, dependency, documentation and
 # packaged-binary smoke gates run before a commit can become a release tag.
+# CI runs on the always-on self-hosted runner (trusted main pushes only),
+# sharing the machine with Hardware qualify. No fork PR may run here:
+# self-hosted runners must never execute untrusted code.
 on:
   push:
-    branches: [main]
-  pull_request:
     branches: [main]
 
 permissions:
@@ -17,7 +18,7 @@ concurrency:
 
 jobs:
   check:
-    runs-on: windows-latest
+    runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -74,7 +75,7 @@ jobs:
 
 
   rust-audit:
-    runs-on: windows-latest
+    runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]
     permissions:
       contents: read
       checks: write
@@ -88,7 +89,7 @@ jobs:
 
   package-smoke:
     needs: [check, rust-audit]
-    runs-on: windows-latest
+    runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
