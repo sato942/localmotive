@@ -5541,6 +5541,116 @@ Connection: close
     }
 
     #[test]
+    fn firmware_gated_record_rejects_a_firmware_mismatch() {
+        // F-041-06: a record keyed to firmware FW-9 must not match when the
+        // host reports FW-8 or nothing. Missing-firmware hosts stay on the
+        // not-applicable path; only an exact firmware value satisfies a
+        // firmware-gated record. Mutant-proven: forcing firmware_matches to
+        // true fails this test at the FW-8 assertion.
+        let source = EvidenceSource {
+            kind: EvidenceSourceKind::Policy,
+            detail: "test fixture".into(),
+        };
+        let bytes =
+            Evidence::known(1, EvidenceLevel::Observed, source.clone(), 1, Vec::new()).unwrap();
+        let adapter = GpuAdapterInfo {
+            adapter_id: "luid:00000001:00000002".into(),
+            compatibility_id: "pci:10de:2b85:00000000:a1".into(),
+            name: "NVIDIA fixture".into(),
+            vendor: "nvidia".into(),
+            driver: Evidence::known(
+                "610.74".into(),
+                EvidenceLevel::Observed,
+                source.clone(),
+                1,
+                Vec::new(),
+            )
+            .unwrap(),
+            backend: Evidence::known("cuda".into(), EvidenceLevel::Derived, source, 1, Vec::new())
+                .unwrap(),
+            dedicated_bytes: bytes.clone(),
+            shared_bytes: bytes.clone(),
+            budget_bytes: bytes.clone(),
+            current_usage_bytes: bytes.clone(),
+            available_budget_bytes: bytes.clone(),
+            available_for_reservation_bytes: bytes,
+            capacity_observations: Vec::new(),
+        };
+        let (release, approved, _) = approved_release();
+        let hardware = HardwareInfo {
+            architecture: "x64".into(),
+            gpu_names: vec![adapter.name.clone()],
+            vendor: "nvidia".into(),
+            cuda_major: Some(13),
+            driver_version: "610.74".into(),
+            detection_status: "test fixture".into(),
+            recommendation: String::new(),
+            system_memory: detect_system_memory(),
+            adapters: vec![adapter.clone()],
+            manual_overrides: Vec::new(),
+        };
+        let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
+        let option = catalog
+            .options
+            .iter()
+            .find(|option| option.install_key == "cuda-13.3")
+            .unwrap();
+        let identity = approved_runtime_identity().unwrap();
+        let key = CompatibilityKey {
+            os_build: "26100".into(),
+            architecture: "x64".into(),
+            adapter_id: adapter.compatibility_id.clone(),
+            driver: "610.74".into(),
+            firmware: "FW-9".into(),
+            backend: option.backend.clone(),
+            install_key: option.install_key.clone(),
+            release_commit: identity.release_commit.clone(),
+            asset_name: option.asset.name.clone(),
+            asset_sha256: option
+                .asset
+                .digest
+                .as_deref()
+                .unwrap()
+                .strip_prefix("sha256:")
+                .unwrap()
+                .into(),
+        };
+        let record = CompatibilityRecord {
+            expiry_identity: compatibility_expiry_identity(&key),
+            key,
+            evidence_level: "L4_PRODUCT".into(),
+            attestation_id: "attestation:fixture".into(),
+        };
+        assert!(compatibility_record_matches(
+            &record,
+            option,
+            &adapter,
+            "26100",
+            Some("FW-9"),
+            "x64",
+            &identity.release_commit,
+        ));
+        assert!(!compatibility_record_matches(
+            &record,
+            option,
+            &adapter,
+            "26100",
+            Some("FW-8"),
+            "x64",
+            &identity.release_commit,
+        ));
+        assert!(!compatibility_record_matches(
+            &record,
+            option,
+            &adapter,
+            "26100",
+            None,
+            "x64",
+            &identity.release_commit,
+        ));
+    }
+
+    #[test]
     fn compatibility_record_requires_every_exact_key_field() {
         let source = EvidenceSource {
             kind: EvidenceSourceKind::Policy,

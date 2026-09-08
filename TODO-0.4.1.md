@@ -770,18 +770,42 @@ Use an explicit not-applicable value otherwise.
 
 #### Required regression checks
 
-- [ ] Generic `AMD Radeon RX` does not prove ROCm support.
-- [ ] Generic `Intel Arc` does not prove SYCL support.
-- [ ] Missing driver evidence prevents native-backend preference.
-- [ ] Missing required firmware evidence prevents native-backend preference.
-- [ ] A mismatched install key prevents native-backend preference.
-- [ ] A mismatched runtime commit prevents native-backend preference.
-- [ ] A mismatched asset digest prevents native-backend preference.
-- [ ] An unlisted device falls back with an explicit reason.
-- [ ] Two NVIDIA adapters require selection.
-- [ ] Two AMD adapters require selection.
-- [ ] Mixed vendors require selection.
-- [ ] The selected stable adapter ID reaches recommendation and launch.
+- [x] Generic `AMD Radeon RX` does not prove ROCm support.
+- [x] Generic `Intel Arc` does not prove SYCL support.
+- [x] Missing driver evidence prevents native-backend preference.
+- [x] Missing required firmware evidence prevents native-backend preference.
+- [x] A mismatched install key prevents native-backend preference.
+- [x] A mismatched runtime commit prevents native-backend preference.
+- [x] A mismatched asset digest prevents native-backend preference.
+- [x] An unlisted device falls back with an explicit reason.
+- [x] Two NVIDIA adapters require selection.
+- [x] Two AMD adapters require selection.
+- [x] Mixed vendors require selection.
+- [x] The selected stable adapter ID reaches recommendation and launch.
+
+Recommendation evidence (lib 386/2 green; new firmware test
+mutant-proven): `generic_amd_name_without_an_exact_record_falls_back_to_cpu`
+(`AMD Radeon RX 7900 XTX` falls back, Vulkan stays listed);
+`generic_intel_name_without_an_exact_record_falls_back_to_cpu` (`Intel Arc
+A770` falls back, Vulkan stays listed);
+`generic_nvidia_name_without_an_exact_record_falls_back_to_cpu` (bare
+`RTX 5090` name falls back to CPU without an exact adapter record);
+`compatibility_record_requires_every_exact_key_field` (os_build,
+adapter_id, driver, backend, install_key, release_commit, asset_name, and
+asset_sha256 mismatches all refuse the match; wrong adapter id refuses the
+exact index); new `firmware_gated_record_rejects_a_firmware_mismatch`
+(FW-9 record matches FW-9, refuses FW-8 and none; forcing
+firmware_matches true fails at the FW-8 assertion);
+`unsupported_amd_hardware_rejects_rocm_and_keeps_vulkan_or_cpu` and
+`unsupported_intel_hardware_rejects_sycl_and_keeps_vulkan_or_cpu`
+(unlisted devices fall back with explicit reasons);
+`same_vendor_multi_adapter_hosts_require_explicit_selection`,
+`selection_discarding_a_second_adapter_fails_without_explicit_choice`,
+`mixed_vendor_adapters_require_explicit_selection_without_silent_fallback`
+(two-NVIDIA, two-AMD, and mixed-vendor hosts all require explicit
+selection); the selected adapter id flows through
+`recommend_catalog_for_adapter` into the install request
+(`runtime setup refresh preserves the selected adapter recommendation`).
 
 ### F-041-07 — Product support labels overstate the evidence level
 
