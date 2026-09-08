@@ -1266,36 +1266,76 @@ After Phase 0A passes, keep `research/` read-only throughout product implementat
 
 #### Tasks
 
-- [ ] Introduce typed per-backend availability.
-- [ ] Fetch the exact approved tag.
-- [ ] Use asynchronous bounded HTTP.
-- [ ] Use a separate bounded artifact-download client.
-- [ ] Add validated response caching.
-- [ ] Enforce the exact cache key and 2 MiB metadata limit.
-- [ ] Detect hardware once in the authoritative Rust setup command.
-- [ ] Bound and terminate every hardware probe process.
-- [ ] Map rate limits and timeouts to typed errors.
-- [ ] Return blocked backend evidence with the usable catalog.
-- [ ] Return candidate-specific install and recommendation decisions.
-- [ ] Keep local runtime discovery independent.
-- [ ] Add validated resumable archive downloads.
-- [ ] Add explicit archive download cancellation.
-- [ ] Bound archive concurrency and partial-file disk usage.
+- [x] Introduce typed per-backend availability.
+- [x] Fetch the exact approved tag.
+- [x] Use asynchronous bounded HTTP.
+- [x] Use a separate bounded artifact-download client.
+- [x] Add validated response caching.
+- [x] Enforce the exact cache key and 2 MiB metadata limit.
+- [x] Detect hardware once in the authoritative Rust setup command.
+- [x] Bound and terminate every hardware probe process.
+- [x] Map rate limits and timeouts to typed errors.
+- [x] Return blocked backend evidence with the usable catalog.
+- [x] Return candidate-specific install and recommendation decisions.
+- [x] Keep local runtime discovery independent.
+- [x] Add validated resumable archive downloads.
+- [x] Add explicit archive download cancellation.
+- [x] Bound archive concurrency and partial-file disk usage.
 
 #### Acceptance checks
 
-- [ ] Failed CUDA returns CPU and independently approved options.
-- [ ] Failed ROCm blocks only ROCm.
-- [ ] Queued OpenVINO blocks only OpenVINO.
-- [ ] A catalog timeout completes within the configured bound.
-- [ ] Existing managed runtimes remain visible offline.
-- [ ] Only a matching validated cache provides offline catalog metadata.
-- [ ] No remote failure produces an indefinite spinner.
-- [ ] No hardware probe exceeds the 30-second discovery limit.
-- [ ] One setup request produces one hardware snapshot.
-- [ ] Interrupted downloads resume against an unchanged remote artifact.
-- [ ] Changed servers cannot finalize an old partial archive.
-- [ ] Focused Rust and frontend tests pass.
+- [x] Failed CUDA returns CPU and independently approved options.
+- [x] Failed ROCm blocks only ROCm.
+- [x] Queued OpenVINO blocks only OpenVINO.
+- [x] A catalog timeout completes within the configured bound.
+- [x] Existing managed runtimes remain visible offline.
+- [x] Only a matching validated cache provides offline catalog metadata.
+- [x] No remote failure produces an indefinite spinner.
+- [x] No hardware probe exceeds the 30-second discovery limit.
+- [x] One setup request produces one hardware snapshot.
+- [x] Interrupted downloads resume against an unchanged remote artifact.
+- [x] Changed servers cannot finalize an old partial archive.
+- [x] Focused Rust and frontend tests pass.
+
+#### Phase 1 evidence map (HEAD `b60a585`, self-hosted CI `34277629442` green)
+
+- Typed availability: `BackendAvailabilityStatus` (`Available`/`Blocked`/`Dormant`) with
+  `blocking_jobs` plus `evidence_urls`; blocked CUDA/ROCm/OpenVINO cards render in `App.tsx`.
+- Exact tag: `approved_runtime_catalog_uses_the_exact_tag_endpoint`;
+  wrong-tag fails closed in `catalog_wrong_tag_body_fails_closed_with_an_identity_error`.
+- Bounded async HTTP: `RUNTIME_CATALOG_TIMEOUT` (15 s) through `fetch_catalog_http`;
+  `catalog_http_deadline_returns_a_typed_timeout`.
+- Artifact client: `download_file` with `RUNTIME_DOWNLOAD_CONNECTIONS` (4 of max 8),
+  `validate_runtime_archive_size` (8 GiB bound), pre-sized `.part` plus sidecar only.
+- Cache: `catalog_cache_record`/`validate_catalog_cache`;
+  `offline_catalog_cache_requires_the_exact_approved_identity_and_body_digest`.
+- 2 MiB limit: `MAX_RUNTIME_CATALOG_BYTES` enforced streaming;
+  `catalog_oversized_body_is_rejected_before_json_parsing`;
+  truncated bodies map to `InvalidResponse`.
+- One detection: `load_runtime_setup` snapshots hardware once;
+  `one_runtime_setup_uses_one_hardware_detection`.
+- Probe bounds: `HARDWARE_PROBE_TIMEOUT` (30 s) with bounded output;
+  `bounded_output_terminates_a_stalled_hardware_probe`.
+- Typed errors: 403 body (`catalog_rate_limit_body_maps_403_to_a_typed_rate_limit_error`),
+  429 with `Retry-After` (`catalog_429_maps_to_a_typed_rate_limit_error_with_retry_delay`),
+  timeout, `BodyTooLarge`, `InvalidResponse`; no secret header
+  (`catalog_client_sends_no_secret_header`).
+- Isolation: `failed_cuda_jobs_keep_independently_approved_cpu_and_vulkan_options`,
+  `failed_rocm_jobs_block_only_rocm_options`,
+  `queued_openvino_jobs_block_only_openvino_options` (all mutant-proven).
+- Resume/cancel/bounds: `cancellation_retains_valid_state_and_the_next_attempt_resumes`,
+  `resume_identity_binds_digest_and_last_modified`,
+  `every_range_response_is_bound_to_the_probed_remote_identity`,
+  `existing_files_are_reused_only_when_remote_identity_matches`,
+  `runtime_archive_downloads_use_four_bounded_connections` (mutant-proven).
+- Offline listing: `load_runtime_setup` collects `list_managed_runtimes()` before the
+  catalog fetch; `managed_runtime_listing_shows_local_installs_without_a_catalog_fetch`
+  pins the fail-closed half (unverified bytes never list; positive half covered by
+  production installs since approval digests cannot be manufactured in unit tests).
+- Spinner states: `runtimeCatalogViewState` (`idle`/`loading`/`ready`/`empty`/`error`)
+  with Retry actions; frontend tests green (48 pass), `tsc` clean.
+- Full gate: lib 372 passed 2 ignored, fmt clean, clippy zero errors,
+  qualification PASS (19 rows, 1 L4), research anchor PASS.
 
 ### Phase 2 — Repair approval data and recommendation rules
 
