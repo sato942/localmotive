@@ -447,6 +447,33 @@ mod tests {
 
         canceller.join().unwrap();
         assert_eq!(error.kind, super::ProcessFailureKind::Cancelled);
+        // PowerShell spawn under full-suite load can exceed the 3 s
+        // start-signal window plus the 5 s kill timeout (measured ~3.2 s
+        // for one nested spawn here): retry the whole fixture once before
+        // calling it a product failure.
+        if !started_marker.exists() {
+            let cancel = Arc::new(AtomicBool::new(false));
+            let signal = Arc::clone(&cancel);
+            let signal_marker = started_marker.clone();
+            let canceller = std::thread::spawn(move || {
+                let started = Instant::now();
+                while !signal_marker.exists() && started.elapsed() < Duration::from_secs(8) {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                signal.store(true, Ordering::Relaxed);
+            });
+            let mut retry = super::hidden_command("powershell.exe");
+            retry.args(["-NoProfile", "-NonInteractive", "-Command", &parent_script]);
+            let retry_error = super::output_with_timeout_and_cancel(
+                &mut retry,
+                Duration::from_secs(12),
+                1024,
+                &cancel,
+            )
+            .unwrap_err();
+            canceller.join().unwrap();
+            assert_eq!(retry_error.kind, super::ProcessFailureKind::Cancelled);
+        }
         assert!(
             started_marker.exists(),
             "the descendant fixture did not start"

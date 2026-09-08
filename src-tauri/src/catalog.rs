@@ -198,7 +198,26 @@ fn verify_catalog_signature_with_key(body: &[u8], encoded: &str, key: &[u8; 32])
 }
 
 fn verify_catalog_signature(body: &[u8], encoded: &str) -> bool {
-    verify_catalog_signature_with_key(body, encoded, &CATALOG_VERIFYING_KEY)
+    // Ed25519 signs exact bytes, so a CRLF checkout would invalidate the
+    // shipped signature. Normalize CRLF to LF before verifying: JSON treats
+    // both as insignificant whitespace, and the LF policy in .gitattributes
+    // keeps the canonical bytes stable.
+    let mut normalized: Vec<u8>;
+    let bytes = if body.windows(2).any(|pair| pair == b"\r\n") {
+        normalized = body
+            .split(|byte| *byte == b'\r')
+            .flat_map(|segment| {
+                let stripped = segment.strip_prefix(b"\n").unwrap_or(segment);
+                stripped.iter().copied().chain(std::iter::once(b'\n'))
+            })
+            .collect::<Vec<u8>>();
+        // Drop the trailing newline the fold above always appends.
+        normalized.pop();
+        normalized.as_slice()
+    } else {
+        body
+    };
+    verify_catalog_signature_with_key(bytes, encoded, &CATALOG_VERIFYING_KEY)
 }
 
 /// `owner/name`, the only shape Hugging Face uses. Rejecting anything else
@@ -421,7 +440,29 @@ fn save_cache_record(
         return Err("The catalog cache exceeds its size limit".into());
     }
     let cache = cache_path(root);
-    let temp = root.join(format!("catalog-cache.{}.tmp", std::process::id()));
+    // Parallel tests share one process id, so the temp name needs a random
+    // suffix too: two threads publishing different bodies must not share one
+    // temp file, or a reader can observe a mixed record.
+    let temp = {
+        let candidate = (0..16)
+            .map(|_| {
+                root.join(format!(
+                    "catalog-cache-{}-{:016x}.tmp",
+                    std::process::id(),
+                    rand::random::<u64>()
+                ))
+            })
+            .find(|candidate| {
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(candidate)
+                    .map(drop)
+                    .is_ok()
+            })
+            .ok_or_else(|| "Could not allocate a unique catalog cache temp file".to_string())?;
+        candidate
+    };
     {
         let mut file = std::fs::File::create(&temp)
             .map_err(|error| format!("Could not create {}: {error}", temp.display()))?;
@@ -760,6 +801,44 @@ pub fn clear_hf_token() -> Result<TokenStatus, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Give each test its own temp directory: parallel `cargo test` threads
+    /// share one process id, so a pid-keyed name lets two tests wipe each
+    /// other's cache records. A random suffix keeps ownership private.
+    #[cfg(test)]
+    fn unique_test_dir(prefix: &str) -> PathBuf {
+        for _ in 0..16 {
+            let candidate = std::env::temp_dir().join(format!(
+                "{prefix}-{}-{:016x}",
+                std::process::id(),
+                rand::random::<u64>()
+            ));
+            if std::fs::create_dir(&candidate).is_ok() {
+                return candidate;
+            }
+        }
+        panic!("could not allocate a unique temp dir for {prefix}");
+    }
+
+    /// Phase 0B RED: the signature must verify over the checked-out bytes,
+    /// whatever line endings the checkout produced. A CRLF-normalized
+    /// `catalog.json` must verify exactly like the LF original; otherwise a
+    /// clean Windows clone breaks the catalog gate. This test failed before
+    /// the verifier normalized line endings.
+    #[test]
+    fn shipped_signature_verifies_after_crlf_checkout_normalization() {
+        let catalog_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("catalog");
+        let body = std::fs::read_to_string(catalog_dir.join("catalog.json")).unwrap();
+        let signature = std::fs::read_to_string(catalog_dir.join("catalog.json.sig")).unwrap();
+        let crlf = body.replace('\n', "\r\n");
+        assert!(
+            verify_catalog_signature(crlf.as_bytes(), &signature),
+            "signature must survive CRLF checkout normalization"
+        );
+    }
 
     #[test]
     fn bounded_catalog_reader_rejects_limit_plus_one() {
@@ -1155,9 +1234,7 @@ mod tests {
 
     #[test]
     fn cache_body_and_etag_are_published_as_one_consistent_record() {
-        let root =
-            std::env::temp_dir().join(format!("localmotive-cache-record-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = unique_test_dir("localmotive-cache-record");
         save_cache_record(
             &root,
             "catalog body",
@@ -1188,10 +1265,7 @@ mod tests {
 
     #[test]
     fn concurrent_cache_refreshes_never_mix_a_body_with_another_etag() {
-        let root =
-            std::env::temp_dir().join(format!("localmotive-cache-race-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
+        let root = unique_test_dir("localmotive-cache-race");
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
         let results = std::thread::scope(|scope| {
             let handles = (0..8)
@@ -1232,10 +1306,7 @@ mod tests {
 
     #[test]
     fn cache_readers_wait_until_a_cache_publication_finishes() {
-        let root =
-            std::env::temp_dir().join(format!("localmotive-cache-reader-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
+        let root = unique_test_dir("localmotive-cache-reader");
         let guard = CATALOG_CACHE_WRITE_LOCK.lock().unwrap();
         let (send, receive) = std::sync::mpsc::channel();
         let reader_root = root.clone();
@@ -1254,9 +1325,7 @@ mod tests {
 
     #[test]
     fn cached_catalog_is_used_when_the_network_fails() {
-        let root = std::env::temp_dir().join(format!("localmotive-cat-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
+        let root = unique_test_dir("localmotive-cat");
         let catalog_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
@@ -1284,10 +1353,7 @@ mod tests {
     fn corrupt_cache_falls_back_to_the_bundled_catalog() {
         // An interrupted external cache edit or disk corruption must not leave
         // the catalog tab empty while the network is also unavailable.
-        let root =
-            std::env::temp_dir().join(format!("localmotive-corrupt-cat-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
+        let root = unique_test_dir("localmotive-corrupt-cat");
         std::fs::write(cache_path(&root), "not json").unwrap();
 
         let snapshot = fetch_catalog("http://127.0.0.1:9/catalog.json", &root).unwrap();
