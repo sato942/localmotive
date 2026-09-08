@@ -2392,6 +2392,24 @@ async fn fetch_catalog_http(
         return Err(error);
     }
     if !response.status().is_success() {
+        // GitHub answers an exhausted unauthenticated quota with `403 rate
+        // limit exceeded`, not `429`: surface that body as a typed
+        // rate-limit error so the UI can show the reset guidance.
+        if response.status() == reqwest::StatusCode::FORBIDDEN {
+            let body = response.text().await.unwrap_or_default();
+            if body.to_ascii_lowercase().contains("rate limit") {
+                let mut error = RuntimeCatalogError::new(
+                    RuntimeCatalogErrorKind::RateLimited,
+                    "GitHub rate-limited the runtime catalog request. Retry after the indicated delay.",
+                );
+                error.retry_after_seconds = None;
+                return Err(error);
+            }
+            return Err(RuntimeCatalogError::new(
+                RuntimeCatalogErrorKind::Http,
+                format!("GitHub returned HTTP 403 for the approved runtime catalog: {body}"),
+            ));
+        }
         return Err(RuntimeCatalogError::new(
             RuntimeCatalogErrorKind::Http,
             format!(
@@ -4593,6 +4611,42 @@ mod tests {
 
         assert_eq!(error.kind, RuntimeCatalogErrorKind::Timeout);
         assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    /// Phase 1 RED: GitHub answers an exhausted unauthenticated quota with
+    /// `403 rate limit exceeded`, not `429`. The catalog must surface that
+    /// as a typed rate-limit error with the reset message, never as a
+    /// generic HTTP failure. This test failed before `fetch_catalog_http`
+    /// mapped the 403 rate-limit body.
+    #[test]
+    fn catalog_rate_limit_body_maps_403_to_a_typed_rate_limit_error() {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut head = vec![0u8; 1024];
+            let _ = stream.read(&mut head);
+            let body = "{\"message\":\"API rate limit exceeded for x.\",\"documentation_url\":\"https://docs.github.com/rest\"}";
+            let _ = write!(
+                stream,
+                "HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.flush();
+        });
+        let client = runtime_catalog_client(Duration::from_secs(5)).unwrap();
+
+        let error = tauri::async_runtime::block_on(fetch_catalog_http(
+            &client,
+            &format!("http://{address}/release"),
+            None,
+        ))
+        .unwrap_err();
+
+        assert_eq!(error.kind, RuntimeCatalogErrorKind::RateLimited);
     }
 
     #[test]
