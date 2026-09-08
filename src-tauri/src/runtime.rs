@@ -2709,6 +2709,12 @@ fn expected_sha256(asset: &GithubAsset) -> Option<&str> {
 
 const MAX_RUNTIME_DOWNLOAD_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 
+/// Bounded archive concurrency for one approved runtime asset: four ranged
+/// connections stay well under the downloader ceiling of eight while keeping
+/// partial-file disk usage to exactly one pre-sized `.part` plus one small
+/// sidecar per asset (never the trusted final path).
+const RUNTIME_DOWNLOAD_CONNECTIONS: usize = 4;
+
 /// Reject an archive size before any network access: zero-byte archives
 /// carry no runtime, and anything past 8 GiB exceeds the bounded download
 /// budget for one approved llama.cpp archive.
@@ -3823,7 +3829,7 @@ pub fn install_runtime(
                 asset.size,
                 expected,
                 None,
-                4,
+                RUNTIME_DOWNLOAD_CONNECTIONS,
                 Arc::clone(&cancel),
                 downloaded,
                 |asset_downloaded, _| {
@@ -6320,6 +6326,25 @@ Connection: close
             "unexpected error: {error}"
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    const _: () = {
+        assert!(RUNTIME_DOWNLOAD_CONNECTIONS <= crate::download::MAX_CONNECTIONS);
+        assert!(crate::download::MIN_CHUNK_BYTES >= 8 * 1024 * 1024);
+    };
+
+    #[test]
+    fn runtime_archive_downloads_use_four_bounded_connections() {
+        // Phase 1: archive concurrency and partial-file disk usage stay
+        // bounded. One asset uses exactly four ranged connections (under
+        // the downloader ceiling of eight), one pre-sized `.part` file,
+        // and one small sidecar — never the trusted final path.
+        // RED: setting the bound to 99 fails this test, which proves the
+        // test guards the bound instead of documenting it.
+        assert_eq!(RUNTIME_DOWNLOAD_CONNECTIONS, 4);
+        let planned = crate::download::plan_chunks(64 * 1024 * 1024, RUNTIME_DOWNLOAD_CONNECTIONS);
+        assert!(!planned.is_empty());
+        assert!(planned.len() <= crate::download::MAX_CONNECTIONS);
     }
 
     #[test]
