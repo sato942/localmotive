@@ -4352,6 +4352,71 @@ mod tests {
     }
 
     #[test]
+    fn failed_rocm_jobs_block_only_rocm_options() {
+        let (release, approved, mut jobs) = approved_release();
+        for job in &mut jobs {
+            if job.backend == "rocm" {
+                job.conclusion = "failure".into();
+                job.status = "completed".into();
+            }
+        }
+        let mut hardware = detect_hardware();
+        hardware.architecture = "x64".into();
+
+        let catalog = build_approved_catalog(&release, &hardware, &approved, &jobs)
+            .expect("a ROCm failure must not discard unrelated approved backends");
+
+        assert!(catalog.options.iter().any(|option| option.backend == "cpu"));
+        assert!(!catalog
+            .options
+            .iter()
+            .any(|option| option.backend == "rocm"));
+        let blocked = catalog
+            .availability
+            .iter()
+            .find(|availability| {
+                availability.backend == "rocm"
+                    && availability.status == BackendAvailabilityStatus::Blocked
+            })
+            .expect("the blocked ROCm option remains visible");
+        assert!(blocked.blocking_jobs.iter().any(|name| name == "gpu-rocm"));
+    }
+
+    #[test]
+    fn queued_openvino_jobs_block_only_openvino_options() {
+        let (release, approved, mut jobs) = approved_release();
+        for job in &mut jobs {
+            if job.backend == "openvino" {
+                job.status = "queued".into();
+                job.conclusion = String::new();
+            }
+        }
+        let mut hardware = detect_hardware();
+        hardware.architecture = "x64".into();
+
+        let catalog = build_approved_catalog(&release, &hardware, &approved, &jobs)
+            .expect("a queued OpenVINO job must not discard unrelated approved backends");
+
+        assert!(catalog.options.iter().any(|option| option.backend == "cpu"));
+        assert!(!catalog
+            .options
+            .iter()
+            .any(|option| option.backend == "openvino"));
+        let blocked = catalog
+            .availability
+            .iter()
+            .find(|availability| {
+                availability.backend == "openvino"
+                    && availability.status == BackendAvailabilityStatus::Blocked
+            })
+            .expect("the blocked OpenVINO option remains visible");
+        assert!(blocked
+            .blocking_jobs
+            .iter()
+            .any(|name| name == "gpu-openvino-low-perf"));
+    }
+
+    #[test]
     fn all_blocked_backends_return_an_empty_catalog_with_explanations() {
         let (release, approved, mut jobs) = approved_release();
         for job in &mut jobs {
