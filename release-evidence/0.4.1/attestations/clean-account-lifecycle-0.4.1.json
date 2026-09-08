@@ -32,6 +32,6 @@
   "release": "0.4.1",
   "result": "PASS",
   "schemaVersion": 1,
-  "sourceRevision": "8e076697d164f3e50ba968e55867446f42800a8b",
+  "sourceRevision": "632a67d9af7debb01376898337dea53d6f9840ac",
   "verifier": "scripts/sandbox/host-run-lifecycle.ps1 + run-lifecycle-in-sandbox.ps1, run 34108616687"
 }
