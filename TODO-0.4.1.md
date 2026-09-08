@@ -1634,18 +1634,32 @@ The rebaseline must keep all research checks green and publish a tracked manifes
 
 #### Tasks
 
-- [ ] Compare the research tree with the approved Phase 0A rebaseline digest.
-- [ ] Run all research unit tests without modifying fixtures.
-- [ ] Run `verify_research.py` without modifying its inputs.
-- [ ] Record the observed result in the tracked 0.4.1 ledger.
+- [x] Compare the research tree with the approved Phase 0A rebaseline digest.
+- [x] Run all research unit tests without modifying fixtures.
+- [x] Run `verify_research.py` without modifying its inputs.
+- [x] Record the observed result in the tracked 0.4.1 ledger.
+
+Observed result (HEAD `f5dde82`, 2026-09-09): the live worktree check
+reports 2 drifted files plus aggregate, exactly the two known post-freeze
+additions (`test_research_tools.py` +2089 bytes for the 2 rebound receipt
+tests, `verify_research.py` +1706 bytes for the retained-output block;
+both modified 08:48 after the 06:25:34 freeze on 2026-09-06). Live unit
+tests run 103/103 (ledger holds the 101-test run plus the 101-name retained
+log). Core verifier 63/63 PASS. Tracked anchor gate
+(`verify_research_anchor.mjs`) PASS: tracked manifest 7a906c7f matches the
+anchor, the local worktree manifest copy is byte-identical to the tracked
+copy, independent review agrees. The drift is worktree-only growth inside
+gitignored `research/`; no tracked ledger file was modified to hide it.
+A second rebaseline needs a fresh owner approval (the filed approval
+authorized exactly one). Phase 5 boxes stay open until that decision lands.
 
 #### Acceptance checks
 
 - [ ] The research-tree digest matches the Phase 0A record.
-- [ ] All current research unit tests pass.
+- [x] All current research unit tests pass.
 - [ ] Every research verification check passes.
 - [ ] No research file changes occur after the approved rebaseline.
-- [ ] A research failure blocks Phase 6.
+- [x] A research failure blocks Phase 6.
 
 ### Phase 6 — Package and qualify 0.4.1
 
