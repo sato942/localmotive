@@ -519,27 +519,54 @@ Official rate-limit documentation: <https://docs.github.com/en/rest/using-the-re
 
 Use a controlled local HTTP server.
 
-- [ ] Exact-tag `200` returns the expected catalog.
-- [ ] `403` becomes a rate-limit error state.
-- [ ] `429` becomes a rate-limit error state.
-- [ ] A delayed response stops at the configured timeout.
-- [ ] A truncated response becomes an invalid-response error.
-- [ ] A wrong tag fails closed.
-- [ ] The client sends no secret header.
-- [ ] A server that ignores `Range` restarts safely.
-- [ ] A malformed `Content-Range` rejects the partial archive.
-- [ ] A short range response rejects the partial archive.
-- [ ] An overlapping range response rejects the partial archive.
-- [ ] An inconsistent total size rejects the partial archive.
-- [ ] A changed ETag or digest rejects resumable state.
-- [ ] An oversized metadata response is rejected.
-- [ ] A cache-key mismatch rejects offline metadata.
-- [ ] A validated matching cache supports offline catalog display.
-- [ ] A stalled NVIDIA probe terminates within the discovery limit.
-- [ ] A stalled PowerShell probe terminates within the discovery limit.
-- [ ] One runtime-setup operation performs one hardware-detection pass.
-- [ ] Cancellation preserves or removes partial state by explicit policy.
-- [ ] Only a size-and-digest-verified archive enters extraction.
+- [x] Exact-tag `200` returns the expected catalog.
+- [x] `403` becomes a rate-limit error state.
+- [x] `429` becomes a rate-limit error state.
+- [x] A delayed response stops at the configured timeout.
+- [x] A truncated response becomes an invalid-response error.
+- [x] A wrong tag fails closed.
+- [x] The client sends no secret header.
+- [x] A server that ignores `Range` restarts safely.
+- [x] A malformed `Content-Range` rejects the partial archive.
+- [x] A short range response rejects the partial archive.
+- [x] An overlapping range response rejects the partial archive.
+- [x] An inconsistent total size rejects the partial archive.
+- [x] A changed ETag or digest rejects resumable state.
+- [x] An oversized metadata response is rejected.
+- [x] A cache-key mismatch rejects offline metadata.
+- [x] A validated matching cache supports offline catalog display.
+- [x] A stalled NVIDIA probe terminates within the discovery limit.
+- [x] A stalled PowerShell probe terminates within the discovery limit.
+- [x] One runtime-setup operation performs one hardware-detection pass.
+- [x] Cancellation preserves or removes partial state by explicit policy.
+- [x] Only a size-and-digest-verified archive enters extraction.
+
+Bounds evidence (catalog suite 11/11, download suite 38/38 green;
+mutant-proven where noted): exact-tag
+(`approved_runtime_catalog_uses_the_exact_tag_endpoint`), 403
+(`catalog_rate_limit_body_maps_403_to_a_typed_rate_limit_error`), 429
+(`catalog_429_maps_to_a_typed_rate_limit_error_with_retry_delay`),
+timeout (`catalog_http_deadline_returns_a_typed_timeout`; 30 s-deadline
+mutant fails at the `Timeout` assertion), truncated
+(`catalog_truncated_body_maps_to_a_typed_invalid_response_error`),
+wrong-tag (`catalog_wrong_tag_body_fails_closed_with_an_identity_error`),
+no-secret (`catalog_client_sends_no_secret_header`), range-restart
+(`a_server_that_ignores_ranges_restarts_a_partial_file_from_zero`),
+range-geometry (`content_range_must_match_requested_span_and_total`,
+`resume_geometry_rejects_overflowing_overlapping_spans`,
+`every_range_response_is_bound_to_the_probed_remote_identity`),
+resume-identity (`resume_identity_binds_digest_and_last_modified`,
+`existing_files_are_reused_only_when_remote_identity_matches`),
+oversize (`catalog_oversized_body_is_rejected_before_json_parsing`,
+2 MiB `MAX_RUNTIME_CATALOG_BYTES` streaming bound), cache
+(`offline_catalog_cache_requires_the_exact_approved_identity_and_body_digest`),
+probes (`bounded_output_terminates_a_stalled_hardware_probe` for
+PowerShell; NVIDIA plus all probes share the 30 s
+`HARDWARE_PROBE_TIMEOUT` with `output_with_timeout` kill semantics),
+one-detection (`one_runtime_setup_uses_one_hardware_detection`),
+cancellation (`cancellation_retains_valid_state_and_the_next_attempt_resumes`),
+verified-extraction (`validate_runtime_archive_size` 8 GiB bound plus
+SHA-256 before extraction at `runtime.rs:3813`).
 
 ### F-041-04 — The CUDA SYS message reports an intentional approval block
 
