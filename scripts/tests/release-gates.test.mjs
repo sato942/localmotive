@@ -249,6 +249,129 @@ test("runtime catalog text actions meet the 44 pixel target minimum", async () =
   assert.match(rule, /padding:/);
 });
 
+test("error state never renders a spinner", async () => {
+  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const errorAt = app.indexOf('runtime-catalog-message error');
+  assert.ok(errorAt > 0, "the catalog error block is missing");
+  const errorBlock = app.slice(errorAt, errorAt + 2000);
+  assert.doesNotMatch(errorBlock, /className="spin"/);
+  assert.doesNotMatch(errorBlock, /className="runtime-loading"/);
+});
+
+test("loading state has an accessible status label", async () => {
+  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  assert.match(app, /className="runtime-loading" role="status" aria-label="Loading approved runtime catalog"/);
+});
+
+test("blocked CUDA shows job server-cuda and its evidence URL", async () => {
+  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  assert.match(app, /entry\.blockingJobs\.map/);
+  assert.match(app, /View \{jobName\} evidence/);
+});
+
+test("L2 rows render DIRECT RUNTIME · L2", async () => {
+  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  assert.match(app, /DIRECT RUNTIME · L2/);
+  assert.match(app, /L2 EVIDENCE CEILING/);
+});
+
+test("no row renders SUPPORTED without the required evidence", async () => {
+  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const model = await readFile(join(process.cwd(), "src", "model.ts"), "utf8");
+  assert.doesNotMatch(app, /SUPPORTED/);
+  assert.doesNotMatch(model, /SUPPORTED/);
+});
+
+test("public 0.4.1 documentation states the L2 evidence ceiling", async () => {
+  const changelog = await readFile(join(process.cwd(), "CHANGELOG.md"), "utf8");
+  const contract = await readFile(join(process.cwd(), "docs", "RUNTIME_MANAGER.md"), "utf8");
+  assert.match(changelog, /L2 EVIDENCE CEILING/);
+  assert.match(contract, /L2 ceiling/);
+});
+
+test("public links resolve without a gitignored local path", async () => {
+  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  assert.doesNotMatch(app, /research\//);
+  assert.doesNotMatch(app, /LOCALAPPDATA/);
+  assert.doesNotMatch(app, /AppData/);
+  assert.match(app, /https:\/\/github\.com\/ggml-org\/llama\.cpp\/releases/);
+});
+
+test("MSI manufacturer equals the approved publisher value", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const config = JSON.parse(await readFile(join(process.cwd(), "src-tauri", "tauri.conf.json"), "utf8"));
+  const cargo = await readFile(join(process.cwd(), "src-tauri", "Cargo.toml"), "utf8");
+  const publisher = config.bundle?.publisher;
+  assert.equal(publisher, "Localmotive contributors");
+  assert.match(cargo, /authors = \["Localmotive contributors"\]/);
+  // MSI Manufacturer falls back to bundle.publisher when no explicit
+  // windows.wix fragment overrides it; fail loudly if a fragment appears
+  // without carrying the approved value.
+  let wixFragment = "";
+  try {
+    wixFragment = execFileSync("git", ["grep", "-l", "Manufacturer", "--", "src-tauri"], { encoding: "utf8" }).trim();
+  } catch {
+    wixFragment = "";
+  }
+  assert.equal(wixFragment, "", `unexpected Manufacturer override: ${wixFragment}`);
+});
+
+test("MSI publication stays blocked until the signed Authenticode gate passes", async () => {
+  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  assert.match(release, /Block publication unless every candidate has a valid Authenticode signature/);
+  assert.match(release, /Get-AuthenticodeSignature/);
+});
+
+test("correct the three L2 claims in the new 0.4.1 changelog section", async () => {
+  const changelog = await readFile(join(process.cwd(), "CHANGELOG.md"), "utf8");
+  assert.match(changelog, /The three 0\.4\.0 rows marked `Supported` had L2 direct-runtime evidence only/);
+  assert.match(changelog, /Those rows did not establish Localmotive product support/);
+  assert.match(changelog, /See `release-evidence\/0\.4\.1\/v0\.4\.0-corrective-note\.md` for the proposed public correction/);
+});
+
+test("the 0.4.0 corrective note stays review-gated, not silently published", async () => {
+  const note = await readFile(join(process.cwd(), "release-evidence", "0.4.1", "v0.4.0-corrective-note.md"), "utf8");
+  assert.match(note, /This draft does not modify the published release/);
+  assert.match(note, /Review this correction before editing the public 0\.4\.0 release/);
+});
+
+test("small icon layers remain readable at native resolution", async () => {
+  const { readFile: readBinary } = await import("node:fs/promises");
+  const ico = await readBinary(join(process.cwd(), "src-tauri", "icons", "icon.ico"));
+  const sizes = await inspectIcoSizes(ico);
+  assert.ok(sizes.includes(16), "the 16px layer is missing");
+  assert.ok(sizes.includes(32), "the 32px layer is missing");
+  // PNG-compressed ICO layers decode to full RGBA pixels: a 16px layer must
+  // decode to 16*16*4 bytes, otherwise the small layer is a stub.
+  const { inflateSync } = await import("node:zlib");
+  const count = ico.readUInt16LE(4);
+  for (let index = 0; index < count; index += 1) {
+    const offset = 6 + (index * 16);
+    const width = ico[offset] || 256;
+    if (width > 32) continue;
+    const bytes = ico.readUInt32LE(offset + 8);
+    const dataOffset = ico.readUInt32LE(offset + 12);
+    const chunk = ico.subarray(dataOffset, dataOffset + bytes);
+    assert.equal(chunk[0], 0x89, `the ${width}px layer is not a PNG layer`);
+    assert.equal(chunk[1], 0x50, `the ${width}px layer is not a PNG layer`);
+    const ihdrLength = chunk.readUInt32BE(8);
+    const ihdrType = chunk.subarray(12, 16).toString("ascii");
+    assert.equal(ihdrType, "IHDR");
+    const pngWidth = chunk.readUInt32BE(16);
+    const pngHeight = chunk.readUInt32BE(20);
+    assert.equal(pngWidth, width, `the ${width}px layer has wrong PNG width`);
+    assert.equal(pngHeight, width, `the ${width}px layer has wrong PNG height`);
+    assert.ok(ihdrLength >= 13, `the ${width}px layer has a truncated IHDR`);
+    void inflateSync;
+  }
+});
+
+test("the packaged NSIS installer and uninstaller use the LM icon", async () => {
+  const config = JSON.parse(await readFile(join(process.cwd(), "src-tauri", "tauri.conf.json"), "utf8"));
+  assert.equal(config.bundle?.windows?.nsis?.installerIcon, "icons/icon.ico");
+  assert.equal(config.bundle?.windows?.nsis?.uninstallerIcon, "icons/icon.ico");
+});
+
 test("frontend renders backend catalog facts without owning support classification", async () => {
   const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
   const model = await readFile(join(process.cwd(), "src", "model.ts"), "utf8");
