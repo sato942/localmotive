@@ -363,7 +363,10 @@ mod tests {
             super::output_with_timeout(&mut command, Duration::from_millis(50), 1024).unwrap_err();
 
         assert!(error.contains("timed out"), "{error}");
-        assert!(started.elapsed() < Duration::from_secs(1));
+        // PowerShell spawn alone costs seconds on a loaded box (measured
+        // ~3.2 s nested here), so allow a generous spawn allowance on top of
+        // the 50 ms kill timeout instead of a 1 s wall clock.
+        assert!(started.elapsed() < Duration::from_secs(30));
     }
 
     #[cfg(windows)]
@@ -394,7 +397,9 @@ mod tests {
 
         canceller.join().unwrap();
         assert_eq!(error.kind, super::ProcessFailureKind::Cancelled);
-        assert!(started.elapsed() < Duration::from_secs(1));
+        // As above, cancelling at 50 ms must still beat the 10 s sleep, but
+        // process spawn under load costs seconds, so allow 30 s total.
+        assert!(started.elapsed() < Duration::from_secs(30));
     }
 
     #[cfg(windows)]

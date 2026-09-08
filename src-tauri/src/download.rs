@@ -1250,7 +1250,17 @@ mod tests {
             let mut reader = BufReader::new(stream.try_clone().unwrap());
             loop {
                 let mut line = String::new();
-                reader.read_line(&mut line).unwrap();
+                // A WouldBlock here only means the peer has not sent the next
+                // header line yet; wait briefly rather than failing the fixture.
+                match reader.read_line(&mut line) {
+                    Ok(0) => break,
+                    Ok(_) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(1));
+                        continue;
+                    }
+                    Err(error) => panic!("server read failed: {error}"),
+                }
                 if line == "\r\n" || line.is_empty() {
                     break;
                 }
@@ -1446,10 +1456,28 @@ mod tests {
                 let mut request = String::new();
                 loop {
                     let mut line = String::new();
-                    if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                    // Accepted streams inherit the listener's non-blocking mode
+                    // on Windows; a WouldBlock only means the peer has not sent
+                    // the next header line yet.
+                    match reader.read_line(&mut line) {
+                        Ok(0) => break,
+                        Ok(_) => {}
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(Duration::from_millis(1));
+                            continue;
+                        }
+                        Err(error) => panic!("server read failed: {error}"),
+                    }
+                    if line == "\r\n" {
                         break;
                     }
                     request.push_str(&line);
+                }
+                // A half-opened probe connection can reach us with no request
+                // head yet; wait for the retry rather than parsing an empty
+                // request and panicking on the missing Range line.
+                if request.is_empty() {
+                    continue;
                 }
                 if request_index > 0 {
                     let start = request
@@ -1926,7 +1954,18 @@ mod tests {
                 let mut reader = BufReader::new(stream.try_clone().unwrap());
                 loop {
                     let mut line = String::new();
-                    reader.read_line(&mut line).unwrap();
+                    // Accepted streams inherit the listener's non-blocking mode on
+                    // Windows; a WouldBlock only means the peer has not sent the
+                    // next header line yet.
+                    match reader.read_line(&mut line) {
+                        Ok(0) => break,
+                        Ok(_) => {}
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(Duration::from_millis(1));
+                            continue;
+                        }
+                        Err(error) => panic!("server read failed: {error}"),
+                    }
                     if line == "\r\n" || line.is_empty() {
                         break;
                     }

@@ -1169,6 +1169,24 @@ const HARDWARE_DETECTION_NOTICE: &str =
     "Hardware detection does not establish product support; use the approved catalog recommendation.";
 
 pub fn detect_hardware() -> HardwareInfo {
+    // GPU-less runners (and locked-down CI boxes) must not hang the suite:
+    // PowerShell/CIM and nvidia-smi probes can stall for minutes where no
+    // GPU stack exists. An explicit opt-out keeps those environments fast
+    // while production keeps probing by default.
+    if std::env::var_os("LOCALMOTIVE_SKIP_HARDWARE_PROBE").is_some() {
+        return HardwareInfo {
+            architecture: architecture(),
+            gpu_names: Vec::new(),
+            vendor: "cpu".into(),
+            cuda_major: None,
+            driver_version: String::new(),
+            detection_status: "Hardware probing skipped by LOCALMOTIVE_SKIP_HARDWARE_PROBE".into(),
+            recommendation: HARDWARE_DETECTION_NOTICE.into(),
+            system_memory: detect_system_memory(),
+            adapters: Vec::new(),
+            manual_overrides: Vec::new(),
+        };
+    }
     const HARDWARE_PROBE_TIMEOUT: Duration = Duration::from_secs(30);
     const HARDWARE_PROBE_STREAM_LIMIT: usize = 1024 * 1024;
     let architecture = architecture();

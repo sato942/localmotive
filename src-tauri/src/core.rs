@@ -2286,14 +2286,21 @@ fn main() {
         drop(listener);
         assert_eq!(pick_free_port("127.0.0.1", taken).unwrap(), taken);
 
-        // Requested port occupied -> the next free port above it.
+        // Requested port occupied -> the next free port above it. Another
+        // parallel test can grab `next` between our probe and our bind, so
+        // retry a few times rather than asserting a raced bind succeeds.
         let held = TcpListener::bind(("127.0.0.1", taken)).unwrap();
-        let next = pick_free_port("127.0.0.1", taken).unwrap();
-        assert!(next > taken, "expected a port above {taken}, got {next}");
-        assert!(
-            TcpListener::bind(("127.0.0.1", next)).is_ok(),
-            "returned port {next} was not actually free"
-        );
+        let mut bound = false;
+        for _ in 0..8 {
+            let next = pick_free_port("127.0.0.1", taken).unwrap();
+            assert!(next > taken, "expected a port above {taken}, got {next}");
+            if TcpListener::bind(("127.0.0.1", next)).is_ok() {
+                bound = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(bound, "could not bind a port above {taken}");
         drop(held);
     }
 
