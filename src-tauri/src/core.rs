@@ -2112,6 +2112,46 @@ mod tests {
     }
 
     #[test]
+    fn pinned_smoke_model_provenance_license_size_and_digest_are_recorded() {
+        // Phase 3: the pinned smoke model provenance, license, size, and
+        // digest are recorded in a tracked fixture AND bound to the compiled
+        // product pin. A drift in any field fails closed here before any
+        // health run can use a substituted model.
+        // RED: pointing the fixture at a wrong digest fails this test, which
+        // proves the test guards the pin instead of documenting it.
+        #[derive(serde::Deserialize)]
+        struct SmokeModelFixture {
+            repo: String,
+            revision: String,
+            filename: String,
+            url: String,
+            size: u64,
+            sha256: String,
+            license: String,
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let fixture: SmokeModelFixture = serde_json::from_str(
+            &std::fs::read_to_string(root.join("tests/fixtures/health/smoke-model.json")).unwrap(),
+        )
+        .unwrap();
+        let pin = pinned_model_load_pin();
+
+        assert_eq!(fixture.repo, pin.repository);
+        assert_eq!(fixture.revision, pin.revision);
+        assert_eq!(fixture.filename, pin.name);
+        assert_eq!(fixture.url, pin.url);
+        assert_eq!(fixture.size, pin.bytes);
+        assert_eq!(fixture.sha256, pin.sha256);
+        assert_eq!(fixture.license, pin.license);
+        assert_eq!(pin.license, "apache-2.0");
+        assert_eq!(pin.bytes, 101_016_128);
+        assert_eq!(
+            pin.sha256,
+            "e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5"
+        );
+    }
+
+    #[test]
     fn pinned_smoke_cancellation_record_releases_work_cleanly() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let summary =
