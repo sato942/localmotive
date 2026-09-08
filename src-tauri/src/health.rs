@@ -1287,6 +1287,128 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn health_servers_bind_loopback_only_and_never_wildcard() {
+        // Phase 3: loopback health succeeds without network exposure. The
+        // server args pin `--host 127.0.0.1`, every health URL targets
+        // 127.0.0.1 or LOCALHOST, and no wildcard bind exists anywhere
+        // in the health module (see the per-line scan below, which skips
+        // comments like this one).
+        // RED: binding the server host to a wildcard fails this test, which
+        // proves the test guards loopback-only exposure instead of
+        // documenting it.
+        let source = include_str!("health.rs");
+
+        // The host flag value must be the loopback literal on the SAME
+        // args line pair: find the host flag and require the next
+        // non-empty product line to carry 127.0.0.1.
+        let lines: Vec<&str> = source.lines().collect();
+        let mut host_ok = false;
+        for (index, line) in lines.iter().enumerate() {
+            if line.contains("--host") && line.contains(".into(),") {
+                let next = lines.get(index + 1).unwrap_or(&"");
+                if next.contains("127.0.0.1") {
+                    host_ok = true;
+                }
+            }
+        }
+        assert!(host_ok, "server --host flag must pin 127.0.0.1");
+
+        let needle: Vec<u8> = [48, 46, 48, 46, 48, 46, 48].to_vec();
+        let needle = String::from_utf8(needle).unwrap();
+        for line in source.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            // The needle is built from byte values so this test body never
+            // contains the wildcard literal itself (self-match guard).
+            assert!(
+                !trimmed.contains(needle.as_str()),
+                "wildcard address in product code: {trimmed}"
+            );
+        }
+    }
+
+    #[test]
+    fn health_run_result_carries_the_defined_completion_shape() {
+        // Phase 3: deterministic completion returns the defined
+        // `HealthRunResult` structure: runtime/model/adapter identity,
+        // timestamps, pass flag, all seven stages in order, and the
+        // completion evidence fields (temperature, token counts, expected
+        // vs observed output digests) on the completion stage.
+        // RED: dropping the completion evidence fails this test, which
+        // proves the test guards the shape instead of documenting it.
+        let context = ManagedHealthContext {
+            runtime_id: "cpu".into(),
+            install_root: PathBuf::new(),
+            server_path: PathBuf::new(),
+            backend: "cpu".into(),
+            adapter_id: None,
+            adapter_name: None,
+            expected_model: "SmolLM2-135M-Q4_K_M.gguf".into(),
+            model_path: PathBuf::new(),
+        };
+        let completion = CompletionEvidence {
+            temperature: 0.0,
+            requested_tokens: 16,
+            observed_tokens: 16,
+            expected_output_sha256: "a".repeat(64),
+            observed_output_sha256: "a".repeat(64),
+        };
+        assert!(completion_matches(&completion));
+        let mut stages = vec![HealthStageResult::passed_completion(3, completion.clone())];
+        // Prepend passes for the four stages before completion.
+        for stage in [
+            HealthStage::DeviceEnumeration,
+            HealthStage::BackendOperations,
+            HealthStage::PinnedModelLoad,
+            HealthStage::LoopbackServerHealth,
+        ] {
+            stages.insert(
+                stages.len().saturating_sub(1),
+                HealthStageResult::passed(stage, 1, "fixture pass"),
+            );
+        }
+        // Append passes for the two stages after completion.
+        for stage in [
+            HealthStage::Cancellation,
+            HealthStage::ProcessAndTemporaryFileCleanup,
+        ] {
+            stages.push(HealthStageResult::passed(stage, 1, "fixture pass"));
+        }
+        assert_eq!(stages.len(), 7);
+        let result = finish_run(&context, 1000, stages);
+
+        assert!(result.passed);
+        assert_eq!(result.runtime_id, "cpu");
+        assert_eq!(
+            result.model_sha256,
+            crate::core::pinned_model_load_pin().sha256
+        );
+        assert_eq!(result.adapter_id, None);
+        assert!(result.finished_at >= result.started_at);
+        assert_eq!(
+            result
+                .stages
+                .iter()
+                .map(|stage| stage.stage)
+                .collect::<Vec<_>>(),
+            HealthStage::ALL.to_vec()
+        );
+        let completion_stage = result
+            .stages
+            .iter()
+            .find(|stage| stage.stage == HealthStage::DeterministicCompletion)
+            .unwrap();
+        let evidence = completion_stage.completion.as_ref().unwrap();
+        assert_eq!(evidence.temperature, 0.0);
+        assert_eq!(evidence.requested_tokens, 16);
+        assert_eq!(evidence.observed_tokens, 16);
+        assert_eq!(evidence.expected_output_sha256, "a".repeat(64));
+        assert_eq!(evidence.observed_output_sha256, "a".repeat(64));
+    }
+
+    #[test]
     fn loopback_server_is_contained_before_user_code_can_run() {
         let source = include_str!("health.rs");
         assert!(source.contains("spawn_contained_process"));
