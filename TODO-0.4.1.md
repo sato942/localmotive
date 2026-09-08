@@ -1347,30 +1347,68 @@ After Phase 0A passes, keep `research/` read-only throughout product implementat
 
 #### Tasks
 
-- [ ] Give the manifest one authoritative tag field.
-- [ ] Validate every active and dormant asset.
-- [ ] Correct the dormant Arm64 CUDA URL.
-- [ ] Validate release commit and publication time.
-- [ ] Capture only terminal required-job states for final approval.
-- [ ] Record the approval observation time.
-- [ ] Map required jobs to assets, platforms, and hardware classes.
-- [ ] Add exact hardware compatibility keys.
-- [ ] Pass the selected adapter ID through IPC.
-- [ ] Require selection on every multi-adapter host.
-- [ ] Keep unknown AMD and Intel devices on CPU by default.
-- [ ] Never recommend experimental Vulkan without an exact qualifying row.
-- [ ] Define an installation request containing only `install_key` and `adapter_id`.
+- [x] Give the manifest one authoritative tag field.
+- [x] Validate every active and dormant asset.
+- [x] Correct the dormant Arm64 CUDA URL.
+- [x] Validate release commit and publication time.
+- [x] Capture only terminal required-job states for final approval.
+- [x] Record the approval observation time.
+- [x] Map required jobs to assets, platforms, and hardware classes.
+- [x] Add exact hardware compatibility keys.
+- [x] Pass the selected adapter ID through IPC.
+- [x] Require selection on every multi-adapter host.
+- [x] Keep unknown AMD and Intel devices on CPU by default.
+- [x] Never recommend experimental Vulkan without an exact qualifying row.
+- [x] Define an installation request containing only `install_key` and `adapter_id`.
 
 #### Acceptance checks
 
-- [ ] Official exact-tag metadata matches every manifest asset.
-- [ ] All required jobs have terminal captured states.
-- [ ] Every candidate with applicable blocking evidence remains non-installable and non-recommended.
-- [ ] Every failed or queued job has one validated impact mapping.
-- [ ] Ambiguous job mappings fail closed before catalog construction.
-- [ ] Generic vendor names never qualify native backends.
-- [ ] Same-vendor multi-adapter tests require selection.
-- [ ] Unknown combinations show their fallback reason.
+- [x] Official exact-tag metadata matches every manifest asset.
+- [x] All required jobs have terminal captured states.
+- [x] Every candidate with applicable blocking evidence remains non-installable and non-recommended.
+- [x] Every failed or queued job has one validated impact mapping.
+- [x] Ambiguous job mappings fail closed before catalog construction.
+- [x] Generic vendor names never qualify native backends.
+- [x] Same-vendor multi-adapter tests require selection.
+- [x] Unknown combinations show their fallback reason.
+
+#### Phase 2 evidence map (HEAD `34fab16`, self-hosted CI `34280885118` pending)
+
+- Authoritative tag: `manifest_tag_is_the_single_authoritative_release_tag`
+  (top-level `releaseTag` gates identity; per-asset URL derivation stays as
+  defense in depth; honest characterization, no single-point RED claimed).
+- Active plus dormant assets: `every_manifest_asset_and_job_matches_the_frozen_b10816_fixtures`
+  binds all 13 assets to the frozen release fixture.
+- Arm64 URL: `dormant_arm64_cuda_url_matches_the_frozen_exact_tag_release`.
+- Commit plus publication: `approved_manifest_identity_matches_the_frozen_b10816_release`,
+  `catalog_rejects_an_option_when_upstream_identity_changes`,
+  `catalog_rejects_changed_publication_identity`.
+- Terminal states: `manifest_rejects_a_nonterminal_required_job_state`
+  (five cases incl. the isolating queued-plus-success case; mutant-proven).
+- Observation time: `manifest_observation_time_is_a_valid_utc_timestamp`
+  (mutant-proven).
+- Impact mapping: `every_b10816_required_job_maps_to_shipping_impact_and_is_green`
+  (11 jobs, platforms, hardware classes).
+- Ambiguous fail-closed: `manifest_rejects_an_ambiguous_job_to_install_key_mapping`
+  plus `approved_manifest_rejects_unknown_fields_and_ambiguous_job_mappings`
+  (both mutant-proven).
+- Blocked exclusion: `blocked_backends_are_never_installed_or_recommended`
+  (mutant-proven), plus Phase 1 isolation trio.
+- Compat keys: `compatibility_record_requires_every_exact_key_field`,
+  `approved_manifest_rejects_an_unbound_compatibility_record`.
+- Adapter IPC: `install_request_rejects_frontend_artifact_overrides_and_requires_exact_adapter_id`
+  (`RuntimeInstallRequest` is `deny_unknown_fields` key plus adapter only).
+- Selection: `selection_discarding_a_second_adapter_fails_without_explicit_choice`,
+  `mixed_vendor_adapters_require_explicit_selection_without_silent_fallback`,
+  `same_vendor_multi_adapter_hosts_require_explicit_selection` (mutant-proven).
+- Unknown fallback: `generic_amd_name_without_an_exact_record_falls_back_to_cpu`,
+  `generic_intel_name_without_an_exact_record_falls_back_to_cpu`,
+  `generic_nvidia_name_without_an_exact_record_falls_back_to_cpu`,
+  `nvidia_family_and_driver_do_not_create_exact_qualification`,
+  `cpu_fallback_discloses_cpu_backend_without_accelerator_label`.
+- Vulkan exact row: `unsupported_amd_hardware_rejects_rocm_and_keeps_vulkan_or_cpu`,
+  `unsupported_intel_hardware_rejects_sycl_and_keeps_vulkan_or_cpu`.
+- Full gate: lib 378 passed 2 ignored, fmt clean, clippy zero errors.
 
 ### Phase 3 — Enforce managed-runtime trust and complete health
 
