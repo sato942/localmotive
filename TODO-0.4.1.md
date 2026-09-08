@@ -1225,18 +1225,18 @@ After Phase 0A passes, keep `research/` read-only throughout product implementat
 
 #### Tasks
 
-- [ ] Add a failing blocked-backend catalog test.
-- [ ] Add a failing catalog-error UI state test.
-- [ ] Add a failing managed-runtime reuse integrity test.
-- [ ] Add a failing dormant Arm64 URL test.
-- [ ] Add failing crafted installation-IPC tests.
-- [ ] Add failing hardware-probe timeout tests.
-- [ ] Add a failing one-detection-per-setup test.
-- [ ] Add tracked minimal health fixtures outside `research/`.
-- [ ] Add an LF checkout policy for signed catalog bytes.
-- [ ] Reproduce every clean-clone and GitHub-runner failure.
-- [ ] Decide whether to requalify `b10796` or qualify a newer release.
-- [ ] Decide which Windows versions 0.4.1 will claim.
+- [x] Add a failing blocked-backend catalog test.
+- [x] Add a failing catalog-error UI state test.
+- [x] Add a failing managed-runtime reuse integrity test.
+- [x] Add a failing dormant Arm64 URL test.
+- [x] Add failing crafted installation-IPC tests.
+- [x] Add failing hardware-probe timeout tests.
+- [x] Add a failing one-detection-per-setup test.
+- [x] Add tracked minimal health fixtures outside `research/`.
+- [x] Add an LF checkout policy for signed catalog bytes.
+- [x] Reproduce every clean-clone and GitHub-runner failure.
+- [x] Decide whether to requalify `b10796` or qualify a newer release.
+- [x] Decide which Windows versions 0.4.1 will claim.
 
 #### Recorded implementation decisions
 
@@ -1247,14 +1247,14 @@ After Phase 0A passes, keep `research/` read-only throughout product implementat
 
 #### Acceptance checks
 
-- [ ] Every failing test fails for the expected reason.
-- [ ] The clean clone has no dependency on gitignored research files.
-- [ ] Catalog signature tests are checkout-invariant.
-- [ ] No test depends on live GitHub timing.
-- [ ] No credential enters fixtures or logs.
-- [ ] The baseline asset hashes still match the published release.
-- [ ] The research-tree digest still matches the Phase 0A record.
-- [ ] The selected runtime pin has a complete successful required-job set.
+- [x] Every failing test fails for the expected reason.
+- [x] The clean clone has no dependency on gitignored research files.
+- [x] Catalog signature tests are checkout-invariant.
+- [x] No test depends on live GitHub timing.
+- [x] No credential enters fixtures or logs.
+- [x] The baseline asset hashes still match the published release.
+- [x] The research-tree digest still matches the Phase 0A record.
+- [x] The selected runtime pin has a complete successful required-job set.
 
 ### Phase 1 — Repair catalog retrieval and isolation
 
