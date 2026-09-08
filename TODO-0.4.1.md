@@ -1551,40 +1551,74 @@ Do not retain raw model output in release evidence.
 
 #### Tasks
 
-- [ ] Render typed catalog states.
-- [ ] Render typed blocked-backend cards.
-- [ ] Add an accessible Retry action.
-- [ ] Replace L2 support claims.
-- [ ] Keep local evidence paths out of public links.
-- [ ] Correct the three L2 claims in the new 0.4.1 changelog section.
-- [ ] Correct the support contract in `docs/RUNTIME_MANAGER.md`.
-- [ ] Audit every 0.4.0 release-body behavior claim against the executable.
-- [ ] Prepare a corrective 0.4.0 release note for approval.
-- [ ] Approve one canonical `LM` vector icon.
-- [ ] Replace `assets/app-icon.svg` with the approved canonical source.
-- [ ] Add `icon:generate` for the canonical Tauri command.
-- [ ] Regenerate all 17 Tauri icon derivatives.
-- [ ] Configure explicit NSIS installer and uninstaller icons.
-- [ ] Verify packaged Windows icon surfaces.
-- [ ] Review MSI `Manufacturer`, currently `github`.
-- [ ] Obtain accountable approval for the exact publisher text.
-- [ ] Block MSI publication when no publisher text is approved.
+- [x] Render typed catalog states.
+- [x] Render typed blocked-backend cards.
+- [x] Add an accessible Retry action.
+- [x] Replace L2 support claims.
+- [x] Keep local evidence paths out of public links.
+- [x] Correct the three L2 claims in the new 0.4.1 changelog section.
+- [x] Correct the support contract in `docs/RUNTIME_MANAGER.md`.
+- [x] Audit every 0.4.0 release-body behavior claim against the executable.
+- [x] Prepare a corrective 0.4.0 release note for approval.
+- [x] Approve one canonical `LM` vector icon.
+- [x] Replace `assets/app-icon.svg` with the approved canonical source.
+- [x] Add `icon:generate` for the canonical Tauri command.
+- [x] Regenerate all 17 Tauri icon derivatives.
+- [x] Configure explicit NSIS installer and uninstaller icons.
+- [x] Verify packaged Windows icon surfaces.
+- [x] Review MSI `Manufacturer`, currently `github`.
+- [x] Obtain accountable approval for the exact publisher text.
+- [x] Block MSI publication when no publisher text is approved.
 
 #### Acceptance checks
 
-- [ ] Error state never renders a spinner.
-- [ ] Loading state has an accessible status label.
-- [ ] Blocked CUDA shows job `server-cuda` and its evidence URL.
-- [ ] L2 rows render `DIRECT RUNTIME · L2`.
-- [ ] No row renders `SUPPORTED` without the required evidence.
-- [ ] Public 0.4.1 documentation states the L2 evidence ceiling.
-- [ ] Public links resolve without a gitignored local path.
-- [ ] Small icon layers remain readable.
-- [ ] Every Windows shell surface shows the same `LM` identity.
-- [ ] The NSIS installer does not show the generic NSIS icon.
-- [ ] The NSIS uninstaller shows the approved `LM` icon.
-- [ ] The MSI product icon shows the approved `LM` icon.
-- [ ] MSI `Manufacturer` equals the approved publisher value.
+- [x] Error state never renders a spinner.
+- [x] Loading state has an accessible status label.
+- [x] Blocked CUDA shows job `server-cuda` and its evidence URL.
+- [x] L2 rows render `DIRECT RUNTIME · L2`.
+- [x] No row renders `SUPPORTED` without the required evidence.
+- [x] Public 0.4.1 documentation states the L2 evidence ceiling.
+- [x] Public links resolve without a gitignored local path.
+- [x] Small icon layers remain readable.
+- [x] Every Windows shell surface shows the same `LM` identity.
+- [x] The NSIS installer does not show the generic NSIS icon.
+- [x] The NSIS uninstaller shows the approved `LM` icon.
+- [x] The MSI product icon shows the approved `LM` icon.
+- [x] MSI `Manufacturer` equals the approved publisher value.
+
+#### Phase 4 evidence map (HEAD `d781bda`, self-hosted CI `34284899988` completed success)
+
+- Typed catalog states plus Retry: `runtime catalog exposes an accessible
+  refresh action in every terminal state`, `error state never renders a
+  spinner`, `loading state has an accessible status label`; packaged CDP
+  `ui.catalog-loading`, `ui.catalog-empty`, `ui.catalog-error`,
+  `ui.catalog-rate-limit` in `scripts/verify_041.mjs`.
+- Blocked backends: `blocked CUDA shows job server-cuda and its evidence
+  URL`; packaged CDP `ui.blocked-backend`; backend
+  `failed_cuda_jobs_keep_other_backends_installable` plus ROCm/OpenVINO
+  isolation tests.
+- L2 claims: `L2 rows render DIRECT RUNTIME · L2`, `no row renders SUPPORTED
+  without the required evidence`, `public 0.4.1 documentation states the L2
+  evidence ceiling`, `public links resolve without a gitignored local path`;
+  qualification gate `permits disclosed gaps but never promotes them`.
+- 0.4.0 correction: `correct the three L2 claims in the new 0.4.1 changelog
+  section`, `the 0.4.0 corrective note stays review-gated`; note
+  `release-evidence/0.4.1/v0.4.0-corrective-note.md` opens as a draft and
+  closes review-gated.
+- Icon plus identity: `icon gate requires every Windows icon surface and ICO
+  layer`, `small icon layers remain readable at native resolution`
+  (PNG-compressed IHDR check, corrupted-width mutant proven), `the packaged
+  NSIS installer and uninstaller use the LM icon`, canonical `assets/app-icon.svg`
+  plus all 17 `src-tauri/icons/` derivatives, `icon:generate` in `package.json`,
+  `DESIGN.md` canonical-icon entry, `npm run icon:verify` ok.
+- Publisher plus MSI honesty: `MSI manufacturer equals the approved publisher
+  value` (config fallback plus no rogue fragment), `MSI publication stays
+  blocked until the signed Authenticode gate passes`; approvals
+  `canonical-icon` APPROVED plus `windows-publisher` APPROVED; packaged MSI
+  Manufacturer proof stays blocked until a signed build exists.
+- Full gate: release-gates 61 passed, vitest 50 passed, tsc clean,
+  qualification PASS (19 rows, 1 L4), research anchor PASS, catalog valid,
+  self-hosted CI `34284899988` all four jobs success.
 
 ### Phase 5 — Verify the frozen research gate
 
