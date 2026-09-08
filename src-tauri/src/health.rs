@@ -1481,12 +1481,18 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn cancellation_job_terminates_descendant_processes() {
+        // Under MSYS/git-bash the `ping.exe -n 2` prologue resolves to the
+        // MSYS ping (seconds per echo, not one second per echo), so the
+        // child can exit before the 1.5 s readiness sleep and the
+        // still-running assertion goes red for environment reasons, not
+        // product reasons. Invoke the native ping by absolute path so the
+        // timing matches the fixture design on every shell.
         let mut command = crate::proc::hidden_command("cmd.exe");
         command
             .args([
                 "/D",
                 "/C",
-                "ping.exe -n 2 127.0.0.1 >NUL & ping.exe -n 60 127.0.0.1 >NUL",
+                r"C:\Windows\System32\ping.exe -n 2 127.0.0.1 >NUL & C:\Windows\System32\ping.exe -n 60 127.0.0.1 >NUL",
             ])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
