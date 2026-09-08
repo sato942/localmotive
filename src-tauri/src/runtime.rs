@@ -5151,6 +5151,84 @@ Connection: close
     }
 
     #[test]
+    fn same_vendor_multi_adapter_hosts_require_explicit_selection() {
+        // Phase 2: same-vendor pairs (two NVIDIA cards) must require
+        // explicit selection too — not just mixed-vendor hosts. Without a
+        // selection the recommendation falls back to CPU with a reason that
+        // names the missing choice; after an explicit selection the
+        // recommendation evaluates the selected adapter.
+        // RED: auto-preferring the first adapter fails this test, which
+        // proves the test guards the selection gate instead of documenting it.
+        let source = EvidenceSource {
+            kind: EvidenceSourceKind::Policy,
+            detail: "test fixture".into(),
+        };
+        let bytes =
+            Evidence::known(1, EvidenceLevel::Observed, source.clone(), 1, Vec::new()).unwrap();
+        let adapter = |id: &str| GpuAdapterInfo {
+            adapter_id: id.into(),
+            compatibility_id: "pci:10de:2b85:00000000:a1".into(),
+            name: "NVIDIA fixture".into(),
+            vendor: "nvidia".into(),
+            driver: Evidence::known(
+                "610.74".into(),
+                EvidenceLevel::Observed,
+                source.clone(),
+                1,
+                Vec::new(),
+            )
+            .unwrap(),
+            backend: Evidence::known(
+                "cuda".into(),
+                EvidenceLevel::Derived,
+                source.clone(),
+                1,
+                Vec::new(),
+            )
+            .unwrap(),
+            dedicated_bytes: bytes.clone(),
+            shared_bytes: bytes.clone(),
+            budget_bytes: bytes.clone(),
+            current_usage_bytes: bytes.clone(),
+            available_budget_bytes: bytes.clone(),
+            available_for_reservation_bytes: bytes.clone(),
+            capacity_observations: Vec::new(),
+        };
+        let hardware = HardwareInfo {
+            architecture: "x64".into(),
+            gpu_names: vec!["NVIDIA A".into(), "NVIDIA B".into()],
+            vendor: "nvidia".into(),
+            cuda_major: Some(13),
+            driver_version: "610.74".into(),
+            detection_status: "test fixture".into(),
+            recommendation: String::new(),
+            system_memory: detect_system_memory(),
+            adapters: vec![adapter("luid:aa"), adapter("luid:bb")],
+            manual_overrides: Vec::new(),
+        };
+        let (release, approved, _) = approved_release();
+        let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
+        let mut options = catalog.options;
+
+        let reason = apply_capability_recommendation(&mut options, &hardware, None);
+        let recommended = options.iter().find(|option| option.recommended).unwrap();
+        assert_eq!(
+            recommended.backend, "cpu",
+            "two adapters without selection must fall back"
+        );
+        assert!(
+            reason.contains("select one adapter"),
+            "fallback reason must name the missing choice: {reason}"
+        );
+
+        let reason = apply_capability_recommendation(&mut options, &hardware, Some("luid:bb"));
+        assert!(
+            reason.contains("L4 product compatibility") || reason.contains("CPU fallback"),
+            "explicit selection must reach adapter evaluation: {reason}"
+        );
+    }
+
+    #[test]
     fn runtime_archive_resume_path_is_stable_and_separate_from_install_staging() {
         let root = Path::new(r"C:\managed-runtimes");
         let install = resolve_approved_install("cpu").unwrap();
