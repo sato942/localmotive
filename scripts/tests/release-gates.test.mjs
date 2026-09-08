@@ -249,6 +249,20 @@ test("runtime catalog text actions meet the 44 pixel target minimum", async () =
   assert.match(rule, /padding:/);
 });
 
+test("a rejected catalog invocation removes the spinner", async () => {
+  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const errorAt = app.indexOf('runtime-catalog-message error');
+  assert.ok(errorAt > 0, "the catalog error block is missing");
+  const errorBlock = app.slice(errorAt, errorAt + 2000);
+  assert.doesNotMatch(errorBlock, /className="spin"/);
+  assert.doesNotMatch(errorBlock, /className="runtime-loading"/);
+  // The error branch is exclusive with the loading branch: the state
+  // machine returns exactly one kind, so error can never co-render loading.
+  const model = await readFile(join(process.cwd(), "src", "model.ts"), "utf8");
+  assert.match(model, /if \(input\.loading\) return \{ kind: "loading" \};/);
+  assert.match(model, /if \(input\.error\) return \{ kind: "error", error: input\.error \};/);
+});
+
 test("error state never renders a spinner", async () => {
   const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
   const errorAt = app.indexOf('runtime-catalog-message error');

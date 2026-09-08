@@ -381,14 +381,45 @@ Load local managed runtimes independently from remote release metadata.
 
 Keep existing managed runtimes available during a GitHub outage.
 
+A rejected catalog invocation shows `Runtime catalog unavailable` plus the
+typed backend message and one `Retry` button (`App.tsx:1408-1415`); the
+rate-limit variant additionally shows `Retry after N seconds`. The error
+branch is exclusive with loading through `runtimeCatalogViewState`, which
+returns exactly one kind. Gate: `a rejected catalog invocation removes the
+spinner` (plus the pre-existing `error state never renders a spinner`,
+`loading state has an accessible status label`, and packaged CDP
+`ui.catalog-error`).
+
+A rejected catalog invocation leaves `Retry` enabled: the error block owns
+one `Retry` button bound to `loadRuntimeSetup`, and the packaged CDP
+`ui.catalog-error` asserts exactly one `Retry` action. Gate: packaged
+`ui.catalog-error` (`retryCount === 1`).
+
+A catalog error does not prevent managed-runtime discovery: `load_runtime_setup`
+(`lib.rs:2181`) collects `list_managed_runtimes()` before the catalog fetch,
+so existing installs stay visible during a GitHub outage. Gate:
+`managed_runtime_listing_shows_local_installs_without_a_catalog_fetch`
+(fail-closed half) plus the `load_runtime_setup` ordering.
+
+An empty successful catalog renders `No approved runtime matches this
+system` with `role="status"` and no loading indicator (`App.tsx:1424`).
+Gate: packaged CDP `ui.catalog-empty` (`messageCount === 1`,
+`loadingCount === 0`).
+
+Component teardown ignores stale completion: the mount effect bumps
+`runtimeCatalogSeq` on unmount (`App.tsx:897-900`), and every completion
+path checks `keepLatestRequest` before committing state. Gate: `runtime setup
+invalidates pending responses during unmount` plus `runtime setup ignores
+stale responses and owns a separate loading state`.
+
 #### Required regression checks
 
-- [ ] A rejected catalog invocation removes the spinner.
-- [ ] A rejected catalog invocation shows an actionable error.
-- [ ] A rejected catalog invocation leaves Retry enabled.
-- [ ] A catalog error does not prevent managed-runtime discovery.
-- [ ] An empty successful catalog does not display a loading state.
-- [ ] Component teardown cancels or ignores stale completion.
+- [x] A rejected catalog invocation removes the spinner.
+- [x] A rejected catalog invocation shows an actionable error.
+- [x] A rejected catalog invocation leaves Retry enabled.
+- [x] A catalog error does not prevent managed-runtime discovery.
+- [x] An empty successful catalog does not display a loading state.
+- [x] Component teardown cancels or ignores stale completion.
 
 ### F-041-03 — The release lookup is larger and less bounded than necessary
 
