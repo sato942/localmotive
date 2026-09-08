@@ -2709,6 +2709,16 @@ fn expected_sha256(asset: &GithubAsset) -> Option<&str> {
 
 const MAX_RUNTIME_DOWNLOAD_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 
+/// Reject an archive size before any network access: zero-byte archives
+/// carry no runtime, and anything past 8 GiB exceeds the bounded download
+/// budget for one approved llama.cpp archive.
+fn validate_runtime_archive_size(name: &str, size: u64) -> Result<(), String> {
+    if size == 0 || size > MAX_RUNTIME_DOWNLOAD_BYTES {
+        return Err(format!("Runtime asset has an invalid size: {name}"));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 fn copy_download_with_limit<R: Read, W: io::Write>(
     reader: &mut R,
@@ -3794,9 +3804,7 @@ pub fn install_runtime(
                         .to_string(),
                 );
             }
-            if asset.size == 0 || asset.size > MAX_RUNTIME_DOWNLOAD_BYTES {
-                return Err(format!("Runtime asset has an invalid size: {}", asset.name));
-            }
+            validate_runtime_archive_size(&asset.name, asset.size)?;
             let expected = expected_sha256(asset)
                 .ok_or_else(|| format!("Runtime asset {} lacks an approved SHA-256", asset.name))?;
             let archive = runtime_download_target(&root, &option, asset)?;
@@ -6312,6 +6320,23 @@ Connection: close
             "unexpected error: {error}"
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn install_rejects_an_archive_size_past_the_8gib_download_bound() {
+        let install = resolve_approved_install("cpu").unwrap();
+
+        validate_runtime_archive_size(&install.asset.name, install.asset.size)
+            .expect("the approved fixture size must pass the bound");
+        assert_eq!(MAX_RUNTIME_DOWNLOAD_BYTES, 8 * 1024 * 1024 * 1024);
+
+        let error =
+            validate_runtime_archive_size(&install.asset.name, MAX_RUNTIME_DOWNLOAD_BYTES + 1)
+                .unwrap_err();
+        assert!(error.contains("invalid size"), "unexpected error: {error}");
+
+        let error = validate_runtime_archive_size(&install.asset.name, 0).unwrap_err();
+        assert!(error.contains("invalid size"), "unexpected error: {error}");
     }
 
     #[test]
