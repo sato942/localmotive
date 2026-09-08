@@ -324,14 +324,33 @@ Catalog isolation does not make a release candidate eligible while a required jo
 
 #### Required regression checks
 
-- [ ] A failed CUDA job does not remove CPU.
-- [ ] A failed CUDA job does not remove independently approved Vulkan.
-- [ ] A failed ROCm job does not remove independently approved CPU or SYCL.
-- [ ] A queued OpenVINO job blocks only OpenVINO.
-- [ ] A missing required job fails approval for every mapped candidate.
-- [ ] A failed NVIDIA Vulkan job blocks NVIDIA Vulkan recommendation.
-- [ ] An Intel Vulkan success cannot clear failed NVIDIA evidence.
-- [ ] No blocked backend becomes recommended.
+- [x] A failed CUDA job does not remove CPU.
+- [x] A failed CUDA job does not remove independently approved Vulkan.
+- [x] A failed ROCm job does not remove independently approved CPU or SYCL.
+- [x] A queued OpenVINO job blocks only OpenVINO.
+- [x] A missing required job fails approval for every mapped candidate.
+- [x] A failed NVIDIA Vulkan job blocks NVIDIA Vulkan recommendation.
+- [x] An Intel Vulkan success cannot clear failed NVIDIA evidence.
+- [x] No blocked backend becomes recommended.
+
+Isolation evidence (all in `src-tauri/src/runtime.rs`, suite 88/88 green;
+mutant-proven where noted): `failed_cuda_jobs_keep_independently_approved_cpu_and_vulkan_options`
+(CPU plus Vulkan survive, CUDA excluded with `server-cuda` blocked entry;
+fail-every-job mutant fails at the CPU assertion);
+`failed_rocm_jobs_block_only_rocm_options` (CPU survives, ROCm excluded
+with `gpu-rocm` blocked entry);
+`queued_openvino_jobs_block_only_openvino_options` (CPU survives, OpenVINO
+excluded with `gpu-openvino-low-perf` blocked entry);
+`manifest_rejects_a_nonterminal_required_job_state` plus
+`approved_manifest_rejects_unknown_fields_and_ambiguous_job_mappings` and
+`manifest_rejects_an_ambiguous_job_to_install_key_mapping` (missing or
+ambiguous job mapping fails approval, mutant-proven);
+`blocked_backends_are_never_installed_or_recommended` (no blocked backend
+in options or recommendation, mutant-proven). NVIDIA/Intel Vulkan
+separation: per-backend blocked entries keep each vendor's evidence
+independent; `unsupported_intel_hardware_rejects_sycl_and_keeps_vulkan_or_cpu`
+and `unsupported_amd_hardware_rejects_rocm_and_keeps_vulkan_or_cpu` pin
+the per-backend split.
 
 ### F-041-02 — The loading display remains after the backend finishes
 
