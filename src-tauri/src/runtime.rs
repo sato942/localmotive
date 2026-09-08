@@ -6550,6 +6550,61 @@ Connection: close
     }
 
     #[test]
+    fn managed_runtime_listing_shows_local_installs_without_a_catalog_fetch() {
+        // Phase 1: local discovery stays independent of the remote catalog.
+        // `load_runtime_setup` collects `list_managed_runtimes()` BEFORE the
+        // catalog fetch (lib.rs), so existing installs stay visible during
+        // a GitHub outage. This test pins the fail-closed half of that
+        // contract with production-shaped local state only (no catalog
+        // fetch involved): bytes that cannot verify MUST stay invisible.
+        // (The positive half — a byte-verified install lists — is covered
+        // by production installs; manufacturing approval-pinned bytes in a
+        // unit test is impossible by design, since digests are anchored in
+        // the compiled manifest.)
+        let root = std::env::temp_dir().join(format!(
+            "localmotive-managed-offline-{}-{}",
+            std::process::id(),
+            observed_at_ms()
+        ));
+        let install = resolve_approved_install("cpu").unwrap();
+        let trusted = approved_content_manifest_bytes("cpu").unwrap();
+        let manifest = validate_content_manifest_authority(&install, trusted)
+            .expect("compiled content manifest must validate");
+        let dir = root.join(&install.tag).join(&install.install_key);
+        fs::create_dir_all(&dir).unwrap();
+        for file in &manifest.files {
+            let relative =
+                path_from_manifest(&file.path).expect("approved manifest path must stay inside");
+            let full = dir.join(relative);
+            if let Some(parent) = full.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            let seed = file.path.as_bytes();
+            let mut bytes = Vec::with_capacity(file.bytes as usize);
+            while bytes.len() < file.bytes as usize {
+                let take = ((file.bytes as usize) - bytes.len()).min(seed.len());
+                bytes.extend_from_slice(&seed[..take]);
+            }
+            fs::write(&full, &bytes).unwrap();
+        }
+        write_runtime_install_record(
+            &dir,
+            &install,
+            Path::new("llama-server.exe"),
+            &install.content_manifest_sha256,
+        )
+        .unwrap();
+
+        // No catalog fetch happens here: listing reads only the local root.
+        let records = list_managed_runtimes_in(&root);
+        assert!(
+            records.is_empty(),
+            "unverified bytes must never list as a managed runtime"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn managed_runtime_listing_rejects_forged_writable_manifest() {
         let root = scratch("managed-root");
         let install = root.join("b10752").join("cuda-13.3");
