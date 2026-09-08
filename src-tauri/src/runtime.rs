@@ -4637,6 +4637,107 @@ mod tests {
         );
     }
 
+    /// Phase 1: the catalog client sends no secret header. The metadata
+    /// request carries only the GitHub API accept header and the public
+    /// product user-agent, so no credential can leak through catalog
+    /// refresh on a shared machine or in captured traffic.
+    #[test]
+    fn catalog_client_sends_no_secret_header() {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+        let seen_server = std::sync::Arc::clone(&seen);
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut head = vec![0u8; 4096];
+            let count = stream.read(&mut head).unwrap_or(0);
+            *seen_server.lock().unwrap() = head[..count].to_vec();
+            let body = "{}";
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK
+Content-Type: application/json
+Content-Length: {}
+Connection: close
+
+{}",
+                body.len(),
+                body
+            );
+            let _ = stream.flush();
+        });
+        let client = runtime_catalog_client(Duration::from_secs(5)).unwrap();
+        let _ = tauri::async_runtime::block_on(fetch_catalog_http(
+            &client,
+            &format!("http://{address}/release"),
+            None,
+        ));
+
+        let head = String::from_utf8_lossy(&seen.lock().unwrap()).to_ascii_lowercase();
+        assert!(head.contains("accept: application/vnd.github+json"));
+        assert!(head.contains("user-agent: localmotive/"));
+        for secret in [
+            "authorization:",
+            "proxy-authorization:",
+            "x-api-key:",
+            "api-key:",
+            "cookie:",
+            "token:",
+            "bearer ",
+            "ghp_",
+            "gho_",
+        ] {
+            assert!(
+                !head.contains(secret),
+                "catalog request must not carry a secret header, found: {secret}"
+            );
+        }
+    }
+
+    /// Phase 1: a `429` rate-limit answer maps to the typed rate-limit
+    /// error and preserves the `Retry-After` delay. The controlled fixture
+    /// answers `429` with `Retry-After: 120`, so the catalog error carries
+    /// the same typed kind and delay the UI retry guidance needs.
+    #[test]
+    fn catalog_429_maps_to_a_typed_rate_limit_error_with_retry_delay() {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut head = vec![0u8; 1024];
+            let _ = stream.read(&mut head);
+            let body = "{\"message\":\"API rate limit exceeded.\"}";
+            let _ = write!(
+                stream,
+                "HTTP/1.1 429 Too Many Requests
+Content-Type: application/json
+Content-Length: {}
+Retry-After: 120
+Connection: close
+
+{}",
+                body.len(),
+                body
+            );
+            let _ = stream.flush();
+        });
+        let client = runtime_catalog_client(Duration::from_secs(5)).unwrap();
+
+        let error = tauri::async_runtime::block_on(fetch_catalog_http(
+            &client,
+            &format!("http://{address}/release"),
+            None,
+        ))
+        .unwrap_err();
+
+        assert_eq!(error.kind, RuntimeCatalogErrorKind::RateLimited);
+        assert_eq!(error.retry_after_seconds, Some(120));
+    }
+
     #[test]
     fn catalog_http_deadline_returns_a_typed_timeout() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
