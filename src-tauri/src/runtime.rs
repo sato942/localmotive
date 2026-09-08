@@ -4541,6 +4541,53 @@ mod tests {
     }
 
     #[test]
+    fn manifest_rejects_a_nonterminal_required_job_state() {
+        // Phase 2 RED: final approval captures ONLY terminal required-job
+        // states. A queued or in-progress job must fail manifest parsing
+        // with the terminal-state error, never slip into approval.
+        // RED: blanking the status fails this test, which proves the test
+        // guards the terminal gate instead of documenting it.
+        for (status, conclusion, completed_at) in [
+            ("queued", "", ""),
+            ("in_progress", "", ""),
+            ("completed", "", "2026-09-04T19:48:30Z"),
+            ("completed", "success", ""),
+            // Isolates the status gate: conclusion and timestamp are valid,
+            // so ONLY the status check can reject this queued job.
+            ("queued", "success", "2026-09-04T19:48:30Z"),
+        ] {
+            let mut manifest: serde_json::Value = serde_json::from_str(APPROVED_RUNTIMES).unwrap();
+            manifest["requiredJobs"][0]["status"] = serde_json::json!(status);
+            manifest["requiredJobs"][0]["conclusion"] = serde_json::json!(conclusion);
+            manifest["requiredJobs"][0]["completedAt"] = serde_json::json!(completed_at);
+
+            let error = parse_approved_manifest(&manifest.to_string()).unwrap_err();
+            assert!(
+                error.contains("not terminal or complete"),
+                "status {status:?} conclusion {conclusion:?}: unexpected error: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn manifest_rejects_an_ambiguous_job_to_install_key_mapping() {
+        // Phase 2 RED: every failed or queued job needs ONE validated impact
+        // mapping. A job whose install key maps to a different backend must
+        // fail closed before catalog construction, never block the wrong
+        // backend or slip through approval.
+        // RED: pointing a job at a foreign install key fails this test,
+        // which proves the test guards the mapping instead of documenting it.
+        let mut manifest: serde_json::Value = serde_json::from_str(APPROVED_RUNTIMES).unwrap();
+        manifest["requiredJobs"][0]["installKeys"] = serde_json::json!(["vulkan"]);
+
+        let error = parse_approved_manifest(&manifest.to_string()).unwrap_err();
+        assert!(
+            error.contains("ambiguously maps"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
     fn manifest_observation_time_is_a_valid_utc_timestamp() {
         // Phase 2 RED: the approval observation time must be recorded as a
         // valid UTC timestamp (`observedAt`), so blocking evidence carries
