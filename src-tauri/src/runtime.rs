@@ -4709,6 +4709,69 @@ mod tests {
     }
 
     #[test]
+    fn blocked_backends_are_never_installed_or_recommended() {
+        // Phase 2: every candidate with applicable blocking evidence stays
+        // out of catalog options and carries a blocked availability entry.
+        // Drive this from the real blocked-jobs fixture: CUDA fails and
+        // OpenVINO queues there.
+        // RED: a mutant that widens blocked CUDA evidence to every backend
+        // removes CPU from options and fails this test, which proves the
+        // test guards isolation instead of documenting it.
+        let jobs: Vec<RequiredUpstreamJob> =
+            serde_json::from_str(include_str!("../tests/fixtures/runtime/blocked-jobs.json"))
+                .unwrap();
+
+        assert!(backend_is_blocked_by_upstream(&jobs, "cuda"));
+        assert!(backend_is_blocked_by_upstream(&jobs, "openvino"));
+
+        let (release, approved, _) = approved_release();
+        let mut hardware = detect_hardware();
+        hardware.architecture = "x64".into();
+        let catalog = build_approved_catalog(&release, &hardware, &approved, &jobs)
+            .expect("blocked backends must remain present as explanations, not options");
+
+        // Usable backends survive; blocked ones never appear as options.
+        assert!(catalog.options.iter().any(|option| option.backend == "cpu"));
+        assert!(!catalog
+            .options
+            .iter()
+            .any(|option| option.backend == "cuda"));
+        assert!(!catalog
+            .options
+            .iter()
+            .any(|option| option.backend == "openvino"));
+        for option in &catalog.options {
+            assert!(
+                !backend_is_blocked_by_upstream(&jobs, &option.backend),
+                "blocked backend {} must not be installable",
+                option.backend
+            );
+        }
+        // Blocked entries stay visible as explanations with evidence.
+        for backend in ["cuda", "openvino"] {
+            let entry = catalog
+                .availability
+                .iter()
+                .find(|entry| {
+                    entry.backend == backend && entry.status == BackendAvailabilityStatus::Blocked
+                })
+                .unwrap_or_else(|| panic!("blocked {backend} must stay visible as an explanation"));
+            assert!(
+                !entry.blocking_jobs.is_empty(),
+                "blocked {backend} needs job names"
+            );
+            assert!(
+                !entry.evidence_urls.is_empty(),
+                "blocked {backend} needs evidence URLs"
+            );
+        }
+        assert!(catalog
+            .availability
+            .iter()
+            .any(|entry| entry.status == BackendAvailabilityStatus::Blocked));
+    }
+
+    #[test]
     fn dormant_arm64_cuda_url_matches_the_frozen_exact_tag_release() {
         #[derive(Deserialize)]
         struct ReleaseFixture {
