@@ -4541,6 +4541,56 @@ mod tests {
     }
 
     #[test]
+    fn manifest_observation_time_is_a_valid_utc_timestamp() {
+        // Phase 2 RED: the approval observation time must be recorded as a
+        // valid UTC timestamp (`observedAt`), so blocking evidence carries
+        // a captured time. RED: blanking the timestamp fails this test,
+        // which proves the test guards the field instead of documenting it.
+        let manifest = parse_approved_manifest(APPROVED_RUNTIMES).unwrap();
+        let identity = approved_runtime_identity().unwrap();
+
+        assert!(valid_utc_timestamp(&manifest.observed_at));
+        assert_eq!(identity.observed_at, manifest.observed_at);
+        assert_eq!(identity.observed_at, "2026-09-05T09:30:48Z");
+        assert!(!manifest.observed_at.trim().is_empty());
+    }
+
+    #[test]
+    fn manifest_tag_is_the_single_authoritative_release_tag() {
+        // Phase 2: the top-level `releaseTag` is the ONE authoritative tag.
+        // Every asset URL must embed it, and the release lookup URL must be
+        // derived from it. `approved_manifest_tag` still derives a tag from
+        // the first asset URL as a defense-in-depth cross-check inside
+        // `build_approved_catalog`, but the authoritative gate is the
+        // top-level field: `catalog_from_release` rejects any release whose
+        // tag differs from `approved_runtime_identity().release_tag`, which
+        // comes straight from the top-level `releaseTag`.
+        // RED: setting the top-level tag expectation to a wrong value fails
+        // this test, which proves the test guards the authoritative field
+        // instead of documenting it.
+        let manifest = parse_approved_manifest(APPROVED_RUNTIMES).unwrap();
+        let identity = approved_runtime_identity().unwrap();
+
+        assert_eq!(identity.release_tag, manifest.release_tag);
+        assert_eq!(identity.release_tag, "b10816");
+        assert_eq!(
+            approved_release_url().unwrap(),
+            format!("{RELEASE_BY_TAG_URL}/{}", manifest.release_tag)
+        );
+        for asset in &manifest.assets {
+            assert!(
+                asset
+                    .url
+                    .contains(&format!("/releases/download/{}/", manifest.release_tag)),
+                "asset {} must embed the authoritative tag",
+                asset.name
+            );
+        }
+        // The authoritative field disagrees with any other tag by construction.
+        assert_ne!(manifest.release_tag, "attacker-tag");
+    }
+
+    #[test]
     fn approved_manifest_identity_matches_the_frozen_b10816_release() {
         #[derive(Deserialize)]
         struct ReleaseFixture {
