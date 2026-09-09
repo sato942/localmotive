@@ -885,6 +885,13 @@ test("release verify step waits for the candidate WebView before driving checks"
   assert.match(block, /Start-Process \$portable/);
   // A fixed sleep races WebView startup: the step must poll the CDP
   // endpoint until the page appears instead of assuming readiness.
-  // RED: current step launches then drives checks with no wait.
   assert.match(block, /json\/list/);
+});
+
+test("release publish verification avoids hosted-only shell dependencies", async () => {
+  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  // Git-bash on the self-hosted runner has no jq: parse the inventory
+  // with node so the publish gate cannot fail on missing tooling.
+  // RED: the publish step shells out to jq, which is absent on the runner.
+  assert.doesNotMatch(release, /jq -r/);
 });

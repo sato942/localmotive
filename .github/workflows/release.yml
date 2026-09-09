@@ -262,7 +262,7 @@ jobs:
         run: |
           node scripts/verify_candidate_inventory.mjs artifacts "$VERSION" "artifacts/candidate-inventory-${VERSION}.json"
           (cd artifacts && sha256sum -c "SHA256SUMS-${VERSION}.txt")
-          test "$(jq -r '.release' "artifacts/candidate-inventory-${VERSION}.json")" = "$VERSION"
+          node -e "const v=JSON.parse(require('fs').readFileSync('artifacts/candidate-inventory-${VERSION}.json','utf8')); if(v.release!=='${VERSION}') throw new Error('inventory release mismatch')"
           echo "Unsigned prerelease: Authenticode is DEFERRED_BY_OWNER; no signature is claimed. SmartScreen may warn."
 
       - name: Extract this version's changelog section
@@ -321,11 +321,7 @@ jobs:
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
             --json tagName,name,isDraft,isPrerelease,assets,body \
             > public-readback/release.json
-          test "$(jq -r '.tagName' public-readback/release.json)" = "$TAG"
-          test "$(jq -r '.name' public-readback/release.json)" = "Localmotive $VERSION (unsigned prerelease)"
-          test "$(jq -r '.isDraft' public-readback/release.json)" = "false"
-          test "$(jq -r '.isPrerelease' public-readback/release.json)" = "true"
-          test "$(jq '.assets | length' public-readback/release.json)" -eq 6
+          node -e "const r=JSON.parse(require('fs').readFileSync('public-readback/release.json','utf8')); const assert=require('assert'); assert.equal(r.tagName,process.env.TAG); assert.equal(r.name,'Localmotive '+process.env.VERSION+' (unsigned prerelease)'); assert.equal(r.isDraft,false); assert.equal(r.isPrerelease,true); assert.equal(r.assets.length,6);"
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
             --dir public-readback --clobber
           for name in \
