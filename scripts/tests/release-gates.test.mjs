@@ -727,6 +727,12 @@ test("packaged catalog harness drives React state without a production test hook
   assert.doesNotMatch(source, /hooks\[5\]/);
   assert.doesNotMatch(source, /__LM_VERIFY_ORIGINAL_INVOKE/);
   assert.doesNotMatch(source, /Page\.addScriptToEvaluateOnNewDocument/);
+  // Shape-scan contract, proven live against the production fiber
+  // (hardware=3, catalog=5, error=NULL=6, loading=7): the catalog
+  // predicate must exclude null, the error predicate must accept null
+  // with dispatch, and the scan must not use a fixed offset.
+  assert.match(source, /memoizedState !== null/);
+  assert.match(source, /Array\.isArray\(entry\.memoizedState\.options\)/);
 });
 
 test("packaged verifier requires successful health, cancellation, and restart", async () => {
@@ -865,4 +871,8 @@ test("packaged rejection detail preserves the backend error message", async () =
   const source = await readFile(join(process.cwd(), "scripts", "verify_041.mjs"), "utf8");
   assert.match(source, /errorText/);
   assert.match(source, /hardware snapshot/);
+  // CDP returnByValue stringifies thrown objects: the verifier must
+  // serialize the raw IPC error inside the page, or kind is lost.
+  assert.match(source, /JSON\.stringify\(error\)/);
+  assert.match(source, /invalid_response/);
 });

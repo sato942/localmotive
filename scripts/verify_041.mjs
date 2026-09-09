@@ -283,11 +283,21 @@ async function rejectedInvoke(command, args) {
       );
       return { rejected: false, value };
     } catch (error) {
-      // Tauri serializes Rust errors across IPC: structured errors arrive
-      // as objects, but plain-string rejections (Err(String)) arrive as
-      // bare strings. Normalize both so kind assertions stay honest.
-      const structured = error && typeof error === 'object'
-        ? { kind: error.kind ?? 'unknown', message: error.message ?? String(error), retryAfterSeconds: error.retryAfterSeconds ?? null }
+      // Tauri serializes Rust errors across IPC as JSON values: structured
+      // errors arrive as objects, plain-string rejections (Err(String)) as
+      // bare strings. CDP returnByValue stringifies thrown objects into
+      // their message text ("[object Object]"), so serialize the raw error
+      // to JSON inside the page before it crosses the CDP boundary.
+      const serialized = (() => {
+        try { return JSON.stringify(error); } catch { return null; }
+      })();
+      const parsed = (() => {
+        try { return serialized ? JSON.parse(serialized) : null; } catch { return null; }
+      })();
+      const source = (parsed && typeof parsed === 'object') ? parsed
+        : (error && typeof error === 'object') ? error : null;
+      const structured = source
+        ? { kind: source.kind ?? 'unknown', message: source.message ?? String(error), retryAfterSeconds: source.retryAfterSeconds ?? null }
         : { kind: 'unknown', message: String(error), retryAfterSeconds: null };
       return {
         rejected: true,
@@ -398,18 +408,22 @@ async function installCatalogHarness(setup) {
         typeof entry?.queue?.dispatch === 'function'
       );
       if (hardwareIndex >= 0) {
+        const hasDispatch = (entry) => typeof entry?.queue?.dispatch === 'function';
         const isCatalogHook = (entry) =>
-          entry?.memoizedState && typeof entry.memoizedState === 'object' &&
-          (entry.memoizedState === null || Array.isArray(entry.memoizedState.options)) &&
-          typeof entry?.queue?.dispatch === 'function';
+          hasDispatch(entry) &&
+          entry?.memoizedState !== null &&
+          typeof entry.memoizedState === 'object' &&
+          Array.isArray(entry.memoizedState.options);
         const isErrorHook = (entry) =>
-          entry?.memoizedState === null ||
-          (entry?.memoizedState && typeof entry.memoizedState === 'object' &&
-            (typeof entry.memoizedState.kind === 'string' || typeof entry.memoizedState.message === 'string')) &&
-          typeof entry?.queue?.dispatch === 'function';
+          hasDispatch(entry) && (
+            entry?.memoizedState === null ||
+            (entry?.memoizedState !== null &&
+              typeof entry.memoizedState === 'object' &&
+              (typeof entry.memoizedState.kind === 'string' ||
+                typeof entry.memoizedState.message === 'string'))
+          );
         const isLoadingHook = (entry) =>
-          typeof entry?.memoizedState === 'boolean' &&
-          typeof entry?.queue?.dispatch === 'function';
+          hasDispatch(entry) && typeof entry?.memoizedState === 'boolean';
         let catalogHook = null;
         let errorHook = null;
         let loadingHook = null;
@@ -632,6 +646,7 @@ try {
             adapterId: "luid:ffffffffffffffff:ffffffffffffffff",
           });
           requireCondition(result.rejected, "The backend accepted an unknown adapter identifier");
+          requireCondition(result.error?.kind === "invalid_response", "The rejection did not preserve the invalid-response kind");
           requireCondition(/not (?:present )?in the current hardware snapshot/i.test(result.errorText), "The rejection did not identify the hardware-snapshot mismatch");
           return { rejected: true, error: result.error };
         },
