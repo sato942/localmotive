@@ -158,6 +158,18 @@ cargo test                           # Rust tests
 CI runs exactly this on every push and PR. If it fails locally it will fail
 there; do not push hoping otherwise.
 
+### Self-hosted runner Rust isolation
+
+The runner (`C:\actions-runner-localmotive`, Listener started hidden via
+`localmotive-control\start-runner.ps1`) runs as the logged-in user, so its
+Rust toolchain must not share the owner's `~/.cargo` / `~/.rustup`.
+`start-runner.ps1` sets process-level `CARGO_HOME` / `RUSTUP_HOME` to the
+dedicated `cargo-home` / `rustup-home` dirs before spawning the Listener.
+Always start the runner via that script (or the watchdog that calls it) so
+the isolation applies. Machine-level `CARGO_HOME` / `RUSTUP_HOME` may also
+be set when elevation is available (belt and suspenders). Never clean the
+owner's personal `~/.cargo`.
+
 ### Packaging
 
 ```bash
