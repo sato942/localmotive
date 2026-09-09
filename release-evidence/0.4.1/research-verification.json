@@ -1,18 +1,18 @@
 {
   "schemaVersion": 1,
   "release": "0.4.1",
-  "observedAt": "2026-09-06T02:25:43Z",
-  "baseCommit": "ca07483574f2b7d4be17f7704fe2dcabaa8cd6b8",
+  "observedAt": "2026-09-09T02:50:02.139133Z",
+  "baseCommit": "257826a85b30d9b97e631e23a7dcdbe354d8aa11",
   "commands": [
     "python -m unittest discover -s research/0.4/tests -v",
     "python research/0.4/verify_research.py --core-evidence",
-    "python research/0.4.1/freeze_research.py check --allow-product-changes --expected-manifest-sha256 7a906c7f7ab1efd7b2db57e56f92afa0592121fce84c67bde6531abb288cdec6",
+    "python research/0.4.1/freeze_research.py check --allow-product-changes --expected-manifest-sha256 cc406cbd84aca6e5ca0ca50da8cacb90c2981b56b18f2abe691827b996434eda",
     "node scripts/verify_research_anchor.mjs",
     "python research/0.4/verify_research.py"
   ],
   "unitTests": {
     "status": "PASS",
-    "passed": 101,
+    "passed": 103,
     "failed": 0,
     "skipped": 0
   },
@@ -25,10 +25,10 @@
   },
   "freeze": {
     "status": "PASS",
-    "manifestSha256": "7a906c7f7ab1efd7b2db57e56f92afa0592121fce84c67bde6531abb288cdec6",
-    "treeSha256": "5bc3fd3357883956683e662075d099a286007cdbc18fbe372e3758115bd594bb",
+    "manifestSha256": "cc406cbd84aca6e5ca0ca50da8cacb90c2981b56b18f2abe691827b996434eda",
+    "treeSha256": "114b82908a26bb08e83c13f234182d86247e2a003fd82419d15d7fd180396ac8",
     "files": 3840,
-    "bytes": 1740909016,
+    "bytes": 1740913117,
     "productScopeSha256": "878a1a161f93fba7d5655f27702d9ea5dc65c2496ecc799e60aff1baef267337"
   },
   "cleanCheckoutCoverage": {
@@ -42,8 +42,8 @@
     "verdict": "PASS",
     "delegationId": "deleg_a1b2c3d4",
     "reportPath": "release-evidence/0.4.1/phase0a-independent-review.txt",
-    "reportSha256": "2b81387e1399f943fb5c68cc6158dbc59ff2697896310429f493f8546380c110",
-    "manifestSha256": "7a906c7f7ab1efd7b2db57e56f92afa0592121fce84c67bde6531abb288cdec6",
-    "treeSha256": "5bc3fd3357883956683e662075d099a286007cdbc18fbe372e3758115bd594bb"
+    "reportSha256": "0a0420f4a57c37415336e0905e9aca6b9b9b86ac7b6556d65a00b43cb5d4fd0f",
+    "manifestSha256": "cc406cbd84aca6e5ca0ca50da8cacb90c2981b56b18f2abe691827b996434eda",
+    "treeSha256": "114b82908a26bb08e83c13f234182d86247e2a003fd82419d15d7fd180396ac8"
   }
 }

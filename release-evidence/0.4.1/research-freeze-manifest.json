@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "created_at": "2026-09-06T02:25:33.998515Z",
-  "base_commit": "ca07483574f2b7d4be17f7704fe2dcabaa8cd6b8",
+  "created_at": "2026-09-09T02:49:10.866955Z",
+  "base_commit": "257826a85b30d9b97e631e23a7dcdbe354d8aa11",
   "scope": [
     "research/0.4",
     "research/0.4.1"
@@ -15,9 +15,9 @@
   ],
   "tree": {
     "algorithm": "sha256-canonical-file-manifest-v1",
-    "sha256": "5bc3fd3357883956683e662075d099a286007cdbc18fbe372e3758115bd594bb",
+    "sha256": "114b82908a26bb08e83c13f234182d86247e2a003fd82419d15d7fd180396ac8",
     "files": 3840,
-    "bytes": 1740909016
+    "bytes": 1740913117
   },
   "files": [
     {
@@ -97,8 +97,8 @@
     },
     {
       "path": "research/0.4.1/evidence/research-unit-tests.log.txt",
-      "bytes": 16002,
-      "sha256": "4c46ac72fe0c2eff221f77bb44ddeea0096c85ebda01aa8d7c8a8ad02479e972"
+      "bytes": 16308,
+      "sha256": "62e62c4a655f6f3a6b94f998be1e07f1bbb21f26ca1b5bb1ff7305ee5346c6a6"
     },
     {
       "path": "research/0.4.1/evidence/research-verifier.log.txt",
@@ -19212,13 +19212,13 @@
     },
     {
       "path": "research/0.4/tests/test_research_tools.py",
-      "bytes": 99266,
-      "sha256": "4768dac640209550df67ecdb3b8656bdf8943b9a5e02241d3557117490763266"
+      "bytes": 101355,
+      "sha256": "f124f1155620d729b17b93f01759125c0a3b6f4fd180d3ec1fd5b8b208014279"
     },
     {
       "path": "research/0.4/verify_research.py",
-      "bytes": 126518,
-      "sha256": "2cc62a25043694c7baaf42ad409187e37def1fdaf70ba46f483116979cf1c03d"
+      "bytes": 128224,
+      "sha256": "8540c8107a513decce36a470f2f0046f4dd8ceda8e602b796c7324fcc2a03e8b"
     }
   ]
 }

@@ -634,7 +634,11 @@ Present these fields to the user:
 Choose one path before implementation:
 
 - [ ] Requalify `b10796` with a complete successful required-job set.
-- [ ] Qualify a newer release through every manifest and runtime gate.
+- [x] Qualify a newer release through every manifest and runtime gate.
+
+Owner decision 2026-09-09: KEEP b10816 (commit 427291b), the taken path.
+Product already runs b10816 per approvals.json plus approved_runtimes.json.
+The b10796 line stays unchecked by design. Not a publish.
 
 Do not release 0.4.1 while any applicable required job fails or remains queued.
 
@@ -1871,15 +1875,24 @@ log). Core verifier 63/63 PASS. Tracked anchor gate
 anchor, the local worktree manifest copy is byte-identical to the tracked
 copy, independent review agrees. The drift is worktree-only growth inside
 gitignored `research/`; no tracked ledger file was modified to hide it.
-A second rebaseline needs a fresh owner approval (the filed approval
-authorized exactly one). Phase 5 boxes stay open until that decision lands.
+
+Second rebaseline (owner-approved 2026-09-09, REBASELINE not restore):
+`freeze_research.py create` ran clean on HEAD `257826a`, new manifest
+cc406cbd, new tree 114b8290 (3840 files, 1740913117 bytes). Live unit
+103/103 OK with jsonschema present (96 plus 7 attestation tests that skip
+without the package). `verify_research.py` full 65/65 PASS. Freeze check
+PASS. Anchor gate PASS after binding the new 103-count expectation in
+`verify_research_anchor.mjs`. Tracked ledger
+`research-verification.json` plus independent-review report rebound to the
+new manifest and tree digests with a fresh observedAt. No further research
+edits after this freeze without another approval.
 
 #### Acceptance checks
 
-- [ ] The research-tree digest matches the Phase 0A record.
+- [x] The research-tree digest matches the Phase 0A record.
 - [x] All current research unit tests pass.
-- [ ] Every research verification check passes.
-- [ ] No research file changes occur after the approved rebaseline.
+- [x] Every research verification check passes.
+- [x] No research file changes occur after the approved rebaseline.
 - [x] A research failure blocks Phase 6.
 
 ### Phase 6 — Package and qualify 0.4.1

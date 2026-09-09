@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "manifestPath": "research/0.4.1/research-freeze.json",
   "trackedManifestPath": "release-evidence/0.4.1/research-freeze-manifest.json",
-  "manifestSha256": "7a906c7f7ab1efd7b2db57e56f92afa0592121fce84c67bde6531abb288cdec6",
-  "baseCommit": "ca07483574f2b7d4be17f7704fe2dcabaa8cd6b8",
+  "manifestSha256": "cc406cbd84aca6e5ca0ca50da8cacb90c2981b56b18f2abe691827b996434eda",
+  "baseCommit": "257826a85b30d9b97e631e23a7dcdbe354d8aa11",
   "scope": [
     "research/0.4",
     "research/0.4.1"
@@ -17,9 +17,9 @@
   ],
   "tree": {
     "algorithm": "sha256-canonical-file-manifest-v1",
-    "sha256": "5bc3fd3357883956683e662075d099a286007cdbc18fbe372e3758115bd594bb",
+    "sha256": "114b82908a26bb08e83c13f234182d86247e2a003fd82419d15d7fd180396ac8",
     "files": 3840,
-    "bytes": 1740909016
+    "bytes": 1740913117
   },
   "productScopeSha256": "878a1a161f93fba7d5655f27702d9ea5dc65c2496ecc799e60aff1baef267337"
 }

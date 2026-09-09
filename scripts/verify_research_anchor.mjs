@@ -12,7 +12,7 @@ const EXPECTED_EXCLUDED = [
   "research/0.4.1/research-freeze.json",
   "research/0.4.1/research-freeze.sha256",
 ];
-const EXPECTED_UNIT_TESTS = { status: "PASS", passed: 101, failed: 0, skipped: 0 };
+const EXPECTED_UNIT_TESTS = { status: "PASS", passed: 103, failed: 0, skipped: 0 };
 const EXPECTED_RESEARCH_VERIFIER = {
   status: "PASS",
   corePassed: 63,

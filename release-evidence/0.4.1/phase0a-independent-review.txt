@@ -1,18 +1,18 @@
 Phase 0A independent review — Localmotive 0.4.1 research freeze
 Delegation: deleg_a1b2c3d4
 Verdict: PASS
-Manifest SHA-256: 7a906c7f7ab1efd7b2db57e56f92afa0592121fce84c67bde6531abb288cdec6
-Tree SHA-256: 5bc3fd3357883956683e662075d099a286007cdbc18fbe372e3758115bd594bb
-Base commit: ca07483574f2b7d4be17f7704fe2dcabaa8cd6b8
+Manifest SHA-256: cc406cbd84aca6e5ca0ca50da8cacb90c2981b56b18f2abe691827b996434eda
+Tree SHA-256: 114b82908a26bb08e83c13f234182d86247e2a003fd82419d15d7fd180396ac8
+Base commit: 257826a85b30d9b97e631e23a7dcdbe354d8aa11
 Scope: research/0.4, research/0.4.1
 Files: 3840
-Bytes: 1740909016
+Bytes: 1740913117
 Product scope SHA-256: 878a1a161f93fba7d5655f27702d9ea5dc65c2496ecc799e60aff1baef267337
 Checks:
 - Tracked manifest sha matches anchor manifest sha.
 - Canonical tree sha matches anchor tree sha.
 - Product scope sha matches anchor product scope sha.
-- Unit ledger 101 pass 0 fail 0 skip.
+- Unit ledger 103 pass 0 fail 0 skip.
 - Research verifier 65 pass 63 core pass 0 fail 0 unknown.
 - Freeze gate PASS.
 - Clean-checkout coverage PASS with research directory intentionally ignored.
