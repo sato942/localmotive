@@ -27,13 +27,16 @@ jobs:
       contents: read
       checks: write
     steps:
+      # The self-hosted runner image defaults core.autocrlf=true, which
+      # marks LF-tracked text files modified after checkout and trips the
+      # packaged clean-source probe. v5.1.0 has no git-config input, so pin
+      # LF explicitly before checkout. Scoped to the runner, not the repo.
+      - name: Pin LF line endings before checkout
+        shell: bash
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
-          # The runner image defaults core.autocrlf=true, which marks
-          # LF-tracked text files modified after checkout and trips the
-          # packaged clean-source probe. Pin LF so the probe stays honest.
-          git-config: core.autocrlf=false
       # The self-hosted runner keeps no cargo on PATH for fresh shells, and
       # audit-check shells out to cargo. Install the pinned toolchain first.
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable reviewed 2026-09-05
@@ -52,13 +55,14 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
       version: ${{ steps.version.outputs.version }}
     steps:
+      # The self-hosted runner image defaults core.autocrlf=true; pin LF
+      # before checkout (v5.1.0 has no git-config input).
+      - name: Pin LF line endings before checkout
+        shell: bash
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
-          # The runner image defaults core.autocrlf=true, which marks
-          # LF-tracked text files modified after checkout and trips the
-          # packaged clean-source probe. Pin LF so the probe stays honest.
-          git-config: core.autocrlf=false
           fetch-depth: 0
 
       - name: Resolve version
@@ -137,13 +141,14 @@ jobs:
     needs: [rust-audit, quality]
     runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]
     steps:
+      # The self-hosted runner image defaults core.autocrlf=true; pin LF
+      # before checkout (v5.1.0 has no git-config input).
+      - name: Pin LF line endings before checkout
+        shell: bash
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
-          # The runner image defaults core.autocrlf=true, which marks
-          # LF-tracked text files modified after checkout and trips the
-          # packaged clean-source probe. Pin LF so the probe stays honest.
-          git-config: core.autocrlf=false
 
       - name: Resolve exact source revision
         shell: bash
@@ -224,13 +229,14 @@ jobs:
     permissions:
       contents: write
     steps:
+      # The self-hosted runner image defaults core.autocrlf=true; pin LF
+      # before checkout (v5.1.0 has no git-config input).
+      - name: Pin LF line endings before checkout
+        shell: bash
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
-          # The runner image defaults core.autocrlf=true, which marks
-          # LF-tracked text files modified after checkout and trips the
-          # packaged clean-source probe. Pin LF so the probe stays honest.
-          git-config: core.autocrlf=false
 
       - name: Retrieve verified release candidates
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

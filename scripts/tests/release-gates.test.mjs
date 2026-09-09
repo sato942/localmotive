@@ -852,7 +852,8 @@ test("release ship gates default to the self-hosted runner, never windows-latest
 
 test("release checkout pins line endings so the packaged clean-source probe is honest", async () => {
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
-  assert.match(release, /core\.autocrlf.*false/);
+  assert.doesNotMatch(release, /git-config:/);
+  assert.match(release, /git config --global core\.autocrlf false/);
 });
 
 test("packaged clean-source probe ignores the verifier-owned artifacts directory", async () => {
