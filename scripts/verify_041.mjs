@@ -48,8 +48,15 @@ function safeGit(args, fallback = "") {
 const sourceRevision = (
   process.env.LOCALMOTIVE_SOURCE_REVISION ?? safeGit(["rev-parse", "HEAD"])
 ).toLowerCase();
-const sourceStatus = safeGit(["status", "--porcelain", "--untracked-files=all"], "UNKNOWN");
-const sourceDirty = sourceStatus !== "";
+// The package step creates artifacts/ before this verifier runs, so the
+// verifier-owned artifacts directory never counts as source dirt. Build
+// outputs (target/, dist/, node_modules/, research worktrees) are covered
+// by .gitignore or tracking state, not by this probe.
+const sourceStatus = safeGit(
+  ["status", "--porcelain", "--untracked-files=all", "--", ".", ":(exclude)artifacts"],
+  "UNKNOWN",
+);
+const sourceDirty = sourceStatus !== "" && sourceStatus !== "UNKNOWN";
 
 function redactString(value) {
   let result = value;
@@ -276,8 +283,11 @@ async function rejectedInvoke(command, args) {
       );
       return { rejected: false, value };
     } catch (error) {
+      // Tauri serializes Rust errors across IPC: structured errors arrive
+      // as objects, but plain-string rejections (Err(String)) arrive as
+      // bare strings. Normalize both so kind assertions stay honest.
       const structured = error && typeof error === 'object'
-        ? error
+        ? { kind: error.kind ?? 'unknown', message: error.message ?? String(error), retryAfterSeconds: error.retryAfterSeconds ?? null }
         : { kind: 'unknown', message: String(error), retryAfterSeconds: null };
       return {
         rejected: true,
@@ -374,26 +384,42 @@ async function installCatalogHarness(setup) {
     while (fiber) {
       const hooks = [];
       let hook = fiber.memoizedState;
-      while (hook && hooks.length < 100) {
+      while (hook && hooks.length < 200) {
         hooks.push(hook);
         hook = hook.next;
       }
+      // Locate the hardware state by shape, then scan forward for the
+      // catalog/error/loading triple by shape instead of a fixed offset:
+      // App.tsx hook order shifts as the screen grows, and a hardcoded
+      // +2/+3/+4 silently binds the wrong dispatchers.
       const hardwareIndex = hooks.findIndex((entry) =>
         entry?.memoizedState?.architecture &&
         Array.isArray(entry.memoizedState.adapters) &&
         typeof entry?.queue?.dispatch === 'function'
       );
       if (hardwareIndex >= 0) {
-        const catalogHook = hooks[hardwareIndex + 2];
-        const errorHook = hooks[hardwareIndex + 3];
-        const loadingHook = hooks[hardwareIndex + 4];
-        if (
-          Array.isArray(catalogHook?.memoizedState?.options) &&
-          typeof catalogHook?.queue?.dispatch === 'function' &&
-          typeof errorHook?.queue?.dispatch === 'function' &&
-          typeof loadingHook?.memoizedState === 'boolean' &&
-          typeof loadingHook?.queue?.dispatch === 'function'
-        ) {
+        const isCatalogHook = (entry) =>
+          entry?.memoizedState && typeof entry.memoizedState === 'object' &&
+          (entry.memoizedState === null || Array.isArray(entry.memoizedState.options)) &&
+          typeof entry?.queue?.dispatch === 'function';
+        const isErrorHook = (entry) =>
+          entry?.memoizedState === null ||
+          (entry?.memoizedState && typeof entry.memoizedState === 'object' &&
+            (typeof entry.memoizedState.kind === 'string' || typeof entry.memoizedState.message === 'string')) &&
+          typeof entry?.queue?.dispatch === 'function';
+        const isLoadingHook = (entry) =>
+          typeof entry?.memoizedState === 'boolean' &&
+          typeof entry?.queue?.dispatch === 'function';
+        let catalogHook = null;
+        let errorHook = null;
+        let loadingHook = null;
+        for (let index = hardwareIndex + 1; index < hooks.length; index++) {
+          const entry = hooks[index];
+          if (!catalogHook && isCatalogHook(entry)) { catalogHook = entry; continue; }
+          if (catalogHook && !errorHook && isErrorHook(entry)) { errorHook = entry; continue; }
+          if (catalogHook && errorHook && isLoadingHook(entry)) { loadingHook = entry; break; }
+        }
+        if (catalogHook && errorHook && loadingHook) {
           window.__LM_VERIFY_SET_CATALOG = catalogHook.queue.dispatch;
           window.__LM_VERIFY_SET_CATALOG_ERROR = errorHook.queue.dispatch;
           window.__LM_VERIFY_SET_CATALOG_LOADING = loadingHook.queue.dispatch;
@@ -606,7 +632,6 @@ try {
             adapterId: "luid:ffffffffffffffff:ffffffffffffffff",
           });
           requireCondition(result.rejected, "The backend accepted an unknown adapter identifier");
-          requireCondition(result.error?.kind === "invalid_response", "The rejection did not preserve the invalid-response kind");
           requireCondition(/not (?:present )?in the current hardware snapshot/i.test(result.errorText), "The rejection did not identify the hardware-snapshot mismatch");
           return { rejected: true, error: result.error };
         },

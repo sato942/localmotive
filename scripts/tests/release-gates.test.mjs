@@ -722,8 +722,8 @@ test("packaged catalog harness drives React state without a production test hook
   const source = await readFile(join(process.cwd(), "scripts", "verify_041.mjs"), "utf8");
   assert.match(source, /__reactFiber\$/);
   assert.match(source, /findIndex/);
-  assert.match(source, /hardwareIndex \+ 2/);
   assert.match(source, /queue\.dispatch/);
+  assert.doesNotMatch(source, /hardwareIndex \+ 2/);
   assert.doesNotMatch(source, /hooks\[5\]/);
   assert.doesNotMatch(source, /__LM_VERIFY_ORIGINAL_INVOKE/);
   assert.doesNotMatch(source, /Page\.addScriptToEvaluateOnNewDocument/);
@@ -848,4 +848,20 @@ test("release ship gates default to the self-hosted runner, never windows-latest
     assert.match(found[1], /self-hosted/);
     assert.match(found[1], /localmotive-hw/);
   }
+});
+
+test("release checkout pins line endings so the packaged clean-source probe is honest", async () => {
+  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  assert.match(release, /core\.autocrlf.*false/);
+});
+
+test("packaged clean-source probe ignores the verifier-owned artifacts directory", async () => {
+  const source = await readFile(join(process.cwd(), "scripts", "verify_041.mjs"), "utf8");
+  assert.match(source, /artifacts/);
+});
+
+test("packaged rejection detail preserves the backend error message", async () => {
+  const source = await readFile(join(process.cwd(), "scripts", "verify_041.mjs"), "utf8");
+  assert.match(source, /errorText/);
+  assert.match(source, /hardware snapshot/);
 });
