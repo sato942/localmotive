@@ -837,3 +837,15 @@ test("workflow gate policy covers the hardware qualify night path", async () => 
   assert.deepEqual(Object.keys(policy.workflows["hardware-qualify.yml"].gates).sort(), ["clean-account-lifecycle", "hardware-qualify"]);
   assert.deepEqual(policy.workflows["hardware-qualify.yml"].packageJobs["clean-account-lifecycle"], ["hardware-qualify"]);
 });
+
+test("release ship gates default to the self-hosted runner, never windows-latest", async () => {
+  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  assert.doesNotMatch(release, /runs-on:\s*windows-latest/);
+  for (const job of ["quality", "package", "publish"]) {
+    const pattern = new RegExp(`^  ${job}:[\\s\\S]*?runs-on:\\s*(.+)$`, "m");
+    const found = release.match(pattern);
+    assert.ok(found, `${job} runs-on is missing`);
+    assert.match(found[1], /self-hosted/);
+    assert.match(found[1], /localmotive-hw/);
+  }
+});
