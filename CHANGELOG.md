@@ -65,7 +65,7 @@ The candidate also lacks completed Windows 10 lifecycle evidence, clean-account 
 
 RustSec still reports unmaintained transitive crates from Tauri's Windows-irrelevant GTK graph and current `urlpattern` Unicode data dependencies.
 
-Publication remains blocked until every non-waived release gate passes, including Authenticode verification.
+Publication proceeds only after every non-waived release gate passes. Authenticode is deferred by owner order 2026-09-09: this release ships honestly unsigned, so no signature match is claimed; verify the published SHA-256 checksums before use.
 
 ## 0.4.0
 

@@ -289,9 +289,9 @@ Other Windows hardware may work but remains untested and unsupported until packa
 
 macOS remains out of scope for this matrix.
 
-Code signing status is SignPath Foundation application submitted.
+Code signing status is DEFERRED_BY_OWNER: Authenticode is postponed until the project is more mature (owner order 2026-09-09). No paid cert. SignPath stays pending or ignored and blocks no gate.
 
-Windows installers remain unsigned until SignPath approval and wiring complete.
+Windows installers remain honestly unsigned with disclosure. Windows SmartScreen can show a warning when you start an unsigned file. Unsigned artifacts stay testing-only or pre-release.
 
 ## Current limitations
 
@@ -306,16 +306,16 @@ Windows installers remain unsigned until SignPath approval and wiring complete.
 - Catalog downloads support single-file GGUF entries only.
 - Inventory scanning supports split GGUF files already on disk.
 - Application updates require a newer manual installation or executable.
-- Localmotive 0.4.1 publication requires valid timestamped Authenticode signatures.
-- Until SignPath approval and wiring complete, files remain unsigned and the signature gate remains blocked.
+- Localmotive 0.4.1 ships unsigned under the deferred-signing exception: no Authenticode signatures exist, so no signature match can be claimed. Verify the published SHA-256 checksums before use. SmartScreen can warn on unsigned files.
+- Signing boxes are deferred, not green, and block no gate.
 
 ## Troubleshooting
 
 ### SmartScreen shows a warning
 
-Verify the Authenticode signer and the published SHA-256 value.
+Localmotive 0.4.1 ships unsigned under the deferred-signing exception: there is no Authenticode signer to verify. Verify the published SHA-256 checksums before use.
 
-A valid signature does not guarantee immediate SmartScreen reputation.
+SmartScreen can warn on unsigned files.
 
 ### A model is incomplete
 
