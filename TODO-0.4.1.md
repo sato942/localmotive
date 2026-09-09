@@ -1943,11 +1943,11 @@ This exception does not convert an untested row into a pass.
 - [x] Expire an attestation when any qualification-key field changes.
 - [x] Install and launch NSIS on a clean Windows account.
 - [x] Install and launch MSI on a clean Windows account.
-- [ ] Install and launch on every claimed Windows version.
+- [ ] Install and launch on every claimed Windows version. (Unclaimed by owner order 2026-09-09: no Windows 10 or full-P0 claim without exact L4 evidence; stays under the filed missing-P0 disclosure exception. Not signing-related.)
 - [x] Test update from 0.4.0.
 - [x] Test cancellation and restart.
 - [x] Test both uninstallers.
-- [ ] If signing authority is granted, sign and timestamp the exact candidates.
+- [ ] DEFERRED — Authenticode signing and timestamping, postponed until the project is more mature (owner order 2026-09-09). Do not buy a paid cert. SignPath stays pending or ignored. Builds remain honestly unsigned with disclosure (SmartScreen may warn). This box is deferred, not green, and blocks nothing: CI, quals, and hygiene proceed unsigned.
 - [x] Inspect asset names, sizes, hashes, metadata, and signatures.
 - [x] Record source revision, workflow run, artifact IDs, and checksums.
 - [x] Record every known limitation in release notes.
@@ -2008,10 +2008,18 @@ Treat these checks as material automated checks:
 - [x] Published claims do not exceed the evidence level.
 - [x] Release notes disclose unsigned status when applicable.
 - [x] Version, tag, changelog, and installer metadata agree.
-- [ ] Candidate checksums and signatures match the inventory.
+- [ ] DEFERRED — Candidate checksums and signatures match the inventory. (Deferred with signing per owner order 2026-09-09: no signed candidate exists, so no signature match can be claimed. Checksums alone do not close this box. Unsigned artifacts stay testing-only.)
 - [ ] Published asset names, sizes, and digests match the verified inventory.
 - [x] No `L5 RELEASE` claim exists without signing and complete P0 evidence.
 - [ ] An accountable human approves public publication.
+
+Deferred-signing exception (owner order 2026-09-09): Authenticode is
+postponed until the project is more mature. No paid cert purchase. SignPath
+stays pending or ignored. Builds remain honestly unsigned with disclosure
+(SmartScreen may warn). Signing boxes are deferred, not green, and block no
+gate: CI, quals, and hygiene proceed unsigned. No official public publish,
+no marketing release, no tag retarget (v0.4.1 stays at bc8c00f); unsigned
+artifacts stay testing-only or pre-release.
 
 Phase 6 acceptance notes: the checked boxes are evidenced on HEAD
 `5e93576` (gate outputs listed in the step report; self-hosted CI

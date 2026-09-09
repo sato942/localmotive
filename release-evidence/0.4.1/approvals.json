@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "release": "0.4.1",
   "recordedAt": "2026-09-05T15:57:18Z",
-  "updatedAt": "2026-09-05T23:38:27Z",
+  "updatedAt": "2026-09-09T11:25:51.105456Z",
   "sourceRevision": "ca07483574f2b7d4be17f7704fe2dcabaa8cd6b8",
   "sourceWorktreeClean": false,
   "approvalSource": "Interactive user selections in the Hermes desktop session",
@@ -56,15 +56,16 @@
     },
     {
       "id": "authenticode-signing",
-      "status": "USER_CONFIRMED_BLOCKED_PENDING_INSTALLATION",
-      "decision": "Keep signing blocked until the user installs the approved code-signing certificate in CurrentUser\\My.",
-      "selection": "Keep signing blocked until I install a certificate",
+      "status": "DEFERRED_BY_OWNER",
+      "decision": "Postpone Authenticode code signing until the project is more mature (owner order 2026-09-09).",
+      "selection": "Defer signing; stay honestly unsigned",
       "conditions": [
-        "Block publication until signature verification passes against the approved identity.",
-        "Record timestamp and certificate identity evidence without exposing secrets.",
-        "Do not export or print the private key."
+        "Do not buy a paid OV/EV/personal cert for this stretch.",
+        "SignPath stays pending or ignored; it blocks no gate.",
+        "Disclose unsigned status (SmartScreen may warn); unsigned artifacts stay testing-only or pre-release.",
+        "No official public publish, no marketing release, no tag retarget of v0.4.1 (stays at bc8c00f) on signing grounds."
       ],
-      "observation": "No private-key certificate was present in CurrentUser\\My at 2026-09-05T23:38:27Z. The user selected the blocked-until-installation option."
+      "observation": "Owner deferred signing on 2026-09-09; prior blocked-until-installation state superseded, not deleted."
     },
     {
       "id": "v0.4.0-corrective-note",
@@ -120,8 +121,8 @@
       "conditions": [
         "Honor the explicit P0 evidence disclosure exception.",
         "Pass every other material gate.",
-        "Publish only the exact signed and verified candidate.",
-        "Verify the public release after publication."
+        "No official public publish without a later explicit publish OK; deferred signing means no signed candidate exists to publish.",
+        "Verify the public release after any future publication."
       ]
     }
   ]

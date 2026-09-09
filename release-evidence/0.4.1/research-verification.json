@@ -42,7 +42,7 @@
     "verdict": "PASS",
     "delegationId": "deleg_a1b2c3d4",
     "reportPath": "release-evidence/0.4.1/phase0a-independent-review.txt",
-    "reportSha256": "0a0420f4a57c37415336e0905e9aca6b9b9b86ac7b6556d65a00b43cb5d4fd0f",
+    "reportSha256": "44dbf6fa6396571fb213ab3ef5e61e6c599addc51d299aa691c2aaf04b6a0083",
     "manifestSha256": "cc406cbd84aca6e5ca0ca50da8cacb90c2981b56b18f2abe691827b996434eda",
     "treeSha256": "114b82908a26bb08e83c13f234182d86247e2a003fd82419d15d7fd180396ac8"
   }
