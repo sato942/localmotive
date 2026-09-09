@@ -185,6 +185,17 @@ jobs:
           $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=10041 --user-data-dir=$profile"
           $process = Start-Process $portable -PassThru
           try {
+            # The WebView needs seconds to expose CDP: poll /json/list
+            # until the page appears instead of racing first connect.
+            $deadline = (Get-Date).AddSeconds(90)
+            while ($true) {
+              try {
+                $tabs = Invoke-RestMethod "http://127.0.0.1:10041/json/list"
+                if ($tabs) { break }
+              } catch { }
+              if ((Get-Date) -gt $deadline) { throw "Candidate WebView did not expose CDP in 90s" }
+              Start-Sleep -Seconds 2
+            }
             node scripts/verify_041.mjs 10041 $portable "artifacts/packaged-verification-0.4.1.json"
             if ($LASTEXITCODE -ne 0) { throw "verify_041 failed with code $LASTEXITCODE" }
             $record = Get-Content "artifacts/packaged-verification-0.4.1.json" -Raw | ConvertFrom-Json

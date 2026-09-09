@@ -876,3 +876,15 @@ test("packaged rejection detail preserves the backend error message", async () =
   assert.match(source, /JSON\.stringify\(error\)/);
   assert.match(source, /invalid_response/);
 });
+
+test("release verify step waits for the candidate WebView before driving checks", async () => {
+  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  const at = release.indexOf("Verify the packaged executable");
+  assert.ok(at >= 0, "verify step is missing");
+  const block = release.slice(at, at + 3000);
+  assert.match(block, /Start-Process \$portable/);
+  // A fixed sleep races WebView startup: the step must poll the CDP
+  // endpoint until the page appears instead of assuming readiness.
+  // RED: current step launches then drives checks with no wait.
+  assert.match(block, /json\/list/);
+});
