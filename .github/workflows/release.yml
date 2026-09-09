@@ -217,27 +217,15 @@ jobs:
           name: localmotive-${{ needs.quality.outputs.version }}-verified
           path: artifacts
 
-      - name: Block publication unless every candidate has a valid Authenticode signature
-        shell: pwsh
+      - name: Verify checksums and inventory for the honestly-unsigned prerelease
+        shell: bash
         env:
           VERSION: ${{ needs.quality.outputs.version }}
         run: |
-          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
-            Sort-Object FullName |
-            Select-Object -Last 1
-          if (-not $signtool) { throw "signtool.exe is unavailable" }
-          $files = @(
-            "artifacts/Localmotive_${env:VERSION}_x64.msi",
-            "artifacts/Localmotive_${env:VERSION}_x64-setup.exe",
-            "artifacts/Localmotive_${env:VERSION}_x64-portable.exe"
-          )
-          foreach ($file in $files) {
-            & $signtool.FullName verify /pa /all $file
-            if ($LASTEXITCODE -ne 0) { throw "Authenticode verification failed for $file" }
-            $signature = Get-AuthenticodeSignature -LiteralPath $file
-            if ($signature.Status -ne "Valid") { throw "PowerShell rejected the Authenticode signature for $file" }
-            if ($null -eq $signature.TimeStamperCertificate) { throw "Authenticode timestamp is missing for $file" }
-          }
+          node scripts/verify_candidate_inventory.mjs artifacts "$VERSION" "artifacts/candidate-inventory-${VERSION}.json"
+          (cd artifacts && sha256sum -c "SHA256SUMS-${VERSION}.txt")
+          test "$(jq -r '.release' "artifacts/candidate-inventory-${VERSION}.json")" = "$VERSION"
+          echo "Unsigned prerelease: Authenticode is DEFERRED_BY_OWNER; no signature is claimed. SmartScreen may warn."
 
       - name: Extract this version's changelog section
         shell: bash
@@ -263,14 +251,16 @@ jobs:
             echo "| \`candidate-inventory-${VERSION}.json\` | Candidate size and digest evidence |"
             echo
             echo "Target scope: Windows 10 and Windows 11 x64. See the qualification limitations above."
-            echo "The executable and installer assets passed the Authenticode verification gate above."
+            echo ""
+            echo "This prerelease is honestly unsigned: Authenticode is DEFERRED_BY_OWNER, no signature is claimed, and Windows SmartScreen may warn. Verify the published SHA-256 checksums before use."
           } > release-notes.md
 
-      - name: Publish the explicitly approved release
+      - name: Publish the explicitly approved unsigned prerelease
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ needs.quality.outputs.tag }}
-          name: Localmotive ${{ needs.quality.outputs.version }}
+          name: Localmotive ${{ needs.quality.outputs.version }} (unsigned prerelease)
+          prerelease: true
           body_path: release-notes.md
           files: |
             artifacts/Localmotive_${{ needs.quality.outputs.version }}_x64-setup.exe
@@ -294,9 +284,9 @@ jobs:
             --json tagName,name,isDraft,isPrerelease,assets,body \
             > public-readback/release.json
           test "$(jq -r '.tagName' public-readback/release.json)" = "$TAG"
-          test "$(jq -r '.name' public-readback/release.json)" = "Localmotive $VERSION"
+          test "$(jq -r '.name' public-readback/release.json)" = "Localmotive $VERSION (unsigned prerelease)"
           test "$(jq -r '.isDraft' public-readback/release.json)" = "false"
-          test "$(jq -r '.isPrerelease' public-readback/release.json)" = "false"
+          test "$(jq -r '.isPrerelease' public-readback/release.json)" = "true"
           test "$(jq '.assets | length' public-readback/release.json)" -eq 6
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
             --dir public-readback --clobber

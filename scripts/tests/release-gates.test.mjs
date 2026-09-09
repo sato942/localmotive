@@ -330,10 +330,23 @@ test("MSI manufacturer equals the approved publisher value", async () => {
   assert.equal(wixFragment, "", `unexpected Manufacturer override: ${wixFragment}`);
 });
 
-test("MSI publication stays blocked until the signed Authenticode gate passes", async () => {
+test("unsigned prerelease publication verifies checksums and inventory instead of Authenticode", async () => {
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
-  assert.match(release, /Block publication unless every candidate has a valid Authenticode signature/);
-  assert.match(release, /Get-AuthenticodeSignature/);
+  assert.doesNotMatch(release, /signtool/);
+  assert.doesNotMatch(release, /Get-AuthenticodeSignature/);
+  assert.doesNotMatch(release, /TimeStamperCertificate/);
+  assert.doesNotMatch(release, /passed the Authenticode verification gate/);
+  assert.match(release, /unsigned/);
+  assert.match(release, /SmartScreen/);
+  assert.match(release, /verify_candidate_inventory/);
+  assert.match(release, /sha256sum -c/);
+});
+
+test("unsigned prerelease publication reads back a prerelease with the unsigned asset set", async () => {
+  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  assert.match(release, /prerelease:\s*true/);
+  assert.match(release, /\.isPrerelease/);
+  assert.match(release, /honestly unsigned/);
 });
 
 test("correct the three L2 claims in the new 0.4.1 changelog section", async () => {
