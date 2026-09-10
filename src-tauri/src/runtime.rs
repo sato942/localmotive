@@ -2197,7 +2197,7 @@ pub fn managed_runtime_relative_path(tag: &str, backend: &str) -> PathBuf {
 /// Destination policy for NEW managed runtime installations.
 ///
 /// New approved installs always publish into the primary `Localmotive` root,
-/// even when only the legacy `GGUF Pilot` directory exists. The audited defect
+/// even when only the legacy product directory exists. The audited defect
 /// (RT-01) published installs into the legacy root while launch validation
 /// rejected every legacy path, producing an unrecoverable install/launch loop.
 /// Discovery of existing installs is a separate policy: see

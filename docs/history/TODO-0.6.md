@@ -1,7 +1,7 @@
 # Localmotive 0.6 — audit remediation TODO
 
 **Target:** `0.6.0` stabilization release  
-**Status:** Planning complete; implementation in progress — Package 1 (managed runtime trust and legacy recovery)  
+**Status:** Planning complete; implementation in progress — Package 2 (catalog restart, offline loading and recovery)  
 **Source:** [localmotive-comprehensive-audit.md](./localmotive-comprehensive-audit.md)
 **Audited source SHA:** `e530371b056cd8e049c2246dbb151aa407bf359f`  
 **Release baseline reviewed by the audit:** `v0.5.0`, source `a4b7127f739f7420232d9b6f63da693d39128d0b`  
@@ -30,7 +30,7 @@ Owner: `sato942` (accountable maintainer). Implementation and evidence productio
 
 | Package | Scope | Status |
 |---|---|---|
-| 1 | Managed runtime trust and legacy recovery (RT-01, RT-02, RT-04, RT-07) | In progress |
+| 1 | Managed runtime trust and legacy recovery (RT-01, RT-02, RT-04, RT-07) | Implementation complete; unit-verified; packaged items open in G-05 |
 | 2 | Catalog restart, offline loading and recovery (DC-01, DC-03, DC-07) | Not started |
 | 3 | Override identity and atomic persistence (DC-04, DC-05, DC-06) | Not started |
 | 4 | Bounded and cancellable tuning (MT-03, MT-04, RT-03) | Not started |
@@ -170,22 +170,22 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Publish new approved runtimes into a launchable primary installation root**
 
-**Status:** Not started · **Priority:** High · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (commit `bd33337`); packaged upgrade acceptance pending V06-G-05 · **Priority:** High · **Owner:** sato942  
 **Audit trace:** [Audit RT-01](./localmotive-comprehensive-audit.md#rt-01)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src-tauri/src/runtime.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/runtime.rs), [src-tauri/src/lib.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/lib.rs)
 
 **Implementation**
 
-- [ ] **V06-RT-01.I1** — Separate the destination policy for new approved installations from discovery of existing GGUF Pilot installations; select the primary Localmotive runtime root for new installs even when only the legacy directory exists. **Trace:** [Audit RT-01](./localmotive-comprehensive-audit.md#rt-01).
-- [ ] **V06-RT-01.I2** — Keep legacy discovery and any migration explicit, preserving existing files until the replacement has passed compiled-content verification and publication has succeeded. **Trace:** [Audit RT-01](./localmotive-comprehensive-audit.md#rt-01).
-- [ ] **V06-RT-01.I3** — Align install, repair, reuse, public inspection, and launch validation so a successful installation result cannot return a path that the same application categorically rejects as legacy. **Trace:** [Audit RT-01](./localmotive-comprehensive-audit.md#rt-01).
-- [ ] **V06-RT-01.I4** — Update the existing root-selection regression and recovery messages to express the selected policy; retain architecture, content-manifest, reparse, backup, and rollback protections. **Trace:** [Audit RT-01](./localmotive-comprehensive-audit.md#rt-01).
+- [x] **V06-RT-01.I1** — Separate the destination policy for new approved installations from discovery of existing GGUF Pilot installations; select the primary Localmotive runtime root for new installs even when only the legacy directory exists. **Trace:** [Audit RT-01](./localmotive-comprehensive-audit.md#rt-01).
+- [x] **V06-RT-01.I2** — Keep legacy discovery and any migration explicit, preserving existing files until the replacement has passed compiled-content verification and publication has succeeded. **Trace:** [Audit RT-01](./localmotive-comprehensive-audit.md#rt-01).
+- [x] **V06-RT-01.I3** — Align install, repair, reuse, public inspection, and launch validation so a successful installation result cannot return a path that the same application categorically rejects as legacy. **Trace:** [Audit RT-01](./localmotive-comprehensive-audit.md#rt-01).
+- [x] **V06-RT-01.I4** — Update the existing root-selection regression and recovery messages to express the selected policy; retain architecture, content-manifest, reparse, backup, and rollback protections. **Trace:** [Audit RT-01](./localmotive-comprehensive-audit.md#rt-01).
 
 **Verification**
 
-- [ ] **V06-RT-01.V1** — Compose root selection, installation/publication using an inert verified fixture, and the public inspection trust gate with an empty legacy directory and absent primary directory; assert that the returned runtime is accepted. **Trace:** [Audit RT-01](./localmotive-comprehensive-audit.md#rt-01).
-- [ ] **V06-RT-01.V2** — Repeat the scenario with corrupt legacy records, a populated primary root, and repair/reuse requests; verify that reinstall does not reproduce the legacy rejection loop. **Trace:** [Audit RT-01](./localmotive-comprehensive-audit.md#rt-01).
+- [x] **V06-RT-01.V1** — Compose root selection, installation/publication using an inert verified fixture, and the public inspection trust gate with an empty legacy directory and absent primary directory; assert that the returned runtime is accepted. **Trace:** [Audit RT-01](./localmotive-comprehensive-audit.md#rt-01).
+- [x] **V06-RT-01.V2** — Repeat the scenario with corrupt legacy records, a populated primary root, and repair/reuse requests; verify that reinstall does not reproduce the legacy rejection loop. **Trace:** [Audit RT-01](./localmotive-comprehensive-audit.md#rt-01).
 - [ ] **V06-RT-01.V3** — On the supported packaged Windows application, reproduce the upgrade layout and record a successful install followed by inspection and launch, including preservation of prior files on a failed migration. **Trace:** [Audit RT-01](./localmotive-comprehensive-audit.md#rt-01).
 
 **Complete when:** Every newly approved install or reuse result names a runtime that passes the current launch trust policy. The documented recovery action repairs the legacy upgrade scenario without requiring manual directory deletion.
@@ -196,22 +196,22 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Enforce managed content authorization before every runtime probe**
 
-**Status:** Not started · **Priority:** High · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (commit `4081a7f`); packaged workflow acceptance pending V06-G-05 · **Priority:** High · **Owner:** sato942  
 **Audit trace:** [Audit RT-02](./localmotive-comprehensive-audit.md#rt-02)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src-tauri/src/lib.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/lib.rs), [src-tauri/src/core.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/core.rs), [src-tauri/src/runtime.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/runtime.rs)
 
 **Implementation**
 
-- [ ] **V06-RT-02.I1** — Centralize managed-runtime content authorization at the lowest shared execution or probe boundary so callers cannot bypass it by directly invoking core runtime inspection. **Trace:** [Audit RT-02](./localmotive-comprehensive-audit.md#rt-02).
-- [ ] **V06-RT-02.I2** — Route tuning preparation, the older public runtime-health command, normal inspection, and launch through that boundary before executing version, help, or device-discovery probes. **Trace:** [Audit RT-02](./localmotive-comprehensive-audit.md#rt-02).
-- [ ] **V06-RT-02.I3** — Authorize the complete managed installation and the selected companion executable, including llama-cli.exe and its approved DLLs, rather than validating only that the server path is a regular file. **Trace:** [Audit RT-02](./localmotive-comprehensive-audit.md#rt-02).
-- [ ] **V06-RT-02.I4** — Introduce an explicit verified-runtime representation or equally enforceable execution interface; keep intentionally selected external runtimes governed by an explicit separate policy and retain compiled inventory, digest, and filesystem protections. **Trace:** [Audit RT-02](./localmotive-comprehensive-audit.md#rt-02).
+- [x] **V06-RT-02.I1** — Centralize managed-runtime content authorization at the lowest shared execution or probe boundary so callers cannot bypass it by directly invoking core runtime inspection. **Trace:** [Audit RT-02](./localmotive-comprehensive-audit.md#rt-02).
+- [x] **V06-RT-02.I2** — Route tuning preparation, the older public runtime-health command, normal inspection, and launch through that boundary before executing version, help, or device-discovery probes. **Trace:** [Audit RT-02](./localmotive-comprehensive-audit.md#rt-02).
+- [x] **V06-RT-02.I3** — Authorize the complete managed installation and the selected companion executable, including llama-cli.exe and its approved DLLs, rather than validating only that the server path is a regular file. **Trace:** [Audit RT-02](./localmotive-comprehensive-audit.md#rt-02).
+- [x] **V06-RT-02.I4** — Introduce an explicit verified-runtime representation or equally enforceable execution interface; keep intentionally selected external runtimes governed by an explicit separate policy and retain compiled inventory, digest, and filesystem protections. **Trace:** [Audit RT-02](./localmotive-comprehensive-audit.md#rt-02).
 
 **Verification**
 
-- [ ] **V06-RT-02.V1** — Use inert replaced managed server and CLI binaries that write a sentinel whenever invoked; call tuning preparation and the older health workflow and assert rejection before any sentinel appears. **Trace:** [Audit RT-02](./localmotive-comprehensive-audit.md#rt-02).
-- [ ] **V06-RT-02.V2** — Tamper with an approved DLL while leaving the server executable unchanged and require rejection through the same user-facing workflows. **Trace:** [Audit RT-02](./localmotive-comprehensive-audit.md#rt-02).
+- [x] **V06-RT-02.V1** — Use inert replaced managed server and CLI binaries that write a sentinel whenever invoked; call tuning preparation and the older health workflow and assert rejection before any sentinel appears. **Trace:** [Audit RT-02](./localmotive-comprehensive-audit.md#rt-02).
+- [x] **V06-RT-02.V2** — Tamper with an approved DLL while leaving the server executable unchanged and require rejection through the same user-facing workflows. **Trace:** [Audit RT-02](./localmotive-comprehensive-audit.md#rt-02).
 - [ ] **V06-RT-02.V3** — Exercise ordinary managed inspection/launch and intentional external-runtime selection to verify that the centralized boundary preserves their documented behavior and does not rely on frontend validation. **Trace:** [Audit RT-02](./localmotive-comprehensive-audit.md#rt-02).
 
 **Complete when:** No managed EXE or companion probe executes before the installation passes compiled-content authorization. Production-path regressions cover both previously bypassing workflows and detect removal or bypass of the shared guard.
@@ -248,17 +248,17 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Retain verified executable and DLL protection through managed process loading**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (commit `8566883`); packaged writer-race check pending V06-G-05 · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit RT-04](./localmotive-comprehensive-audit.md#rt-04)  
 **Prerequisites:** [V06-RT-02](#v06-rt-02)
 **Source touchpoints:** [src-tauri/src/runtime.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/runtime.rs), [src-tauri/src/lib.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/lib.rs), [src-tauri/src/health.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/health.rs)
 
 **Implementation**
 
-- [ ] **V06-RT-04.I1** — Extend the shared verified-runtime execution boundary to return a lease that retains restrictive read-sharing handles for the approved executable and DLL inventory, rather than discarding each handle after hashing. **Trace:** [Audit RT-04](./localmotive-comprehensive-audit.md#rt-04).
-- [ ] **V06-RT-04.I2** — Retain and validate the relevant directory identities with the lease, and keep protection effective through process creation and loading of the files covered by the execution-identity guarantee. **Trace:** [Audit RT-04](./localmotive-comprehensive-audit.md#rt-04).
-- [ ] **V06-RT-04.I3** — Carry the lease through managed health context preparation, any pinned health-model download, and the subsequent CLI, benchmark, and server launches so the long preparation interval does not reopen a modification window. **Trace:** [Audit RT-04](./localmotive-comprehensive-audit.md#rt-04).
-- [ ] **V06-RT-04.I4** — Coordinate runtime repair and replacement with active leases, defining a clear wait or rejection outcome; preserve backup/rollback behavior and avoid replacing cryptographic approval with a last-moment path recheck. **Trace:** [Audit RT-04](./localmotive-comprehensive-audit.md#rt-04).
+- [x] **V06-RT-04.I1** — Extend the shared verified-runtime execution boundary to return a lease that retains restrictive read-sharing handles for the approved executable and DLL inventory, rather than discarding each handle after hashing. **Trace:** [Audit RT-04](./localmotive-comprehensive-audit.md#rt-04).
+- [x] **V06-RT-04.I2** — Retain and validate the relevant directory identities with the lease, and keep protection effective through process creation and loading of the files covered by the execution-identity guarantee. **Trace:** [Audit RT-04](./localmotive-comprehensive-audit.md#rt-04).
+- [x] **V06-RT-04.I3** — Carry the lease through managed health context preparation, any pinned health-model download, and the subsequent CLI, benchmark, and server launches so the long preparation interval does not reopen a modification window. **Trace:** [Audit RT-04](./localmotive-comprehensive-audit.md#rt-04).
+- [x] **V06-RT-04.I4** — Coordinate runtime repair and replacement with active leases, defining a clear wait or rejection outcome; preserve backup/rollback behavior and avoid replacing cryptographic approval with a last-moment path recheck. **Trace:** [Audit RT-04](./localmotive-comprehensive-audit.md#rt-04).
 
 **Verification**
 
@@ -326,23 +326,23 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Verify and extract approved archives through the tested production path**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (commit `ad5bcd0`); symlink-swap variant pending a privileged packaged check · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit RT-07](./localmotive-comprehensive-audit.md#rt-07)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src-tauri/src/runtime.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/runtime.rs)
 
 **Implementation**
 
-- [ ] **V06-RT-07.I1** — Replace the test-only archive-verification implementation with a production verification/extraction path that the actual installer uses after download completion. **Trace:** [Audit RT-07](./localmotive-comprehensive-audit.md#rt-07).
-- [ ] **V06-RT-07.I2** — Open the archive with appropriate identity and sharing protections, verify approved size and SHA-256, and extract from that same opened file so reopening cannot introduce another check/use gap. **Trace:** [Audit RT-07](./localmotive-comprehensive-audit.md#rt-07).
-- [ ] **V06-RT-07.I3** — Remove duplicate security logic guarded solely by cfg(test), and route archive mutation regressions through the production installer or its real extraction boundary. **Trace:** [Audit RT-07](./localmotive-comprehensive-audit.md#rt-07).
-- [ ] **V06-RT-07.I4** — Preserve capability-relative create-new extraction, traversal/ADS/symlink rejection, decompression limits, cancellation, final compiled per-file inventory verification, and verified publication/rollback. **Trace:** [Audit RT-07](./localmotive-comprehensive-audit.md#rt-07).
+- [x] **V06-RT-07.I1** — Replace the test-only archive-verification implementation with a production verification/extraction path that the actual installer uses after download completion. **Trace:** [Audit RT-07](./localmotive-comprehensive-audit.md#rt-07).
+- [x] **V06-RT-07.I2** — Open the archive with appropriate identity and sharing protections, verify approved size and SHA-256, and extract from that same opened file so reopening cannot introduce another check/use gap. **Trace:** [Audit RT-07](./localmotive-comprehensive-audit.md#rt-07).
+- [x] **V06-RT-07.I3** — Remove duplicate security logic guarded solely by cfg(test), and route archive mutation regressions through the production installer or its real extraction boundary. **Trace:** [Audit RT-07](./localmotive-comprehensive-audit.md#rt-07).
+- [x] **V06-RT-07.I4** — Preserve capability-relative create-new extraction, traversal/ADS/symlink rejection, decompression limits, cancellation, final compiled per-file inventory verification, and verified publication/rollback. **Trace:** [Audit RT-07](./localmotive-comprehensive-audit.md#rt-07).
 
 **Verification**
 
-- [ ] **V06-RT-07.V1** — Replace the archive between completed download and actual production extraction with same-size changed content and with a changed-size file; assert rejection before any archive entry is extracted. **Trace:** [Audit RT-07](./localmotive-comprehensive-audit.md#rt-07).
+- [x] **V06-RT-07.V1** — Replace the archive between completed download and actual production extraction with same-size changed content and with a changed-size file; assert rejection before any archive entry is extracted. **Trace:** [Audit RT-07](./localmotive-comprehensive-audit.md#rt-07).
 - [ ] **V06-RT-07.V2** — Attempt symlink/reparse replacement and a path change after the archive is opened; verify that the protected original handle remains authoritative or the operation fails safely. **Trace:** [Audit RT-07](./localmotive-comprehensive-audit.md#rt-07).
-- [ ] **V06-RT-07.V3** — Cancel during archive verification and confirm bounded cancellation/cleanup, then run an intact approved fixture through the same production path to exercise successful extraction and final content checks. **Trace:** [Audit RT-07](./localmotive-comprehensive-audit.md#rt-07).
+- [x] **V06-RT-07.V3** — Cancel during archive verification and confirm bounded cancellation/cleanup, then run an intact approved fixture through the same production path to exercise successful extraction and final content checks. **Trace:** [Audit RT-07](./localmotive-comprehensive-audit.md#rt-07).
 
 **Complete when:** The production installer verifies the exact protected archive bytes consumed by extraction. Regression tests fail if production archive verification is removed or bypassed; no test-only security implementation supplies the apparent guarantee.
 
@@ -3022,5 +3022,33 @@ This document was mechanically checked for complete mapping of the 72 audit IDs 
 
 Closure records implement [V06-G-02](#v06-g-02). One record per finding package; each record names the pre-fix reproduction, the fix commit, the post-fix command, and the residual limits. Checkbox states in the finding packages are updated together with these records.
 
-_No records yet._
+### V06-RT-01 — launchable install destination (commit `bd33337`)
+
+- Status: Implemented; unit-verified; packaged upgrade acceptance open (V06-G-05).
+- Regression before fix (mutation proof): mutation A restored the audited `managed_runtime_root_in` fallback inside `runtime_install_roots_in`; `rt01_new_installs_publish_into_the_primary_root_even_with_only_a_legacy_directory` then FAILED. Mutation B restored location-based legacy rejection; `rt01_installation_result_passes_the_launch_trust_gate_and_reuse_in_both_roots` then FAILED.
+- Verification after fix: `cargo test rt01` — 3 passed / 0 failed. Full suite: 405 passed / 0 failed (2026-09-11, Windows 11 26100, Rust 1.98.1).
+- Limits: the packaged Windows upgrade scenario (V06-RT-01.V3) was not executed here; it is part of V06-G-05.
+
+### V06-RT-02 — managed probe authorization (commit `4081a7f`)
+
+- Status: Implemented; unit-verified; packaged workflow acceptance open (V06-G-05).
+- Regression before fix (mutation proof): mutation C removed `guard(path)?` from `run_runtime_probe_with`; both sentinel tests FAILED because the replaced managed CLI/EXE actually executed (the negative control confirms the sentinel writes its marker when run).
+- Verification after fix: `cargo test rt02` — 3 passed / 0 failed (rustc-built inert sentinels, real managed-root fixtures, no marker after rejection). Full suite: 408 passed / 0 failed (2026-09-11).
+- Limits: packaged tamper-through-Tauri-workflow check remains for V06-G-05; V06-RT-02.V3's launch-path re-check is covered at unit level by the external/managed guard tests.
+
+### V06-RT-04 — execution-identity lease (commit `8566883`)
+
+- Status: Implemented; unit-verified; packaged writer-race check open (V06-G-05).
+- Regression before fix (mutation proof): mutation E dropped the retained handle in `lease_verified_installation`; both rt04 tests FAILED because an external writer could then replace the approved EXE/CLI while the "lease" lived.
+- Verification after fix: `cargo test rt04` — 2 passed / 0 failed (replacement blocked for EXE/CLI, after a preparation-like delay, clear repair rejection while leased, replacement succeeds after release, external runtimes produce no lease, health context carries the lease). Full suite: 412 passed / 0 failed (2026-09-11).
+- Limits: the concurrent same-user writer race was exercised in-process, not across two real applications; the packaged variant stays in V06-G-05.
+
+### V06-RT-07 — archive identity bound to extraction (commit `ad5bcd0`)
+
+- Status: Implemented; unit-verified; symlink/reparse swap variant open (privileged packaged check).
+- Regression before fix (mutation proof): mutation D restored the old path-based extraction; `rt07_archive_extraction_rejects_replaced_bytes_through_the_installer_path` FAILED (the replaced archive extracted).
+- Verification after fix: `cargo test rt07` — 2 passed / 0 failed (same-size replacement, changed-size replacement, cancellation during verification, intact approved success path through `extract_zip`, Windows handle-blocks-replacement). Full suite: 409 passed / 0 failed (2026-09-11).
+- Limits: the symlink/reparse replacement variant (V06-RT-07.V2, second half) requires symlink-creation privilege; it stays open for a privileged packaged check.
+
+_Package 1 (RT-01, RT-02, RT-04, RT-07) implementation is complete at the unit/regression layer. The three open packaged items above are collected by the V06-G-05 target-environment gate and must not be counted as passed before that evidence exists._
 

@@ -2503,12 +2503,12 @@ fn main() {
 
     #[test]
     fn rt02_tampered_managed_cli_never_executes_through_the_runtime_health_workflow() {
-        let root =
+        let base =
             std::env::temp_dir().join(format!("localmotive-rt02-health-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).unwrap();
-        let marker = root.join("sentinel-ran.txt");
-        let sentinel = build_sentinel_probe(&root, &marker);
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        let marker = base.join("sentinel-ran.txt");
+        let sentinel = build_sentinel_probe(&base, &marker);
 
         // Negative control: the sentinel writes its marker when invoked, so an
         // absent marker below is meaningful evidence that nothing ran.
@@ -2520,8 +2520,8 @@ fn main() {
         );
         fs::remove_file(&marker).unwrap();
 
-        let primary = root.join("Localmotive").join("runtimes");
-        let legacy = root.join("GGUF Pilot").join("runtimes");
+        let primary = base.join("Localmotive").join("runtimes");
+        let legacy = base.join("GGUF Pilot").join("runtimes");
         let (server, cli) = crate::runtime::test_fixtures::place_fixture_install(&primary);
         fs::copy(&sentinel, &cli).unwrap();
 
@@ -2541,20 +2541,20 @@ fn main() {
             "the tampered managed CLI executed before rejection: {error}"
         );
         assert!(error.contains("content verification"), "{error}");
-        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(base).unwrap();
     }
 
     #[test]
     fn rt02_tampered_managed_server_never_executes_through_runtime_inspection() {
-        let root =
+        let base =
             std::env::temp_dir().join(format!("localmotive-rt02-inspect-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).unwrap();
-        let marker = root.join("sentinel-ran.txt");
-        let sentinel = build_sentinel_probe(&root, &marker);
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        let marker = base.join("sentinel-ran.txt");
+        let sentinel = build_sentinel_probe(&base, &marker);
 
-        let primary = root.join("Localmotive").join("runtimes");
-        let legacy = root.join("GGUF Pilot").join("runtimes");
+        let primary = base.join("Localmotive").join("runtimes");
+        let legacy = base.join("GGUF Pilot").join("runtimes");
         let (server, _cli) = crate::runtime::test_fixtures::place_fixture_install(&primary);
         fs::copy(&sentinel, &server).unwrap();
 
@@ -2575,7 +2575,7 @@ fn main() {
             "the tampered managed server executed before rejection: {error}"
         );
         assert!(error.contains("content verification"), "{error}");
-        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(base).unwrap();
     }
 
     #[test]

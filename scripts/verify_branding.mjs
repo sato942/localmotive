@@ -13,6 +13,8 @@ const HISTORICAL_FILES = new Set([
   "docs/history/TODO.md",
   "docs/history/TODO-0.4.md",
   "docs/history/TODO-0.4.1.md",
+  "docs/history/TODO-0.6.md",
+  "docs/history/localmotive-comprehensive-audit.md",
   "Future_branding.md",
   "TODO.md",
   "TODO-0.4.md",
@@ -24,6 +26,7 @@ const MIGRATION_LINES = new Map([
   ["src/App.tsx", [["localStorage.getItem(`", LEGACY_NAMES[1], ":${key}`)"].join("")]],
   ["src-tauri/src/catalog.rs", ["LEGACY_HF_KEYRING_SERVICE", `${LEGACY_NAMES[0]} HF`]],
   ["src-tauri/src/cloud.rs", ["LEGACY_KEYRING_SERVICE", LEGACY_NAMES[0]]],
+  ["src-tauri/src/core.rs", [`base.join(\"${LEGACY_NAMES[0]}\")`]],
   ["src-tauri/src/runtime.rs", [
     `runtime_data_dir(\"${LEGACY_NAMES[0]}\")`,
     `base.join(\"${LEGACY_NAMES[0]}\")`,
