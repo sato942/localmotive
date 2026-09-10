@@ -43,46 +43,7 @@ vi.mock("@tauri-apps/api/core", () => ({
     if (command === "server_status") return Promise.resolve(idleServerStatus);
     if (command === "list_managed_runtimes") return Promise.resolve([]);
     if (command === "load_runtime_setup" || command === "detect_hardware") {
-      return Promise.resolve({
-        hardware: {
-          architecture: "x86_64",
-          gpuNames: [],
-          vendor: "unknown",
-          cudaMajor: null,
-          driverVersion: "unknown",
-          detectionStatus: "fixture",
-          recommendation: "fixture",
-          systemMemory: {
-            totalPhysicalBytes: {
-              value: null,
-              level: "unknown",
-              source: { kind: "unknown", detail: "fixture" },
-              observedAtMs: 0,
-              notes: [],
-            },
-            availablePhysicalBytes: {
-              value: null,
-              level: "unknown",
-              source: { kind: "unknown", detail: "fixture" },
-              observedAtMs: 0,
-              notes: [],
-            },
-            memoryLoadPercent: {
-              value: null,
-              level: "unknown",
-              source: { kind: "unknown", detail: "fixture" },
-              observedAtMs: 0,
-              notes: [],
-            },
-          },
-          adapters: [],
-          manualOverrides: [],
-        },
-        catalog: null,
-        catalogError: null,
-        runtimeRoot: "",
-        managedRuntimes: [],
-      });
+      return Promise.resolve(runtimeSetup());
     }
     if (command === "cloud_providers") return Promise.resolve([]);
     if (command === "cloud_credential_status") return Promise.resolve({ configured: false });
@@ -139,6 +100,32 @@ const snapshot = (models: unknown[], over: Record<string, unknown> = {}) => ({
   url: "https://example.invalid/catalog.json",
   ...over,
 });
+
+function runtimeSetup(over: Record<string, unknown> = {}) {
+  return {
+    hardware: {
+      architecture: "x86_64",
+      gpuNames: [],
+      vendor: "unknown",
+      cudaMajor: null,
+      driverVersion: "unknown",
+      detectionStatus: "fixture",
+      recommendation: "fixture",
+      systemMemory: {
+        totalPhysicalBytes: { value: null, level: "unknown", source: { kind: "unknown", detail: "fixture" }, observedAtMs: 0, notes: [] },
+        availablePhysicalBytes: { value: null, level: "unknown", source: { kind: "unknown", detail: "fixture" }, observedAtMs: 0, notes: [] },
+        memoryLoadPercent: { value: null, level: "unknown", source: { kind: "unknown", detail: "fixture" }, observedAtMs: 0, notes: [] },
+      },
+      adapters: [],
+      manualOverrides: [],
+    },
+    catalog: null,
+    catalogError: null,
+    runtimeRoot: "",
+    managedRuntimes: [],
+    ...over,
+  };
+}
 
 let container: HTMLDivElement;
 let root: Root;
@@ -264,6 +251,111 @@ describe("HF catalog presentation through public interfaces", () => {
     });
     await settle();
     expect(text()).toContain("alpha");
+  });
+
+  describe("runtime catalog presentation through public interfaces", () => {
+    async function openRuntimeTab() {
+      const tab = [...container.querySelectorAll("button")].find((button) =>
+        (button.textContent ?? "").trim() === "Runtime",
+      );
+      expect(tab, "Runtime navigation must exist").toBeTruthy();
+      await act(async () => {
+        tab!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+    }
+
+    function refreshCatalogButton() {
+      return container.querySelector('[aria-label="Refresh approved runtime catalog"]');
+    }
+
+    it("shows one loading state and disables refresh until the retrieval resolves", async () => {
+      let release!: (value: unknown) => void;
+      const pending = new Promise((resolvePromise) => {
+        release = resolvePromise;
+      });
+      // The refresh action re-runs the runtime setup load; the first call
+      // (mount) resolves, the click re-run stays pending until released.
+      let calls = 0;
+      handlers.set("load_runtime_setup", () => {
+        calls += 1;
+        return calls === 1 ? runtimeSetup() : pending;
+      });
+      await mount();
+      await openRuntimeTab();
+      await settle();
+
+      const button = refreshCatalogButton();
+      expect(button, "the runtime catalog refresh action must exist").toBeTruthy();
+      await act(async () => {
+        (button as HTMLButtonElement).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      await settle();
+      expect(container.querySelectorAll(".runtime-loading").length).toBe(1);
+      expect(refreshCatalogButton()?.getAttribute("disabled")).not.toBeNull();
+
+      await act(async () => {
+        release(
+          runtimeSetup({
+            catalog: { tag: "b1", publishedAt: "", options: [], availability: [], origin: "cache", recommendationReason: "" },
+          }),
+        );
+      });
+      await settle();
+      expect(container.querySelectorAll(".runtime-loading").length).toBe(0);
+      expect(container.querySelectorAll(".runtime-catalog-message").length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("shows the explicit empty state without a loading indicator", async () => {
+      handlers.set("load_runtime_setup", () =>
+        runtimeSetup({
+          catalog: { tag: "b1", publishedAt: "", options: [], availability: [], origin: "cache", recommendationReason: "" },
+        }),
+      );
+      await mount();
+      await openRuntimeTab();
+      await settle();
+      const message = container.querySelectorAll(".runtime-catalog-message");
+      expect(message.length).toBeGreaterThanOrEqual(1);
+      expect(message[0].textContent ?? "").toContain("No approved runtime");
+      expect(container.querySelectorAll(".runtime-loading").length).toBe(0);
+    });
+
+    it("shows a terminal error with one retry action", async () => {
+      handlers.set("load_runtime_setup", () =>
+        runtimeSetup({
+          catalogError: { kind: "network", message: "Verifier-injected catalog failure" },
+        }),
+      );
+      await mount();
+      await openRuntimeTab();
+      await settle();
+      const errored = container.querySelectorAll(".runtime-catalog-message.error");
+      expect(errored.length).toBe(1);
+      expect(errored[0].textContent ?? "").toContain("Verifier-injected catalog failure");
+      const retries = [...errored[0].querySelectorAll("button")].filter(
+        (button) => (button.textContent ?? "").trim() === "Retry",
+      );
+      expect(retries.length).toBe(1);
+      expect(container.querySelectorAll(".runtime-loading").length).toBe(0);
+    });
+
+    it("shows the rate-limit retry delay honestly", async () => {
+      handlers.set("load_runtime_setup", () =>
+        runtimeSetup({
+          catalogError: {
+            kind: "rate_limited",
+            message: "GitHub rate limit hit; retry after 60 seconds",
+            retryAfterSeconds: 60,
+          },
+        }),
+      );
+      await mount();
+      await openRuntimeTab();
+      await settle();
+      const errored = container.querySelectorAll(".runtime-catalog-message.error");
+      expect(errored.length).toBe(1);
+      expect((errored[0].textContent ?? "").toLowerCase()).toContain("retry after 60 seconds");
+    });
   });
 
   it("a manual refresh reuses the merged collection and reports cooldown honestly", async () => {

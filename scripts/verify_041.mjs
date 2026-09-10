@@ -27,7 +27,6 @@ const cdpConnectTimeoutMs = Math.max(
 const startedAt = new Date().toISOString();
 const checks = [];
 let client;
-let catalogHarnessResponses;
 let baselineSetup;
 let installedRuntime;
 let originalRuntimeBytes;
@@ -308,195 +307,6 @@ async function rejectedInvoke(command, args) {
   })()`, 120_000);
 }
 
-const fixtureCatalog = {
-  tag: "b10816",
-  publishedAt: "2026-09-04T00:00:00Z",
-  options: [
-    {
-      id: "verify-cpu",
-      label: "CPU verification fixture",
-      backend: "cpu",
-      installKey: "cpu",
-      description: "Hermetic packaged-verifier fixture.",
-      compatibility: "x64 CPU fixture",
-      asset: {
-        name: "llama-b10816-bin-win-cpu-x64.zip",
-        browserDownloadUrl: "https://example.invalid/cpu.zip",
-        size: 1,
-        digest: `sha256:${"0".repeat(64)}`,
-      },
-      companionAsset: null,
-      recommended: true,
-    },
-    {
-      id: "verify-vulkan",
-      label: "Vulkan verification fixture",
-      backend: "vulkan",
-      installKey: "vulkan",
-      description: "Hermetic packaged-verifier fixture.",
-      compatibility: "x64 Vulkan fixture",
-      asset: {
-        name: "llama-b10816-bin-win-vulkan-x64.zip",
-        browserDownloadUrl: "https://example.invalid/vulkan.zip",
-        size: 1,
-        digest: `sha256:${"1".repeat(64)}`,
-      },
-      companionAsset: null,
-      recommended: false,
-    },
-  ],
-  availability: [
-    {
-      installKey: "cuda-13.3",
-      backend: "cuda",
-      status: "blocked",
-      reason: "Verifier-injected upstream CUDA job failure.",
-      blockingJobs: ["server-cuda"],
-      evidenceUrls: ["https://github.com/ggml-org/llama.cpp/actions/runs/33906999326/job/101134163906"],
-    },
-  ],
-  origin: "cache",
-  warning: "Hermetic packaged-verifier fixture",
-  recommendationReason: "CPU fallback for packaged UI verification.",
-};
-
-async function installCatalogHarness(setup) {
-  catalogHarnessResponses = {
-    ready: { ...setup, catalog: fixtureCatalog, catalogError: null },
-    empty: {
-      ...setup,
-      catalog: { ...fixtureCatalog, options: [] },
-      catalogError: null,
-    },
-    error: {
-      ...setup,
-      catalog: null,
-      catalogError: {
-        kind: "invalid_response",
-        message: "Verifier-injected catalog failure",
-        retryAfterSeconds: null,
-      },
-    },
-    rate: {
-      ...setup,
-      catalog: null,
-      catalogError: {
-        kind: "rate_limited",
-        message: "Verifier-injected GitHub rate limit; retry after 60 seconds",
-        retryAfterSeconds: 60,
-      },
-    },
-  };
-  // CDP can attach before React commits the App fiber tree, and the first
-  // walk then sees a partial hook list. Retry the same shape predicates
-  // with backoff instead of failing one-shot; predicates are unchanged.
-  const deadline = Date.now() + 45_000;
-  let result = null;
-  for (;;) {
-    result = await client.evaluate(`(() => {
-    const host = document.querySelector('.app-shell');
-    const fiberKey = host && Object.keys(host).find((key) => key.startsWith('__reactFiber$'));
-    let fiber = fiberKey ? host[fiberKey] : null;
-    while (fiber) {
-      const hooks = [];
-      let hook = fiber.memoizedState;
-      while (hook && hooks.length < 200) {
-        hooks.push(hook);
-        hook = hook.next;
-      }
-      // Locate the hardware state by shape, then scan forward for the
-      // catalog/error/loading triple by shape instead of a fixed offset:
-      // App.tsx hook order shifts as the screen grows, and a hardcoded
-      // +2/+3/+4 silently binds the wrong dispatchers.
-      const hardwareIndex = hooks.findIndex((entry) =>
-        entry?.memoizedState?.architecture &&
-        Array.isArray(entry.memoizedState.adapters) &&
-        typeof entry?.queue?.dispatch === 'function'
-      );
-      if (hardwareIndex >= 0) {
-        const hasDispatch = (entry) => typeof entry?.queue?.dispatch === 'function';
-        const isCatalogHook = (entry) =>
-          hasDispatch(entry) &&
-          entry?.memoizedState !== null &&
-          typeof entry.memoizedState === 'object' &&
-          Array.isArray(entry.memoizedState.options);
-        const isErrorHook = (entry) =>
-          hasDispatch(entry) && (
-            entry?.memoizedState === null ||
-            (entry?.memoizedState !== null &&
-              typeof entry.memoizedState === 'object' &&
-              (typeof entry.memoizedState.kind === 'string' ||
-                typeof entry.memoizedState.message === 'string'))
-          );
-        const isLoadingHook = (entry) =>
-          hasDispatch(entry) && typeof entry?.memoizedState === 'boolean';
-        let catalogHook = null;
-        let errorHook = null;
-        let loadingHook = null;
-        for (let index = hardwareIndex + 1; index < hooks.length; index++) {
-          const entry = hooks[index];
-          if (!catalogHook && isCatalogHook(entry)) { catalogHook = entry; continue; }
-          if (catalogHook && !errorHook && isErrorHook(entry)) { errorHook = entry; continue; }
-          if (catalogHook && errorHook && isLoadingHook(entry)) { loadingHook = entry; break; }
-        }
-        if (catalogHook && errorHook && loadingHook) {
-          window.__LM_VERIFY_SET_CATALOG = catalogHook.queue.dispatch;
-          window.__LM_VERIFY_SET_CATALOG_ERROR = errorHook.queue.dispatch;
-          window.__LM_VERIFY_SET_CATALOG_LOADING = loadingHook.queue.dispatch;
-          return { ok: true, hardwareIndex, hookCount: hooks.length };
-        }
-      }
-      fiber = fiber.return;
-    }
-    return { ok: false, reason: 'The App catalog state hooks were not found' };
-  })()`);
-    if (result?.ok) break;
-    if (Date.now() >= deadline) break;
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-  }
-  requireCondition(result?.ok, result?.reason ?? "The React catalog harness failed");
-}
-
-async function setCatalogScenario(scenario) {
-  requireCondition(catalogHarnessResponses, "The catalog harness responses are unavailable");
-  const response = scenario === "pending" ? catalogHarnessResponses.ready : catalogHarnessResponses[scenario];
-  requireCondition(response, `Unknown catalog harness scenario: ${scenario}`);
-  const catalog = scenario === "pending" ? fixtureCatalog : response.catalog;
-  const error = scenario === "pending" ? null : response.catalogError;
-  const loading = scenario === "pending";
-  const emptyCatalog = catalogHarnessResponses.empty.catalog;
-  const result = await client.evaluate(`(() => {
-    if (
-      typeof window.__LM_VERIFY_SET_CATALOG !== 'function' ||
-      typeof window.__LM_VERIFY_SET_CATALOG_ERROR !== 'function' ||
-      typeof window.__LM_VERIFY_SET_CATALOG_LOADING !== 'function'
-    ) {
-      return { ok: false, reason: 'The React catalog harness is not installed' };
-    }
-    window.__LM_VERIFY_SET_CATALOG(${JSON.stringify(catalog)});
-    window.__LM_VERIFY_SET_CATALOG_ERROR(${JSON.stringify(error)});
-    window.__LM_VERIFY_SET_CATALOG_LOADING(${JSON.stringify(loading)});
-    if (${JSON.stringify(scenario)} === 'pending') {
-      window.__LM_VERIFY_RESOLVE = () => {
-        delete window.__LM_VERIFY_RESOLVE;
-        window.__LM_VERIFY_SET_CATALOG(${JSON.stringify(emptyCatalog)});
-        window.__LM_VERIFY_SET_CATALOG_ERROR(null);
-        window.__LM_VERIFY_SET_CATALOG_LOADING(false);
-      };
-    } else {
-      delete window.__LM_VERIFY_RESOLVE;
-    }
-    return { ok: true };
-  })()`);
-  requireCondition(result?.ok, result?.reason ?? "The catalog scenario could not be selected");
-  await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
-  return result;
-}
-
-async function setScenarioAndRefresh(scenario) {
-  return setCatalogScenario(scenario);
-}
-
 async function artifactRecord() {
   requireCondition(artifactPath, "Pass the packaged artifact path as the second argument");
   const details = await stat(artifactPath);
@@ -663,121 +473,33 @@ try {
       );
 
       await runCheck(
-        "ui.catalog-harness",
-        "The verifier seeds catalog state without network dependence.",
+        "ipc.runtime-catalog-fetch",
+        "The packaged app fetches the real approved runtime catalog through IPC and the response carries exact install identities.",
         async () => {
-          await installCatalogHarness(baselineSetup);
-          await clickUnique("button.nav-item", "Runtime");
-          await setScenarioAndRefresh("ready");
-          await waitFor(
-            "document.querySelectorAll('.runtime-option:not(.blocked)').length === 2",
-            "The seeded runtime cards did not render",
-          );
-          return { fixture_tag: fixtureCatalog.tag, option_count: 2 };
+          const adapterId = baselineSetup.hardware.adapters?.[0]?.adapterId ?? null;
+          const catalog = await invoke("fetch_runtime_catalog", { adapterId }, 120_000);
+          requireCondition(Array.isArray(catalog?.options) && catalog.options.length >= 1, "The runtime catalog returned no options");
+          requireCondition(/^b\d+$/.test(catalog.tag ?? ""), `The runtime catalog tag was not an upstream build tag: ${catalog.tag}`);
+          for (const option of catalog.options) {
+            requireCondition(typeof option.installKey === "string" && option.installKey.length > 0, "A runtime option omitted its install key");
+            requireCondition(typeof option.backend === "string" && option.backend.length > 0, "A runtime option omitted its backend");
+            requireCondition(/^llama-.*\.zip$/.test(option.asset?.name ?? ""), `A runtime option asset name was not a llama.cpp archive: ${option.asset?.name}`);
+            requireCondition(typeof option.asset?.browserDownloadUrl === "string" && option.asset.browserDownloadUrl.startsWith("https://"), "A runtime option asset URL was not https");
+          }
+          requireCondition(typeof catalog.recommendationReason === "string" && catalog.recommendationReason.length > 0, "The runtime catalog omitted its recommendation reason");
+          return { tag: catalog.tag, option_count: catalog.options.length, origin: catalog.origin };
         },
       );
 
       await runCheck(
-        "ui.catalog-loading",
-        "The packaged UI shows one bounded loading state and disables refresh during retrieval.",
+        "ui.runtime-cards",
+        "Every rendered runtime card keeps one scope element, frontend-owned fields empty, and the static upstream-evidence limits.",
         async () => {
-          await setScenarioAndRefresh("pending");
           await waitFor(
-            "document.querySelectorAll('.runtime-loading').length === 1",
-            "The loading state did not appear",
+            "document.querySelectorAll('.runtime-option').length >= 1",
+            "The real runtime catalog did not render any card",
           );
-          const state = await client.evaluate(`({
-            loadingCount: document.querySelectorAll('.runtime-loading').length,
-            refreshCount: document.querySelectorAll('[aria-label="Refresh approved runtime catalog"]').length,
-            refreshDisabled: document.querySelector('[aria-label="Refresh approved runtime catalog"]')?.disabled === true
-          })`);
-          requireCondition(state.loadingCount === 1, "The loading selector did not match one intended element");
-          requireCondition(state.refreshCount === 1, "The refresh selector did not match one intended element");
-          requireCondition(state.refreshDisabled, "Refresh remained enabled while loading");
-          await client.evaluate("window.__LM_VERIFY_RESOLVE()")
-          await waitFor(
-            "document.querySelectorAll('.runtime-catalog-message').length === 1 && document.querySelectorAll('.runtime-loading').length === 0",
-            "The loading state did not terminate",
-          );
-          return state;
-        },
-      );
-
-      await runCheck(
-        "ui.catalog-empty",
-        "The packaged UI shows an explicit empty state without a loading indicator.",
-        async () => {
-          const state = await client.evaluate(`({
-            messageCount: document.querySelectorAll('.runtime-catalog-message').length,
-            loadingCount: document.querySelectorAll('.runtime-loading').length,
-            text: document.querySelector('.runtime-catalog-message')?.innerText ?? ''
-          })`);
-          requireCondition(state.messageCount === 1, "The empty selector did not match one intended element");
-          requireCondition(state.loadingCount === 0, "The loading indicator remained visible");
-          requireCondition(state.text.includes("No approved runtime"), "The empty message was not explicit");
-          return state;
-        },
-      );
-
-      await runCheck(
-        "ui.catalog-error",
-        "The packaged UI shows a terminal catalog error and one retry action.",
-        async () => {
-          await setScenarioAndRefresh("error");
-          await waitFor(
-            "document.querySelectorAll('.runtime-catalog-message.error').length === 1",
-            "The catalog error did not render",
-          );
-          const state = await client.evaluate(`(() => {
-            const message = document.querySelector('.runtime-catalog-message.error');
-            return {
-              errorCount: document.querySelectorAll('.runtime-catalog-message.error').length,
-              loadingCount: document.querySelectorAll('.runtime-loading').length,
-              retryCount: message ? [...message.querySelectorAll('button')].filter((button) => button.textContent.trim() === 'Retry').length : 0,
-              text: message?.innerText ?? ''
-            };
-          })()`);
-          requireCondition(state.errorCount === 1, "The error selector did not match one intended element");
-          requireCondition(state.loadingCount === 0, "The error state still showed loading");
-          requireCondition(state.retryCount === 1, "The error state did not expose one retry action");
-          requireCondition(state.text.includes("Verifier-injected catalog failure"), "The backend error was not visible");
-          return state;
-        },
-      );
-
-      await runCheck(
-        "ui.catalog-rate-limit",
-        "The packaged UI terminates loading and reports a rate-limit retry condition.",
-        async () => {
-          await setScenarioAndRefresh("rate");
-          await waitFor(
-            "document.querySelector('.runtime-catalog-message.error')?.innerText.includes('rate limit')",
-            "The rate-limit state did not render",
-          );
-          const state = await client.evaluate(`({
-            errorCount: document.querySelectorAll('.runtime-catalog-message.error').length,
-            loadingCount: document.querySelectorAll('.runtime-loading').length,
-            retryCount: document.querySelectorAll('.runtime-catalog-message.error button').length,
-            text: document.querySelector('.runtime-catalog-message.error')?.innerText ?? ''
-          })`);
-          requireCondition(state.errorCount === 1, "The rate-limit selector did not match one intended element");
-          requireCondition(state.loadingCount === 0, "The rate-limit state still showed loading");
-          requireCondition(state.retryCount === 1, "The rate-limit state did not expose one retry action");
-          requireCondition(/retry after 60 seconds/i.test(state.text), "The retry delay was not visible");
-          return state;
-        },
-      );
-
-      await runCheck(
-        "ui.runtime-scope",
-        "Each runtime card has one dedicated scope element despite multiple role lines.",
-        async () => {
-          await setScenarioAndRefresh("ready");
-          await waitFor(
-            "document.querySelectorAll('.runtime-option:not(.blocked)').length === 2",
-            "The ready catalog did not render",
-          );
-          const cards = await client.evaluate(`[...document.querySelectorAll('.runtime-option:not(.blocked)')].map((card) => {
+          const cards = await client.evaluate(`[...document.querySelectorAll('.runtime-option')].map((card) => {
             const scope = card.querySelector('.runtime-scope');
             return {
               label: card.querySelector('strong')?.textContent ?? '',
@@ -791,16 +513,15 @@ try {
               revision: scope?.dataset.runtimeRevision ?? ''
             };
           })`);
-          requireCondition(cards.length === 2, "The card selector did not match two fixture cards");
+          requireCondition(cards.length >= 1, "The card selector did not match any rendered runtime card");
           for (const card of cards) {
+            requireCondition(card.scopeCount === 1, `${card.label} did not contain exactly one scope element`);
             requireCondition(card.roleCount >= 2, `${card.label} did not contain multiple role lines`);
-            requireCondition(card.scopeCount === 1, `${card.label} did not contain one scope element`);
-            requireCondition(card.level === "", `${card.label} added a frontend-owned support level`);
-            requireCondition(card.os === "", `${card.label} added a frontend-owned operating-system claim`);
+            requireCondition(card.level === "" && card.os === "", `${card.label} added a frontend-owned support claim`);
             requireCondition(card.text.includes("UPSTREAM EVIDENCE ONLY"), `${card.label} omitted the upstream-evidence limit`);
             requireCondition(card.text.includes("exact product configuration untested"), `${card.label} omitted the product-qualification limit`);
-            requireCondition(card.architecture === "x64", `${card.label} omitted exact architecture scope`);
-            requireCondition(card.revision === "b10816", `${card.label} omitted exact runtime scope`);
+            requireCondition(card.architecture !== "", `${card.label} omitted its architecture scope`);
+            requireCondition(/^b\d+$/.test(card.revision), `${card.label} omitted an upstream build revision`);
           }
           return { cards };
         },
@@ -993,21 +714,48 @@ try {
             async () => {
               const outcome = await client.evaluate(`(async () => {
                 try {
+                  // Semantic trigger (audit QD-03.I4): register the progress
+                  // listener BEFORE starting the run and cancel only after
+                  // the backend emits its first health progress phase, so a
+                  // slow start cannot race an early cancel the way a fixed
+                  // sleep could.
+                  let firstPhase = null;
+                  const phaseSeen = new Promise((resolvePromise) => {
+                    const callbackId = window.__TAURI_INTERNALS__.transformCallback((event) => {
+                      const phase = event?.payload?.phase ?? event?.payload?.message ?? "";
+                      if (firstPhase === null) {
+                        firstPhase = String(phase);
+                        resolvePromise(true);
+                      }
+                    });
+                    window.__TAURI_INTERNALS__
+                      .invoke("plugin:event|listen", {
+                        event: "health-model-progress",
+                        target: { kind: "Any" },
+                        handler: callbackId,
+                      })
+                      .catch(() => resolvePromise(false));
+                  });
                   const running = window.__TAURI_INTERNALS__.invoke(
                     "check_managed_runtime_health",
                     { request: { installKey: "cpu", adapterId: null } }
                   );
-                  await new Promise((resolvePromise) => setTimeout(resolvePromise, 250));
+                  const sawPhase = await Promise.race([
+                    phaseSeen,
+                    running.then(() => false),
+                    new Promise((resolvePromise) => setTimeout(() => resolvePromise(false), 120_000)),
+                  ]);
                   const accepted = await window.__TAURI_INTERNALS__.invoke(
                     "cancel_managed_runtime_health",
                     {}
                   );
-                  return { ok: true, accepted, health: await running };
+                  return { ok: true, accepted, sawPhase, firstPhase, health: await running };
                 } catch (error) {
                   return { ok: false, error: String(error) };
                 }
               })()`, 600_000);
               requireCondition(outcome?.ok, outcome?.error ?? "Cancelled health invocation failed");
+              requireCondition(outcome.sawPhase === true, "The health run never emitted a progress phase to cancel against");
               requireCondition(outcome.accepted === true, "The backend did not accept health cancellation");
               requireCondition(outcome.health?.passed === false, "The cancelled health run reported success");
               requireCondition(outcome.health?.stages?.length === 7, "The cancelled health run lost the seven-stage contract");
@@ -1015,7 +763,7 @@ try {
                 .filter((stage) => stage.failureReason === "cancelled")
                 .map((stage) => stage.stage);
               requireCondition(cancelledStages.length >= 1, "The cancelled run did not attribute cancellation to a stage");
-              return { accepted: true, cancelled_stages: cancelledStages };
+              return { accepted: true, cancelled_stages: cancelledStages, cancelled_after_phase: outcome.firstPhase };
             },
           );
 

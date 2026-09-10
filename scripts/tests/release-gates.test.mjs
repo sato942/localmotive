@@ -855,21 +855,40 @@ test("research anchor gate rejects an independent review for another research tr
   assert.ok(result.failures.includes("verification:independent-review-tree"));
 });
 
-test("packaged catalog harness drives React state without a production test hook", async () => {
+test("packaged verifier contains no private React-state injection (QD-03)", async () => {
   const source = await readFile(join(process.cwd(), "scripts", "verify_041.mjs"), "utf8");
-  assert.match(source, /__reactFiber\$/);
-  assert.match(source, /findIndex/);
-  assert.match(source, /queue\.dispatch/);
-  assert.doesNotMatch(source, /hardwareIndex \+ 2/);
-  assert.doesNotMatch(source, /hooks\[5\]/);
+  // The fiber walk and dispatch extraction are gone: presentation states
+  // live in the jsdom component tests (src/App.catalog.test.tsx), and the
+  // verifier speaks only through the real IPC boundary and the DOM.
+  assert.doesNotMatch(source, /__reactFiber\$/);
+  assert.doesNotMatch(source, /memoizedState/);
+  assert.doesNotMatch(source, /queue\.dispatch/);
+  assert.doesNotMatch(source, /__LM_VERIFY_SET_CATALOG/);
   assert.doesNotMatch(source, /__LM_VERIFY_ORIGINAL_INVOKE/);
   assert.doesNotMatch(source, /Page\.addScriptToEvaluateOnNewDocument/);
-  // Shape-scan contract, proven live against the production fiber
-  // (hardware=3, catalog=5, error=NULL=6, loading=7): the catalog
-  // predicate must exclude null, the error predicate must accept null
-  // with dispatch, and the scan must not use a fixed offset.
-  assert.match(source, /memoizedState !== null/);
-  assert.match(source, /Array\.isArray\(entry\.memoizedState\.options\)/);
+  // Genuine replacements stay: the real catalog fetch check and the
+  // relational card-invariant check.
+  assert.match(source, /ipc\.runtime-catalog-fetch/);
+  assert.match(source, /ui\.runtime-cards/);
+});
+
+test("packaged cancellation check cancels on a backend progress phase, not a fixed sleep (QD-03)", async () => {
+  const source = await readFile(join(process.cwd(), "scripts", "verify_041.mjs"), "utf8");
+  assert.match(source, /health-model-progress/);
+  assert.match(source, /sawPhase/);
+  assert.match(source, /plugin:event\|listen/);
+  const cancellation = source.split("health.cancellation")[1].split("health.restart")[0];
+  assert.doesNotMatch(cancellation, /setTimeout\(resolvePromise, 250\)/);
+});
+
+test("component test environment owns the catalog presentation scenarios (QD-02, QD-03)", async () => {
+  const source = await readFile(join(process.cwd(), "src", "App.catalog.test.tsx"), "utf8");
+  assert.match(source, /@vitest-environment jsdom/);
+  assert.match(source, /vi\.mock\("@tauri-apps\/api\/core"/);
+  assert.match(source, /No curated model matches these filters/);
+  assert.match(source, /COOLDOWN/);
+  assert.match(source, /runtime-catalog-message/);
+  assert.match(source, /rate-limited|retry after 60 seconds/);
 });
 
 test("packaged verifier requires successful health, cancellation, and restart", async () => {
