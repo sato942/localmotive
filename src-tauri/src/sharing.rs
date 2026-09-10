@@ -105,6 +105,31 @@ pub struct PrivacyReview {
     pub requires_user_confirmation: bool,
 }
 
+/// One bounded failure category in the public summary. Codes come from the
+/// attempt outcome vocabulary only; raw error strings never travel
+/// (audit MT-02).
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PublicFailureCategory {
+    pub code: String,
+    pub count: u32,
+}
+
+/// The public, shareable summary: counts and numeric statistics only. It is
+/// built from the internal summary plus the observations that back its
+/// counts, so a valid share can never contain a raw trial error (MT-02).
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PublicBenchmarkSummary {
+    pub successful_trials: u32,
+    pub failed_trials: u32,
+    pub prefill_tps: Option<crate::measurement::MetricStats>,
+    pub decode_tps: crate::measurement::MetricStats,
+    pub first_token_ms: Option<crate::measurement::MetricStats>,
+    pub derived_ttft_ms: Option<crate::measurement::MetricStats>,
+    pub failure_categories: Vec<PublicFailureCategory>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ShareBundle {
@@ -119,7 +144,7 @@ pub struct ShareBundle {
     pub warmup_outcomes: Vec<AttemptOutcome>,
     pub observations: Vec<ShareObservation>,
     pub terminal_outcome: Option<AttemptOutcome>,
-    pub summary: Option<BenchmarkSummaryV2>,
+    pub summary: Option<PublicBenchmarkSummary>,
     pub quality: Option<ShareQuality>,
     pub privacy_review: PrivacyReview,
 }
@@ -141,6 +166,30 @@ fn validate_public_text(label: &str, value: &str, max_bytes: usize) -> Result<()
         return Err(format!("{label} contains private or path-like text"));
     }
     Ok(())
+}
+
+/// A public export may only carry evidence whose free-form source detail was
+/// replaced with an approved identifier and whose notes were dropped; this
+/// runs at construction and at every direct persistence boundary
+/// (audit MT-02 I3).
+fn validate_public_evidence<T>(label: &str, evidence: &Evidence<T>) -> Result<(), String> {
+    if !evidence.notes.is_empty() {
+        return Err(format!("{label}.notes must be empty in a public export"));
+    }
+    if !evidence
+        .source
+        .detail
+        .starts_with(PUBLIC_SOURCE_DETAIL_PREFIX)
+    {
+        return Err(format!(
+            "{label}.source.detail must use the public export source vocabulary"
+        ));
+    }
+    validate_public_text(
+        &format!("{label}.source.detail"),
+        &evidence.source.detail,
+        128,
+    )
 }
 
 fn validate_metric_stats(
@@ -170,6 +219,93 @@ fn validate_metric_stats(
         return Err(format!("{label} contains invalid statistics"));
     }
     Ok(())
+}
+
+/// The only source-detail shape allowed into a public export.
+pub const PUBLIC_SOURCE_DETAIL_PREFIX: &str = "public export source: ";
+
+fn public_source_detail(kind: crate::evidence::EvidenceSourceKind) -> String {
+    use crate::evidence::EvidenceSourceKind;
+    let label = match kind {
+        EvidenceSourceKind::FileSystem => "file-system",
+        EvidenceSourceKind::GgufMetadata => "gguf-metadata",
+        EvidenceSourceKind::Runtime => "runtime",
+        EvidenceSourceKind::WindowsApi => "windows-api",
+        EvidenceSourceKind::NvidiaSmi => "nvidia-smi",
+        EvidenceSourceKind::Cim => "cim",
+        EvidenceSourceKind::User => "user",
+        EvidenceSourceKind::Catalog => "catalog",
+        EvidenceSourceKind::Benchmark => "benchmark",
+        EvidenceSourceKind::Calculation => "calculation",
+        EvidenceSourceKind::Policy => "policy",
+        EvidenceSourceKind::Import => "import",
+        EvidenceSourceKind::Unknown => "unknown",
+    };
+    format!("{PUBLIC_SOURCE_DETAIL_PREFIX}{label}")
+}
+
+/// Rebuild one evidence value for public export: value, level, kind, and
+/// timestamp survive; free-form source detail becomes an approved identifier
+/// and notes are dropped (audit MT-02 I2).
+fn public_evidence<T: Clone>(evidence: &Evidence<T>) -> Evidence<T> {
+    Evidence {
+        value: evidence.value.clone(),
+        level: evidence.level,
+        source: crate::evidence::EvidenceSource {
+            kind: evidence.source.kind,
+            detail: public_source_detail(evidence.source.kind),
+        },
+        observed_at_ms: evidence.observed_at_ms,
+        notes: Vec::new(),
+    }
+}
+
+fn public_failure_category_code(outcome: AttemptOutcome) -> &'static str {
+    match outcome {
+        AttemptOutcome::Succeeded => "succeeded",
+        AttemptOutcome::Failed => "failed",
+        AttemptOutcome::TimedOut => "timed-out",
+        AttemptOutcome::Cancelled => "cancelled",
+    }
+}
+
+const PUBLIC_FAILURE_CODES: &[&str] = &["failed", "timed-out", "cancelled"];
+
+fn public_summary(
+    summary: &BenchmarkSummaryV2,
+    observations: &[crate::evidence::BenchmarkObservation],
+) -> Result<PublicBenchmarkSummary, String> {
+    let mut categories: Vec<PublicFailureCategory> = Vec::new();
+    for observation in observations {
+        if observation.outcome == AttemptOutcome::Succeeded {
+            continue;
+        }
+        let code = public_failure_category_code(observation.outcome);
+        match categories.iter_mut().find(|category| category.code == code) {
+            Some(category) => category.count += 1,
+            None => categories.push(PublicFailureCategory {
+                code: code.into(),
+                count: 1,
+            }),
+        }
+    }
+    categories.sort_by(|left, right| left.code.cmp(&right.code));
+    let category_total: u32 = categories.iter().map(|category| category.count).sum();
+    let failed_trials = u32::try_from(summary.failed_trials)
+        .map_err(|_| "Share summary failure count is out of range".to_string())?;
+    if category_total != failed_trials {
+        return Err("Share summary failure counts do not match the benchmark observations".into());
+    }
+    Ok(PublicBenchmarkSummary {
+        successful_trials: u32::try_from(summary.successful_trials)
+            .map_err(|_| "Share summary success count is out of range".to_string())?,
+        failed_trials,
+        prefill_tps: summary.prefill_tps.clone(),
+        decode_tps: summary.decode_tps.clone(),
+        first_token_ms: summary.first_token_ms.clone(),
+        derived_ttft_ms: summary.derived_ttft_ms.clone(),
+        failure_categories: categories,
+    })
 }
 
 pub fn validate_share_bundle(bundle: &ShareBundle) -> Result<(), String> {
@@ -276,6 +412,42 @@ pub fn validate_share_bundle(bundle: &ShareBundle) -> Result<(), String> {
             }
         }
         validate_metric_stats("summary.decodeTps", &summary.decode_tps)?;
+        // The public summary may contain counts and bounded category codes
+        // only; anything else is not a valid public export (audit MT-02).
+        if summary.failure_categories.len() > PUBLIC_FAILURE_CODES.len() {
+            return Err("summary.failureCategories exceeds the bounded vocabulary".into());
+        }
+        let mut seen = Vec::new();
+        let mut total = 0_u32;
+        for category in &summary.failure_categories {
+            if !PUBLIC_FAILURE_CODES.contains(&category.code.as_str()) || category.count == 0 {
+                return Err("summary.failureCategories contains an unbounded category".into());
+            }
+            if seen.contains(&category.code) {
+                return Err("summary.failureCategories repeats a category".into());
+            }
+            seen.push(category.code.clone());
+            total = total.saturating_add(category.count);
+        }
+        if total != summary.failed_trials {
+            return Err("summary.failureCategories do not sum to summary.failedTrials".into());
+        }
+    }
+    for (index, hardware) in bundle.hardware.iter().enumerate() {
+        for (label, evidence) in [
+            ("dedicatedBytes", &hardware.dedicated_bytes),
+            ("sharedBytes", &hardware.shared_bytes),
+            ("budgetBytes", &hardware.budget_bytes),
+        ] {
+            validate_public_evidence(&format!("hardware[{index}].{label}"), evidence)?;
+        }
+    }
+    validate_public_evidence("launch.effectiveContext", &bundle.launch.effective_context)?;
+    for (index, observation) in bundle.observations.iter().enumerate() {
+        validate_public_evidence(
+            &format!("observations[{index}].peakProcessRssBytes"),
+            &observation.peak_process_rss_bytes,
+        )?;
     }
     if let Some(quality) = bundle.quality.as_ref() {
         validate_public_text("quality.suiteId", &quality.suite_id, 128)?;
@@ -474,14 +646,14 @@ pub fn build_share_bundle(
                 vendor: item.vendor.clone(),
                 backend: item.backend.clone(),
                 driver: item.driver.clone(),
-                dedicated_bytes: item.dedicated_bytes.clone(),
-                shared_bytes: item.shared_bytes.clone(),
-                budget_bytes: item.budget_bytes.clone(),
+                dedicated_bytes: public_evidence(&item.dedicated_bytes),
+                shared_bytes: public_evidence(&item.shared_bytes),
+                budget_bytes: public_evidence(&item.budget_bytes),
             })
             .collect(),
         launch: ShareLaunch {
             requested_context: launch.requested_context,
-            effective_context: launch.effective_context.clone(),
+            effective_context: public_evidence(&launch.effective_context),
             parallel: launch.parallel,
             gpu_layers: launch.gpu_layers.clone(),
             batch: launch.batch,
@@ -511,15 +683,20 @@ pub fn build_share_bundle(
                 decode_tps: item.decode_tps,
                 first_token_ms: item.first_token_ms,
                 derived_ttft_ms: item.derived_ttft_ms,
-                peak_process_rss_bytes: item.peak_process_rss_bytes.clone(),
+                peak_process_rss_bytes: public_evidence(&item.peak_process_rss_bytes),
                 outcome: item.outcome,
                 succeeded: item.outcome == AttemptOutcome::Succeeded,
             })
             .collect(),
         terminal_outcome: manifest.terminal_outcome,
-        summary: summary.cloned(),
+        summary: summary
+            .map(|summary| public_summary(summary, &manifest.observations))
+            .transpose()?,
         quality,
         privacy_review: PrivacyReview {
+            // Describe the actual serialized policy (audit MT-02 I3): raw
+            // errors never travel, and evidence free text is replaced by an
+            // approved source vocabulary.
             omitted_fields: vec![
                 "filesystemPaths".into(),
                 "hostnames".into(),
@@ -527,6 +704,8 @@ pub fn build_share_bundle(
                 "credentialsAndArguments".into(),
                 "rawErrors".into(),
                 "adapterStableIds".into(),
+                "evidenceSourceDetails".into(),
+                "evidenceNotes".into(),
             ],
             requires_user_confirmation: true,
         },
@@ -544,17 +723,21 @@ mod tests {
     };
 
     fn observed_context(value: u32) -> Evidence<u32> {
-        Evidence::known(
-            value,
-            crate::evidence::EvidenceLevel::Observed,
-            crate::evidence::EvidenceSource {
-                kind: crate::evidence::EvidenceSourceKind::Runtime,
-                detail: "llama-server GET /props fixture".into(),
-            },
-            42,
-            Vec::new(),
+        // Persisted/public fixtures carry the sanitized source vocabulary,
+        // because the validator now enforces it at every boundary.
+        public_evidence(
+            &Evidence::known(
+                value,
+                crate::evidence::EvidenceLevel::Observed,
+                crate::evidence::EvidenceSource {
+                    kind: crate::evidence::EvidenceSourceKind::Runtime,
+                    detail: "llama-server GET /props fixture".into(),
+                },
+                42,
+                Vec::new(),
+            )
+            .unwrap(),
         )
-        .unwrap()
     }
 
     fn manifest_fixture() -> BenchmarkManifest {
@@ -611,19 +794,171 @@ mod tests {
         assert!(require_export_confirmation(true).is_ok());
     }
 
+    fn mixed_manifest_with_nested_canaries() -> BenchmarkManifest {
+        // One successful and one failed observation, with distinct path,
+        // account-name, secret, and nested-evidence canaries in the raw
+        // failure and in nested notes/details (audit MT-02 V1/V2).
+        let mut manifest = manifest_fixture();
+        manifest.model.as_mut().unwrap().shards = vec![FileFact {
+            path: r"C:\Users\Mubarak\private-model.gguf".into(),
+            bytes: 1_000,
+            sha256: Some("c".repeat(64)),
+        }];
+        let mut success = BenchmarkObservation {
+            trial: 1,
+            started_at_ms: 42,
+            duration_ms: 0.5,
+            prompt_tokens: 512,
+            cached_prompt_tokens: 0,
+            generated_tokens: 256,
+            prefill_tps: Some(100.0),
+            decode_tps: Some(50.0),
+            first_token_ms: Some(10.0),
+            derived_ttft_ms: Some(11.0),
+            peak_process_rss_bytes: Evidence::known(
+                1_024,
+                crate::evidence::EvidenceLevel::Observed,
+                crate::evidence::EvidenceSource {
+                    kind: crate::evidence::EvidenceSourceKind::Runtime,
+                    detail: "NESTED-DETAIL-CANARY".into(),
+                },
+                42,
+                vec!["NESTED-NOTE-CANARY".into()],
+            )
+            .unwrap(),
+            outcome: AttemptOutcome::Succeeded,
+            error: None,
+        };
+        let failed = BenchmarkObservation {
+            trial: 2,
+            started_at_ms: 43,
+            duration_ms: 0.4,
+            outcome: AttemptOutcome::Failed,
+            error: Some(
+                "launch failed for C:\\Users\\Mubarak under account sato942 with api-key super-secret; LOGTail-CANARY"
+                    .into(),
+            ),
+            ..BenchmarkObservation::default()
+        };
+        // Keep the success in a local variable name that the compiler allows.
+        success.trial = 1;
+        manifest.observations = vec![success, failed];
+        manifest.hardware = vec![crate::evidence::HardwareFact {
+            adapter_id: "adapter-0".into(),
+            name: "Test GPU".into(),
+            vendor: "NVIDIA".into(),
+            backend: Some("cuda".into()),
+            driver: Some("1".into()),
+            current_usage_bytes: Evidence::unknown(
+                crate::evidence::EvidenceSource {
+                    kind: crate::evidence::EvidenceSourceKind::Unknown,
+                    detail: "NESTED-DETAIL-CANARY".into(),
+                },
+                42,
+                "NESTED-NOTE-CANARY",
+            ),
+            dedicated_bytes: Evidence::known(
+                8,
+                crate::evidence::EvidenceLevel::Observed,
+                crate::evidence::EvidenceSource {
+                    kind: crate::evidence::EvidenceSourceKind::NvidiaSmi,
+                    detail: "NESTED-DETAIL-CANARY".into(),
+                },
+                42,
+                vec!["NESTED-NOTE-CANARY".into()],
+            )
+            .unwrap(),
+            shared_bytes: Evidence::unknown(
+                crate::evidence::EvidenceSource {
+                    kind: crate::evidence::EvidenceSourceKind::Unknown,
+                    detail: "NESTED-DETAIL-CANARY".into(),
+                },
+                42,
+                "NESTED-NOTE-CANARY",
+            ),
+            budget_bytes: Evidence::unknown(
+                crate::evidence::EvidenceSource {
+                    kind: crate::evidence::EvidenceSourceKind::Unknown,
+                    detail: "NESTED-DETAIL-CANARY".into(),
+                },
+                42,
+                "NESTED-NOTE-CANARY",
+            ),
+        }];
+        if let Some(launch) = manifest.launch.as_mut() {
+            launch.effective_context.notes = vec!["NESTED-NOTE-CANARY".into()];
+        }
+        manifest
+    }
+
     #[test]
     fn privacy_export_excludes_paths_prompts_credentials_and_raw_errors() {
-        let manifest = manifest_fixture();
+        let manifest = mixed_manifest_with_nested_canaries();
+        let summary = crate::measurement::summarize_observations(&manifest.observations).unwrap();
 
-        let export = build_share_bundle(&manifest, None, None, "e".repeat(64), 42).unwrap();
+        let export = build_share_bundle(&manifest, Some(&summary), None, "e".repeat(64), 42)
+            .expect("a mixed manifest with a valid summary must export");
         let json = serde_json::to_string(&export).unwrap();
 
-        assert!(!json.contains("Mubarak"));
-        assert!(!json.contains("super-secret"));
-        assert!(!json.contains("api-key"));
-        assert!(!json.contains("private-model.gguf"));
+        for canary in [
+            "Mubarak",
+            "sato942",
+            "super-secret",
+            "api-key",
+            "private-model.gguf",
+            "NESTED-DETAIL-CANARY",
+            "NESTED-NOTE-CANARY",
+            "LOGTail-CANARY",
+        ] {
+            assert!(
+                !json.contains(canary),
+                "{canary} leaked through the public export: {json}"
+            );
+        }
         assert!(json.contains("model-structural-id"));
         assert!(json.contains("privacyReview"));
+        assert!(json.contains("evidenceSourceDetails"));
+        // Useful counts and numeric statistics survive the redaction.
+        assert!(json.contains("\"decodeTps\""), "{json}");
+        assert!(json.contains("\"failureCategories\""), "{json}");
+        assert!(json.contains("\"successfulTrials\":1"), "{json}");
+        assert!(json.contains("\"failedTrials\":1"), "{json}");
+        assert!(json.contains("\"code\":\"failed\""), "{json}");
+        assert!(json.contains("public export source:"), "{json}");
+        // The privacy review describes the actual serialized policy.
+        assert!(json.contains("rawErrors"));
+        assert!(json.contains("evidenceNotes"));
+    }
+
+    #[test]
+    fn mt02_direct_persistence_rejects_unsanitized_evidence_and_raw_failure_text() {
+        // The stronger validator must hold at the direct persistence boundary
+        // too: a hand-supplied bundle with nested free text is refused
+        // (audit MT-02 I3).
+        let manifest = mixed_manifest_with_nested_canaries();
+        let summary = crate::measurement::summarize_observations(&manifest.observations).unwrap();
+        let mut export =
+            build_share_bundle(&manifest, Some(&summary), None, "e".repeat(64), 42).unwrap();
+        // A tampered bundle: reintroduce a note after construction.
+        export.hardware[0].shared_bytes.notes = vec!["NESTED-NOTE-CANARY".into()];
+        let directory =
+            std::env::temp_dir().join(format!("localmotive-share-boundary-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let target = directory.join("tampered.json");
+        let error = persist_share_bundle(&target, &export).unwrap_err();
+        assert!(error.contains("notes must be empty"), "{error}");
+        assert!(!target.exists(), "a rejected export must not be written");
+
+        // And an unbounded failure category is refused the same way.
+        let mut export =
+            build_share_bundle(&manifest, Some(&summary), None, "e".repeat(64), 42).unwrap();
+        if let Some(pub_summary) = export.summary.as_mut() {
+            pub_summary.failure_categories[0].code = "raw: C:\\Users\\Mubarak".into();
+        }
+        let error = persist_share_bundle(&target, &export).unwrap_err();
+        assert!(error.contains("unbounded category"), "{error}");
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     #[test]

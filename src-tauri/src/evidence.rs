@@ -561,7 +561,13 @@ pub struct BenchmarkObservation {
     pub trial: u16,
     pub started_at_ms: u64,
     pub duration_ms: f64,
+    /// Prompt tokens the runtime evaluated this request (`timings.prompt_n`).
     pub prompt_tokens: u32,
+    /// Prompt tokens restored from the runtime's prompt cache
+    /// (`timings.cache_n`, b10816 semantics). A warm trial is valid when
+    /// processed + cached equals the requested prompt size (audit MT-01).
+    #[serde(default)]
+    pub cached_prompt_tokens: u32,
     pub generated_tokens: u32,
     pub prefill_tps: Option<f64>,
     pub decode_tps: Option<f64>,
@@ -585,6 +591,7 @@ impl Default for BenchmarkObservation {
             started_at_ms: 0,
             duration_ms: 0.0,
             prompt_tokens: 0,
+            cached_prompt_tokens: 0,
             generated_tokens: 0,
             prefill_tps: None,
             decode_tps: None,

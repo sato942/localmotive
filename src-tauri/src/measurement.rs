@@ -80,7 +80,10 @@ fn validate_observation(observation: &BenchmarkObservation) -> Result<(), String
     }
     if observation.outcome == AttemptOutcome::Succeeded
         && (observation.decode_tps.is_none()
-            || observation.prompt_tokens == 0
+            || observation
+                .prompt_tokens
+                .saturating_add(observation.cached_prompt_tokens)
+                == 0
             || observation.generated_tokens == 0)
     {
         return Err(format!(
@@ -89,6 +92,26 @@ fn validate_observation(observation: &BenchmarkObservation) -> Result<(), String
         ));
     }
     Ok(())
+}
+
+/// Bound one acquisition-time failure string so a rich launch error (which
+/// can carry a runtime log tail) can never make the final manifest fail
+/// validation and discard the whole run, including earlier successes
+/// (audit MT-12). The cut is Unicode-safe and the truncation is explicit.
+pub const MAX_OBSERVATION_ERROR_BYTES: usize = 4_096;
+
+pub fn bound_observation_error(error: &str) -> String {
+    const MARKER: &str =
+        " … [message truncated; the full runtime output remains in the local run log]";
+    if error.len() <= MAX_OBSERVATION_ERROR_BYTES {
+        return error.to_string();
+    }
+    let budget = MAX_OBSERVATION_ERROR_BYTES.saturating_sub(MARKER.len());
+    let mut cut = budget;
+    while cut > 0 && !error.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    format!("{}{MARKER}", &error[..cut])
 }
 
 fn metric_stats(values: impl Iterator<Item = f64>) -> Option<MetricStats> {
@@ -188,7 +211,13 @@ pub fn summarize_observations(
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CompletionTiming {
+    /// Prompt tokens the runtime evaluated for this request (`prompt_n`).
     pub prompt_tokens: u32,
+    /// Prompt tokens restored from the runtime prompt cache (`cache_n`,
+    /// b10816 semantics). The requested prompt is complete when
+    /// `prompt_tokens + cached_prompt_tokens` equals the requested size
+    /// (audit MT-01).
+    pub cached_prompt_tokens: u32,
     pub generated_tokens: u32,
     pub prefill_tps: f64,
     pub decode_tps: f64,
@@ -261,8 +290,19 @@ pub fn parse_completion_timing(body: &str) -> Result<CompletionTiming, String> {
         .get("first_token_ms")
         .and_then(serde_json::Value::as_f64)
         .filter(|value| value.is_finite() && *value > 0.0);
+    // `cache_n` is absent on runtimes without prompt caching: treat the
+    // whole prompt as processed in that case, and reject a present value
+    // that is not a token count.
+    let cached_prompt_tokens = match timings.get("cache_n") {
+        None | Some(serde_json::Value::Null) => 0,
+        Some(value) => value
+            .as_u64()
+            .and_then(|value| u32::try_from(value).ok())
+            .ok_or("llama-server timing cache_n must be a non-negative token count")?,
+    };
     Ok(CompletionTiming {
         prompt_tokens: tokens("prompt_n")?,
+        cached_prompt_tokens,
         generated_tokens: tokens("predicted_n")?,
         prefill_tps: positive("prompt_per_second")?,
         decode_tps: positive("predicted_per_second")?,
@@ -334,7 +374,7 @@ where
                     started_at_ms,
                     duration_ms,
                     outcome,
-                    error: Some(error),
+                    error: Some(bound_observation_error(&error)),
                 });
                 run.terminal_outcome = Some(outcome);
                 return Ok(run);
@@ -363,6 +403,7 @@ where
                 started_at_ms,
                 duration_ms,
                 prompt_tokens: timing.prompt_tokens,
+                cached_prompt_tokens: timing.cached_prompt_tokens,
                 generated_tokens: timing.generated_tokens,
                 prefill_tps: Some(timing.prefill_tps),
                 decode_tps: Some(timing.decode_tps),
@@ -374,12 +415,14 @@ where
             },
             Err(error) => {
                 let outcome = failed_outcome(&error);
+                // Bounded at acquisition: outcome/category first, then the
+                // visible truncation marker (audit MT-12).
                 BenchmarkObservation {
                     trial,
                     started_at_ms,
                     duration_ms,
                     outcome,
-                    error: Some(error),
+                    error: Some(bound_observation_error(&error)),
                     ..BenchmarkObservation::default()
                 }
             }
@@ -561,10 +604,18 @@ fn completion_request_with_prompt_tokens_inner(
     .to_string();
     let payload = post_json(host, port, "/completion", &body, timeout, cancelled)?;
     let timing = parse_completion_timing(&payload)?;
-    if timing.prompt_tokens != workload.prompt_tokens {
+    // b10816 reports newly evaluated prompt tokens separately from tokens
+    // restored from the prompt cache; the requested prompt is fully accounted
+    // for when both counts sum to the requested size. This keeps cached warm
+    // trials valid without accepting a genuinely wrong workload (audit MT-01).
+    let accounted_prompt_tokens = timing
+        .prompt_tokens
+        .checked_add(timing.cached_prompt_tokens)
+        .ok_or("llama-server prompt token counts overflowed")?;
+    if accounted_prompt_tokens != workload.prompt_tokens {
         return Err(format!(
-            "llama-server evaluated {} prompt tokens; expected {}",
-            timing.prompt_tokens, workload.prompt_tokens
+            "llama-server evaluated {} prompt tokens and restored {} from cache; expected a total of {}",
+            timing.prompt_tokens, timing.cached_prompt_tokens, workload.prompt_tokens
         ));
     }
     if timing.generated_tokens != workload.generation_tokens {
@@ -791,6 +842,7 @@ mod tests {
             started_at_ms: 42 + u64::from(trial),
             duration_ms: 100.0,
             prompt_tokens: 32,
+            cached_prompt_tokens: 0,
             generated_tokens: 16,
             prefill_tps: decode_tps.map(|value| value * 2.0),
             decode_tps,
@@ -904,6 +956,7 @@ mod tests {
             } else {
                 Ok(CompletionTiming {
                     prompt_tokens: 32,
+                    cached_prompt_tokens: 0,
                     generated_tokens: 16,
                     prefill_tps: 100.0,
                     decode_tps: 50.0,
@@ -949,6 +1002,7 @@ mod tests {
         let run = run_workload_with(&workload, &AtomicBool::new(false), || {
             Ok(CompletionTiming {
                 prompt_tokens: workload.prompt_tokens,
+                cached_prompt_tokens: 0,
                 generated_tokens: workload.generation_tokens,
                 prefill_tps: 100.0,
                 decode_tps: 50.0,
@@ -1072,6 +1126,7 @@ mod tests {
             fresh_runtime_starts += 1;
             Ok(CompletionTiming {
                 prompt_tokens: workload.prompt_tokens,
+                cached_prompt_tokens: 0,
                 generated_tokens: workload.generation_tokens,
                 prefill_tps: 100.0,
                 decode_tps: 50.0,
@@ -1212,7 +1267,12 @@ mod tests {
 
         let error = completion_request("127.0.0.1", port, &workload).unwrap_err();
 
-        assert!(error.contains("evaluated 4 prompt tokens; expected 5"));
+        assert!(
+            error.contains(
+                "evaluated 4 prompt tokens and restored 0 from cache; expected a total of 5"
+            ),
+            "{error}"
+        );
         server.join().unwrap();
     }
 
@@ -1451,5 +1511,277 @@ mod tests {
         .unwrap_err();
 
         assert!(error.contains("compatibility identity"));
+    }
+
+    /// Serve `attempts` benchmark attempts: for each, one tokenize response
+    /// and one completion response whose body comes from `bodies[index]`.
+    fn serve_cache_protocol(bodies: Vec<String>) -> (u16, std::thread::JoinHandle<Vec<String>>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = thread::spawn(move || {
+            let mut seen = Vec::new();
+            for body in &bodies {
+                let (mut tokenize_stream, _) = listener.accept().unwrap();
+                seen.push(read_http_request(&mut tokenize_stream));
+                let tokenize_body = format!(r#"{{"tokens":[{}]}}"#, ["10"; 8].join(","));
+                write!(
+                    tokenize_stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    tokenize_body.len(),
+                    tokenize_body
+                )
+                .unwrap();
+                drop(tokenize_stream);
+
+                let (mut completion_stream, _) = listener.accept().unwrap();
+                seen.push(read_http_request(&mut completion_stream));
+                write!(
+                    completion_stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .unwrap();
+                drop(completion_stream);
+            }
+            seen
+        });
+        (port, handle)
+    }
+
+    fn cached_timing_body(prompt_n: u32, cache_n: u32, predicted_n: u32) -> String {
+        format!(
+            r#"{{"timings":{{"prompt_n":{prompt_n},"cache_n":{cache_n},"prompt_ms":80.0,"prompt_per_second":50.0,"predicted_n":{predicted_n},"predicted_ms":40.0,"predicted_per_second":50.0,"predicted_per_token_ms":20.0}}}}"#
+        )
+    }
+
+    #[test]
+    fn mt01_warm_cache_reuse_is_counted_against_processed_plus_cached_tokens() {
+        // b10816: the first request processes the whole prompt, later requests
+        // restore it from cache. The default warm protocol must accept the
+        // cached hit (audit MT-01 V1).
+        let bodies = vec![
+            cached_timing_body(512, 0, 256),
+            cached_timing_body(1, 511, 256),
+            cached_timing_body(1, 511, 256),
+        ];
+        let (port, server) = serve_cache_protocol(bodies);
+        let workload = Workload {
+            prompt_tokens: 512,
+            generation_tokens: 256,
+            warmups: 1,
+            trials: 2,
+            ..Workload::default()
+        };
+        let cancelled = AtomicBool::new(false);
+        let run = run_workload_with(&workload, &cancelled, || {
+            completion_request("127.0.0.1", port, &workload)
+        })
+        .unwrap();
+        let requests = server.join().unwrap();
+
+        assert_eq!(run.warmups.len(), 1);
+        assert_eq!(run.warmups[0].outcome, AttemptOutcome::Succeeded);
+        assert_eq!(run.observations.len(), 2);
+        for observation in &run.observations {
+            assert_eq!(
+                observation.outcome,
+                AttemptOutcome::Succeeded,
+                "{observation:?}"
+            );
+            assert_eq!(observation.prompt_tokens, 1);
+            assert_eq!(observation.cached_prompt_tokens, 511);
+            assert_eq!(observation.generated_tokens, 256);
+        }
+        // The protocol is genuinely warm: later requests ask for prompt reuse.
+        assert!(
+            requests
+                .iter()
+                .filter(|request| request.contains("cache_prompt"))
+                .count()
+                >= 2,
+            "warm requests must be explicit about cache policy"
+        );
+        let summary = summarize_observations(&run.observations).unwrap();
+        assert_eq!(summary.successful_trials, 2);
+    }
+
+    #[test]
+    fn mt01_inconsistent_or_missing_cache_accounting_is_rejected() {
+        // (a) A runtime without cache_n still works: absent means 0 cached.
+        let bodies = vec![
+            r#"{"timings":{"prompt_n":512,"prompt_ms":80.0,"prompt_per_second":50.0,"predicted_n":256,"predicted_ms":40.0,"predicted_per_second":50.0,"predicted_per_token_ms":20.0}}"#.to_string(),
+        ];
+        let (port, server) = serve_cache_protocol(bodies);
+        let workload = Workload {
+            prompt_tokens: 512,
+            generation_tokens: 256,
+            warmups: 0,
+            trials: 1,
+            ..Workload::default()
+        };
+        let cancelled = AtomicBool::new(false);
+        let run = run_workload_with(&workload, &cancelled, || {
+            completion_request("127.0.0.1", port, &workload)
+        })
+        .unwrap();
+        server.join().unwrap();
+        assert_eq!(run.observations[0].outcome, AttemptOutcome::Succeeded);
+        assert_eq!(run.observations[0].cached_prompt_tokens, 0);
+
+        // (b) Processed + cached that miss the requested total are wrong.
+        let bodies = vec![cached_timing_body(1, 100, 256)];
+        let (port, server) = serve_cache_protocol(bodies);
+        let error = run_workload_with(&workload, &cancelled, || {
+            completion_request("127.0.0.1", port, &workload)
+        })
+        .unwrap();
+        server.join().unwrap();
+        assert_eq!(error.observations[0].outcome, AttemptOutcome::Failed);
+        assert!(
+            error.observations[0]
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("expected a total of 512"),
+            "{:?}",
+            error.observations[0].error
+        );
+
+        // (c) Cache accounting cannot excuse a short generation.
+        let bodies = vec![cached_timing_body(1, 511, 100)];
+        let (port, server) = serve_cache_protocol(bodies);
+        let short = run_workload_with(&workload, &cancelled, || {
+            completion_request("127.0.0.1", port, &workload)
+        })
+        .unwrap();
+        server.join().unwrap();
+        assert_eq!(short.observations[0].outcome, AttemptOutcome::Failed);
+        assert!(
+            short.observations[0]
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("generated 100 tokens"),
+            "{:?}",
+            short.observations[0].error
+        );
+
+        // (d) A non-numeric cache_n is a protocol error, not silently zero.
+        let bodies = vec![r#"{"timings":{"prompt_n":512,"cache_n":"lots","prompt_ms":80.0,"prompt_per_second":50.0,"predicted_n":256,"predicted_ms":40.0,"predicted_per_second":50.0,"predicted_per_token_ms":20.0}}"#.to_string()];
+        let (port, server) = serve_cache_protocol(bodies);
+        let malformed = run_workload_with(&workload, &cancelled, || {
+            completion_request("127.0.0.1", port, &workload)
+        })
+        .unwrap();
+        server.join().unwrap();
+        assert_eq!(malformed.observations[0].outcome, AttemptOutcome::Failed);
+        assert!(
+            malformed.observations[0]
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("cache_n"),
+            "{:?}",
+            malformed.observations[0].error
+        );
+    }
+
+    #[test]
+    fn mt12_oversize_failure_text_is_bounded_at_acquisition_with_a_visible_marker() {
+        // A rich cold-start failure (structured evidence plus a runtime log
+        // tail) must not turn into a manifest-validation rejection that
+        // discards the run (audit MT-12). The bound happens at acquisition.
+        let huge = format!(
+            "cold start failed: {}é{}",
+            "x".repeat(5_000),
+            "log tail with multibyte é characters; ".repeat(80)
+        );
+        assert!(huge.len() > MAX_OBSERVATION_ERROR_BYTES);
+        let workload = Workload {
+            warmups: 0,
+            trials: 1,
+            ..Workload::default()
+        };
+        let cancelled = AtomicBool::new(false);
+        let run = run_workload_with(&workload, &cancelled, || Err(huge.clone())).unwrap();
+
+        let stored = run.observations[0].error.as_deref().unwrap();
+        assert!(
+            stored.len() <= MAX_OBSERVATION_ERROR_BYTES,
+            "stored error is {} bytes",
+            stored.len()
+        );
+        assert!(stored.contains("[message truncated"), "{stored}");
+        assert!(stored.starts_with("cold start failed:"), "{stored}");
+        assert_eq!(run.observations[0].outcome, AttemptOutcome::Failed);
+        assert_eq!(
+            run.terminal_outcome, None,
+            "a failed trial is recorded, not terminal"
+        );
+
+        // Warmup failures take the same bound and do end the run.
+        let workload = Workload {
+            warmups: 1,
+            trials: 1,
+            ..Workload::default()
+        };
+        let run = run_workload_with(&workload, &cancelled, || Err(huge.clone())).unwrap();
+        let stored = run.warmups[0].error.as_deref().unwrap();
+        assert!(stored.len() <= MAX_OBSERVATION_ERROR_BYTES);
+        assert!(stored.contains("[message truncated"));
+        assert_eq!(run.terminal_outcome, Some(AttemptOutcome::Failed));
+
+        // Boundary: a message of exactly the limit is untouched.
+        let exact = "y".repeat(MAX_OBSERVATION_ERROR_BYTES);
+        assert_eq!(bound_observation_error(&exact), exact);
+        // One byte over: bounded with the marker, still valid UTF-8.
+        let over = format!("{exact}é");
+        let bounded = bound_observation_error(&over);
+        assert!(bounded.len() <= MAX_OBSERVATION_ERROR_BYTES);
+        assert!(bounded.contains("[message truncated"));
+    }
+
+    #[test]
+    fn mt12_successful_observations_survive_a_later_oversize_failure() {
+        // Two good trials plus one oversized failure: the summary and the
+        // earlier measurements must survive finalization (audit MT-12 V2).
+        let huge = "z".repeat(9_000);
+        let attempts = AtomicBool::new(false);
+        let workload = Workload {
+            warmups: 0,
+            trials: 3,
+            ..Workload::default()
+        };
+        let cancelled = AtomicBool::new(false);
+        let mut index = 0;
+        let run = run_workload_with(&workload, &cancelled, || {
+            index += 1;
+            if index == 2 {
+                Err(huge.clone())
+            } else {
+                Ok(CompletionTiming {
+                    prompt_tokens: workload.prompt_tokens,
+                    cached_prompt_tokens: 0,
+                    generated_tokens: workload.generation_tokens,
+                    prefill_tps: 100.0,
+                    decode_tps: 50.0,
+                    first_token_ms: None,
+                    derived_ttft_ms: 25.0,
+                    peak_process_rss_bytes: unknown_process_peak_rss_bytes(),
+                })
+            }
+        })
+        .unwrap();
+        let _ = &attempts;
+
+        assert_eq!(run.observations.len(), 3);
+        assert_eq!(run.observations[0].outcome, AttemptOutcome::Succeeded);
+        assert_eq!(run.observations[2].outcome, AttemptOutcome::Succeeded);
+        let failure = run.observations[1].error.as_deref().unwrap();
+        assert!(failure.len() <= MAX_OBSERVATION_ERROR_BYTES);
+        let summary = summarize_observations(&run.observations).unwrap();
+        assert_eq!(summary.successful_trials, 2);
+        assert_eq!(summary.failed_trials, 1);
     }
 }
