@@ -13,23 +13,33 @@ The same executable provides the local API and optional WebUI.
 ## Download
 
 Download the current release from [GitHub Releases][releases].
+The current tip ships as **Latest** on the repository home page.
 
-Release 0.3.0 provides these Windows x64 files:
+Each release provides these Windows x64 files:
 
-- `Localmotive_0.3.0_x64-setup.exe` is the NSIS installer.
-- `Localmotive_0.3.0_x64.msi` is the MSI installer.
-- `Localmotive_0.3.0_x64-portable.exe` runs without installation.
-- `SHA256SUMS-0.3.0.txt` covers the three application files.
+- `Localmotive_<version>_x64-setup.exe` is the NSIS installer.
+- `Localmotive_<version>_x64.msi` is the MSI installer.
+- `Localmotive_<version>_x64-portable.exe` runs without installation.
+- `SHA256SUMS-<version>.txt` covers the three application files.
+- `packaged-verification-<version>.json` is the packaged behavior evidence.
+- `candidate-inventory-<version>.json` is the candidate size and digest evidence.
 
-The 0.3.0 application files do not have Authenticode signatures.
+For example, release 0.4.1 ships `Localmotive_0.4.1_x64-setup.exe`,
+`Localmotive_0.4.1_x64.msi`, `Localmotive_0.4.1_x64-portable.exe`,
+and `SHA256SUMS-0.4.1.txt`.
+
+The application files do not have Authenticode signatures.
+Signing is deferred by owner order, so every ship is honestly unsigned:
+the release name carries `(unsigned)`, the notes disclose SmartScreen,
+and no signature is claimed.
 
 Windows SmartScreen can show a warning when you start an unsigned file.
 
 Verify a downloaded file before use:
 
 ```powershell
-Get-FileHash .\Localmotive_0.3.0_x64-setup.exe -Algorithm SHA256
-Get-Content .\SHA256SUMS-0.3.0.txt
+Get-FileHash .\Localmotive_0.4.1_x64-setup.exe -Algorithm SHA256
+Get-Content .\SHA256SUMS-0.4.1.txt
 ```
 
 Compare the two SHA-256 values.
@@ -54,7 +64,8 @@ AI Tune also needs credentials and network access for one configured provider.
 
 Check model size and hardware requirements before each download.
 
-The bundled 0.3.0 catalog includes individual files larger than 25 GB.
+The bundled catalog holds 158 models and 1417 single-file GGUF builds
+(schemaVersion 2, updated 2026-09-10).
 Memory needs and speed depend on the model, quantization, context, backend,
 and computer hardware.
 
@@ -135,10 +146,12 @@ The 0.4.1 ARM64 assets remain dormant and do not create install options.
 
 ### Curated Hugging Face catalog
 
-- Browse a maintainer-curated list of GGUF files.
+- Browse a maintainer-curated list of GGUF files built from the allowlist in `catalog/providers.json`.
 - Search by repository, family, publisher, parameters, summary, and tags.
-- Filter by tag, quantization, gated status, and maximum file size.
+- Filter by tag, quantization, author, licence, pipeline, architecture, gated status, and maximum file size.
+- Narrow by recency: every entry carries `lastModified` from Hugging Face, and the allowlist covers repos updated in the last 90 days.
 - Sort by downloads, likes, repository name, or smallest file.
+- **Hardware fit** is on by default: the app reads detected dedicated VRAM, else shared memory, else system memory, and hides files above half that budget. The toggle explains its budget source, and the user can disable it or widen it to 25, 50, 75, or 100 percent of budget.
 - Download selected model bytes from Hugging Face to the model folder.
 - Use one connection when the server does not prove range support.
 - Use bounded parallel requests after valid range responses.
@@ -149,6 +162,10 @@ The 0.4.1 ARM64 assets remain dormant and do not create install options.
 - Reject symbolic links and Windows reparse points in the download path.
 - Accept network catalog changes only after Ed25519 verification.
 - Fall back to the signed cache or embedded catalog when necessary.
+
+The catalog file is schemaVersion 2. The allowlist ships inside the signed
+artifact, so adding a trusted author is a catalog publish, never an app
+release. The app binary holds no author list.
 
 The optional Hugging Face token supports authenticated Hub requests.
 The token also supports gated repositories accepted by the account.
@@ -267,6 +284,7 @@ They use Windows Credential Manager.
 - Child processes use `CREATE_NO_WINDOW` on Windows.
 - Runtime and model paths must identify files before server launch.
 - Catalog downloads must match the validated catalog.
+- Catalog filter, facet, budget, and launch-profile strings are bounded in Rust at the Tauri boundary. UI limits are hints only.
 
 Advanced extra arguments remain an expert interface.
 

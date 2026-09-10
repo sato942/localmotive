@@ -230,6 +230,28 @@ test("Windows installers use the bootstrapper WebView2 mode until offline bundli
   assert.equal(config.bundle?.windows?.webviewInstallMode?.type, "downloadBootstrapper");
 });
 
+test("README matches the shipped product and the unsigned Latest policy", async () => {
+  const readme = await readFile(join(process.cwd(), "README.md"), "utf8");
+  // Stale 0.3.0 download section hid the real ship state. Seen live: the
+  // Download section still named 0.3.0 files while Latest served 0.4.1.
+  assert.doesNotMatch(readme, /Release 0\.3\.0 provides/);
+  assert.doesNotMatch(readme, /Localmotive_0\.3\.0_x64/);
+  assert.doesNotMatch(readme, /SHA256SUMS-0\.3\.0/);
+  assert.doesNotMatch(readme, /The bundled 0\.3\.0 catalog/);
+  assert.doesNotMatch(readme, /\(unsigned prerelease\)/);
+  assert.doesNotMatch(readme, /testing-only or pre-release/);
+  // Current product: unsigned full release on Latest, SmartScreen honesty,
+  // checksum proof, catalog v2 story, and network needs.
+  assert.match(readme, /Latest/);
+  assert.match(readme, /\(unsigned\)/);
+  assert.match(readme, /SmartScreen/);
+  assert.match(readme, /SHA256SUMS/);
+  assert.match(readme, /schema 2|schemaVersion 2/i);
+  assert.match(readme, /providers\.json/);
+  assert.match(readme, /Hardware fit/i);
+  assert.match(readme, /raw\.githubusercontent\.com/);
+});
+
 test("launch profiles reject oversize input at the Rust boundary", async () => {
   const core = await readFile(join(process.cwd(), "src-tauri", "src", "core.rs"), "utf8");
   // Profile strings flow from the UI into build_args. UI limits are hints
