@@ -1,6 +1,6 @@
 # Localmotive 0.5 implementation tracker
 
-- **Status:** PHASES 0–7 DONE 2026-09-10. PHASE 8 SHIP GATE OPEN (owner approval).
+- **Status:** v0.5.0 SHIPPED 2026-09-10. Tag `v0.5.0`, Latest = v0.5.0 (unsigned).
 - **Target:** `0.5.0`
 - **Tree at creation:** `30c28bfb2b4db1244f19424dc67326a074965535`
 - **Tag at creation:** `v0.4.1` @ `a0ef02cf4b35a31ff10af1bd8c0a58064f86ab2e`
@@ -275,7 +275,7 @@ Acceptance:
 
 - [x] Verify history with `git log v0.3.0..HEAD`, tags, release notes, TODO closeouts.
 - [x] Write evidence-backed 0.3.0 to 0.4.0 to 0.4.1 to 0.5.0 narrative.
-- [ ] Add `## 0.5.0` to `CHANGELOG.md` at bump.
+- [x] Add `## 0.5.0` to `CHANGELOG.md` at bump.
 - [x] Add short Whats new since 0.3 in README or `docs/` if useful.
 - [x] Disclose unsigned, SmartScreen, Latest fix, self-hosted CI, catalog signing, evidence, package verify, deferred Authenticode.
 - [x] Invent no features, signing, Win10 support, or perf numbers.
@@ -293,15 +293,15 @@ Acceptance:
 
 - Every claim traces to git or release evidence.
 
-### Phase 8 — Version bump and ship gates (owner gate)
+### Phase 8 — Version bump and ship gates (owner gate: APPROVED, SHIPPED 2026-09-10)
 
-- [ ] Bump `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json` to `0.5.0` together.
-- [ ] Add CHANGELOG `## 0.5.0`.
-- [ ] Update README asset names and `SHA256SUMS` examples.
-- [ ] Get CI green.
-- [ ] Tag-push Release with `prerelease: false` and name `(unsigned)`.
-- [ ] Confirm read-back PASS and Latest = `v0.5.0`.
-- [ ] Wait for explicit owner ship approval before tag and publish.
+- [x] Bump `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json` to `0.5.0` together.
+- [x] Add CHANGELOG `## 0.5.0`.
+- [x] Update README asset names and `SHA256SUMS` examples.
+- [x] Get CI green.
+- [x] Tag-push Release with `prerelease: false` and name `(unsigned)`.
+- [x] Confirm read-back PASS and Latest = `v0.5.0`.
+- [x] Wait for explicit owner ship approval before tag and publish.
 
 Acceptance:
 
@@ -345,6 +345,28 @@ Append every check with exact command and observed result. Never write should wo
 - Pending: Latest repair commands and output. Done 2026-09-10. See Phase 0 evidence.
 - Pending: release-gates RED and GREEN runs. Done 2026-09-10. RED 71 pass 2 fail. GREEN 73 pass 0 fail. Pins PASS. Workflow gates PASS.
 - Pending: catalog dry-run numbers. Done 2026-09-10. See Phase 2 evidence.
+
+### 2026-09-10 Ship 0.5.0 (owner-approved; tag `v0.5.0`, Release run `34514283693` success)
+
+- Owner approval: ship 0.5.0 authorized in this session. Signing stays DEFERRED_BY_OWNER; release is honestly unsigned with SmartScreen + SHA-256 disclosure.
+- Command: version bump (`package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json` + locks 0.4.1 -> 0.5.0; `ci.yml`/`release.yml`/`workflow-gates.json` verify pins -> 0.5.0; `release.yml` version gate + publish condition -> v0.5.0; `release-gates` tag-push test -> v0.5.0; `CHANGELOG.md ## 0.5.0` added; README asset examples -> 0.5.0).
+- Observed: commit `a4b7127` (`release: bump to 0.5.0...`). `node scripts/verify_versions.mjs 0.5.0` ok true. Gates 80 pass 0 fail. Rust lib 403/0. tsc 0. Vitest 52. Catalog valid v2 (158/1417). fmt/clippy clean. Doc tests clean. `npm audit` 0 vulnerabilities.
+- Command: `git push origin main`
+- Observed: `5aba8d2..a4b7127 main -> main`.
+- Command: CI on bump commit (run `34512236377`)
+- Observed: completed success: rust-audit, check, Security audit, package-smoke all success.
+- Command: `git tag -a v0.5.0 -m ...` (once) + `git push origin v0.5.0`
+- Observed: tag object `eb52220`, `* [new tag] v0.5.0 -> v0.5.0`. Tag points at `a4b7127`.
+- Command: Release run `34514283693` (tag-push path)
+- Observed: completed success: rust-audit, quality, package, publish all success. Hardware-qualify run `34514283563` is unrelated to ship: host proof success, Sandbox clean-account failure (Sandbox unavailable on runner + `release not found` polling before publish), not a ship gate.
+- Command: `gh release view v0.5.0 --json tagName,name,isDraft,isPrerelease,assets`
+- Observed: tag `v0.5.0`, name `Localmotive 0.5.0 (unsigned)`, draft false, prerelease false, 6 assets (`Localmotive_0.5.0_x64-setup.exe`, `Localmotive_0.5.0_x64.msi`, `Localmotive_0.5.0_x64-portable.exe`, `SHA256SUMS-0.5.0.txt`, `packaged-verification-0.4.1.json`, `candidate-inventory-0.5.0.json`).
+- Command: `gh api repos/sato942/localmotive/releases/latest`
+- Observed: tag `v0.5.0`, name `Localmotive 0.5.0 (unsigned)`, prerelease false. Latest = v0.5.0. PASS.
+- Command: `gh release download v0.5.0` + `sha256sum -c SHA256SUMS-0.5.0.txt` in the download dir
+- Observed: all 3 application files OK. `candidate-inventory-0.5.0.json` release `0.5.0`, sourceRevision `a4b7127...`. `packaged-verification-0.4.1.json` overall PASS.
+- Command: `gh release view v0.5.0 --json body`
+- Observed: body is the `## 0.5.0` CHANGELOG section plus Downloads table, scope line, and honestly-unsigned disclosure. No Authenticode claimed.
 
 ### 2026-09-10 SQLite mirror closeout (HEAD `75b2531`, CI run `34495934762` success)
 
@@ -457,12 +479,8 @@ wc -c catalog/catalog.json
 | Real 0.3 to 0.5 docs | PASS | Phase 7 narrative in tracker, counts from git. No invented claims. `## 0.5.0` waits for bump. |
 | SQLite mirror + migrations + DB rebuild test | PASS | `catalog_db.rs` local-only; mirror/rebuild/migration tests PASS; gates 80/0. |
 | User local catalog overrides | PASS | Marked `user_sourced`, local-only, strict verification; remove refuses curated rows. |
-| 0.5.0 ship gates | BLOCKED | Owner ship approval pending. No tag. No publish. |
+| 0.5.0 ship gates | PASS | Tag `v0.5.0` @ `a4b7127`, Release run `34514283693` success, Latest = v0.5.0 unsigned. |
 
 ## Conclusion
 
-Phases 0–7 are DONE. The SQLite mirror (fill, query path, migrations,
-corrupt-DB rebuild) and user local overrides (marked, local-only, strict
-verification) are implemented with RED-first tests and gate proof above.
-
-Do not tag or publish 0.5.0 until the owner says ship. Phase 8 stays [ ].
+v0.5.0 is SHIPPED. Phases 0–8 are DONE with gate proof above. Latest = v0.5.0 (unsigned).
