@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -2790,14 +2790,18 @@ fn open_verified_capability_directory(path: &Path, label: &str) -> Result<CapDir
     Ok(directory)
 }
 
-fn extract_zip_with_limits_and_cancel(
-    archive_path: &Path,
+/// The single extraction boundary: parse and extract one archive reader.
+///
+/// All extraction paths share this body so traversal, alternate-stream,
+/// symlink, duplicate-path, size and cancellation protections cannot diverge
+/// between the installer and its regressions (audit RT-07).
+fn extract_zip_from_reader<R: Read + Seek>(
+    reader: R,
     destination: &Path,
     limits: ArchiveLimits,
     cancel: Option<&AtomicBool>,
 ) -> Result<(), String> {
-    let file = File::open(archive_path).map_err(|error| error.to_string())?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|error| error.to_string())?;
+    let mut archive = zip::ZipArchive::new(reader).map_err(|error| error.to_string())?;
     let destination_dir =
         open_verified_capability_directory(destination, "runtime extraction directory")?;
     if archive.len() > limits.max_entries {
@@ -2921,16 +2925,20 @@ fn extract_zip_with_limits(
     destination: &Path,
     limits: ArchiveLimits,
 ) -> Result<(), String> {
-    extract_zip_with_limits_and_cancel(archive_path, destination, limits, None)
+    let file = File::open(archive_path).map_err(|error| error.to_string())?;
+    extract_zip_from_reader(file, destination, limits, None)
 }
 
-/// Verify the archive file identity before extraction.
+/// Extract an approved runtime archive with its approved identity bound to the
+/// exact bytes that are decompressed.
 ///
-/// The downloader already checks size and SHA-256, but the file sits on disk
-/// between download and extraction. A replaced file with the same size would
-/// otherwise extract without detection, so re-hash here and refuse on mismatch.
-#[cfg(test)]
-fn extract_verified_zip_with_limits_and_cancel(
+/// The archive is opened once with read-only sharing protection
+/// (`FILE_SHARE_READ` on Windows), its size and SHA-256 are checked through
+/// that same handle, and the same handle is then parsed and extracted.
+/// Reopening by path between the check and the extraction would leave a
+/// check/use gap (audit RT-07); the protected handle also stops a concurrent
+/// writer from replacing the path for the duration of the operation.
+fn extract_zip_with_limits_and_identity_and_cancel(
     archive_path: &Path,
     destination: &Path,
     limits: ArchiveLimits,
@@ -2938,14 +2946,14 @@ fn extract_verified_zip_with_limits_and_cancel(
     expected_size: u64,
     expected_sha256_hex: &str,
 ) -> Result<(), String> {
-    let metadata = fs::metadata(archive_path).map_err(|error| error.to_string())?;
-    if metadata.len() != expected_size {
+    let mut file = open_managed_file_for_verification(archive_path)?;
+    let metadata = file.metadata().map_err(|error| error.to_string())?;
+    if !metadata.is_file() || metadata.len() != expected_size {
         return Err(format!(
-            "Runtime archive size mismatch: expected {expected_size} bytes, found {} bytes (SHA-256 identity check failed)",
+            "Runtime archive size mismatch: expected {expected_size} bytes, found {} bytes (identity check failed before extraction)",
             metadata.len()
         ));
     }
-    let mut file = File::open(archive_path).map_err(|error| error.to_string())?;
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
     loop {
@@ -2964,15 +2972,25 @@ fn extract_verified_zip_with_limits_and_cancel(
             "Runtime archive SHA-256 mismatch: expected {expected_sha256_hex}, found {actual}"
         ));
     }
-    extract_zip_with_limits_and_cancel(archive_path, destination, limits, cancel)
+    file.seek(SeekFrom::Start(0))
+        .map_err(|error| error.to_string())?;
+    extract_zip_from_reader(file, destination, limits, cancel)
 }
 
-fn extract_zip(archive_path: &Path, destination: &Path, cancel: &AtomicBool) -> Result<(), String> {
-    extract_zip_with_limits_and_cancel(
+fn extract_zip(
+    archive_path: &Path,
+    destination: &Path,
+    cancel: &AtomicBool,
+    expected_size: u64,
+    expected_sha256_hex: &str,
+) -> Result<(), String> {
+    extract_zip_with_limits_and_identity_and_cancel(
         archive_path,
         destination,
         RUNTIME_ARCHIVE_LIMITS,
         Some(cancel),
+        expected_size,
+        expected_sha256_hex,
     )
 }
 
@@ -4003,7 +4021,7 @@ pub fn install_runtime(
                     });
                 },
             )?;
-            extract_zip(&archive, &staging, &cancel)?;
+            extract_zip(&archive, &staging, &cancel, asset.size, expected)?;
             fs::remove_file(&archive).map_err(|error| error.to_string())?;
             completed = completed.saturating_add(asset.size);
         }
@@ -6767,7 +6785,7 @@ Connection: close
     }
 
     #[test]
-    fn archive_extraction_binds_the_approved_digest_to_the_parsed_file() {
+    fn rt07_archive_extraction_rejects_replaced_bytes_through_the_installer_path() {
         use std::io::Write;
 
         let root = scratch("archive-identity");
@@ -6785,6 +6803,9 @@ Connection: close
             archive.finish().unwrap();
         };
 
+        // Approved identity recorded, then a same-size replacement between
+        // download and extraction. The production installer path must reject
+        // before any entry is extracted.
         write_archive(b"approved");
         let approved_bytes = fs::read(&archive_path).unwrap();
         let approved_size = approved_bytes.len() as u64;
@@ -6792,23 +6813,87 @@ Connection: close
         write_archive(b"replaced");
         assert_eq!(fs::metadata(&archive_path).unwrap().len(), approved_size);
 
-        let error = extract_verified_zip_with_limits_and_cancel(
+        let error = extract_zip(
             &archive_path,
             &destination,
-            ArchiveLimits {
-                max_entries: 2,
-                max_entry_bytes: 64,
-                max_total_bytes: 64,
-                max_path_bytes: 64,
-            },
-            None,
+            &AtomicBool::new(false),
             approved_size,
             &approved_digest,
         )
         .unwrap_err();
-
         assert!(error.contains("SHA-256"), "unexpected error: {error}");
         assert!(!destination.join("runtime.dll").exists());
+
+        // A changed-size replacement is rejected too.
+        write_archive(b"replaced and longer");
+        let error = extract_zip(
+            &archive_path,
+            &destination,
+            &AtomicBool::new(false),
+            approved_size,
+            &approved_digest,
+        )
+        .unwrap_err();
+        assert!(error.contains("size mismatch"), "unexpected error: {error}");
+        assert!(!destination.join("runtime.dll").exists());
+
+        // Cancellation during archive verification returns promptly.
+        write_archive(b"approved");
+        let error = extract_zip(
+            &archive_path,
+            &destination,
+            &AtomicBool::new(true),
+            approved_size,
+            &approved_digest,
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("cancelled during archive verification"),
+            "unexpected error: {error}"
+        );
+        assert!(!destination.join("runtime.dll").exists());
+
+        // Intact approved bytes extract through the same production path and
+        // the final content is the verified payload.
+        extract_zip(
+            &archive_path,
+            &destination,
+            &AtomicBool::new(false),
+            approved_size,
+            &approved_digest,
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read(destination.join("runtime.dll")).unwrap(),
+            b"approved"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rt07_protected_archive_handle_blocks_path_replacement_for_its_lifetime() {
+        use std::io::Write;
+
+        let root = scratch("archive-handle");
+        let archive_path = root.join("runtime.zip");
+        let file = File::create(&archive_path).unwrap();
+        let mut archive = zip::ZipWriter::new(file);
+        archive
+            .start_file("runtime.dll", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        archive.write_all(b"approved").unwrap();
+        archive.finish().unwrap();
+
+        // The read-only shared handle used by the identity check must make a
+        // concurrent writer's replacement attempt fail while it is open.
+        let handle = open_managed_file_for_verification(&archive_path).unwrap();
+        assert!(
+            File::create(&archive_path).is_err(),
+            "replacement must be blocked while the protected handle is open"
+        );
+        drop(handle);
+        assert!(File::create(&archive_path).is_ok());
         fs::remove_dir_all(root).unwrap();
     }
 
