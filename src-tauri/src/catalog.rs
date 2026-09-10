@@ -627,7 +627,10 @@ pub fn rich_facets(models: &[CatalogModel]) -> CatalogFacets {
 }
 
 /// A catalog plus how it was obtained, so the interface can be honest about
-/// whether it is showing live or cached data.
+/// whether it is showing live or cached data. `last_success_secs` is the
+/// wall-clock second of the last successful network fill (None when never):
+/// the UI renders it as last success. `cooldown_remaining_minutes` is Some
+/// only when the caller just hit the cooldown instead of the network.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CatalogSnapshot {
@@ -636,6 +639,10 @@ pub struct CatalogSnapshot {
     pub origin: String,
     pub fetched_at: String,
     pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_success_secs: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cooldown_remaining_minutes: Option<u64>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -643,6 +650,90 @@ struct CacheRecord {
     body: String,
     etag: Option<String>,
     signature: String,
+}
+
+/// Refresh cooldown in minutes. The app refuses a network refresh until this
+/// long after the last success, so a stuck retry loop cannot hammer the CDN.
+/// The UI shows the remaining wait. Tunable; the default covers a daily
+/// rhythm with headroom for manual refreshes.
+pub const CATALOG_REFRESH_COOLDOWN_MINUTES: u64 = 1560;
+
+/// In-flight refresh guard: only one catalog refresh may run at a time.
+/// The guard lives for the refresh duration; a second caller gets a clear
+/// error instead of a second network fetch.
+pub struct CatalogRefreshGuard {
+    _private: (),
+}
+
+static CATALOG_REFRESH_ACTIVE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+impl CatalogRefreshGuard {
+    pub fn try_acquire() -> Option<Self> {
+        CATALOG_REFRESH_ACTIVE
+            .compare_exchange(
+                false,
+                true,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+            )
+            .ok()
+            .map(|_| CatalogRefreshGuard { _private: () })
+    }
+
+    #[cfg(test)]
+    pub fn held_for_test() -> bool {
+        CATALOG_REFRESH_ACTIVE.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
+impl Drop for CatalogRefreshGuard {
+    fn drop(&mut self) {
+        CATALOG_REFRESH_ACTIVE.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+/// Whether a refresh may hit the network now. Returns the remaining wait in
+/// whole minutes when the cooldown still applies. A missing or unparsable
+/// timestamp never blocks: first start must always be able to fill.
+pub fn refresh_cooldown_remaining_minutes(
+    last_success_secs: Option<&str>,
+    now_secs_value: u64,
+    cooldown_minutes: u64,
+) -> Option<u64> {
+    let last: u64 = last_success_secs?.trim().parse().ok()?;
+    let elapsed = now_secs_value.saturating_sub(last);
+    let cooldown_secs = cooldown_minutes.saturating_mul(60);
+    if elapsed >= cooldown_secs {
+        None
+    } else {
+        Some(cooldown_secs.saturating_sub(elapsed).div_ceil(60))
+    }
+}
+
+/// Last successful refresh, seconds since epoch. Stored beside the cache so
+/// the UI can show last success plus the remaining cooldown.
+pub fn refresh_stamp_path(root: &Path) -> PathBuf {
+    root.join("catalog-refresh-stamp.txt")
+}
+
+pub fn read_refresh_stamp(root: &Path) -> Option<String> {
+    std::fs::read_to_string(refresh_stamp_path(root))
+        .ok()
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
+}
+
+fn write_refresh_stamp(root: &Path) {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs().to_string())
+        .unwrap_or_default();
+    if secs.is_empty() {
+        return;
+    }
+    let _ = std::fs::create_dir_all(root);
+    let _ = std::fs::write(refresh_stamp_path(root), &secs);
 }
 
 static CATALOG_CACHE_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -731,7 +822,7 @@ pub fn fetch_catalog(url: &str, cache_root: &Path) -> Result<CatalogSnapshot, St
 
     let client = match http_client() {
         Ok(client) => client,
-        Err(error) => return fallback(cached_body.map(str::to_string), url, error),
+        Err(error) => return fallback(cached_body.map(str::to_string), url, error, cache_root),
     };
     let mut request = client.get(url);
     if let (Some(etag), Some(_)) = (cached_etag, cached_body) {
@@ -746,6 +837,7 @@ pub fn fetch_catalog(url: &str, cache_root: &Path) -> Result<CatalogSnapshot, St
                     cached_body.map(str::to_string),
                     url,
                     format!("the catalog server answered HTTP {status}"),
+                    cache_root,
                 );
             }
             let etag = response
@@ -756,11 +848,14 @@ pub fn fetch_catalog(url: &str, cache_root: &Path) -> Result<CatalogSnapshot, St
             if status == 304 {
                 let body = cached_body
                     .ok_or_else(|| "Catalog unchanged but no cached copy exists".to_string())?;
+                write_refresh_stamp(cache_root);
                 return Ok(CatalogSnapshot {
                     catalog: parse_catalog(body)?,
                     origin: "not-modified".into(),
                     fetched_at: now(),
                     url: url.to_string(),
+                    last_success_secs: read_refresh_stamp(cache_root),
+                    cooldown_remaining_minutes: None,
                 });
             }
             if response
@@ -771,6 +866,7 @@ pub fn fetch_catalog(url: &str, cache_root: &Path) -> Result<CatalogSnapshot, St
                     cached_body.map(str::to_string),
                     url,
                     "the catalog response exceeds its size limit".into(),
+                    cache_root,
                 );
             }
             let body =
@@ -787,6 +883,7 @@ pub fn fetch_catalog(url: &str, cache_root: &Path) -> Result<CatalogSnapshot, St
                             cached_body.map(str::to_string),
                             url,
                             "the catalog signature exceeds its size limit".into(),
+                            cache_root,
                         );
                     }
                     String::from_utf8(read_bounded_catalog_body(
@@ -803,6 +900,7 @@ pub fn fetch_catalog(url: &str, cache_root: &Path) -> Result<CatalogSnapshot, St
                             "the catalog signature server answered HTTP {}",
                             signature_response.status().as_u16()
                         ),
+                        cache_root,
                     )
                 }
                 Err(error) => {
@@ -810,6 +908,7 @@ pub fn fetch_catalog(url: &str, cache_root: &Path) -> Result<CatalogSnapshot, St
                         cached_body.map(str::to_string),
                         url,
                         format!("could not fetch the catalog signature: {error}"),
+                        cache_root,
                     )
                 }
             };
@@ -818,19 +917,28 @@ pub fn fetch_catalog(url: &str, cache_root: &Path) -> Result<CatalogSnapshot, St
                     cached_body.map(str::to_string),
                     url,
                     "the catalog signature is invalid".into(),
+                    cache_root,
                 );
             }
             let catalog = parse_catalog(&body)?;
             // Only cache a signed document that parsed successfully.
             let _ = save_cache_record(cache_root, &body, etag.as_deref(), &signature);
+            write_refresh_stamp(cache_root);
             Ok(CatalogSnapshot {
                 catalog,
                 origin: "network".into(),
                 fetched_at: now(),
                 url: url.to_string(),
+                last_success_secs: read_refresh_stamp(cache_root),
+                cooldown_remaining_minutes: None,
             })
         }
-        Err(error) => fallback(cached_body.map(str::to_string), url, error.to_string()),
+        Err(error) => fallback(
+            cached_body.map(str::to_string),
+            url,
+            error.to_string(),
+            cache_root,
+        ),
     }
 }
 
@@ -849,6 +957,7 @@ fn fallback(
     cached_body: Option<String>,
     url: &str,
     error: String,
+    cache_root: &Path,
 ) -> Result<CatalogSnapshot, String> {
     if let Some(body) = cached_body {
         if let Ok(catalog) = parse_catalog(&body) {
@@ -857,6 +966,8 @@ fn fallback(
                 origin: "cache".into(),
                 fetched_at: now(),
                 url: url.to_string(),
+                last_success_secs: read_refresh_stamp(cache_root),
+                cooldown_remaining_minutes: None,
             });
         }
     }
@@ -870,6 +981,8 @@ fn fallback(
         origin: "bundled".into(),
         fetched_at: now(),
         url: url.to_string(),
+        last_success_secs: read_refresh_stamp(cache_root),
+        cooldown_remaining_minutes: None,
     })
 }
 
@@ -1780,6 +1893,70 @@ mod tests {
         receive.recv_timeout(Duration::from_secs(1)).unwrap();
         reader.join().unwrap();
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn refresh_cooldown_blocks_until_1560_minutes_pass_then_releases() {
+        // The cooldown keeps a stuck retry loop from hammering the CDN. Seen
+        // live: fetch_catalog had no cooldown at all, so every Refresh click
+        // hit the network. First start (no stamp) must always fill.
+        assert_eq!(
+            refresh_cooldown_remaining_minutes(None, 1_000_000, 1560),
+            None
+        );
+        assert_eq!(
+            refresh_cooldown_remaining_minutes(Some("not-a-number"), 1_000_000, 1560),
+            None
+        );
+        // Exactly at the boundary the network is allowed again.
+        assert_eq!(
+            refresh_cooldown_remaining_minutes(Some("0"), 1560 * 60, 1560),
+            None
+        );
+        // One second before the boundary reports the remaining wait.
+        assert_eq!(
+            refresh_cooldown_remaining_minutes(Some("0"), 1560 * 60 - 1, 1560),
+            Some(1)
+        );
+        // Halfway through reports half the wait, rounded up.
+        assert_eq!(
+            refresh_cooldown_remaining_minutes(Some("0"), 780 * 60, 1560),
+            Some(780)
+        );
+        // Clock skew into the past never produces a huge wait.
+        assert_eq!(
+            refresh_cooldown_remaining_minutes(Some("9999999"), 1_000_000, 1560),
+            Some(1560)
+        );
+    }
+
+    #[test]
+    fn refresh_stamp_round_trips_through_the_cache_dir() {
+        // The UI shows last success plus the remaining cooldown, so the stamp
+        // must survive a write/read cycle. Missing stamp means never.
+        let root = unique_test_dir("localmotive-refresh-stamp");
+        assert_eq!(read_refresh_stamp(&root), None);
+        write_refresh_stamp(&root);
+        let stamp = read_refresh_stamp(&root).expect("stamp must exist after write");
+        assert!(stamp.trim().parse::<u64>().is_ok());
+        assert_eq!(
+            refresh_cooldown_remaining_minutes(Some(&stamp), u64::MAX, 1560),
+            None
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn only_one_catalog_refresh_runs_at_a_time() {
+        // Two Refresh clicks must not start two network fetches. The guard
+        // releases when dropped, so a finished refresh unblocks the next one.
+        assert!(!CatalogRefreshGuard::held_for_test());
+        let first = CatalogRefreshGuard::try_acquire().expect("first acquire wins");
+        assert!(CatalogRefreshGuard::held_for_test());
+        assert!(CatalogRefreshGuard::try_acquire().is_none());
+        drop(first);
+        assert!(!CatalogRefreshGuard::held_for_test());
+        let _second = CatalogRefreshGuard::try_acquire().expect("release unblocks");
     }
 
     #[test]

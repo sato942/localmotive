@@ -1635,6 +1635,10 @@ export type CatalogSnapshot = {
   origin: "network" | "not-modified" | "cache" | "bundled";
   fetchedAt: string;
   url: string;
+  /** Wall-clock second of the last successful network fill. Absent when never. */
+  lastSuccessSecs?: string;
+  /** Remaining cooldown in minutes. Present only when a refresh hit cooldown. */
+  cooldownRemainingMinutes?: number;
 };
 
 export type TokenStatus = {

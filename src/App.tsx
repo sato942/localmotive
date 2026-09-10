@@ -1237,6 +1237,12 @@ function App() {
                   <strong>{catalogRows.length}</strong>
                   <span>of {catalogSnapshot?.catalog.models.length ?? 0} curated models</span>
                   {catalogSnapshot && <small>LIST UPDATED {catalogSnapshot.catalog.updated || "UNKNOWN"}</small>}
+                  {catalogSnapshot?.lastSuccessSecs && (
+                    <small>LAST SUCCESS {new Date(Number(catalogSnapshot.lastSuccessSecs) * 1000).toLocaleString()}</small>
+                  )}
+                  {typeof catalogSnapshot?.cooldownRemainingMinutes === "number" && (
+                    <small>COOLDOWN {catalogSnapshot.cooldownRemainingMinutes} MIN LEFT</small>
+                  )}
                 </div>
                 {catalogBusy && !catalogSnapshot && <div className="catalog-empty machine-panel"><RefreshCw size={24} className="spin" /><strong>Fetching curated catalog</strong></div>}
                 {!catalogBusy && catalogSnapshot && catalogRows.length === 0 && <div className="catalog-empty machine-panel"><Database size={24} /><strong>No curated model matches these filters</strong><span>Clear one or more filters.</span></div>}

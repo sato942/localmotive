@@ -279,6 +279,28 @@ test("catalog commands reject oversize input at the Rust boundary", async () => 
   assert.match(lib, /validate_budget_inputs\(dedicated_bytes\.len\(\), shared_bytes\.len\(\)\)/);
 });
 
+test("catalog refresh honors cooldown, lock, and last-success display", async () => {
+  const backend = await readFile(join(process.cwd(), "src-tauri", "src", "catalog.rs"), "utf8");
+  const lib = await readFile(join(process.cwd(), "src-tauri", "src", "lib.rs"), "utf8");
+  const model = await readFile(join(process.cwd(), "src", "model.ts"), "utf8");
+  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  // Seen live: fetch_catalog had no cooldown, so every Refresh click hit the
+  // network, and two clicks started two fetches. The backend now owns a 1560
+  // min cooldown, an in-flight guard, and a last-success stamp; the UI shows
+  // last success plus the remaining wait.
+  assert.match(backend, /CATALOG_REFRESH_COOLDOWN_MINUTES/);
+  assert.match(backend, /refresh_cooldown_remaining_minutes/);
+  assert.match(backend, /CatalogRefreshGuard/);
+  assert.match(backend, /read_refresh_stamp/);
+  assert.match(lib, /CatalogRefreshGuard::try_acquire/);
+  assert.match(lib, /refresh_cooldown_remaining_minutes/);
+  assert.match(lib, /CATALOG_REFRESH_COOLDOWN_MINUTES/);
+  assert.match(model, /lastSuccessSecs/);
+  assert.match(model, /cooldownRemainingMinutes/);
+  assert.match(app, /LAST SUCCESS/);
+  assert.match(app, /COOLDOWN/);
+});
+
 test("model catalog exposes rich filters with hardware auto-fit defaults", async () => {
   const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
   const model = await readFile(join(process.cwd(), "src", "model.ts"), "utf8");

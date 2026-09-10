@@ -2684,12 +2684,48 @@ fn catalog_cache_root(app: &tauri::AppHandle) -> std::path::PathBuf {
         .unwrap_or_else(|_| std::env::temp_dir().join("localmotive"))
 }
 
+/// Fetch the catalog for the HF Catalog tab. Holds the in-flight guard for
+/// the whole refresh so two Refresh clicks cannot start two network fetches.
+/// Returns the remaining cooldown in minutes instead of hitting the network
+/// when the last success is younger than CATALOG_REFRESH_COOLDOWN_MINUTES.
+/// First start (no stamp) always fills.
 #[tauri::command]
 async fn fetch_model_catalog(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<catalog::CatalogSnapshot, String> {
     let root = catalog_cache_root(&app);
+    let _in_flight = catalog::CatalogRefreshGuard::try_acquire().ok_or_else(|| {
+        let stamp = catalog::read_refresh_stamp(&root);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        match catalog::refresh_cooldown_remaining_minutes(
+            stamp.as_deref(),
+            now,
+            catalog::CATALOG_REFRESH_COOLDOWN_MINUTES,
+        ) {
+            Some(left) => {
+                format!("A catalog refresh is already running. Try again in about {left} min.")
+            }
+            None => "A catalog refresh is already running. Try again shortly.".to_string(),
+        }
+    })?;
+    let stamp = catalog::read_refresh_stamp(&root);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if let Some(left) = catalog::refresh_cooldown_remaining_minutes(
+        stamp.as_deref(),
+        now,
+        catalog::CATALOG_REFRESH_COOLDOWN_MINUTES,
+    ) {
+        return Err(format!(
+            "The catalog was refreshed recently. Try again in about {left} min."
+        ));
+    }
     let url = catalog::DEFAULT_CATALOG_URL.to_string();
     let snapshot =
         tauri::async_runtime::spawn_blocking(move || catalog::fetch_catalog(&url, &root))
