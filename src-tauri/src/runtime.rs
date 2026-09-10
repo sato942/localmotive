@@ -2994,7 +2994,7 @@ fn find_runtime(path: &Path) -> Option<PathBuf> {
 }
 
 #[derive(Clone, Debug)]
-struct ResolvedRuntimeInstall {
+pub(crate) struct ResolvedRuntimeInstall {
     tag: String,
     release_commit: String,
     architecture: String,
@@ -3571,11 +3571,11 @@ fn verify_installed_runtime(
 ///
 /// Production always uses [`ManagedApprovalSource::compiled`], which resolves
 /// installs and content manifests from the compiled-in approval tables. Tests
-/// inject inert fixtures because the compiled manifests pin real release bytes.
+/// inject inert fixtures because compiled manifests pin real release bytes.
 #[derive(Clone, Copy)]
-struct ManagedApprovalSource<'a> {
-    resolve_install: &'a dyn Fn(&str) -> Result<ResolvedRuntimeInstall, String>,
-    content_manifest: &'a dyn Fn(&str) -> Result<&'static [u8], String>,
+pub(crate) struct ManagedApprovalSource<'a> {
+    pub(crate) resolve_install: &'a dyn Fn(&str) -> Result<ResolvedRuntimeInstall, String>,
+    pub(crate) content_manifest: &'a dyn Fn(&str) -> Result<&'static [u8], String>,
 }
 
 impl ManagedApprovalSource<'static> {
@@ -3596,18 +3596,32 @@ fn path_is_under(candidate: &Path, root: &Path) -> bool {
             .is_some_and(|(candidate, root)| candidate.starts_with(root))
 }
 
-fn managed_runtime_verified_in_with(
-    runtime_path: &Path,
+/// A content-verified managed installation located under one root.
+struct VerifiedInstallation {
+    #[allow(dead_code)] // consumed by RT-04's execution-identity lease work
+    install_dir: PathBuf,
+    server_path: PathBuf,
+    #[allow(dead_code)] // kept for RT-04's execution-identity lease work
+    install: ResolvedRuntimeInstall,
+}
+
+/// Locate and content-verify the managed installation that contains
+/// `executable_path` under `root`.
+///
+/// Returns `Ok(None)` when the path is not inside `root`; the caller then
+/// applies its own policy for deliberately selected external runtimes.
+fn verified_installation_in_with(
+    executable_path: &Path,
     root: &Path,
     approval: ManagedApprovalSource<'_>,
-) -> Result<bool, String> {
-    if !path_is_under(runtime_path, root) {
-        return Ok(false);
+) -> Result<Option<VerifiedInstallation>, String> {
+    if !path_is_under(executable_path, root) {
+        return Ok(None);
     }
     if !safe_directory(root) {
         return Err("Managed runtime root is unavailable or untrusted".into());
     }
-    let mut directory = runtime_path
+    let mut directory = executable_path
         .parent()
         .ok_or("Managed runtime executable has no parent directory")?;
     while directory.starts_with(root) && directory != root {
@@ -3628,20 +3642,17 @@ fn managed_runtime_verified_in_with(
                 return Err("Managed runtime directory does not match compiled approval".into());
             }
             let content = (approval.content_manifest)(&install.install_key)?;
-            let verified = verify_installed_runtime(
+            let server_path = verify_installed_runtime(
                 directory,
                 &install,
                 content,
                 &install.content_manifest_sha256,
             )?;
-            let requested = fs::canonicalize(runtime_path)
-                .map_err(|error| format!("Could not resolve managed runtime path: {error}"))?;
-            let verified = fs::canonicalize(verified)
-                .map_err(|error| format!("Could not resolve verified runtime path: {error}"))?;
-            if requested != verified {
-                return Err("Requested executable is not the approved managed runtime".into());
-            }
-            return Ok(true);
+            return Ok(Some(VerifiedInstallation {
+                install_dir: directory.to_path_buf(),
+                server_path,
+                install,
+            }));
         }
         directory = directory
             .parent()
@@ -3650,8 +3661,59 @@ fn managed_runtime_verified_in_with(
     Err("Managed runtime has no trusted installation record".into())
 }
 
+fn managed_runtime_verified_in_with(
+    runtime_path: &Path,
+    root: &Path,
+    approval: ManagedApprovalSource<'_>,
+) -> Result<bool, String> {
+    let Some(verified) = verified_installation_in_with(runtime_path, root, approval)? else {
+        return Ok(false);
+    };
+    let requested = fs::canonicalize(runtime_path)
+        .map_err(|error| format!("Could not resolve managed runtime path: {error}"))?;
+    let server = fs::canonicalize(&verified.server_path)
+        .map_err(|error| format!("Could not resolve verified runtime path: {error}"))?;
+    if requested != server {
+        return Err("Requested executable is not the approved managed runtime".into());
+    }
+    Ok(true)
+}
+
 fn managed_runtime_verified_in(runtime_path: &Path, root: &Path) -> Result<bool, String> {
     managed_runtime_verified_in_with(runtime_path, root, ManagedApprovalSource::compiled())
+}
+
+/// Authorize executing a managed binary for any probe or launch.
+///
+/// Every code path that starts a managed llama binary -- `--version`, `--help`,
+/// `--list-devices`, health, benchmarks, or the server -- must pass this
+/// boundary first. The complete compiled installation inventory (including
+/// llama-cli.exe and approved DLLs) is verified before any byte executes, and
+/// no caller can bypass it by invoking runtime inspection directly (audit
+/// RT-02). Paths outside both managed roots are deliberately selected external
+/// runtimes: they stay governed by the caller's explicit regular-file checks
+/// and are not covered by compiled-content approval.
+pub(crate) fn authorize_managed_execution(executable: &Path) -> Result<(), String> {
+    authorize_managed_execution_with(
+        executable,
+        &runtime_data_dir("Localmotive"),
+        &runtime_data_dir("GGUF Pilot"),
+        ManagedApprovalSource::compiled(),
+    )
+}
+
+pub(crate) fn authorize_managed_execution_with(
+    executable: &Path,
+    primary: &Path,
+    legacy: &Path,
+    approval: ManagedApprovalSource<'_>,
+) -> Result<(), String> {
+    for root in [primary, legacy] {
+        if verified_installation_in_with(executable, root, approval)?.is_some() {
+            return Ok(());
+        }
+    }
+    Ok(())
 }
 
 pub fn managed_runtime_verified(runtime_path: &Path) -> Result<bool, String> {
@@ -4075,6 +4137,112 @@ pub(crate) fn managed_health_context(
         expected_model: format!("{}@{}/{}", pin.repository, pin.revision, pin.name),
         model_path,
     })
+}
+
+#[cfg(test)]
+pub(crate) mod test_fixtures {
+    //! Inert compiled-approval fixtures for managed-content tests.
+    //!
+    //! Compiled manifests pin real release bytes, so tests inject this approval
+    //! source and directory layout to exercise the production verification walk
+    //! without network access or real binaries.
+
+    use super::*;
+
+    pub(super) fn fixture_content() -> String {
+        format!(
+            concat!(
+                "{{\"schemaVersion\":1,\"releaseTag\":\"b77777\",",
+                "\"releaseCommit\":\"rt01fixture\",",
+                "\"installKey\":\"rt-fixture\",\"backend\":\"rt-fixture\",\"artifacts\":[",
+                "{{\"name\":\"rt-fixture.zip\",\"bytes\":1,\"sha256\":\"{}\"}}],\"files\":[",
+                "{{\"path\":\"bin/ggml-cpu.dll\",\"bytes\":15,\"sha256\":\"{}\"}},",
+                "{{\"path\":\"bin/llama-cli.exe\",\"bytes\":11,\"sha256\":\"{}\"}},",
+                "{{\"path\":\"bin/llama-server.exe\",\"bytes\":18,\"sha256\":\"{}\"}}]}}"
+            ),
+            "a".repeat(64),
+            hex::encode(Sha256::digest(b"trusted backend")),
+            hex::encode(Sha256::digest(b"trusted cli")),
+            hex::encode(Sha256::digest(b"trusted executable"))
+        )
+    }
+
+    pub(super) fn fixture_install() -> ResolvedRuntimeInstall {
+        let content = fixture_content();
+        let digest = hex::encode(Sha256::digest(content.as_bytes()));
+        ResolvedRuntimeInstall {
+            tag: "b77777".into(),
+            release_commit: "rt01fixture".into(),
+            architecture: "x64".into(),
+            backend: "rt-fixture".into(),
+            install_key: "rt-fixture".into(),
+            asset: GithubAsset {
+                name: "rt-fixture.zip".into(),
+                browser_download_url: "https://example.invalid/rt-fixture.zip".into(),
+                size: 1,
+                digest: Some(format!("sha256:{}", "a".repeat(64))),
+            },
+            companion_asset: None,
+            content_manifest_sha256: digest,
+        }
+    }
+
+    pub(super) fn fixture_content_bytes() -> Result<&'static [u8], String> {
+        Ok(Box::leak(fixture_content().into_bytes().into_boxed_slice()))
+    }
+
+    pub(crate) fn fixture_source() -> ManagedApprovalSource<'static> {
+        ManagedApprovalSource {
+            resolve_install: &|install_key: &str| {
+                if install_key == "rt-fixture" {
+                    Ok(fixture_install())
+                } else {
+                    Err(format!("fixture install key {install_key} is not approved"))
+                }
+            },
+            content_manifest: &|install_key: &str| {
+                if install_key == "rt-fixture" {
+                    fixture_content_bytes()
+                } else {
+                    Err(format!(
+                        "fixture content manifest {install_key} is unavailable"
+                    ))
+                }
+            },
+        }
+    }
+
+    pub(super) fn write_fixture_install(directory: &Path) {
+        let bin = directory.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(bin.join("llama-server.exe"), b"trusted executable").unwrap();
+        fs::write(bin.join("llama-cli.exe"), b"trusted cli").unwrap();
+        fs::write(bin.join("ggml-cpu.dll"), b"trusted backend").unwrap();
+        let install = fixture_install();
+        write_runtime_install_record(
+            directory,
+            &install,
+            Path::new("bin/llama-server.exe"),
+            &install.content_manifest_sha256,
+        )
+        .unwrap();
+    }
+
+    /// Place an inert verified fixture installation under `root`.
+    ///
+    /// Returns `(server path, companion CLI path)`.
+    pub(crate) fn place_fixture_install(root: &Path) -> (PathBuf, PathBuf) {
+        let install = fixture_install();
+        let directory = root.join(managed_runtime_relative_path(
+            &install.tag,
+            &install.install_key,
+        ));
+        write_fixture_install(&directory);
+        (
+            directory.join("bin").join("llama-server.exe"),
+            directory.join("bin").join("llama-cli.exe"),
+        )
+    }
 }
 
 #[cfg(test)]
@@ -6209,86 +6377,6 @@ Connection: close
         assert_eq!(cuda_major_from_smi("CUDA Version: 12.4"), Some(12));
     }
 
-    // Inert compiled-approval fixture for RT-01 policy tests. The compiled
-    // manifests pin real release bytes, so the approval lookups are injected.
-    fn rt01_fixture_install() -> ResolvedRuntimeInstall {
-        let content = rt01_fixture_content();
-        let digest = hex::encode(Sha256::digest(content.as_bytes()));
-        ResolvedRuntimeInstall {
-            tag: "b77777".into(),
-            release_commit: "rt01fixture".into(),
-            architecture: "x64".into(),
-            backend: "rt-fixture".into(),
-            install_key: "rt-fixture".into(),
-            asset: GithubAsset {
-                name: "rt-fixture.zip".into(),
-                browser_download_url: "https://example.invalid/rt-fixture.zip".into(),
-                size: 1,
-                digest: Some(format!("sha256:{}", "a".repeat(64))),
-            },
-            companion_asset: None,
-            content_manifest_sha256: digest,
-        }
-    }
-
-    fn rt01_fixture_content() -> String {
-        format!(
-            concat!(
-                "{{\"schemaVersion\":1,\"releaseTag\":\"b77777\",",
-                "\"releaseCommit\":\"rt01fixture\",",
-                "\"installKey\":\"rt-fixture\",\"backend\":\"rt-fixture\",\"artifacts\":[",
-                "{{\"name\":\"rt-fixture.zip\",\"bytes\":1,\"sha256\":\"{}\"}}],\"files\":[",
-                "{{\"path\":\"bin/ggml-cpu.dll\",\"bytes\":15,\"sha256\":\"{}\"}},",
-                "{{\"path\":\"bin/llama-server.exe\",\"bytes\":18,\"sha256\":\"{}\"}}]}}"
-            ),
-            "a".repeat(64),
-            hex::encode(Sha256::digest(b"trusted backend")),
-            hex::encode(Sha256::digest(b"trusted executable"))
-        )
-    }
-
-    fn rt01_fixture_content_bytes() -> Result<&'static [u8], String> {
-        Ok(Box::leak(
-            rt01_fixture_content().into_bytes().into_boxed_slice(),
-        ))
-    }
-
-    fn rt01_fixture_source() -> ManagedApprovalSource<'static> {
-        ManagedApprovalSource {
-            resolve_install: &|install_key: &str| {
-                if install_key == "rt-fixture" {
-                    Ok(rt01_fixture_install())
-                } else {
-                    Err(format!("fixture install key {install_key} is not approved"))
-                }
-            },
-            content_manifest: &|install_key: &str| {
-                if install_key == "rt-fixture" {
-                    rt01_fixture_content_bytes()
-                } else {
-                    Err(format!(
-                        "fixture content manifest {install_key} is unavailable"
-                    ))
-                }
-            },
-        }
-    }
-
-    fn rt01_write_fixture_install(directory: &Path) {
-        let bin = directory.join("bin");
-        fs::create_dir_all(&bin).unwrap();
-        fs::write(bin.join("llama-server.exe"), b"trusted executable").unwrap();
-        fs::write(bin.join("ggml-cpu.dll"), b"trusted backend").unwrap();
-        let install = rt01_fixture_install();
-        write_runtime_install_record(
-            directory,
-            &install,
-            Path::new("bin/llama-server.exe"),
-            &install.content_manifest_sha256,
-        )
-        .unwrap();
-    }
-
     #[test]
     fn rt01_new_installs_publish_into_the_primary_root_even_with_only_a_legacy_directory() {
         let base = std::env::temp_dir().join(format!(
@@ -6324,8 +6412,11 @@ Connection: close
         let legacy = base.join("GGUF Pilot").join("runtimes");
         std::fs::create_dir_all(&legacy).unwrap();
         let (publish_root, reuse_roots) = runtime_install_roots_in(&primary, &legacy);
-        let (install, content) = (rt01_fixture_install(), rt01_fixture_content());
-        let source = rt01_fixture_source();
+        let (install, content) = (
+            test_fixtures::fixture_install(),
+            test_fixtures::fixture_content(),
+        );
+        let source = test_fixtures::fixture_source();
 
         // The published installation follows the real post-extraction steps:
         // write the install record, then verify the compiled inventory.
@@ -6333,7 +6424,7 @@ Connection: close
             &install.tag,
             &install.install_key,
         ));
-        rt01_write_fixture_install(&final_dir);
+        test_fixtures::write_fixture_install(&final_dir);
         let published = verify_installed_runtime(
             &final_dir,
             &install,
@@ -6357,7 +6448,7 @@ Connection: close
             &install.tag,
             &install.install_key,
         ));
-        rt01_write_fixture_install(&legacy_dir);
+        test_fixtures::write_fixture_install(&legacy_dir);
         let legacy_runtime = verify_installed_runtime(
             &legacy_dir,
             &install,
@@ -6392,8 +6483,11 @@ Connection: close
         let primary = base.join("Localmotive").join("runtimes");
         let legacy = base.join("GGUF Pilot").join("runtimes");
         let (publish_root, reuse_roots) = runtime_install_roots_in(&primary, &legacy);
-        let (install, _) = (rt01_fixture_install(), rt01_fixture_content());
-        let source = rt01_fixture_source();
+        let (install, _) = (
+            test_fixtures::fixture_install(),
+            test_fixtures::fixture_content(),
+        );
+        let source = test_fixtures::fixture_source();
 
         // A legacy install left by an older release: the record exists but its
         // content no longer verifies (unapproved old build).
@@ -6419,10 +6513,74 @@ Connection: close
             &install.tag,
             &install.install_key,
         ));
-        rt01_write_fixture_install(&primary_dir);
+        test_fixtures::write_fixture_install(&primary_dir);
         let reused = existing_verified_install(&install, &reuse_roots, source).expect("reuse");
         assert!(reused.reused);
         assert!(Path::new(&reused.runtime_path).starts_with(&primary));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn rt02_execution_authorization_accepts_only_content_verified_managed_binaries() {
+        let base = std::env::temp_dir().join(format!(
+            "localmotive-rt02-guard-{}-{}",
+            std::process::id(),
+            observed_at_ms()
+        ));
+        let primary = base.join("Localmotive").join("runtimes");
+        let legacy = base.join("GGUF Pilot").join("runtimes");
+        std::fs::create_dir_all(&primary).unwrap();
+        std::fs::create_dir_all(&legacy).unwrap();
+        let source = test_fixtures::fixture_source();
+        let (server, cli) = test_fixtures::place_fixture_install(&primary);
+
+        // A verified installation authorizes the server and its approved
+        // companion CLI, because probes execute both.
+        authorize_managed_execution_with(&server, &primary, &legacy, source).unwrap();
+        authorize_managed_execution_with(&cli, &primary, &legacy, source).unwrap();
+
+        // A tampered DLL is rejected even though the server EXE is unchanged.
+        let dll = server.parent().unwrap().join("ggml-cpu.dll");
+        std::fs::write(&dll, b"hostile backend").unwrap();
+        let error =
+            authorize_managed_execution_with(&server, &primary, &legacy, source).unwrap_err();
+        assert!(error.contains("content verification"), "{error}");
+        std::fs::write(&dll, b"trusted backend").unwrap();
+
+        // A replaced server EXE is rejected, and approved bytes restore access.
+        std::fs::write(&server, b"hostile executable").unwrap();
+        assert!(authorize_managed_execution_with(&server, &primary, &legacy, source).is_err());
+        std::fs::write(&server, b"trusted executable").unwrap();
+        authorize_managed_execution_with(&server, &primary, &legacy, source).unwrap();
+
+        // An extra unapproved file changes the inventory and is rejected.
+        let extra = server.parent().unwrap().join("extra.dll");
+        std::fs::write(&extra, b"x").unwrap();
+        assert!(authorize_managed_execution_with(&server, &primary, &legacy, source).is_err());
+        std::fs::remove_file(&extra).unwrap();
+        authorize_managed_execution_with(&server, &primary, &legacy, source).unwrap();
+
+        // Paths outside both managed roots keep the deliberate external-runtime
+        // policy: compiled-content approval does not apply.
+        let external = base.join("external").join("llama-server.exe");
+        std::fs::create_dir_all(external.parent().unwrap()).unwrap();
+        std::fs::write(&external, b"external runtime").unwrap();
+        authorize_managed_execution_with(&external, &primary, &legacy, source).unwrap();
+
+        // A legacy path without compiled approval stays rejected.
+        let legacy_dir = legacy.join("b00000").join("cpu");
+        std::fs::create_dir_all(&legacy_dir).unwrap();
+        std::fs::write(
+            legacy_dir.join("runtime.json"),
+            r#"{"tag":"b00000","backend":"cpu","runtime":"llama-server.exe"}"#,
+        )
+        .unwrap();
+        let legacy_server = legacy_dir.join("llama-server.exe");
+        std::fs::write(&legacy_server, b"legacy runtime").unwrap();
+        assert!(
+            authorize_managed_execution_with(&legacy_server, &primary, &legacy, source).is_err()
+        );
+
         let _ = std::fs::remove_dir_all(&base);
     }
 

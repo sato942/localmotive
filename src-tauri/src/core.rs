@@ -1238,7 +1238,19 @@ const RUNTIME_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
 const RUNTIME_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const RUNTIME_PROBE_STREAM_LIMIT: usize = 2 * 1024 * 1024;
 
-fn run_runtime_probe(path: &Path, arg: &str) -> Result<String, String> {
+/// Shared probe boundary for `--version`, `--help` and `--list-devices`.
+///
+/// The managed-execution guard runs before any byte of the probed binary
+/// executes, so a caller that invokes runtime inspection directly cannot
+/// bypass compiled-content authorization (audit RT-02: tuning preparation and
+/// the older runtime-health command previously executed managed binaries
+/// without the protected launch path's trust check).
+fn run_runtime_probe_with<G: Fn(&Path) -> Result<(), String>>(
+    path: &Path,
+    arg: &str,
+    guard: G,
+) -> Result<String, String> {
+    guard(path)?;
     let mut command = crate::proc::hidden_command(path);
     command.arg(arg).stdin(std::process::Stdio::null());
     let output = crate::proc::output_with_timeout_and_cancel(
@@ -1270,9 +1282,21 @@ fn run_runtime_probe(path: &Path, arg: &str) -> Result<String, String> {
 }
 
 pub fn inspect_runtime(path: &Path) -> Result<RuntimeCapabilities, String> {
+    inspect_runtime_with(path, crate::runtime::authorize_managed_execution)
+}
+
+/// Runtime inspection with an explicit managed-execution guard.
+///
+/// Tuning preparation and the public inspect command both reach managed probes
+/// through this function, so the guard is part of the probe path itself and
+/// cannot be skipped by calling runtime inspection directly (audit RT-02).
+fn inspect_runtime_with<G: Fn(&Path) -> Result<(), String>>(
+    path: &Path,
+    guard: G,
+) -> Result<RuntimeCapabilities, String> {
     crate::artifact::validate_regular_non_reparse_file("Runtime", path)?;
-    let version = run_runtime_probe(path, "--version")?;
-    let help = run_runtime_probe(path, "--help")?;
+    let version = run_runtime_probe_with(path, "--version", &guard)?;
+    let help = run_runtime_probe_with(path, "--help", &guard)?;
     let mut caps = parse_capabilities(&version, &help);
     caps.path = path.to_string_lossy().to_string();
     Ok(caps)
@@ -1675,8 +1699,28 @@ pub fn check_runtime_health(
     expected_backend: &str,
     expected_model: &str,
 ) -> Result<RuntimeDeviceHealth, String> {
+    check_runtime_health_with(
+        server_path,
+        expected_adapters,
+        expected_backend,
+        expected_model,
+        crate::runtime::authorize_managed_execution,
+    )
+}
+
+/// Device health with an explicit managed-execution guard.
+///
+/// The older public runtime-health command and managed health preparation both
+/// funnel their `llama-cli.exe` probe through this function (audit RT-02).
+fn check_runtime_health_with<G: Fn(&Path) -> Result<(), String>>(
+    server_path: &Path,
+    expected_adapters: &[String],
+    expected_backend: &str,
+    expected_model: &str,
+    guard: G,
+) -> Result<RuntimeDeviceHealth, String> {
     let probe = device_probe_path(server_path)?;
-    let output = run_runtime_probe(&probe, "--list-devices")?;
+    let output = run_runtime_probe_with(&probe, "--list-devices", &guard)?;
     let health = decide_device_health(&probe, &output, "", expected_backend, expected_model);
     // `expected_adapters` is required so health can never pass on a
     // probe line alone: at least one caller-observed adapter name must
@@ -2330,7 +2374,7 @@ mod tests {
     fn runtime_probe_uses_the_contained_process_runner() {
         let source = include_str!("core.rs");
         let probe = source
-            .split("fn run_runtime_probe")
+            .split("fn run_runtime_probe_with")
             .nth(1)
             .unwrap()
             .split("pub fn inspect_runtime")
@@ -2338,6 +2382,18 @@ mod tests {
             .unwrap();
         assert!(probe.contains("output_with_timeout"));
         assert!(!probe.contains(".spawn()"));
+        // The managed-execution guard must run before the probe process starts
+        // (audit RT-02): the guard call precedes the contained runner.
+        let guard = probe
+            .find("guard(path)?")
+            .expect("the probe boundary must consult the execution guard");
+        let runner = probe
+            .find("output_with_timeout_and_cancel")
+            .expect("the probe boundary must use the contained runner");
+        assert!(
+            guard < runner,
+            "the guard must run before the process starts"
+        );
     }
 
     #[cfg(windows)]
@@ -2420,6 +2476,105 @@ fn main() {
         let error = inspect_runtime(&executable).unwrap_err();
 
         assert!(error.contains("output limit"), "unexpected error: {error}");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Compile a fixture executable that writes `marker` whenever it runs.
+    fn build_sentinel_probe(root: &Path, marker: &Path) -> PathBuf {
+        let source = root.join("sentinel.rs");
+        let executable = root.join("sentinel.exe");
+        fs::write(
+            &source,
+            format!(
+                "fn main() {{ std::fs::write({:?}, b\"ran\").unwrap(); }}",
+                marker
+            ),
+        )
+        .unwrap();
+        let status = crate::proc::hidden_command("rustc")
+            .arg(&source)
+            .arg("-o")
+            .arg(&executable)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        executable
+    }
+
+    #[test]
+    fn rt02_tampered_managed_cli_never_executes_through_the_runtime_health_workflow() {
+        let root =
+            std::env::temp_dir().join(format!("localmotive-rt02-health-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let marker = root.join("sentinel-ran.txt");
+        let sentinel = build_sentinel_probe(&root, &marker);
+
+        // Negative control: the sentinel writes its marker when invoked, so an
+        // absent marker below is meaningful evidence that nothing ran.
+        let status = crate::proc::hidden_command(&sentinel).status().unwrap();
+        assert!(status.success());
+        assert!(
+            marker.exists(),
+            "negative control sentinel must write a marker"
+        );
+        fs::remove_file(&marker).unwrap();
+
+        let primary = root.join("Localmotive").join("runtimes");
+        let legacy = root.join("GGUF Pilot").join("runtimes");
+        let (server, cli) = crate::runtime::test_fixtures::place_fixture_install(&primary);
+        fs::copy(&sentinel, &cli).unwrap();
+
+        // The older runtime-health workflow must reject the replaced managed CLI
+        // before the --list-devices probe executes it (audit RT-02).
+        let guard = |path: &Path| {
+            crate::runtime::authorize_managed_execution_with(
+                path,
+                &primary,
+                &legacy,
+                crate::runtime::test_fixtures::fixture_source(),
+            )
+        };
+        let error = check_runtime_health_with(&server, &[], "cpu", "fixture", guard).unwrap_err();
+        assert!(
+            !marker.exists(),
+            "the tampered managed CLI executed before rejection: {error}"
+        );
+        assert!(error.contains("content verification"), "{error}");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rt02_tampered_managed_server_never_executes_through_runtime_inspection() {
+        let root =
+            std::env::temp_dir().join(format!("localmotive-rt02-inspect-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let marker = root.join("sentinel-ran.txt");
+        let sentinel = build_sentinel_probe(&root, &marker);
+
+        let primary = root.join("Localmotive").join("runtimes");
+        let legacy = root.join("GGUF Pilot").join("runtimes");
+        let (server, _cli) = crate::runtime::test_fixtures::place_fixture_install(&primary);
+        fs::copy(&sentinel, &server).unwrap();
+
+        // Tuning preparation and the protected inspect command both reach
+        // managed probes through inspect_runtime; the replaced server must be
+        // rejected before --version runs it (audit RT-02).
+        let guard = |path: &Path| {
+            crate::runtime::authorize_managed_execution_with(
+                path,
+                &primary,
+                &legacy,
+                crate::runtime::test_fixtures::fixture_source(),
+            )
+        };
+        let error = inspect_runtime_with(&server, guard).unwrap_err();
+        assert!(
+            !marker.exists(),
+            "the tampered managed server executed before rejection: {error}"
+        );
+        assert!(error.contains("content verification"), "{error}");
         fs::remove_dir_all(root).unwrap();
     }
 
