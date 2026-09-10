@@ -24,7 +24,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Chunks smaller than this are not worth a separate connection.
 pub const MIN_CHUNK_BYTES: u64 = 8 * 1024 * 1024;
@@ -546,6 +546,8 @@ fn existing_file_matches_in(
     entries: &DownloadEntries,
     expected_size: u64,
     expected_sha256: &str,
+    cancel: Option<&AtomicBool>,
+    progress: Option<&mut dyn FnMut(u64)>,
 ) -> Result<bool, String> {
     let metadata = match entries.dir.metadata(&entries.target) {
         Ok(metadata) => metadata,
@@ -566,7 +568,8 @@ fn existing_file_matches_in(
             entries.target.display()
         )
     })?;
-    Ok(sha256_reader(file, &entries.target)?.eq_ignore_ascii_case(expected_sha256))
+    Ok(sha256_reader_with(file, &entries.target, cancel, progress)?
+        .eq_ignore_ascii_case(expected_sha256))
 }
 
 /// Compute a file's sha256, streaming so a 20 GiB model is never held in memory.
@@ -574,13 +577,28 @@ fn existing_file_matches_in(
 fn sha256_file(path: &Path) -> Result<String, String> {
     let file =
         File::open(path).map_err(|error| format!("Could not open {}: {error}", path.display()))?;
-    sha256_reader(file, path)
+    sha256_reader_with(file, path, None, None)
 }
 
-fn sha256_reader(mut file: impl Read, display_path: &Path) -> Result<String, String> {
+/// Streaming SHA-256 with cancellation checks and byte progress, so a large
+/// existing-file or final-part verification returns control promptly when
+/// the user keeps the current state and stops (audit DC-12 I3).
+fn sha256_reader_with(
+    mut file: impl Read,
+    display_path: &Path,
+    cancel: Option<&AtomicBool>,
+    mut progress: Option<&mut dyn FnMut(u64)>,
+) -> Result<String, String> {
     let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; BUFFER_BYTES];
+    let mut hashed = 0_u64;
     loop {
+        if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+            return Err(format!(
+                "Verification of {} was cancelled; the existing bytes were kept.",
+                display_path.display()
+            ));
+        }
         let read = file
             .read(&mut buffer)
             .map_err(|error| format!("Could not read {}: {error}", display_path.display()))?;
@@ -588,9 +606,47 @@ fn sha256_reader(mut file: impl Read, display_path: &Path) -> Result<String, Str
             break;
         }
         hasher.update(&buffer[..read]);
+        hashed += read as u64;
+        if let Some(progress) = progress.as_mut() {
+            progress(hashed);
+        }
     }
     Ok(format!("{:x}", hasher.finalize()))
 }
+
+/// Flush the part file's data before a resume checkpoint claims those bytes.
+///
+/// The documented recovery guarantee (audit DC-12): a published checkpoint
+/// never claims bytes that were not first written to the part file and
+/// flushed to the operating system. A process crash resumes up to the last
+/// checkpoint; an OS crash or power loss re-fetches bytes written after the
+/// last completed checkpoint, because the sidecar is only renamed after the
+/// data sync.
+fn sync_part_data(entries: &DownloadEntries) -> Result<(), String> {
+    let mut options = CapOpenOptions::new();
+    options.write(true);
+    let file = match entries.dir.open_with(&entries.part, &options) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(format!(
+                "Could not open {} to flush its data: {error}",
+                entries.part.display()
+            ));
+        }
+    };
+    file.sync_data().map_err(|error| {
+        format!(
+            "Could not flush {} before saving download progress: {error}",
+            entries.part.display()
+        )
+    })
+}
+
+/// Documented checkpoint cadence: progress UI updates every poll, but the
+/// durable sidecar (with its data sync) is published at most this often,
+/// plus on completion or stop (audit DC-12 I2).
+const CHECKPOINT_INTERVAL_SECS: u64 = 2;
 
 fn client(
     token: Option<&str>,
@@ -757,11 +813,21 @@ pub fn download_file(
     connections: usize,
     cancel: Arc<AtomicBool>,
     downloaded: Arc<AtomicU64>,
-    mut on_progress: impl FnMut(u64, u64) + Send,
+    on_progress: impl FnMut(u64, u64) + Send,
 ) -> Result<PathBuf, String> {
     if cancel.load(Ordering::Relaxed) {
         return Err("Download cancelled before network access started.".into());
     }
+    // Progress must be monotonic for the UI: a later verification pass over
+    // local bytes must never rewind the reported byte total (audit DC-12).
+    let mut last_reported = 0_u64;
+    let mut on_progress = {
+        let mut inner = on_progress;
+        move |done: u64, total: u64| {
+            last_reported = last_reported.max(done);
+            inner(last_reported, total);
+        }
+    };
     if let Some(parent) = target.parent() {
         ensure_safe_write_entry(parent)?;
     }
@@ -777,7 +843,14 @@ pub fn download_file(
         return Err("The remote file size does not match the validated catalog.".into());
     }
     if entries.dir.symlink_metadata(&entries.target).is_ok() {
-        if existing_file_matches_in(&entries, remote.size, expected_sha256)? {
+        let mut verify_progress = |hashed: u64| on_progress(hashed.min(remote.size), remote.size);
+        if existing_file_matches_in(
+            &entries,
+            remote.size,
+            expected_sha256,
+            Some(cancel.as_ref()),
+            Some(&mut verify_progress),
+        )? {
             downloaded.store(remote.size, Ordering::Relaxed);
             on_progress(remote.size, remote.size);
             return Ok(target.to_path_buf());
@@ -893,20 +966,31 @@ pub fn download_file(
                 });
             }
 
-            // Report progress and persist resume state while the workers run.
+            // Report progress every poll; publish a durable checkpoint only
+            // at the documented cadence (or on completion), and always flush
+            // the part data before the sidecar claims those bytes
+            // (audit DC-12 I1/I2).
+            let mut last_checkpoint = Instant::now();
             while !cancel.load(Ordering::Relaxed) {
                 std::thread::sleep(Duration::from_millis(400));
                 let snapshot = chunks.lock().unwrap().clone();
                 let done: u64 = snapshot.iter().map(|c| c.done).sum();
                 on_progress(done, total);
                 state.chunks = snapshot;
-                if let Err(error) = save_resume_state_in(&entries, &state) {
-                    let mut slot = failure.lock().unwrap();
-                    if slot.is_none() {
-                        *slot = Some(error);
+                let due = state.is_complete()
+                    || last_checkpoint.elapsed() >= Duration::from_secs(CHECKPOINT_INTERVAL_SECS);
+                if due {
+                    let checkpoint = sync_part_data(&entries)
+                        .and_then(|()| save_resume_state_in(&entries, &state));
+                    if let Err(error) = checkpoint {
+                        let mut slot = failure.lock().unwrap();
+                        if slot.is_none() {
+                            *slot = Some(error);
+                        }
+                        cancel.store(true, Ordering::Relaxed);
+                        break;
                     }
-                    cancel.store(true, Ordering::Relaxed);
-                    break;
+                    last_checkpoint = Instant::now();
                 }
                 if state.is_complete() {
                     break;
@@ -916,6 +1000,7 @@ pub fn download_file(
     }
 
     state.chunks = chunks.lock().unwrap().clone();
+    sync_part_data(&entries)?;
     save_resume_state_in(&entries, &state)?;
     on_progress(state.downloaded(), total);
 
@@ -939,7 +1024,14 @@ pub fn download_file(
         .dir
         .open(&entries.part)
         .map_err(|error| format!("Could not securely open {}: {error}", part.display()))?;
-    let actual = sha256_reader(part_file, &part)?;
+    let mut verify_progress =
+        |hashed: u64| on_progress(hashed.min(state.downloaded()), state.downloaded());
+    let actual = sha256_reader_with(
+        part_file,
+        &part,
+        Some(cancel.as_ref()),
+        Some(&mut verify_progress),
+    )?;
     if !actual.eq_ignore_ascii_case(expected_sha256) {
         let _ = entries.dir.remove_file(&entries.part);
         let _ = entries.dir.remove_file(&entries.meta);
@@ -2434,6 +2526,123 @@ mod tests {
             "a changed file must not be spliced onto the old bytes"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn dc12_cancelled_existing_file_verification_keeps_the_file_and_retry_reverifies() {
+        // A large existing-file verification must return promptly when the
+        // user keeps the current state and stops, keep the bytes on disk,
+        // and re-verify (never shortcut to completion) on the next attempt
+        // (audit DC-12 I3/V2).
+        let payload: Vec<u8> = (0..(3 * 1024 * 1024))
+            .map(|index| (index % 251) as u8)
+            .collect();
+        let digest = {
+            let mut hasher = Sha256::new();
+            hasher.update(&payload);
+            format!("{:x}", hasher.finalize())
+        };
+        let (port, server) = serve_plain_responses(vec![
+            (payload.clone(), true, None),
+            (payload.clone(), true, None),
+        ]);
+        let root = unique_test_dir("localmotive-dc12-verify");
+        let target = root.join("existing.bin");
+        std::fs::write(&target, &payload).unwrap();
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let downloaded = Arc::new(AtomicU64::new(0));
+        let flip = cancel.clone();
+        let result = download_file(
+            &format!("http://127.0.0.1:{port}/existing.bin"),
+            &target,
+            "test artifact",
+            payload.len() as u64,
+            &digest,
+            None,
+            1,
+            cancel,
+            downloaded.clone(),
+            move |hashed, _total| {
+                if hashed > 0 {
+                    flip.store(true, Ordering::Relaxed);
+                }
+            },
+        );
+        let error = result.unwrap_err();
+        assert!(error.contains("cancelled"), "{error}");
+        assert!(target.exists(), "the kept bytes must survive cancellation");
+        assert_eq!(
+            downloaded.load(Ordering::Relaxed),
+            0,
+            "no transfer may start"
+        );
+
+        // Retry without cancellation: the file is re-verified and reported
+        // complete only after that verification.
+        let retried = download_file(
+            &format!("http://127.0.0.1:{port}/existing.bin"),
+            &target,
+            "test artifact",
+            payload.len() as u64,
+            &digest,
+            None,
+            1,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicU64::new(0)),
+            |_done, _total| {},
+        )
+        .unwrap();
+        assert_eq!(std::fs::read(&retried).unwrap(), payload);
+        let requests = server.join().unwrap();
+        assert_eq!(
+            requests.len(),
+            2,
+            "each attempt probes once; existing bytes avoid transfers"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dc12_checkpoint_publication_is_ordered_after_a_data_sync() {
+        // The documented guarantee: a published checkpoint never claims
+        // bytes that were not first flushed to the part file (audit DC-12
+        // I1/I2). Both production publication points must sync first.
+        let source = include_str!("download.rs");
+        let loop_block = source
+            .split("// Report progress every poll")
+            .nth(1)
+            .unwrap()
+            .split("if state.is_complete() {")
+            .next()
+            .unwrap();
+        let sync = loop_block
+            .find("sync_part_data(&entries)")
+            .expect("the checkpoint loop must flush part data");
+        let save = loop_block
+            .find("save_resume_state_in(&entries, &state)")
+            .expect("the checkpoint loop must publish the sidecar");
+        assert!(
+            sync < save,
+            "data must be flushed before the checkpoint rename"
+        );
+        let final_block = source
+            .split("state.chunks = chunks.lock().unwrap().clone();")
+            .nth(1)
+            .unwrap()
+            .split("if let Some(error) = failure.lock().unwrap().take()")
+            .next()
+            .unwrap();
+        assert!(
+            final_block.contains("sync_part_data(&entries)?;")
+                && final_block.contains("save_resume_state_in(&entries, &state)?;"),
+            "the final save must flush data first"
+        );
+        assert!(
+            final_block.find("sync_part_data(&entries)?;")
+                < final_block.find("save_resume_state_in(&entries, &state)?;"),
+            "the final save must flush data first"
+        );
     }
 
     /// Serve one scripted plain-HTTP response per entry: (payload,
