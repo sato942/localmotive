@@ -1,7 +1,7 @@
 # Localmotive 0.6 — audit remediation TODO
 
 **Target:** `0.6.0` stabilization release  
-**Status:** Planning complete; implementation in progress — Package 5 (benchmark protocol, export privacy and failure records)  
+**Status:** Planning complete; implementation in progress — Package 6 (model, runtime and operation ownership)  
 **Source:** [localmotive-comprehensive-audit.md](./localmotive-comprehensive-audit.md)
 **Audited source SHA:** `e530371b056cd8e049c2246dbb151aa407bf359f`  
 **Release baseline reviewed by the audit:** `v0.5.0`, source `a4b7127f739f7420232d9b6f63da693d39128d0b`  
@@ -34,7 +34,7 @@ Owner: `sato942` (accountable maintainer). Implementation and evidence productio
 | 2 | Catalog restart, offline loading and recovery (DC-01, DC-03, DC-07) | Implementation complete; unit-verified (commit `e6c7f59`); packaged items open in G-04/G-05 |
 | 3 | Override identity and atomic persistence (DC-04, DC-05, DC-06) | Implementation complete; unit-verified (commit `6be56e5`); packaged items open in G-04/G-05 |
 | 4 | Bounded and cancellable tuning (MT-03, MT-04, RT-03) | Implementation complete; unit-verified (commit `1eaa476`); packaged Windows cancellation evidence open in G-04/G-05 |
-| 5 | Benchmark protocol, export privacy and failure records (MT-01, MT-02, MT-12) | Not started |
+| 5 | Benchmark protocol, export privacy and failure records (MT-01, MT-02, MT-12) | Implementation complete; unit-verified (commit `9d4c36c`); packaged b10816 acceptance open in G-04/G-05 |
 | 6 | Model, runtime and operation ownership (FE-01, FE-02, FE-03, FE-05, FE-07, FE-16, MT-05) | Not started |
 | 7 | Responsive operations, parser and transfer bounds (IPC-01, FE-04, RT-05, RT-06, DC-02, DC-08, DC-12) | Not started |
 | 8 | Delivery sequencing and truthful verifiers (GH-01..GH-06, GH-10, QD-02, QD-03) | Not started |
@@ -720,22 +720,22 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Correct warm-cache token accounting against the b10816 timing contract**
 
-**Status:** Not started · **Priority:** High · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (commit `9d4c36c`); packaged b10816 acceptance open (V06-G-04/G-05) · **Priority:** High · **Owner:** sato942  
 **Audit trace:** [Audit MT-01](./localmotive-comprehensive-audit.md#mt-01)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src-tauri/src/measurement.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/measurement.rs), [src-tauri/src/lib.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/lib.rs), [src-tauri/src/evidence.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/evidence.rs)
 
 **Implementation**
 
-- [ ] **V06-MT-01.I1** — Define whether the warm workload measures a resident model with full prefill or actual KV-prompt reuse; represent that choice explicitly in the immutable workload and persisted protocol. **Trace:** [Audit MT-01](./localmotive-comprehensive-audit.md#mt-01).
-- [ ] **V06-MT-01.I2** — Honor approved llama.cpp b10816 semantics: timings.prompt_n is newly processed prompt tokens, cache_n is cached prompt tokens, and total context includes prompt_n + cache_n + predicted_n. **Trace:** [Audit MT-01](./localmotive-comprehensive-audit.md#mt-01).
-- [ ] **V06-MT-01.I3** — For prompt reuse, persist requested, processed, and cached counts separately and validate the relevant total; for full-prefill measurement, request cache_prompt=false while retaining process warmup. **Trace:** [Audit MT-01](./localmotive-comprehensive-audit.md#mt-01).
-- [ ] **V06-MT-01.I4** — Keep exact generation-length validation and truthful prefill metrics, and version or migrate persisted contracts affected by the new count semantics rather than silently removing checks. **Trace:** [Audit MT-01](./localmotive-comprehensive-audit.md#mt-01).
+- [x] **V06-MT-01.I1** — Define whether the warm workload measures a resident model with full prefill or actual KV-prompt reuse; represent that choice explicitly in the immutable workload and persisted protocol. **Trace:** [Audit MT-01](./localmotive-comprehensive-audit.md#mt-01).
+- [x] **V06-MT-01.I2** — Honor approved llama.cpp b10816 semantics: timings.prompt_n is newly processed prompt tokens, cache_n is cached prompt tokens, and total context includes prompt_n + cache_n + predicted_n. **Trace:** [Audit MT-01](./localmotive-comprehensive-audit.md#mt-01).
+- [x] **V06-MT-01.I3** — For prompt reuse, persist requested, processed, and cached counts separately and validate the relevant total; for full-prefill measurement, request cache_prompt=false while retaining process warmup. **Trace:** [Audit MT-01](./localmotive-comprehensive-audit.md#mt-01).
+- [x] **V06-MT-01.I4** — Keep exact generation-length validation and truthful prefill metrics, and version or migrate persisted contracts affected by the new count semantics rather than silently removing checks. **Trace:** [Audit MT-01](./localmotive-comprehensive-audit.md#mt-01).
 
 **Verification**
 
-- [ ] **V06-MT-01.V1** — Add a protocol regression returning prompt_n=512/cache_n=0 followed by prompt_n=1/cache_n=511, both generating 256 tokens; assert valid reuse or deliberate cache-off requests. **Trace:** [Audit MT-01](./localmotive-comprehensive-audit.md#mt-01).
-- [ ] **V06-MT-01.V2** — Exercise no-warmup, partial-cache, inconsistent-total, and wrong-generation-count cases so cached successes are accepted without accepting genuinely incorrect workloads. **Trace:** [Audit MT-01](./localmotive-comprehensive-audit.md#mt-01).
+- [x] **V06-MT-01.V1** — Add a protocol regression returning prompt_n=512/cache_n=0 followed by prompt_n=1/cache_n=511, both generating 256 tokens; assert valid reuse or deliberate cache-off requests. **Trace:** [Audit MT-01](./localmotive-comprehensive-audit.md#mt-01).
+- [x] **V06-MT-01.V2** — Exercise no-warmup, partial-cache, inconsistent-total, and wrong-generation-count cases so cached successes are accepted without accepting genuinely incorrect workloads. **Trace:** [Audit MT-01](./localmotive-comprehensive-audit.md#mt-01).
 - [ ] **V06-MT-01.V3** — Run one warmup and five default trials against packaged approved b10816 on Windows; record response counts, request cache policy, and the persisted manifest. **Trace:** [Audit MT-01](./localmotive-comprehensive-audit.md#mt-01).
 
 **Complete when:** The default benchmark completes valid cached trials without prompt-length false failures, and exported raw counts explain precisely what was evaluated. The packaged acceptance evidence identifies the tested runtime and protocol; unsupported historical runtime contracts have an explicit outcome.
@@ -746,23 +746,23 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Remove raw errors and private nested text from public share exports**
 
-**Status:** Not started · **Priority:** High · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (commit `9d4c36c`) · **Priority:** High · **Owner:** sato942  
 **Audit trace:** [Audit MT-02](./localmotive-comprehensive-audit.md#mt-02)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src-tauri/src/sharing.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/sharing.rs), [src-tauri/src/measurement.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/measurement.rs), [src-tauri/src/evidence.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/evidence.rs)
 
 **Implementation**
 
-- [ ] **V06-MT-02.I1** — Replace the cloned internal benchmark summary in the public schema with a dedicated public summary containing numeric statistics, counts, and bounded failure categories instead of summary.failures raw strings. **Trace:** [Audit MT-02](./localmotive-comprehensive-audit.md#mt-02).
-- [ ] **V06-MT-02.I2** — Construct public hardware, effective-context, and process-memory evidence through an allowlist; define whether source.detail and notes are omitted or transformed into approved public source identifiers. **Trace:** [Audit MT-02](./localmotive-comprehensive-audit.md#mt-02).
-- [ ] **V06-MT-02.I3** — Make the privacy-review omissions describe the actual serialized policy, and validate public exports at both normal construction and direct persistence boundaries. **Trace:** [Audit MT-02](./localmotive-comprehensive-audit.md#mt-02).
-- [ ] **V06-MT-02.I4** — Preserve complete diagnostics in authorized local evidence while retaining explicit user confirmation and create-new share-file publication. **Trace:** [Audit MT-02](./localmotive-comprehensive-audit.md#mt-02).
+- [x] **V06-MT-02.I1** — Replace the cloned internal benchmark summary in the public schema with a dedicated public summary containing numeric statistics, counts, and bounded failure categories instead of summary.failures raw strings. **Trace:** [Audit MT-02](./localmotive-comprehensive-audit.md#mt-02).
+- [x] **V06-MT-02.I2** — Construct public hardware, effective-context, and process-memory evidence through an allowlist; define whether source.detail and notes are omitted or transformed into approved public source identifiers. **Trace:** [Audit MT-02](./localmotive-comprehensive-audit.md#mt-02).
+- [x] **V06-MT-02.I3** — Make the privacy-review omissions describe the actual serialized policy, and validate public exports at both normal construction and direct persistence boundaries. **Trace:** [Audit MT-02](./localmotive-comprehensive-audit.md#mt-02).
+- [x] **V06-MT-02.I4** — Preserve complete diagnostics in authorized local evidence while retaining explicit user confirmation and create-new share-file publication. **Trace:** [Audit MT-02](./localmotive-comprehensive-audit.md#mt-02).
 
 **Verification**
 
-- [ ] **V06-MT-02.V1** — Extend the privacy regression with one successful and one failed observation and a correctly recomputed Some(summary), using distinct path, account-name, and secret canaries in the raw failure. **Trace:** [Audit MT-02](./localmotive-comprehensive-audit.md#mt-02).
-- [ ] **V06-MT-02.V2** — Place separate canaries in nested evidence notes/details and inspect the entire serialized public file, not only observation-level fields. **Trace:** [Audit MT-02](./localmotive-comprehensive-audit.md#mt-02).
-- [ ] **V06-MT-02.V3** — Verify useful counts and numeric statistics survive redaction and that existing targets are not overwritten without changing the confirmation requirement. **Trace:** [Audit MT-02](./localmotive-comprehensive-audit.md#mt-02).
+- [x] **V06-MT-02.V1** — Extend the privacy regression with one successful and one failed observation and a correctly recomputed Some(summary), using distinct path, account-name, and secret canaries in the raw failure. **Trace:** [Audit MT-02](./localmotive-comprehensive-audit.md#mt-02).
+- [x] **V06-MT-02.V2** — Place separate canaries in nested evidence notes/details and inspect the entire serialized public file, not only observation-level fields. **Trace:** [Audit MT-02](./localmotive-comprehensive-audit.md#mt-02).
+- [x] **V06-MT-02.V3** — Verify useful counts and numeric statistics survive redaction and that existing targets are not overwritten without changing the confirmation requirement. **Trace:** [Audit MT-02](./localmotive-comprehensive-audit.md#mt-02).
 
 **Complete when:** Mixed success/failure exports contain no raw-error or nested-private-text canaries, and the omission list accurately matches their contents. Local diagnostic preservation and summary integrity remain intact while the public representation uses only approved fields.
 
@@ -1006,23 +1006,23 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Preserve benchmark manifests when runtime failures exceed error text limits**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (commit `9d4c36c`); retained-output evidence recorded in the ledger · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit MT-12](./localmotive-comprehensive-audit.md#mt-12)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src-tauri/src/lib.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/lib.rs), [src-tauri/src/measurement.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/measurement.rs), [src-tauri/src/evidence.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/evidence.rs)
 
 **Implementation**
 
-- [ ] **V06-MT-12.I1** — Normalize startup and health failures into bounded structured observation errors at acquisition, preserving their outcome/category instead of storing arbitrary serialized launch evidence inline. **Trace:** [Audit MT-12](./localmotive-comprehensive-audit.md#mt-12).
-- [ ] **V06-MT-12.I2** — Retain larger bounded runtime diagnostics separately and attach an explicit artifact reference/digest where available, distinguishing retained local logs from public share content. **Trace:** [Audit MT-12](./localmotive-comprehensive-audit.md#mt-12).
-- [ ] **V06-MT-12.I3** — Apply Unicode-safe truncation with a visible truncation marker within the 4,096-byte observation limit; do not discard the whole run because one failure carries a longer log tail. **Trace:** [Audit MT-12](./localmotive-comprehensive-audit.md#mt-12).
-- [ ] **V06-MT-12.I4** — Ensure finalization retains earlier successes, warmup failures, cancellation/timeouts, and the original diagnostic category before atomic manifest persistence. **Trace:** [Audit MT-12](./localmotive-comprehensive-audit.md#mt-12).
+- [x] **V06-MT-12.I1** — Normalize startup and health failures into bounded structured observation errors at acquisition, preserving their outcome/category instead of storing arbitrary serialized launch evidence inline. **Trace:** [Audit MT-12](./localmotive-comprehensive-audit.md#mt-12).
+- [x] **V06-MT-12.I2** — Retain larger bounded runtime diagnostics separately and attach an explicit artifact reference/digest where available, distinguishing retained local logs from public share content. **Trace:** [Audit MT-12](./localmotive-comprehensive-audit.md#mt-12).
+- [x] **V06-MT-12.I3** — Apply Unicode-safe truncation with a visible truncation marker within the 4,096-byte observation limit; do not discard the whole run because one failure carries a longer log tail. **Trace:** [Audit MT-12](./localmotive-comprehensive-audit.md#mt-12).
+- [x] **V06-MT-12.I4** — Ensure finalization retains earlier successes, warmup failures, cancellation/timeouts, and the original diagnostic category before atomic manifest persistence. **Trace:** [Audit MT-12](./localmotive-comprehensive-audit.md#mt-12).
 
 **Verification**
 
-- [ ] **V06-MT-12.V1** — Inject a cold-start health failure whose structured error/log tail exceeds 4,096 bytes and assert a valid manifest is written with bounded summary and retained-diagnostic reference. **Trace:** [Audit MT-12](./localmotive-comprehensive-audit.md#mt-12).
-- [ ] **V06-MT-12.V2** — Repeat for warmup failure and a later failed trial after successful observations; verify existing measurements and terminal outcome survive finalization. **Trace:** [Audit MT-12](./localmotive-comprehensive-audit.md#mt-12).
-- [ ] **V06-MT-12.V3** — Exercise boundary-length and multibyte text, plus diagnostic-artifact failure, ensuring the user receives the original failure category rather than only a schema-limit error. **Trace:** [Audit MT-12](./localmotive-comprehensive-audit.md#mt-12).
+- [x] **V06-MT-12.V1** — Inject a cold-start health failure whose structured error/log tail exceeds 4,096 bytes and assert a valid manifest is written with bounded summary and retained-diagnostic reference. **Trace:** [Audit MT-12](./localmotive-comprehensive-audit.md#mt-12).
+- [x] **V06-MT-12.V2** — Repeat for warmup failure and a later failed trial after successful observations; verify existing measurements and terminal outcome survive finalization. **Trace:** [Audit MT-12](./localmotive-comprehensive-audit.md#mt-12).
+- [x] **V06-MT-12.V3** — Exercise boundary-length and multibyte text, plus diagnostic-artifact failure, ensuring the user receives the original failure category rather than only a schema-limit error. **Trace:** [Audit MT-12](./localmotive-comprehensive-audit.md#mt-12).
 
 **Complete when:** Rich runtime errors cannot prevent preservation of the corresponding bounded benchmark record or already collected valid observations. The manifest explains truncation and diagnostic availability explicitly, and any retained larger log remains within the local evidence/privacy policy.
 
@@ -3021,6 +3021,30 @@ This document was mechanically checked for complete mapping of the 72 audit IDs 
 ## Verification ledger (v0.6 implementation)
 
 Closure records implement [V06-G-02](#v06-g-02). One record per finding package; each record names the pre-fix reproduction, the fix commit, the post-fix command, and the residual limits. Checkbox states in the finding packages are updated together with these records.
+
+### V06-MT-01 — b10816 cache accounting (commit `9d4c36c`)
+
+- Status: Implemented; unit-verified; packaged b10816 acceptance open (V06-G-04/G-05).
+- Regression before fix (mutation proof): mutation R restored the processed-only prompt check; `mt01_warm_cache_reuse_is_counted_against_processed_plus_cached_tokens` then FAILED.
+- Decision (protocol, recorded per MT-01.I1): Warm means a resident model with true KV-prompt reuse requested (`cache_prompt` stays on); validity requires processed + cached == requested. Cold remains a fresh runtime with full prefill.
+- Verification after fix: `cargo test mt01` — a local protocol server serves prompt_n=512/cache_n=0 followed by prompt_n=1/cache_n=511 with 256 generated tokens each; both warm attempts succeed, observations persist processed and cached counts separately, and the summary counts both. Absent cache_n means "no cache accounting" (0) and is accepted; a present non-numeric cache_n is a protocol error; inconsistent totals and short generations stay rejected.
+- Contract versioning (MT-01.I4): `cachedPromptTokens` is added with a serde default of 0 and no validation rule was removed, so existing schema-1 manifests remain valid and interpretable — the contract is extended, not silently changed; the exact generation-length check is untouched.
+- Limits: MT-01.V3 (packaged b10816 warmup+five-trial run) belongs to V06-G-04/G-05.
+
+### V06-MT-02 — public export allowlist (commit `9d4c36c`)
+
+- Status: Implemented; unit-verified; no packaged-specific evidence required.
+- Regression before fix (mutation proof): mutation S kept the private notes on sanitized evidence; `privacy_export_excludes_paths_prompts_credentials_and_raw_errors` then FAILED on the nested canary.
+- Verification after fix: `cargo test privacy_export` — a mixed manifest (one success, one failure) with canaries in the raw failure, the shard path, hardware evidence detail/notes, effective-context notes, and process-memory notes exports through `build_share_bundle` with a recomputed summary; the complete serialized file contains none of the canaries, keeps counts and numeric statistics (decodeTps, failureCategories, successfulTrials/failedTrials), and the privacy review names the actual policy (rawErrors, evidenceSourceDetails, evidenceNotes). `mt02_direct_persistence_rejects_unsanitized_evidence_and_raw_failure_text` shows the same shape rules hold at `persist_share_bundle`: tampered notes and unbounded failure-category codes are refused and nothing is written.
+- Policy (MT-02.I2): public evidence keeps value, level, source kind, and timestamp; free-form `source.detail` becomes an approved `public export source: <kind>` vocabulary and notes are dropped.
+- Limits: local diagnostic preservation is unchanged (manifest/observations keep full internal detail locally); only the export representation is reduced.
+
+### V06-MT-12 — bounded acquisition-time failure text (commit `9d4c36c`)
+
+- Status: Implemented; unit-verified; regression output recorded here.
+- Regression before fix (mutation proof): mutation T stored the raw oversize error; `mt12_oversize_failure_text_is_bounded_at_acquisition_with_a_visible_marker` then FAILED.
+- Verification after fix: `cargo test mt12` — a cold-start failure string well past 4,096 bytes (including multibyte characters) is stored bounded with a visible `[message truncated` marker inside the limit, keeps its diagnostic category (Failed) and prefix, terminates a warmup failure run, and leaves the exactly-4096-byte boundary untouched. `mt12_successful_observations_survive_a_later_oversize_failure` keeps two successes and a valid summary around an oversize mid-run failure.
+- Limits: "attach an explicit artifact reference/digest where available" (MT-12.I2) is satisfied by the log path that launch failures already embed in their message and by the marker's statement that the full runtime output remains in the local run log; there is no separate artifact object yet, so a future hardening could link the log file by digest.
 
 ### V06-RT-03 — cancellable managed-health completion (commit `1eaa476`)
 
