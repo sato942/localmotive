@@ -1069,6 +1069,8 @@ export type RuntimeCapabilities = {
 
 export type ServerStatus = {
   running: boolean;
+  /** Explicit lifecycle phase: idle, starting, running, or stopping. */
+  phase: string;
   pid: number | null;
   profileName: string | null;
   alias: string | null;

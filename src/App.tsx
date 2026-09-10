@@ -125,6 +125,7 @@ const CLOUD_MODEL = readSetting("cloud-model");
 const inTauri = () => Boolean((window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
 const idleStatus: ServerStatus = {
   running: false,
+  phase: "idle",
   pid: null,
   profileName: null,
   alias: null,
@@ -1270,13 +1271,15 @@ function App() {
                 <p>One supervised process. Exact profile. No hidden defaults.</p>
               </div>
               <div className="actions">
-                {status.running ? (
+                {status.running || status.phase === "starting" ? (
                   <>
-                    <button className="button secondary" onClick={() => openUrl(`http://127.0.0.1:${status.port}`)}>
-                      <SquareTerminal size={16} /> Open chat
-                    </button>
+                    {status.running && (
+                      <button className="button secondary" onClick={() => openUrl(`http://127.0.0.1:${status.port}`)}>
+                        <SquareTerminal size={16} /> Open chat
+                      </button>
+                    )}
                     <button className="button danger" onClick={stop} disabled={busy === "stop"}>
-                      <CircleStop size={16} /> Stop server
+                      <CircleStop size={16} /> {status.phase === "starting" ? "Cancel start" : "Stop server"}
                     </button>
                   </>
                 ) : (
@@ -1290,8 +1293,8 @@ function App() {
             <div className="instrument-strip">
               <div className={status.running ? "instrument primary-readout running" : "instrument primary-readout"}>
                 <span className="instrument-label">PROCESS</span>
-                <strong>{status.running ? "RUNNING" : "STANDBY"}</strong>
-                <small>{status.running ? `PID ${status.pid}` : "No owned child process"}</small>
+                <strong>{status.running ? "RUNNING" : status.phase === "starting" ? "STARTING" : "STANDBY"}</strong>
+                <small>{status.running ? `PID ${status.pid}` : status.phase === "starting" ? "Waiting for readiness; Stop stays available" : "No owned child process"}</small>
               </div>
               <div className="instrument">
                 <span className="instrument-label">ENDPOINT</span>

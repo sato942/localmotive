@@ -102,6 +102,11 @@ struct AppState {
     runtime_catalog: AtomicBool,
     /// One cancellable GGUF metadata read may run at a time.
     gguf_read: Mutex<Option<Arc<AtomicBool>>>,
+    /// The in-flight managed-server start, when one is pending: the child
+    /// stays reachable by Stop through its cancellation signal (audit
+    /// IPC-01), and only the worker that owns this operation ID may commit
+    /// the server slot.
+    starting: Mutex<Option<StartingServer>>,
     /// One managed-runtime seven-stage health run may execute at a time.
     runtime_health: Mutex<Option<Arc<AtomicBool>>>,
     /// One managed-inference operation at a time, with process generations
@@ -219,10 +224,21 @@ fn stop_owner_conflict(active: Option<OperationOwner>) -> Option<String> {
     }
 }
 
+/// A managed-server start in flight (audit IPC-01). The cancellation signal
+/// is the handle Stop uses while readiness is pending; the worker that owns
+/// `operation_id` is the only writer allowed to publish the running server.
+struct StartingServer {
+    operation_id: u64,
+    cancel: Arc<AtomicBool>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ServerStatus {
     running: bool,
+    /// Explicit lifecycle phase: idle, starting, running, or stopping
+    /// (audit IPC-01 I1).
+    phase: String,
     pid: Option<u32>,
     profile_name: Option<String>,
     alias: Option<String>,
@@ -244,6 +260,7 @@ impl Default for ServerStatus {
     fn default() -> Self {
         Self {
             running: false,
+            phase: "idle".to_string(),
             pid: None,
             profile_name: None,
             alias: None,
@@ -268,6 +285,7 @@ fn status_from(slot: &mut Option<ManagedServer>) -> ServerStatus {
                 let exit_code = code.code();
                 let status = ServerStatus {
                     running: false,
+                    phase: "idle".to_string(),
                     pid: None,
                     profile_name: Some(server.profile.name.clone()),
                     alias: Some(server.profile.alias.clone()),
@@ -298,6 +316,7 @@ fn status_from(slot: &mut Option<ManagedServer>) -> ServerStatus {
             }
             Ok(None) => ServerStatus {
                 running: true,
+                phase: "running".to_string(),
                 pid: Some(server.child.id()),
                 profile_name: Some(server.profile.name.clone()),
                 alias: Some(server.profile.alias.clone()),
@@ -314,6 +333,7 @@ fn status_from(slot: &mut Option<ManagedServer>) -> ServerStatus {
             },
             Err(error) => ServerStatus {
                 running: false,
+                phase: "idle".to_string(),
                 pid: None,
                 profile_name: Some(server.profile.name.clone()),
                 alias: Some(server.profile.alias.clone()),
@@ -1134,6 +1154,9 @@ fn launch_failure_evidence(
 }
 
 /// Block until `/health` answers 200, the child exits, or the deadline passes.
+/// The production startup path uses `wait_until_healthy_cancellable`
+/// (audit IPC-01); this non-cancellable form remains for tests.
+#[cfg(test)]
 fn wait_until_healthy(
     child: &mut impl HealthProcess,
     host: &str,
@@ -1275,15 +1298,21 @@ fn wait_until_healthy_inner(
 }
 
 #[tauri::command]
-fn scan_models(root: String) -> Result<Vec<LogicalModel>, String> {
-    core::scan_models(Path::new(&root))
+async fn scan_models(root: String) -> Result<Vec<LogicalModel>, String> {
+    tauri::async_runtime::spawn_blocking(move || core::scan_models(Path::new(&root)))
+        .await
+        .map_err(|error| format!("Model scan task failed: {error}"))?
 }
 
 #[tauri::command]
-fn inspect_runtime(path: String) -> Result<RuntimeCapabilities, String> {
-    let path = Path::new(&path);
-    runtime::verify_managed_runtime_for_launch(path)?;
-    core::inspect_runtime(path)
+async fn inspect_runtime(path: String) -> Result<RuntimeCapabilities, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = Path::new(&path);
+        runtime::verify_managed_runtime_for_launch(path)?;
+        core::inspect_runtime(path)
+    })
+    .await
+    .map_err(|error| format!("Runtime inspection task failed: {error}"))?
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -1297,15 +1326,19 @@ struct RuntimeHealthRequest {
 }
 
 #[tauri::command]
-fn check_runtime_health(
+async fn check_runtime_health(
     request: RuntimeHealthRequest,
 ) -> Result<core::RuntimeDeviceHealth, String> {
-    core::check_runtime_health(
-        Path::new(&request.path),
-        &request.expected_adapters,
-        &request.expected_backend,
-        &request.expected_model,
-    )
+    tauri::async_runtime::spawn_blocking(move || {
+        core::check_runtime_health(
+            Path::new(&request.path),
+            &request.expected_adapters,
+            &request.expected_backend,
+            &request.expected_model,
+        )
+    })
+    .await
+    .map_err(|error| format!("Runtime health task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -1412,176 +1445,184 @@ fn unknown_memory(detail: &str, observed_at_ms: u64) -> evidence::Evidence<u64> 
 }
 
 #[tauri::command]
-fn preflight_model(request: PreflightRequest) -> Result<PreflightResult, String> {
-    let launch = prepare_launch(&request.profile)?;
-    let mut hardware = runtime::detect_hardware();
-    hardware.manual_overrides = request.manual_overrides.clone();
-    let observed_at_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| error.to_string())?
-        .as_millis()
-        .try_into()
-        .map_err(|_| "System time is outside the supported range")?;
-    let execution_path = execution_path_for(&request.profile, &request.selected_adapter_ids);
-    let manual_capacity = runtime::manual_override_capacity(
-        &request.manual_overrides,
-        request
-            .selected_adapter_ids
-            .first()
-            .map(String::as_str)
-            .unwrap_or(""),
-        observed_at_ms,
-    )?;
-    let device_capacities = if matches!(execution_path, evidence::ExecutionPath::Cpu) {
-        vec![(
-            "system-memory".into(),
-            hardware.system_memory.available_physical_bytes.clone(),
-        )]
-    } else {
-        request
-            .selected_adapter_ids
-            .iter()
-            .enumerate()
-            .map(|(index, adapter_id)| {
-                let manual = if index == 0 {
-                    manual_capacity.clone()
-                } else {
-                    runtime::manual_override_capacity(
-                        &request.manual_overrides,
-                        adapter_id,
-                        observed_at_ms,
-                    )?
-                };
-                let capacity = manual
-                    .or_else(|| {
-                        hardware
-                            .adapters
-                            .iter()
-                            .find(|adapter| adapter.adapter_id == *adapter_id)
-                            .map(|adapter| adapter.available_budget_bytes.clone())
-                    })
-                    .unwrap_or_else(|| {
-                        unknown_memory(
-                            "The selected adapter was not present in the current hardware observation.",
+async fn preflight_model(request: PreflightRequest) -> Result<PreflightResult, String> {
+    // Preflight hashes files and probes hardware: run it on a blocking
+    // worker so neither the Tauri main thread nor the async executor stalls
+    // (audit IPC-01 I4).
+    tauri::async_runtime::spawn_blocking(move || {
+        let launch = prepare_launch(&request.profile)?;
+        let mut hardware = runtime::detect_hardware();
+        hardware.manual_overrides = request.manual_overrides.clone();
+        let observed_at_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_millis()
+            .try_into()
+            .map_err(|_| "System time is outside the supported range")?;
+        let execution_path = execution_path_for(&request.profile, &request.selected_adapter_ids);
+        let manual_capacity = runtime::manual_override_capacity(
+            &request.manual_overrides,
+            request
+                .selected_adapter_ids
+                .first()
+                .map(String::as_str)
+                .unwrap_or(""),
+            observed_at_ms,
+        )?;
+        let device_capacities = if matches!(execution_path, evidence::ExecutionPath::Cpu) {
+            vec![(
+                "system-memory".into(),
+                hardware.system_memory.available_physical_bytes.clone(),
+            )]
+        } else {
+            request
+                .selected_adapter_ids
+                .iter()
+                .enumerate()
+                .map(|(index, adapter_id)| {
+                    let manual = if index == 0 {
+                        manual_capacity.clone()
+                    } else {
+                        runtime::manual_override_capacity(
+                            &request.manual_overrides,
+                            adapter_id,
                             observed_at_ms,
-                        )
-                    });
-                Ok((adapter_id.clone(), capacity))
-            })
-            .collect::<Result<Vec<_>, String>>()?
-    };
-    let available_memory = match execution_path {
-        evidence::ExecutionPath::Cpu => hardware.system_memory.available_physical_bytes.clone(),
-        evidence::ExecutionPath::FullGpu | evidence::ExecutionPath::LayerOffload => {
-            if device_capacities.len() != 1 {
-                unknown_memory(
-                    "Select exactly one adapter for this execution path.",
-                    observed_at_ms,
-                )
-            } else {
-                device_capacities[0].1.clone()
+                        )?
+                    };
+                    let capacity = manual
+                        .or_else(|| {
+                            hardware
+                                .adapters
+                                .iter()
+                                .find(|adapter| adapter.adapter_id == *adapter_id)
+                                .map(|adapter| adapter.available_budget_bytes.clone())
+                        })
+                        .unwrap_or_else(|| {
+                            unknown_memory(
+                                "The selected adapter was not present in the current hardware observation.",
+                                observed_at_ms,
+                            )
+                        });
+                    Ok((adapter_id.clone(), capacity))
+                })
+                .collect::<Result<Vec<_>, String>>()?
+        };
+        let available_memory = match execution_path {
+            evidence::ExecutionPath::Cpu => hardware.system_memory.available_physical_bytes.clone(),
+            evidence::ExecutionPath::FullGpu | evidence::ExecutionPath::LayerOffload => {
+                if device_capacities.len() != 1 {
+                    unknown_memory(
+                        "Select exactly one adapter for this execution path.",
+                        observed_at_ms,
+                    )
+                } else {
+                    device_capacities[0].1.clone()
+                }
             }
-        }
-        evidence::ExecutionPath::MultiGpu => unknown_memory(
-            "Per-device placement is required; Localmotive does not aggregate adapter memory.",
-            observed_at_ms,
-        ),
-        _ => unknown_memory(
-            "Select an explicit CPU, single-adapter, or multi-adapter execution path.",
-            observed_at_ms,
-        ),
-    };
-    let main_artifact = launch
-        .artifacts
-        .first()
-        .ok_or("Launch validation did not return a model artifact")?;
-    let summary = main_artifact
-        .summary
-        .as_ref()
-        .ok_or("The model GGUF summary is unavailable")?;
-    let companion_bytes = launch.artifacts.iter().enumerate().try_fold(
-        main_artifact.companion_bytes,
-        |total, (index, artifact)| {
-            if index == 0 {
-                Ok(total)
-            } else {
-                total
-                    .checked_add(artifact.shard_bytes)
-                    .and_then(|value| value.checked_add(artifact.companion_bytes))
-                    .ok_or("Companion storage size overflowed")
-            }
-        },
-    )?;
-    let recurrent_or_hybrid = summary.metadata_facts.iter().any(|fact| {
-        fact.key.contains(".recurrent.")
-            || fact.key.contains(".ssm.")
-            || fact.key.contains(".state_space.")
-    });
-    let mut assumptions = vec![
-        "Artifact file bytes are a weight-allocation proxy, not observed device memory.".into(),
-        "The named reserve covers runtime allocations that GGUF metadata cannot describe.".into(),
-    ];
-    assumptions.extend(
-        launch
-            .arguments
-            .rejected
+            evidence::ExecutionPath::MultiGpu => unknown_memory(
+                "Per-device placement is required; Localmotive does not aggregate adapter memory.",
+                observed_at_ms,
+            ),
+            _ => unknown_memory(
+                "Select an explicit CPU, single-adapter, or multi-adapter execution path.",
+                observed_at_ms,
+            ),
+        };
+        let main_artifact = launch
+            .artifacts
+            .first()
+            .ok_or("Launch validation did not return a model artifact")?;
+        let summary = main_artifact
+            .summary
+            .as_ref()
+            .ok_or("The model GGUF summary is unavailable")?;
+        let companion_bytes = launch.artifacts.iter().enumerate().try_fold(
+            main_artifact.companion_bytes,
+            |total, (index, artifact)| {
+                if index == 0 {
+                    Ok(total)
+                } else {
+                    total
+                        .checked_add(artifact.shard_bytes)
+                        .and_then(|value| value.checked_add(artifact.companion_bytes))
+                        .ok_or("Companion storage size overflowed")
+                }
+            },
+        )?;
+        let recurrent_or_hybrid = summary.metadata_facts.iter().any(|fact| {
+            fact.key.contains(".recurrent.")
+                || fact.key.contains(".ssm.")
+                || fact.key.contains(".state_space.")
+        });
+        let mut assumptions = vec![
+            "Artifact file bytes are a weight-allocation proxy, not observed device memory.".into(),
+            "The named reserve covers runtime allocations that GGUF metadata cannot describe.".into(),
+        ];
+        assumptions.extend(
+            launch
+                .arguments
+                .rejected
+                .iter()
+                .map(|rejected| format!("{}: {}", rejected.flag, rejected.reason)),
+        );
+        let storage_files = launch
+            .artifacts
             .iter()
-            .map(|rejected| format!("{}: {}", rejected.flag, rejected.reason)),
-    );
-    let storage_files = launch
-        .artifacts
-        .iter()
-        .flat_map(|artifact| artifact.shards.iter().chain(&artifact.companions))
-        .map(|file| (PathBuf::from(&file.path), file.size_bytes))
-        .collect::<Vec<_>>();
-    let report = preflight::build_preflight_report(preflight::PreflightFacts {
-        execution_path,
-        runtime_topology_known: matches!(execution_path, evidence::ExecutionPath::Cpu),
-        unverified_requirements: launch.unverified_requirements.clone(),
-        requested_context: u64::from(request.profile.context),
-        native_context: summary.context_length,
-        runtime_fit_enabled: request.profile.fit && launch.runtime.fit,
-        weight_bytes: main_artifact.shard_bytes,
-        companion_bytes,
-        kv: preflight::KvCacheInputs {
-            architecture: summary.architecture.clone(),
-            block_count: summary.block_count,
-            head_count_kv: summary.head_count_kv,
-            key_length: summary.key_length,
-            value_length: summary.value_length,
-            context: u64::from(request.profile.context),
-            cache_type_k: request.profile.cache_type_k.clone(),
-            cache_type_v: request.profile.cache_type_v.clone(),
-            recurrent_or_hybrid,
-            observed_at_ms,
-        },
-        available_memory,
-        available_disk: preflight::available_disk_bytes(
-            Path::new(&request.profile.model),
-            observed_at_ms,
-        ),
-        storage_volumes: preflight::storage_volume_evidence(&storage_files, observed_at_ms),
-        reserve_bytes: request.reserve_bytes.unwrap_or(1_073_741_824),
-        offload_possible: !matches!(execution_path, evidence::ExecutionPath::Cpu),
-        assumptions,
-    });
-    let device_weight_bytes = report
-        .weight_bytes
-        .value
-        .ok_or("Loaded artifact size overflowed before device planning")?;
-    let device_plan = preflight::build_device_plan(
-        &device_capacities,
-        device_weight_bytes,
-        &report.kv_cache_bytes,
-        report.requested_context.observed_at_ms,
-    );
-    Ok(PreflightResult {
-        report,
-        device_plan,
-        launch,
-        hardware,
-        selected_adapter_ids: request.selected_adapter_ids,
+            .flat_map(|artifact| artifact.shards.iter().chain(&artifact.companions))
+            .map(|file| (PathBuf::from(&file.path), file.size_bytes))
+            .collect::<Vec<_>>();
+        let report = preflight::build_preflight_report(preflight::PreflightFacts {
+            execution_path,
+            runtime_topology_known: matches!(execution_path, evidence::ExecutionPath::Cpu),
+            unverified_requirements: launch.unverified_requirements.clone(),
+            requested_context: u64::from(request.profile.context),
+            native_context: summary.context_length,
+            runtime_fit_enabled: request.profile.fit && launch.runtime.fit,
+            weight_bytes: main_artifact.shard_bytes,
+            companion_bytes,
+            kv: preflight::KvCacheInputs {
+                architecture: summary.architecture.clone(),
+                block_count: summary.block_count,
+                head_count_kv: summary.head_count_kv,
+                key_length: summary.key_length,
+                value_length: summary.value_length,
+                context: u64::from(request.profile.context),
+                cache_type_k: request.profile.cache_type_k.clone(),
+                cache_type_v: request.profile.cache_type_v.clone(),
+                recurrent_or_hybrid,
+                observed_at_ms,
+            },
+            available_memory,
+            available_disk: preflight::available_disk_bytes(
+                Path::new(&request.profile.model),
+                observed_at_ms,
+            ),
+            storage_volumes: preflight::storage_volume_evidence(&storage_files, observed_at_ms),
+            reserve_bytes: request.reserve_bytes.unwrap_or(1_073_741_824),
+            offload_possible: !matches!(execution_path, evidence::ExecutionPath::Cpu),
+            assumptions,
+        });
+        let device_weight_bytes = report
+            .weight_bytes
+            .value
+            .ok_or("Loaded artifact size overflowed before device planning")?;
+        let device_plan = preflight::build_device_plan(
+            &device_capacities,
+            device_weight_bytes,
+            &report.kv_cache_bytes,
+            report.requested_context.observed_at_ms,
+        );
+        Ok(PreflightResult {
+            report,
+            device_plan,
+            launch,
+            hardware,
+            selected_adapter_ids: request.selected_adapter_ids,
+        })
+
     })
+    .await
+    .map_err(|error| format!("Preflight task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -1594,39 +1635,126 @@ fn validate_launch_profile(profile: LaunchProfile) -> Result<LaunchValidation, S
     prepare_launch(&profile)
 }
 
+/// Stop-to-exit budget for a startup that is still waiting for readiness
+/// (audit IPC-01). The worker polls its cancellation signal every few
+/// hundred milliseconds, then terminates and reaps the contained tree; this
+/// deadline bounds how long Stop waits for that terminal state.
+pub(crate) const STARTUP_STOP_DEADLINE_SECS: u64 = 10;
+
 #[tauri::command]
-fn start_server(
+
+/// The lifecycle phase observable while a start is pending (audit IPC-01).
+fn server_phase(state: &AppState) -> &'static str {
+    if state
+        .starting
+        .lock()
+        .map(|starting| starting.is_some())
+        .unwrap_or(false)
+    {
+        return "starting";
+    }
+    "idle"
+}
+
+#[tauri::command]
+async fn start_server(
+    app: tauri::AppHandle,
     profile: LaunchProfile,
-    state: tauri::State<AppState>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<ServerStatus, String> {
     // One owner at a time: a running server, benchmark, tuning session, or
     // quality suite all hold the reservation (audit MT-05).
-    let _reservation = reserve_operation(&state.operations, OperationOwner::Server)?;
-    let mut slot = state
-        .server
-        .lock()
-        .map_err(|_| "Server state is unavailable")?;
-    if status_from(&mut slot).running {
-        return Err("Stop the running server before starting another profile".into());
-    }
-    if state
-        .tuning
-        .lock()
-        .map_err(|_| "Tuning state is unavailable")?
-        .is_some()
+    let reservation = reserve_operation(&state.operations, OperationOwner::Server)?;
+    let operation_id = reservation.generation;
+    let cancel = Arc::new(AtomicBool::new(false));
     {
-        return Err("A tuning session is running; stop it before starting a server".into());
+        // One short lock claims the operation and publishes the starting
+        // state; the readiness wait runs on a blocking worker without any
+        // server lock held (audit IPC-01 I1/I2).
+        let mut slot = state
+            .server
+            .lock()
+            .map_err(|_| "Server state is unavailable".to_string())?;
+        if status_from(&mut slot).running {
+            return Err("Stop the running server before starting another profile".into());
+        }
+        let mut starting = state
+            .starting
+            .lock()
+            .map_err(|_| "Server startup state is unavailable".to_string())?;
+        if starting.is_some() {
+            return Err("A server start is already in progress; Stop it first".into());
+        }
+        *starting = Some(StartingServer {
+            operation_id,
+            cancel: cancel.clone(),
+        });
     }
+    let worker_app = app.clone();
+    let worker_cancel = cancel.clone();
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        start_server_worker(&worker_app, profile, operation_id, worker_cancel)
+    })
+    .await
+    .map_err(|error| format!("Server startup task failed: {error}"))?;
+    outcome
+}
+
+/// True when the given startup operation may still publish: the server
+/// reservation is still held, no cancellation arrived, and the starting slot
+/// still names this operation (audit IPC-01 I3). A late completion from an
+/// older operation can never publish or clear a newer operation's state.
+fn startup_is_current(state: &AppState, operation_id: u64, cancel: &AtomicBool) -> bool {
+    !cancel.load(Ordering::Relaxed)
+        && active_operation_owner(&state.operations) == Some(OperationOwner::Server)
+        && state
+            .starting
+            .lock()
+            .ok()
+            .and_then(|starting| starting.as_ref().map(|entry| entry.operation_id))
+            == Some(operation_id)
+}
+
+/// The blocking half of `start_server`: launch, wait for readiness without
+/// holding any lock, and commit the server slot only while this operation
+/// still owns it; otherwise terminate and reap before returning
+/// (audit IPC-01 I2/I3).
+fn start_server_worker(
+    app: &tauri::AppHandle,
+    profile: LaunchProfile,
+    operation_id: u64,
+    cancel: Arc<AtomicBool>,
+) -> Result<ServerStatus, String> {
+    let state = app.state::<AppState>();
+    let clear_starting = |state: &AppState| {
+        if let Ok(mut starting) = state.starting.lock() {
+            if starting
+                .as_ref()
+                .is_some_and(|entry| entry.operation_id == operation_id)
+            {
+                *starting = None;
+            }
+        }
+    };
     let (mut child, mut validation, log_path, execution_lease) =
-        spawn_server(&profile, &format!("server-{}", profile.port))?;
-    if let Err(error) = wait_until_healthy(
+        match spawn_server(&profile, &format!("server-{}", profile.port)) {
+            Ok(spawned) => spawned,
+            Err(error) => {
+                clear_starting(&state);
+                return Err(error);
+            }
+        };
+    let health = wait_until_healthy_cancellable(
         &mut child,
         &profile.host,
         profile.port,
         &log_path,
         Duration::from_secs(600),
-    ) {
+        &cancel,
+    );
+    if let Err(error) = health {
         let _ = child.terminate_and_wait();
+        clear_starting(&state);
         return Err(error);
     }
     let observed_at_ms = SystemTime::now()
@@ -1646,6 +1774,20 @@ fn start_server(
         .duration_since(UNIX_EPOCH)
         .map_err(|e| e.to_string())?
         .as_secs();
+    let mut slot = state
+        .server
+        .lock()
+        .map_err(|_| "Server state is unavailable".to_string())?;
+    let owns = startup_is_current(&state, operation_id, &cancel);
+    if !owns {
+        drop(slot);
+        let _ = child.terminate_and_wait();
+        clear_starting(&state);
+        return Err(
+            "Server startup was cancelled or replaced; the contained process tree was stopped."
+                .into(),
+        );
+    }
     *slot = Some(ManagedServer {
         child,
         profile,
@@ -1655,25 +1797,65 @@ fn start_server(
         started_at,
         runtime_lease: execution_lease,
     });
+    clear_starting(&state);
     Ok(status_from(&mut slot))
 }
 
 #[tauri::command]
-fn stop_server(state: tauri::State<AppState>) -> Result<ServerStatus, String> {
+async fn stop_server(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<ServerStatus, String> {
     if let Some(conflict) = stop_owner_conflict(active_operation_owner(&state.operations)) {
         return Err(conflict);
     }
-    let mut slot = state
-        .server
+    // A pending start is cancelled through its signal; its own worker
+    // terminates and reaps the tree before clearing the starting slot, and
+    // Stop waits a bounded time for that terminal state (audit IPC-01 I2/I3).
+    let pending = state
+        .starting
         .lock()
-        .map_err(|_| "Server state is unavailable")?;
-    if let Some(server) = slot.as_mut() {
-        if !server.child.terminate_and_wait() {
-            return Err("The contained llama-server process tree did not stop".into());
+        .map_err(|_| "Server startup state is unavailable".to_string())?
+        .as_ref()
+        .map(|entry| entry.cancel.clone());
+    let worker_app = app.clone();
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        let state = worker_app.state::<AppState>();
+        if let Some(cancel) = pending {
+            cancel.store(true, Ordering::Relaxed);
+            let deadline = Instant::now() + Duration::from_secs(STARTUP_STOP_DEADLINE_SECS);
+            loop {
+                let cleared = state
+                    .starting
+                    .lock()
+                    .map(|starting| starting.is_none())
+                    .unwrap_or(false);
+                if cleared {
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    return Err(format!(
+                        "The starting server did not stop within {STARTUP_STOP_DEADLINE_SECS} seconds; its contained process tree is still being reaped."
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
         }
-    }
-    *slot = None;
-    Ok(status_from(&mut slot))
+        let mut slot = state
+            .server
+            .lock()
+            .map_err(|_| "Server state is unavailable".to_string())?;
+        if let Some(server) = slot.as_mut() {
+            if !server.child.terminate_and_wait() {
+                return Err("The contained llama-server process tree did not stop".into());
+            }
+        }
+        *slot = None;
+        Ok(status_from(&mut slot))
+    })
+    .await
+    .map_err(|error| format!("Server stop task failed: {error}"))?;
+    outcome
 }
 
 #[tauri::command]
@@ -1682,7 +1864,11 @@ fn server_status(state: tauri::State<AppState>) -> Result<ServerStatus, String> 
         .server
         .lock()
         .map_err(|_| "Server state is unavailable")?;
-    Ok(status_from(&mut slot))
+    let mut status = status_from(&mut slot);
+    if !status.running && server_phase(&state) == "starting" {
+        status.phase = "starting".to_string();
+    }
+    Ok(status)
 }
 
 #[derive(Clone)]
@@ -1730,17 +1916,26 @@ fn read_server_log(state: tauri::State<AppState>) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn benchmark_server(
+async fn benchmark_server(
     tokens: u32,
     repeats: u16,
     state: tauri::State<'_, AppState>,
 ) -> Result<BenchmarkSummary, String> {
-    let mut slot = state
-        .server
-        .lock()
-        .map_err(|_| "Server state is unavailable")?;
-    let server = validated_server_snapshot(&mut slot, "benchmarking")?;
-    core::benchmark_server(&server.profile.host, server.profile.port, tokens, repeats)
+    let server = {
+        let mut slot = state
+            .server
+            .lock()
+            .map_err(|_| "Server state is unavailable".to_string())?;
+        validated_server_snapshot(&mut slot, "benchmarking")?
+    };
+    // The legacy warm measurement blocks on loopback requests: it runs on a
+    // blocking worker instead of the main thread or async executor
+    // (audit IPC-01 I4).
+    tauri::async_runtime::spawn_blocking(move || {
+        core::benchmark_server(&server.profile.host, server.profile.port, tokens, repeats)
+    })
+    .await
+    .map_err(|error| format!("Benchmark task failed: {error}"))?
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -2163,19 +2358,31 @@ fn cancel_benchmark(state: tauri::State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn replay_benchmark_manifest(
+async fn replay_benchmark_manifest(
     manifest: evidence::BenchmarkManifest,
     state: tauri::State<'_, AppState>,
 ) -> Result<evidence::Workload, String> {
     manifest
         .validate_complete()
         .map_err(|error| error.to_string())?;
-    let mut slot = state
-        .server
-        .lock()
-        .map_err(|_| "Server state is unavailable")?;
-    let server = validated_server_snapshot(&mut slot, "replaying a benchmark manifest")?;
-    drop(slot);
+    let server = {
+        let mut slot = state
+            .server
+            .lock()
+            .map_err(|_| "Server state is unavailable".to_string())?;
+        validated_server_snapshot(&mut slot, "replaying a benchmark manifest")?
+    };
+    // Replay re-hashes artifacts and the runtime executable: blocking worker
+    // (audit IPC-01 I4).
+    tauri::async_runtime::spawn_blocking(move || replay_benchmark_manifest_worker(manifest, server))
+        .await
+        .map_err(|error| format!("Replay task failed: {error}"))?
+}
+
+fn replay_benchmark_manifest_worker(
+    manifest: evidence::BenchmarkManifest,
+    server: ValidatedServerSnapshot,
+) -> Result<evidence::Workload, String> {
     let logical_id = server
         .validation
         .artifacts
@@ -3597,8 +3804,31 @@ pub fn run() {
             format_bytes,
             download_eta,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Localmotive");
+        .build(tauri::generate_context!())
+        .expect("Localmotive failed to build its Tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                // Window close during a pending start or a running server:
+                // signal the startup worker and stop the contained child.
+                // Containment (a job object) guarantees the tree dies with
+                // this process even if the orderly stop is interrupted
+                // (audit IPC-01 I3).
+                let state = app.state::<AppState>();
+                if let Ok(starting) = state.starting.lock() {
+                    if let Some(entry) = starting.as_ref() {
+                        entry.cancel.store(true, Ordering::Relaxed);
+                    }
+                }
+                let mut slot = match state.server.lock() {
+                    Ok(slot) => slot,
+                    Err(_) => return,
+                };
+                if let Some(server) = slot.as_mut() {
+                    let _ = server.child.terminate_and_wait();
+                }
+                *slot = None;
+            }
+        });
 }
 
 #[cfg(test)]
@@ -4567,12 +4797,12 @@ mod release_security_tests {
             ..LaunchProfile::default()
         };
 
-        let result = preflight_model(PreflightRequest {
+        let result = tauri::async_runtime::block_on(preflight_model(PreflightRequest {
             profile,
             selected_adapter_ids: Vec::new(),
             manual_overrides: Vec::new(),
             reserve_bytes: Some(536_870_912),
-        });
+        }));
 
         assert!(result.unwrap_err().contains("incomplete or inconsistent"));
         let _ = std::fs::remove_file(path);
@@ -4644,6 +4874,137 @@ mod release_security_tests {
         assert!(error.contains("reparse-point"), "unexpected error: {error}");
         std::fs::remove_dir(junction).unwrap();
         std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod ipc01_startup_tests {
+    use super::*;
+
+    #[test]
+    fn ipc01_startup_commit_requires_the_operation_to_still_own_the_slot() {
+        // A late completion from an older operation can never publish
+        // (audit IPC-01 I3): mismatched IDs, superseded reservations, or a
+        // cancelled start must all be refused.
+        let state = AppState::default();
+        let cancel = AtomicBool::new(false);
+        assert!(
+            !startup_is_current(&state, 1, &cancel),
+            "no reservation must not publish"
+        );
+        let reservation = reserve_operation(&state.operations, OperationOwner::Server).unwrap();
+        let operation_id = reservation.generation;
+        assert!(
+            !startup_is_current(&state, operation_id, &cancel),
+            "no starting slot must not publish"
+        );
+        *state.starting.lock().unwrap() = Some(StartingServer {
+            operation_id,
+            cancel: Arc::new(AtomicBool::new(false)),
+        });
+        assert!(startup_is_current(&state, operation_id, &cancel));
+        assert!(
+            !startup_is_current(&state, operation_id + 1, &cancel),
+            "a newer operation's ID must not be satisfied by the old worker"
+        );
+        cancel.store(true, Ordering::Relaxed);
+        assert!(
+            !startup_is_current(&state, operation_id, &cancel),
+            "a cancelled start must never publish"
+        );
+    }
+
+    #[test]
+    fn ipc01_startup_never_holds_the_server_lock_across_the_readiness_wait() {
+        // The audited defect: the server mutex was held for the whole 600 s
+        // health wait, freezing every other command (audit IPC-01). The
+        // worker must reach the cancellable wait before any server lock,
+        // and the commit must check ownership before publishing.
+        let source = include_str!("lib.rs");
+        let worker = source
+            .split("fn start_server_worker(")
+            .nth(1)
+            .unwrap()
+            .split("#[tauri::command]")
+            .next()
+            .unwrap();
+        let wait = worker
+            .find("wait_until_healthy_cancellable")
+            .expect("the worker must wait cancellably");
+        assert_eq!(
+            worker.matches(".server").count(),
+            1,
+            "the worker must touch the server slot exactly once, at commit"
+        );
+        let lock = worker
+            .find(".server")
+            .expect("the worker must lock the server slot at commit");
+        assert!(
+            lock > wait,
+            "the server lock must not be taken before the readiness wait"
+        );
+        assert!(
+            worker.contains("let owns = startup_is_current("),
+            "the commit must check operation ownership"
+        );
+        assert!(
+            worker.contains("child.terminate_and_wait();"),
+            "a refused commit must reap the process tree"
+        );
+        let command = source
+            .split("async fn start_server(")
+            .nth(1)
+            .unwrap()
+            .split("fn start_server_worker(")
+            .next()
+            .unwrap();
+        assert!(
+            command.contains("spawn_blocking"),
+            "start_server must run the launch on a blocking worker"
+        );
+        assert!(
+            command.contains("OperationOwner::Server"),
+            "start_server must reserve the server owner"
+        );
+    }
+
+    #[test]
+    fn ipc01_expensive_commands_run_on_blocking_workers() {
+        // Every command the audit named as expensive must run its blocking
+        // half on a worker, never on the Tauri main thread or the async
+        // executor (audit IPC-01 I4).
+        let source = include_str!("lib.rs");
+        for (start, end) in [
+            (
+                "async fn scan_models(root: String)",
+                "async fn inspect_runtime(path: String)",
+            ),
+            (
+                "async fn inspect_runtime(path: String)",
+                "async fn check_runtime_health(",
+            ),
+            ("async fn check_runtime_health(", "fn describe_runtime"),
+            (
+                "async fn preflight_model(request: PreflightRequest)",
+                "fn preview_command",
+            ),
+            ("async fn benchmark_server(", "struct BenchmarkRunResult"),
+            (
+                "async fn replay_benchmark_manifest(",
+                "fn replay_benchmark_manifest_worker",
+            ),
+            ("async fn read_gguf_summary(", "fn cancel_gguf_read"),
+        ] {
+            let body = source
+                .split(start)
+                .nth(1)
+                .and_then(|rest| rest.split(end).next())
+                .unwrap_or_else(|| panic!("{start} not found"));
+            assert!(
+                body.contains("spawn_blocking"),
+                "{start} must run its expensive half on a blocking worker"
+            );
+        }
     }
 }
 
