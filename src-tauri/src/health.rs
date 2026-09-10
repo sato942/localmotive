@@ -656,6 +656,62 @@ fn path_is_link_or_reparse(path: &Path) -> bool {
     }
 }
 
+/// Run one completion request under supervision. The blocking request runs on
+/// a worker thread; the caller polls the cancellation flag and the deadline in
+/// short slices and, once either fires, terminates the contained server so the
+/// pending HTTP read ends promptly. Cancellation arriving during response
+/// waiting, body reading, or immediately after completion always reports
+/// `Cancelled`, never a passed stage (audit RT-03).
+fn completion_request_supervised(
+    port: u16,
+    cancel: &AtomicBool,
+    deadline: Instant,
+    mut terminate: impl FnMut(),
+) -> Result<(u16, Vec<u8>), (HealthFailureReason, String)> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(completion_request(port));
+    });
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            terminate();
+            return Err((
+                HealthFailureReason::Cancelled,
+                "Deterministic completion was cancelled while its response was pending.".into(),
+            ));
+        }
+        if Instant::now() >= deadline {
+            terminate();
+            return Err((
+                HealthFailureReason::Timeout,
+                "The bounded loopback completion request exceeded its deadline.".into(),
+            ));
+        }
+        match receiver.recv_timeout(Duration::from_millis(25)) {
+            Ok(result) => {
+                // Resolve the response-versus-cancel race before the stage can
+                // be recorded as passed.
+                if cancel.load(Ordering::Relaxed) {
+                    terminate();
+                    return Err((
+                        HealthFailureReason::Cancelled,
+                        "Deterministic completion finished as it was being cancelled.".into(),
+                    ));
+                }
+                return result;
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                terminate();
+                return Err((
+                    HealthFailureReason::Spawn,
+                    "The completion worker stopped without a result.".into(),
+                ));
+            }
+        }
+    }
+}
+
 fn completion_request(port: u16) -> Result<(u16, Vec<u8>), (HealthFailureReason, String)> {
     let pin = crate::core::pinned_model_load_pin();
     let client = reqwest::blocking::Client::builder()
@@ -1173,7 +1229,14 @@ pub(crate) fn run_managed_health(
             ),
         );
     }
-    let response = completion_request(port);
+    let response = completion_request_supervised(
+        port,
+        cancel,
+        stage_started + MODEL_OPERATION_TIMEOUT,
+        || {
+            child.terminate_and_wait();
+        },
+    );
     let (status, body) = match response {
         Ok(value) => value,
         Err(error) => {
@@ -1747,5 +1810,139 @@ mod tests {
             Some(HealthFailureReason::Mismatch)
         );
         assert!(temporary.cleanup());
+    }
+
+    /// A loopback fixture that accepts one completion request, reads it, and
+    /// deliberately withholds the response until `release` is set (audit RT-03).
+    fn serve_withheld_completion() -> (u16, std::sync::Arc<AtomicBool>, std::thread::JoinHandle<()>)
+    {
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let release = std::sync::Arc::new(AtomicBool::new(false));
+        let release_clone = std::sync::Arc::clone(&release);
+        let handle = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let _ = stream.set_nonblocking(false);
+                let mut buffer = [0_u8; 4096];
+                let _ = stream.read(&mut buffer);
+                let _ = stream.write_all(b""); // keep the stream alive, answer nothing
+                while !release_clone.load(Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
+        });
+        (port, release, handle)
+    }
+
+    /// A loopback fixture that answers one completion request with `body`.
+    fn serve_one_completion_response(body: &'static [u8]) -> (u16, std::thread::JoinHandle<()>) {
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let _ = stream.set_nonblocking(false);
+                let mut buffer = [0_u8; 4096];
+                let _ = stream.read(&mut buffer);
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(header.as_bytes());
+                let _ = stream.write_all(body);
+                let _ = stream.flush();
+            }
+        });
+        (port, handle)
+    }
+
+    #[test]
+    fn rt03_cancel_terminates_a_pending_completion_within_the_bound() {
+        // A server that accepts /completion and never answers must not hold a
+        // cancelled health run for the 120-second request deadline: the
+        // supervisor returns Cancelled, terminates the server, and does so
+        // promptly (audit RT-03).
+        let (port, release, fixture) = serve_withheld_completion();
+        let cancel = std::sync::Arc::new(AtomicBool::new(false));
+        let terminated = std::sync::Arc::new(AtomicBool::new(false));
+        let (reason, elapsed) = std::thread::scope(|scope| {
+            let setter = std::sync::Arc::clone(&cancel);
+            scope.spawn(move || {
+                std::thread::sleep(Duration::from_millis(300));
+                setter.store(true, Ordering::Relaxed);
+            });
+            let terminate_flag = std::sync::Arc::clone(&terminated);
+            let started = Instant::now();
+            let result = completion_request_supervised(
+                port,
+                cancel.as_ref(),
+                Instant::now() + Duration::from_secs(30),
+                move || {
+                    terminate_flag.store(true, Ordering::Relaxed);
+                },
+            );
+            let error = result.expect_err("a withheld response must report failure");
+            (error.0, started.elapsed())
+        });
+        release.store(true, Ordering::Relaxed);
+        fixture.join().unwrap();
+        assert_eq!(reason, HealthFailureReason::Cancelled);
+        assert!(
+            terminated.load(Ordering::Relaxed),
+            "cancellation must terminate the contained server"
+        );
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "stop latency must be bounded, took {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn rt03_a_completion_finishing_at_cancellation_is_never_reported_as_passed() {
+        // The response-versus-cancel race resolves toward Cancelled: a
+        // complete, valid response arriving while the flag is set must not
+        // become a passed completion stage (audit RT-03).
+        let body: &'static [u8] = br#"{"content":"ok","tokens_predicted":4}"#;
+        let (port, fixture) = serve_one_completion_response(body);
+        let cancel = AtomicBool::new(true);
+        let terminated = std::sync::Arc::new(AtomicBool::new(false));
+        let terminate_flag = std::sync::Arc::clone(&terminated);
+        let result = completion_request_supervised(
+            port,
+            &cancel,
+            Instant::now() + Duration::from_secs(30),
+            move || {
+                terminate_flag.store(true, Ordering::Relaxed);
+            },
+        );
+        let error = result.expect_err("a cancelled request must not return a response");
+        fixture.join().unwrap();
+        assert_eq!(error.0, HealthFailureReason::Cancelled);
+        assert!(terminated.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn rt03_the_supervised_request_still_returns_normal_responses() {
+        // Positive control: without cancellation the supervisor is transparent
+        // and does not terminate the server.
+        let body: &'static [u8] = br#"{"content":"ok","tokens_predicted":4}"#;
+        let (port, fixture) = serve_one_completion_response(body);
+        let cancel = AtomicBool::new(false);
+        let terminated = std::sync::Arc::new(AtomicBool::new(false));
+        let terminate_flag = std::sync::Arc::clone(&terminated);
+        let result = completion_request_supervised(
+            port,
+            &cancel,
+            Instant::now() + Duration::from_secs(30),
+            move || {
+                terminate_flag.store(true, Ordering::Relaxed);
+            },
+        )
+        .unwrap();
+        fixture.join().unwrap();
+        assert_eq!(result.0, 200);
+        assert_eq!(result.1, body);
+        assert!(!terminated.load(Ordering::Relaxed));
     }
 }

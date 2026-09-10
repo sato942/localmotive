@@ -52,6 +52,38 @@ pub const TUNABLE_FIELDS: &[(&str, &str)] = &[
     ("parallel", "parallel slots (context is divided among them)"),
 ];
 
+/// Hard cap on how many profile fields one proposal may change. The system
+/// prompt states this policy; the loop enforces it in Rust too, because a
+/// model that ignores instructions must not turn one paid reply into an
+/// unattributable multi-field measurement (audit MT-03).
+pub const MAX_CHANGED_FIELDS_PER_PROPOSAL: usize = 3;
+
+/// Overall wall-clock budget for one tuning session, so no combination of
+/// slow measurements and talkative advisors can keep a session alive
+/// indefinitely (audit MT-03, MT-04).
+pub const TUNING_DEADLINE_SECS: u64 = 45 * 60;
+
+/// Independent loop budgets. All three bound different resources: total
+/// advisor calls (paid requests), measured trials, and consecutive
+/// rejections (no-op, duplicate, or invalid proposals). A valid no-op reply
+/// consumes the advisor-call budget even though it records no trial.
+#[derive(Clone, Copy, Debug)]
+pub struct TuningBudgets {
+    pub max_advisor_calls: u32,
+    pub max_consecutive_rejections: u32,
+    pub deadline: Option<std::time::Instant>,
+}
+
+impl Default for TuningBudgets {
+    fn default() -> Self {
+        Self {
+            max_advisor_calls: 40,
+            max_consecutive_rejections: 3,
+            deadline: None,
+        }
+    }
+}
+
 pub fn is_tunable(field: &str) -> bool {
     TUNABLE_FIELDS.iter().any(|(name, _)| *name == field)
 }
@@ -376,6 +408,33 @@ pub struct TuningInputs<'a> {
     pub capabilities: &'a RuntimeCapabilities,
     pub companions: &'a [String],
     pub max_trials: u32,
+    pub budgets: TuningBudgets,
+    /// The user's Stop signal. Checked before and after every advisor call
+    /// and before every measurement; cancellation is a terminal outcome, not
+    /// a candidate failure (audit MT-04).
+    pub cancel: Option<&'a std::sync::atomic::AtomicBool>,
+}
+
+/// Record one bounded rejection (no-op, duplicate, invalid, or oversized) as
+/// a failed trial so the reason stays visible to the advisor and the user
+/// without spending a measurement (audit MT-03).
+fn push_rejection(
+    trials: &mut Vec<TuningTrial>,
+    on_trial: &mut dyn FnMut(&TuningTrial),
+    proposal: &Proposal,
+    reason: String,
+) {
+    let trial = TuningTrial {
+        index: trials.len() as u32,
+        changes: proposal.changes.clone(),
+        rationale: proposal.rationale.clone(),
+        mean_tps: None,
+        median_tps: None,
+        error: Some(reason),
+        command: String::new(),
+    };
+    on_trial(&trial);
+    trials.push(trial);
 }
 
 /// Measure the baseline, then alternate propose → validate → measure until the
@@ -435,6 +494,27 @@ pub fn run_tuning<B: Bench, A: Advisor>(
         trials.push(trial);
     };
 
+    let is_cancelled = |inputs: &TuningInputs| {
+        inputs
+            .cancel
+            .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed))
+    };
+    let deadline_reached = |inputs: &TuningInputs| {
+        inputs
+            .budgets
+            .deadline
+            .is_some_and(|deadline| std::time::Instant::now() >= deadline)
+    };
+    if is_cancelled(inputs) {
+        return Ok(TuningReport {
+            baseline_tps: None,
+            best_index: None,
+            best_tps: None,
+            best_profile: baseline.clone(),
+            trials,
+            stopped_reason: "Cancelled by the user before the baseline measurement".into(),
+        });
+    }
     record(
         &mut trials,
         &mut best,
@@ -446,17 +526,55 @@ pub fn run_tuning<B: Bench, A: Advisor>(
     );
     let baseline_tps = trials[0].mean_tps;
     if baseline_tps.is_none() {
+        if is_cancelled(inputs) {
+            trials.pop();
+            return Ok(TuningReport {
+                baseline_tps: None,
+                best_index: None,
+                best_tps: None,
+                best_profile: baseline.clone(),
+                trials,
+                stopped_reason: "Cancelled by the user during the baseline measurement".into(),
+            });
+        }
         return Err(format!(
             "Baseline failed, so there is nothing to tune from: {}",
             trials[0].error.clone().unwrap_or_default()
         ));
     }
 
+    // Every effective configuration seen so far, canonicalized AFTER coercion
+    // and companion resolution, starting with the baseline. Comparing raw
+    // proposal maps misses nonempty maps that normalize to an earlier
+    // configuration (audit MT-03).
+    let mut seen_effective: Vec<BTreeMap<String, serde_json::Value>> = vec![BTreeMap::new()];
     let mut stopped_reason = "Trial budget exhausted".to_string();
     let mut consecutive_rejections = 0_u32;
     let mut consecutive_advisor_failures = 0_u32;
-    while (trials.len() as u32) < inputs.max_trials + 1 {
-        let remaining = inputs.max_trials + 1 - trials.len() as u32;
+    let mut advisor_calls = 0_u32;
+    // Measured trials only: rejection rows are recorded in the history but
+    // must not silently spend the measurement budget (audit MT-03).
+    let mut measured_trials = 1_u32;
+    while measured_trials <= inputs.max_trials {
+        if is_cancelled(inputs) {
+            stopped_reason = "Cancelled by the user".into();
+            break;
+        }
+        if deadline_reached(inputs) {
+            stopped_reason = format!(
+                "Overall tuning deadline reached ({} minutes)",
+                TUNING_DEADLINE_SECS / 60
+            );
+            break;
+        }
+        if advisor_calls >= inputs.budgets.max_advisor_calls {
+            stopped_reason = format!(
+                "Advisor call budget exhausted ({} calls)",
+                inputs.budgets.max_advisor_calls
+            );
+            break;
+        }
+        let remaining = inputs.max_trials + 1 - measured_trials;
         let brief = TuningBrief {
             objective: inputs.objective,
             target_context: inputs.target_context,
@@ -471,6 +589,7 @@ pub fn run_tuning<B: Bench, A: Advisor>(
             trials: &trials,
             remaining_trials: remaining,
         };
+        advisor_calls += 1;
         let proposal = match advisor.propose(&brief) {
             Ok(proposal) => {
                 consecutive_advisor_failures = 0;
@@ -485,6 +604,10 @@ pub fn run_tuning<B: Bench, A: Advisor>(
                 continue;
             }
         };
+        if is_cancelled(inputs) {
+            stopped_reason = "Cancelled by the user".into();
+            break;
+        }
         if proposal.done || proposal.changes.is_empty() {
             stopped_reason = if proposal.rationale.is_empty() {
                 "Advisor declared convergence".into()
@@ -493,10 +616,29 @@ pub fn run_tuning<B: Bench, A: Advisor>(
             };
             break;
         }
-        if trials.iter().any(|trial| trial.changes == proposal.changes) {
+        // The advertised three-fields-per-trial policy is a hard limit here
+        // (audit MT-03 I4). `draftModel` is tuner-owned noise, not a field the
+        // model actually chose.
+        let changed_fields = proposal
+            .changes
+            .keys()
+            .filter(|field| field.as_str() != "draftModel")
+            .count();
+        if changed_fields > MAX_CHANGED_FIELDS_PER_PROPOSAL {
             consecutive_rejections += 1;
-            if consecutive_rejections >= 2 {
-                stopped_reason = "Advisor kept repeating configurations".into();
+            let reason = format!(
+                "Rejected: the proposal changed {changed_fields} fields; at most {MAX_CHANGED_FIELDS_PER_PROPOSAL} are allowed per trial"
+            );
+            push_rejection(&mut trials, &mut on_trial, &proposal, reason);
+            if consecutive_rejections >= inputs.budgets.max_consecutive_rejections {
+                stopped_reason = "Advisor repeatedly proposed changes outside the policy".into();
+                break;
+            }
+            if advisor_calls >= inputs.budgets.max_advisor_calls {
+                stopped_reason = format!(
+                    "Advisor call budget exhausted ({} calls)",
+                    inputs.budgets.max_advisor_calls
+                );
                 break;
             }
             continue;
@@ -511,31 +653,83 @@ pub fn run_tuning<B: Bench, A: Advisor>(
             Err(error) => {
                 // Record the rejection as a failed trial so the advisor sees it,
                 // without spending a measurement.
-                let index = trials.len() as u32;
-                let trial = TuningTrial {
-                    index,
-                    changes: proposal.changes.clone(),
-                    rationale: proposal.rationale.clone(),
-                    mean_tps: None,
-                    median_tps: None,
-                    error: Some(format!("Rejected before launch: {error}")),
-                    command: String::new(),
-                };
-                on_trial(&trial);
-                trials.push(trial);
                 consecutive_rejections += 1;
-                if consecutive_rejections >= 3 {
+                push_rejection(
+                    &mut trials,
+                    &mut on_trial,
+                    &proposal,
+                    format!("Rejected before launch: {error}"),
+                );
+                if consecutive_rejections >= inputs.budgets.max_consecutive_rejections {
                     stopped_reason = "Advisor repeatedly proposed invalid changes".into();
+                    break;
+                }
+                if advisor_calls >= inputs.budgets.max_advisor_calls {
+                    stopped_reason = format!(
+                        "Advisor call budget exhausted ({} calls)",
+                        inputs.budgets.max_advisor_calls
+                    );
                     break;
                 }
                 continue;
             }
         };
-        consecutive_rejections = 0;
+        // A proposal that leaves the effective configuration unchanged is a
+        // bounded rejection with its reason in the history, never an
+        // unbounded continuation (audit MT-03).
         if applied.is_empty() {
+            consecutive_rejections += 1;
+            push_rejection(
+                &mut trials,
+                &mut on_trial,
+                &proposal,
+                "Rejected: a no-op proposal that leaves the effective configuration unchanged"
+                    .into(),
+            );
+            if consecutive_rejections >= inputs.budgets.max_consecutive_rejections {
+                stopped_reason = "Advisor repeatedly proposed no-op or duplicate changes".into();
+                break;
+            }
+            if advisor_calls >= inputs.budgets.max_advisor_calls {
+                stopped_reason = format!(
+                    "Advisor call budget exhausted ({} calls)",
+                    inputs.budgets.max_advisor_calls
+                );
+                break;
+            }
             continue;
         }
+        if seen_effective.iter().any(|seen| seen == &applied) {
+            consecutive_rejections += 1;
+            push_rejection(
+                &mut trials,
+                &mut on_trial,
+                &proposal,
+                "Rejected: this configuration was already measured in an earlier trial".into(),
+            );
+            if consecutive_rejections >= inputs.budgets.max_consecutive_rejections {
+                stopped_reason = "Advisor repeatedly proposed no-op or duplicate changes".into();
+                break;
+            }
+            if advisor_calls >= inputs.budgets.max_advisor_calls {
+                stopped_reason = format!(
+                    "Advisor call budget exhausted ({} calls)",
+                    inputs.budgets.max_advisor_calls
+                );
+                break;
+            }
+            continue;
+        }
+        consecutive_rejections = 0;
+        seen_effective.push(applied.clone());
+        measured_trials += 1;
         let outcome = bench.measure(&candidate);
+        if is_cancelled(inputs) {
+            // Cancellation during a measurement is terminal and is never
+            // recorded as a candidate failure or success (audit MT-04).
+            stopped_reason = "Cancelled by the user during a measurement".into();
+            break;
+        }
         record(
             &mut trials,
             &mut best,
@@ -852,6 +1046,8 @@ mod tests {
             capabilities: &caps(),
             companions: &["d.gguf".to_string()],
             max_trials: 6,
+            budgets: TuningBudgets::default(),
+            cancel: None,
         };
         let mut bench = FakeBench { calls: vec![] };
         let mut advisor = ScriptedAdvisor {
@@ -919,6 +1115,8 @@ mod tests {
             capabilities: &caps(),
             companions: &[],
             max_trials: 4,
+            budgets: TuningBudgets::default(),
+            cancel: None,
         };
         let mut bench = FakeBench { calls: vec![] };
         let mut advisor = ScriptedAdvisor {
@@ -959,6 +1157,8 @@ mod tests {
             capabilities: &caps(),
             companions: &[],
             max_trials: 3,
+            budgets: TuningBudgets::default(),
+            cancel: None,
         };
         let mut bench = FakeBench { calls: vec![] };
         let mut advisor = ScriptedAdvisor {
@@ -998,5 +1198,319 @@ mod tests {
             TUNABLE_FIELDS.len()
         );
         assert!(SYSTEM_PROMPT.contains("ONLY a JSON object"));
+    }
+
+    /// Advisor that repeats one fixed reply and counts every call, so budget
+    /// assertions observe the exact number of (paid) requests.
+    struct CountingAdvisor {
+        reply: String,
+        calls: usize,
+        cancel_after: Option<(usize, std::sync::Arc<std::sync::atomic::AtomicBool>)>,
+    }
+    impl Advisor for CountingAdvisor {
+        fn propose(&mut self, _brief: &TuningBrief) -> Result<Proposal, String> {
+            self.calls += 1;
+            if let Some((after, flag)) = &self.cancel_after {
+                if self.calls >= *after {
+                    flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+            parse_proposal(&self.reply)
+        }
+    }
+
+    fn tuning_inputs<'a>(
+        hardware: &'a HardwareInfo,
+        capabilities: &'a RuntimeCapabilities,
+        budgets: TuningBudgets,
+        cancel: Option<&'a std::sync::atomic::AtomicBool>,
+    ) -> TuningInputs<'a> {
+        TuningInputs {
+            objective: "max tok/s",
+            target_context: 4096,
+            hardware,
+            system_ram_bytes: None,
+            gguf: None,
+            capabilities,
+            companions: &[],
+            max_trials: 6,
+            budgets,
+            cancel,
+        }
+    }
+
+    #[test]
+    fn mt03_repeated_effective_noops_terminate_within_the_advisor_call_budget() {
+        // The audited defect: a valid proposal that changes nothing reset the
+        // rejection counter and looped forever. A deterministic advisor that
+        // always proposes the existing value must now terminate inside the
+        // independent advisor-call budget, with every no-op preserved as a
+        // bounded rejection (audit MT-03 V1).
+        let base = base_profile(); // threads defaults to -1 in LaunchProfile::default()
+        let hw = hardware();
+        let cap = caps();
+        let budgets = TuningBudgets {
+            max_advisor_calls: 5,
+            max_consecutive_rejections: 100,
+            deadline: None,
+        };
+        let inputs = tuning_inputs(&hw, &cap, budgets, None);
+        let mut bench = FakeBench { calls: vec![] };
+        let mut advisor = CountingAdvisor {
+            reply: r#"{"changes":{"threads":-1},"rationale":"auto threads are best","done":false}"#
+                .into(),
+            calls: 0,
+            cancel_after: None,
+        };
+        let report = run_tuning(&base, &inputs, &mut bench, &mut advisor, |_| {}).unwrap();
+
+        assert_eq!(
+            advisor.calls, 5,
+            "the advisor-call budget must bind exactly"
+        );
+        assert_eq!(
+            report.stopped_reason, "Advisor call budget exhausted (5 calls)",
+            "{}",
+            report.stopped_reason
+        );
+        assert_eq!(
+            report.trials.len(),
+            6,
+            "baseline plus five recorded rejections"
+        );
+        assert_eq!(
+            bench.calls.len(),
+            1,
+            "no no-op configuration is ever measured"
+        );
+        for trial in &report.trials[1..] {
+            assert!(
+                trial
+                    .error
+                    .as_deref()
+                    .is_some_and(|error| error.contains("no-op")),
+                "rejection reason must be recorded: {trial:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn mt03_noop_rejections_are_also_bounded_by_the_consecutive_rejection_limit() {
+        // With a generous call budget the terminal outcome must come from the
+        // rejection counter itself: repeated no-ops end the session long
+        // before the advisor-call budget (audit MT-03 I3).
+        let base = base_profile();
+        let hw = hardware();
+        let cap = caps();
+        let budgets = TuningBudgets {
+            max_advisor_calls: 100,
+            max_consecutive_rejections: 3,
+            deadline: None,
+        };
+        let inputs = tuning_inputs(&hw, &cap, budgets, None);
+        let mut bench = FakeBench { calls: vec![] };
+        let mut advisor = CountingAdvisor {
+            reply: r#"{"changes":{"threads":-1},"rationale":"no-op again","done":false}"#.into(),
+            calls: 0,
+            cancel_after: None,
+        };
+        let report = run_tuning(&base, &inputs, &mut bench, &mut advisor, |_| {}).unwrap();
+
+        assert_eq!(advisor.calls, 3, "three rejections end the session");
+        assert_eq!(
+            report.stopped_reason,
+            "Advisor repeatedly proposed no-op or duplicate changes"
+        );
+        assert_eq!(
+            report.trials.len(),
+            4,
+            "baseline plus three recorded rejections"
+        );
+    }
+
+    #[test]
+    fn mt03_coercions_echoes_and_oversize_proposals_are_bounded_rejections() {
+        // Numeric-string coercion to the existing value, a bare draftModel
+        // echo, and a four-field change are all rejected with a recorded
+        // reason; the fourth consecutive rejection ends the session (MT-03 V2).
+        let base = base_profile();
+        let hw = hardware();
+        let cap = caps();
+        let inputs = tuning_inputs(&hw, &cap, TuningBudgets::default(), None);
+        let mut bench = FakeBench { calls: vec![] };
+        let mut advisor = ScriptedAdvisor {
+            replies: vec![
+                r#"{"changes":{"threads":"-1"},"rationale":"coerced no-op","done":false}"#,
+                r#"{"changes":{"draftModel":"C:\\m\\d.gguf"},"rationale":"echo","done":false}"#,
+                r#"{"changes":{"gpuLayers":10,"batch":1024,"ubatch":512,"flashAttention":"on"},"rationale":"too many","done":false}"#,
+            ],
+            briefs_seen: vec![],
+        };
+        let report = run_tuning(&base, &inputs, &mut bench, &mut advisor, |_| {}).unwrap();
+
+        assert_eq!(bench.calls.len(), 1, "rejections are never measured");
+        assert_eq!(report.trials.len(), 4, "{:#?}", report.trials);
+        assert!(report.trials[1].error.as_deref().unwrap().contains("no-op"));
+        assert!(report.trials[2].error.as_deref().unwrap().contains("no-op"));
+        assert!(
+            report.trials[3]
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("changed 4 fields"),
+            "{:?}",
+            report.trials[3].error
+        );
+        assert_eq!(
+            report.stopped_reason,
+            "Advisor repeatedly proposed changes outside the policy"
+        );
+    }
+
+    #[test]
+    fn mt03_a_reordered_duplicate_of_a_measured_configuration_is_rejected() {
+        // Comparing canonicalized effective changes (not raw maps) catches a
+        // nonempty proposal that normalizes to an already-measured
+        // configuration (audit MT-03 I2).
+        let base = base_profile();
+        let hw = hardware();
+        let cap = caps();
+        let inputs = tuning_inputs(&hw, &cap, TuningBudgets::default(), None);
+        let mut bench = FakeBench { calls: vec![] };
+        let mut advisor = ScriptedAdvisor {
+            replies: vec![
+                r#"{"changes":{"flashAttention":"on"},"rationale":"fa","done":false}"#,
+                r#"{"changes":{"threads":-1,"flashAttention":"on"},"rationale":"same effect via a different map","done":false}"#,
+                r#"{"changes":{},"rationale":"converged","done":true}"#,
+            ],
+            briefs_seen: vec![],
+        };
+        let report = run_tuning(&base, &inputs, &mut bench, &mut advisor, |_| {}).unwrap();
+
+        assert_eq!(bench.calls.len(), 2, "the duplicate is not measured again");
+        assert!(
+            report.trials[2]
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("already measured")),
+            "{:?}",
+            report.trials[2].error
+        );
+        assert_eq!(report.stopped_reason, "Advisor stopped: converged");
+    }
+
+    #[test]
+    fn mt03_cancellation_during_a_noop_sequence_stops_before_the_next_advisor_call() {
+        // Combined with the lifecycle cancellation: once Stop arrives, a
+        // talkative no-op advisor never gets another paid call (MT-03 V3).
+        let base = base_profile();
+        let hw = hardware();
+        let cap = caps();
+        let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let inputs = tuning_inputs(&hw, &cap, TuningBudgets::default(), Some(flag.as_ref()));
+        let mut bench = FakeBench { calls: vec![] };
+        let mut advisor = CountingAdvisor {
+            reply: r#"{"changes":{"threads":-1},"rationale":"no-op again","done":false}"#.into(),
+            calls: 0,
+            cancel_after: Some((2, flag.clone())),
+        };
+        let report = run_tuning(&base, &inputs, &mut bench, &mut advisor, |_| {}).unwrap();
+
+        assert_eq!(advisor.calls, 2, "cancellation forbids a third paid call");
+        assert_eq!(report.stopped_reason, "Cancelled by the user");
+        assert_eq!(
+            report.trials.len(),
+            2,
+            "baseline plus the first no-op rejection"
+        );
+    }
+
+    #[test]
+    fn mt03_the_overall_deadline_stops_the_loop_with_the_documented_reason() {
+        let base = base_profile();
+        let hw = hardware();
+        let cap = caps();
+        let budgets = TuningBudgets {
+            max_advisor_calls: 100,
+            max_consecutive_rejections: 100,
+            deadline: Some(std::time::Instant::now() - std::time::Duration::from_secs(1)),
+        };
+        let inputs = tuning_inputs(&hw, &cap, budgets, None);
+        let mut bench = FakeBench { calls: vec![] };
+        let mut advisor = CountingAdvisor {
+            reply: r#"{"changes":{"flashAttention":"on"},"rationale":"fa","done":false}"#.into(),
+            calls: 0,
+            cancel_after: None,
+        };
+        let report = run_tuning(&base, &inputs, &mut bench, &mut advisor, |_| {}).unwrap();
+
+        assert_eq!(
+            advisor.calls, 0,
+            "an expired deadline forbids the first paid call"
+        );
+        assert!(
+            report.stopped_reason.contains("deadline"),
+            "{}",
+            report.stopped_reason
+        );
+        assert_eq!(report.trials.len(), 1, "only the baseline was recorded");
+    }
+
+    struct CancelDuringMeasureBench {
+        calls: usize,
+        flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    }
+    impl Bench for CancelDuringMeasureBench {
+        fn measure(
+            &mut self,
+            _profile: &LaunchProfile,
+        ) -> Result<(BenchmarkSummary, String), String> {
+            self.calls += 1;
+            if self.calls > 1 {
+                // The user presses Stop while this candidate is running; the
+                // legacy path would surface the resulting failure as an
+                // ordinary candidate error.
+                self.flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                return Err("server exited with code 1".into());
+            }
+            Ok((
+                summarize_benchmark(vec![100.0], 256, 1).unwrap(),
+                "cmd".into(),
+            ))
+        }
+    }
+
+    #[test]
+    fn mt04_cancellation_during_a_measurement_is_terminal_not_a_candidate_failure() {
+        // A cancelled candidate must never appear as a failed configuration,
+        // and the loop must stop proposing instead of continuing (MT-04 V1).
+        let base = base_profile();
+        let hw = hardware();
+        let cap = caps();
+        let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let inputs = tuning_inputs(&hw, &cap, TuningBudgets::default(), Some(flag.as_ref()));
+        let mut bench = CancelDuringMeasureBench {
+            calls: 0,
+            flag: flag.clone(),
+        };
+        let mut advisor = CountingAdvisor {
+            reply: r#"{"changes":{"flashAttention":"on"},"rationale":"fa","done":false}"#.into(),
+            calls: 0,
+            cancel_after: None,
+        };
+        let report = run_tuning(&base, &inputs, &mut bench, &mut advisor, |_| {}).unwrap();
+
+        assert_eq!(bench.calls, 2, "the candidate was attempted once");
+        assert_eq!(advisor.calls, 1, "no proposal follows the cancellation");
+        assert_eq!(
+            report.stopped_reason,
+            "Cancelled by the user during a measurement"
+        );
+        assert_eq!(
+            report.trials.len(),
+            1,
+            "cancellation is not recorded as a candidate failure: {:#?}",
+            report.trials
+        );
     }
 }

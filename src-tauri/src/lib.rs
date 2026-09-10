@@ -2508,12 +2508,16 @@ impl tune::Bench for LiveBench<'_> {
         let (mut child, mut validation, log_path, _lease) = spawn_server(profile, "tuning")?;
         let command = validation.arguments.command.clone();
         let result = (|| {
-            wait_until_healthy(
+            // The cancellable health wait converts Stop into a prompt failure
+            // instead of holding the session for the full 600-second bound
+            // (audit MT-04).
+            wait_until_healthy_cancellable(
                 &mut child,
                 &profile.host,
                 profile.port,
                 &log_path,
                 Duration::from_secs(600),
+                &self.cancel,
             )?;
             let observed_at_ms = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -2541,12 +2545,34 @@ impl tune::Bench for LiveBench<'_> {
             if self.cancel.load(Ordering::Relaxed) {
                 return Err("Cancelled".into());
             }
-            core::benchmark_server(&profile.host, profile.port, self.tokens, self.repeats)
+            // The cancellable completion path replaces the legacy benchmark so
+            // Stop cannot be ignored while a generation request is pending
+            // (audit MT-04).
+            core::benchmark_server_cancellable(
+                &profile.host,
+                profile.port,
+                self.tokens,
+                self.repeats,
+                &self.cancel,
+            )
         })();
-        let _ = child.terminate_and_wait();
+        // Cleanup failures must be visible: a measured result may not be
+        // reported as a clean success when the trial server could not be
+        // stopped (audit MT-04).
+        let cleanup = child.terminate_and_wait();
         // Give the OS a moment to release the port before the next launch.
         std::thread::sleep(Duration::from_millis(600));
-        result.map(|summary| (summary, command))
+        match (result, cleanup) {
+            (Ok(summary), true) => Ok((summary, command)),
+            (Ok(_), false) => Err(
+                "The measured configuration succeeded, but its trial server could not be stopped cleanly; the result is withheld for the next session to re-check."
+                    .into(),
+            ),
+            (Err(error), true) => Err(error),
+            (Err(error), false) => {
+                Err(format!("{error} (cleanup also failed: the trial server did not exit)"))
+            }
+        }
     }
 }
 
@@ -2624,6 +2650,18 @@ async fn start_tuning(
             capabilities: &capabilities,
             companions: &request.companions,
             max_trials: request.max_trials,
+            budgets: tune::TuningBudgets {
+                // Independent of measured trials: no-op and duplicate replies
+                // each consume one of these calls, so the session cannot stay
+                // alive on talkative advisors (audit MT-03).
+                max_advisor_calls: request.max_trials.saturating_mul(2).saturating_add(6),
+                max_consecutive_rejections: 3,
+                deadline: Some(
+                    std::time::Instant::now()
+                        + Duration::from_secs(tune::TUNING_DEADLINE_SECS),
+                ),
+            },
+            cancel: Some(cancel.as_ref()),
         };
         let mut bench = LiveBench {
             app: &handle,
@@ -4691,5 +4729,54 @@ mod override_authority_tests {
         )
         .is_err());
         let _ = std::fs::remove_dir_all(root);
+    }
+}
+
+#[cfg(test)]
+mod tuning_lifecycle_source_tests {
+    #[test]
+    fn tuning_lifecycle_uses_cancellable_paths_and_reports_cleanup_failures() {
+        // Audit MT-04: the live tuner must use the cancellable health wait and
+        // the cancellable benchmark, and a failed trial-server cleanup must be
+        // surfaced instead of discarded. Reverting any of these fails here.
+        let source = include_str!("lib.rs");
+        let bench_block = source
+            .split("impl tune::Bench for LiveBench<'_> {")
+            .nth(1)
+            .expect("LiveBench must implement tune::Bench")
+            .split("// Give the OS a moment to release the port")
+            .next()
+            .unwrap();
+        assert!(
+            bench_block.contains("wait_until_healthy_cancellable("),
+            "the live bench must use the cancellable health wait"
+        );
+        assert!(
+            !bench_block.contains("wait_until_healthy(\n"),
+            "the live bench must not use the non-cancellable health wait"
+        );
+        assert!(
+            bench_block.contains("benchmark_server_cancellable("),
+            "the live bench must use the cancellable benchmark"
+        );
+        assert!(
+            !bench_block.contains("core::benchmark_server("),
+            "the live bench must not use the legacy benchmark"
+        );
+        let tail = source
+            .split("impl tune::Bench for LiveBench<'_> {")
+            .nth(1)
+            .unwrap()
+            .split("struct TuningRequest")
+            .next()
+            .unwrap();
+        assert!(
+            tail.contains("let cleanup = child.terminate_and_wait();"),
+            "the cleanup result must be captured"
+        );
+        assert!(
+            tail.contains("could not be stopped cleanly"),
+            "a failed cleanup must be surfaced to the caller"
+        );
     }
 }

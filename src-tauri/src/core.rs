@@ -1855,6 +1855,105 @@ pub fn benchmark_server(
     summarize_benchmark(samples, tokens, repeats)
 }
 
+/// Upper bound on one benchmark HTTP response body, so a misbehaving server
+/// cannot inflate memory through this path.
+const MAX_BENCH_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+
+/// The cancellable benchmark the tuner uses: identical measurements, but
+/// every read waits in short slices and checks the cancellation flag, so a
+/// Stop during an in-flight generation cannot be ignored (audit MT-04).
+pub fn benchmark_server_cancellable(
+    host: &str,
+    port: u16,
+    tokens: u32,
+    repeats: u16,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> Result<BenchmarkSummary, String> {
+    if repeats == 0 || repeats > 10 {
+        return Err("Repeats must be between 1 and 10".into());
+    }
+    completion_request_cancellable(host, port, tokens.min(64), cancelled)?;
+    let mut samples = Vec::new();
+    for _ in 0..repeats {
+        samples.push(completion_request_cancellable(
+            host, port, tokens, cancelled,
+        )?);
+    }
+    summarize_benchmark(samples, tokens, repeats)
+}
+
+fn completion_request_cancellable(
+    host: &str,
+    port: u16,
+    tokens: u32,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> Result<f64, String> {
+    use std::io::Read as _;
+    let connect_host = match host {
+        "0.0.0.0" => "127.0.0.1",
+        "::" | "[::]" => "::1",
+        value => value,
+    };
+    let body = serde_json::json!({
+        "prompt": "Write a detailed technical explanation of speculative decoding, including verification, acceptance, and performance tradeoffs.",
+        "n_predict": tokens,
+        "temperature": 0,
+        "seed": 42,
+        "ignore_eos": true,
+        "stream": false
+    })
+    .to_string();
+    let mut stream = TcpStream::connect((connect_host, port)).map_err(|e| e.to_string())?;
+    // Short read slices: each timeout returns to the loop, where the
+    // cancellation flag is checked, so Stop is honoured within ~250 ms even
+    // while the model is still generating.
+    stream
+        .set_read_timeout(Some(Duration::from_millis(250)))
+        .map_err(|e| e.to_string())?;
+    let request = format!(
+        "POST /completion HTTP/1.1\r\nHost: {connect_host}:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|e| e.to_string())?;
+    let mut response: Vec<u8> = Vec::new();
+    let mut buffer = [0_u8; 16 * 1024];
+    loop {
+        if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err("Benchmark cancelled while waiting for a response".into());
+        }
+        match stream.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => {
+                if response.len() + read > MAX_BENCH_RESPONSE_BYTES {
+                    return Err("Benchmark response exceeded its size limit".into());
+                }
+                response.extend_from_slice(&buffer[..read]);
+            }
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock
+                    || error.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                continue
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    let response = String::from_utf8_lossy(&response);
+    let (headers, payload) = response
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| "Invalid HTTP response from llama-server".to_string())?;
+    if !headers.contains(" 200 ") {
+        return Err(format!(
+            "Benchmark request failed: {}",
+            headers.lines().next().unwrap_or(headers)
+        ));
+    }
+    parse_tps(payload)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
