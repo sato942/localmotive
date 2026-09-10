@@ -894,15 +894,27 @@ fn cuda_companion_is_complete(names: &[String], cuda_major: Option<u16>) -> bool
 fn read_manifest(dir: &Path) -> Option<RuntimeManifest> {
     const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
     let path = dir.join("runtime.json");
-    let metadata = fs::symlink_metadata(&path).ok()?;
-    if metadata.file_type().is_symlink()
-        || is_reparse_point(&metadata)
-        || !metadata.is_file()
-        || metadata.len() > MAX_MANIFEST_BYTES
-    {
+    // The record is opened first and every size/type check runs on the
+    // opened handle, and at most the limit plus one detection byte is read
+    // before parsing, so a sparse or growing file can never be allocated
+    // whole just to be rejected (audit RT-05 I2).
+    let mut file = fs::File::open(&path).ok()?;
+    let metadata = file.metadata().ok()?;
+    if !metadata.is_file() || metadata.len() > MAX_MANIFEST_BYTES {
         return None;
     }
-    let bytes = fs::read(path).ok()?;
+    let link_metadata = fs::symlink_metadata(&path).ok()?;
+    if link_metadata.file_type().is_symlink() || is_reparse_point(&link_metadata) {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity(metadata.len().min(MAX_MANIFEST_BYTES) as usize);
+    (&mut file)
+        .take(MAX_MANIFEST_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() as u64 > MAX_MANIFEST_BYTES {
+        return None;
+    }
     serde_json::from_slice(&bytes).ok()
 }
 
@@ -2373,7 +2385,7 @@ async fn fetch_catalog_http(
     if let Some(etag) = etag {
         request = request.header(reqwest::header::IF_NONE_MATCH, etag);
     }
-    let mut response = request.send().await.map_err(|error| {
+    let response = request.send().await.map_err(|error| {
         let kind = if error.is_timeout() {
             RuntimeCatalogErrorKind::Timeout
         } else {
@@ -2400,10 +2412,16 @@ async fn fetch_catalog_http(
     if !response.status().is_success() {
         // GitHub answers an exhausted unauthenticated quota with `403 rate
         // limit exceeded`, not `429`: surface that body as a typed
-        // rate-limit error so the UI can show the reset guidance.
+        // rate-limit error so the UI can show the reset guidance. The body
+        // is read through the same 2 MiB streaming bound as success bodies,
+        // and only a short excerpt is ever retained in messages (audit
+        // RT-05 I1).
         if response.status() == reqwest::StatusCode::FORBIDDEN {
-            let body = response.text().await.unwrap_or_default();
-            if body.to_ascii_lowercase().contains("rate limit") {
+            let body = read_runtime_catalog_body_bounded(response).await?;
+            if String::from_utf8_lossy(&body)
+                .to_ascii_lowercase()
+                .contains("rate limit")
+            {
                 let mut error = RuntimeCatalogError::new(
                     RuntimeCatalogErrorKind::RateLimited,
                     "GitHub rate-limited the runtime catalog request. Retry after the indicated delay.",
@@ -2413,7 +2431,10 @@ async fn fetch_catalog_http(
             }
             return Err(RuntimeCatalogError::new(
                 RuntimeCatalogErrorKind::Http,
-                format!("GitHub returned HTTP 403 for the approved runtime catalog: {body}"),
+                format!(
+                    "GitHub returned HTTP 403 for the approved runtime catalog: {}",
+                    bounded_excerpt(&body)
+                ),
             ));
         }
         return Err(RuntimeCatalogError::new(
@@ -2438,6 +2459,31 @@ async fn fetch_catalog_http(
         .get(reqwest::header::ETAG)
         .and_then(|value| value.to_str().ok())
         .map(str::to_owned);
+    let body = read_runtime_catalog_body_bounded(response).await?;
+    let body = String::from_utf8(body).map_err(|_| {
+        RuntimeCatalogError::new(
+            RuntimeCatalogErrorKind::InvalidResponse,
+            "Runtime catalog metadata is not UTF-8.",
+        )
+    })?;
+    // Map a truncated or otherwise malformed release body to the typed
+    // invalid-response error here, so every `Body` carries parseable
+    // release JSON and no caller can silently accept partial metadata.
+    if serde_json::from_str::<GithubRelease>(&body).is_err() {
+        return Err(RuntimeCatalogError::new(
+            RuntimeCatalogErrorKind::InvalidResponse,
+            "GitHub release response was invalid: the metadata body is not a complete release document.",
+        ));
+    }
+    Ok(CatalogHttpResponse::Body { body, etag })
+}
+
+/// One bounded streaming reader for runtime catalog bodies, for success and
+/// error statuses alike: the 2 MiB limit is enforced while reading, before
+/// anything oversized is retained or formatted (audit RT-05 I1).
+async fn read_runtime_catalog_body_bounded(
+    mut response: reqwest::Response,
+) -> Result<Vec<u8>, RuntimeCatalogError> {
     let mut body = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|error| {
         let kind = if error.is_timeout() {
@@ -2459,22 +2505,18 @@ async fn fetch_catalog_http(
         }
         body.extend_from_slice(&chunk);
     }
-    let body = String::from_utf8(body).map_err(|_| {
-        RuntimeCatalogError::new(
-            RuntimeCatalogErrorKind::InvalidResponse,
-            "Runtime catalog metadata is not UTF-8.",
-        )
-    })?;
-    // Map a truncated or otherwise malformed release body to the typed
-    // invalid-response error here, so every `Body` carries parseable
-    // release JSON and no caller can silently accept partial metadata.
-    if serde_json::from_str::<GithubRelease>(&body).is_err() {
-        return Err(RuntimeCatalogError::new(
-            RuntimeCatalogErrorKind::InvalidResponse,
-            "GitHub release response was invalid: the metadata body is not a complete release document.",
-        ));
+    Ok(body)
+}
+
+/// A short, printable excerpt for bounded error messages.
+fn bounded_excerpt(body: &[u8]) -> String {
+    const MAX_EXCERPT_CHARS: usize = 400;
+    let text = String::from_utf8_lossy(body);
+    let mut excerpt: String = text.chars().take(MAX_EXCERPT_CHARS).collect();
+    if text.chars().count() > MAX_EXCERPT_CHARS {
+        excerpt.push('…');
     }
-    Ok(CatalogHttpResponse::Body { body, etag })
+    excerpt
 }
 
 fn runtime_catalog_cache_path() -> Result<PathBuf, String> {
@@ -2994,11 +3036,55 @@ fn extract_zip(
     )
 }
 
+/// Traversal budgets for managed-install discovery. Every visited entry,
+/// including empty directories, counts against `max_entries`; recursion is
+/// capped by `max_depth` so work is rejected before the pending traversal
+/// can grow without limit (audit RT-05 I3).
+struct ScanLimits {
+    max_depth: usize,
+    max_entries: u64,
+}
+
+impl Default for ScanLimits {
+    fn default() -> Self {
+        Self {
+            max_depth: 12,
+            max_entries: 100_000,
+        }
+    }
+}
+
 fn find_runtime(path: &Path) -> Option<PathBuf> {
-    for entry in fs::read_dir(path).ok()? {
-        let child = entry.ok()?.path();
+    find_runtime_with_limits(path, ScanLimits::default())
+}
+
+fn find_runtime_with_limits(path: &Path, limits: ScanLimits) -> Option<PathBuf> {
+    let mut visited = 0_u64;
+    find_runtime_bounded(path, 0, &mut visited, &limits)
+}
+
+fn find_runtime_bounded(
+    path: &Path,
+    depth: usize,
+    visited: &mut u64,
+    limits: &ScanLimits,
+) -> Option<PathBuf> {
+    if depth > limits.max_depth {
+        return None;
+    }
+    let entries = fs::read_dir(path).ok()?;
+    for entry in entries {
+        *visited += 1;
+        if *visited > limits.max_entries {
+            return None;
+        }
+        let Ok(entry) = entry else {
+            // One unreadable entry must not abort a discovery scan.
+            continue;
+        };
+        let child = entry.path();
         if child.is_dir() {
-            if let Some(found) = find_runtime(&child) {
+            if let Some(found) = find_runtime_bounded(&child, depth + 1, visited, limits) {
                 return Some(found);
             }
         } else if child
@@ -6609,6 +6695,213 @@ Connection: close
         assert_eq!(publish_root, primary);
         assert_eq!(reuse_roots, vec![primary.clone(), legacy.clone()]);
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn rt05_a_chunked_403_body_at_and_beyond_the_limit_is_bounded() {
+        use std::io::{Read, Write};
+
+        // (a) At the 2 MiB boundary with no rate-limit marker the typed Http
+        // error keeps only a short excerpt; one byte beyond the limit is
+        // rejected while reading (audit RT-05 V1).
+        for (excess, body_too_large) in [(0_usize, false), (1_usize, true)] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let body = vec![b'x'; MAX_RUNTIME_CATALOG_BYTES + excess];
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut head = vec![0u8; 4096];
+                let _ = stream.read(&mut head);
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+                );
+                for chunk in body.chunks(64 * 1024) {
+                    let _ = write!(stream, "{:x}\r\n", chunk.len());
+                    let _ = stream.write_all(chunk);
+                    let _ = stream.write_all(b"\r\n");
+                }
+                let _ = stream.write_all(b"0\r\n\r\n");
+            });
+            let client = runtime_catalog_client(Duration::from_secs(10)).unwrap();
+            let error = tauri::async_runtime::block_on(fetch_catalog_http(
+                &client,
+                &format!("http://{address}/release"),
+                None,
+            ))
+            .unwrap_err();
+            if body_too_large {
+                assert_eq!(
+                    error.kind,
+                    RuntimeCatalogErrorKind::BodyTooLarge,
+                    "{excess}"
+                );
+            } else {
+                assert_eq!(error.kind, RuntimeCatalogErrorKind::Http, "{excess}");
+                assert!(error.message.contains("HTTP 403"), "{}", error.message);
+                assert!(
+                    error.message.len() < 1024,
+                    "the excerpt must stay short, got {} bytes",
+                    error.message.len()
+                );
+            }
+            server.join().unwrap();
+        }
+
+        // (b) A small rate-limit 403 keeps its typed RateLimited handling.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut head = vec![0u8; 4096];
+            let _ = stream.read(&mut head);
+            let body = b"API rate limit exceeded for 1.2.3.4.";
+            let _ = write!(
+                stream,
+                "HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(body);
+        });
+        let client = runtime_catalog_client(Duration::from_secs(10)).unwrap();
+        let error = tauri::async_runtime::block_on(fetch_catalog_http(
+            &client,
+            &format!("http://{address}/release"),
+            None,
+        ))
+        .unwrap_err();
+        assert_eq!(error.kind, RuntimeCatalogErrorKind::RateLimited);
+    }
+
+    #[test]
+    fn rt05_sparse_and_boundary_runtime_records_are_bounded() {
+        let base = std::env::temp_dir().join(format!(
+            "localmotive-rt05-manifest-{}-{:016x}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
+        let valid = br#"{"tag":"b1","backend":"cpu","runtime":"llama-server.exe"}"#;
+
+        // A sparse record that claims more than the limit is rejected from
+        // its handle metadata alone.
+        let sparse_dir = base.join("sparse");
+        std::fs::create_dir_all(&sparse_dir).unwrap();
+        let sparse_path = sparse_dir.join("runtime.json");
+        let sparse = std::fs::File::create(&sparse_path).unwrap();
+        sparse.set_len(16 * 1024 * 1024).unwrap();
+        drop(sparse);
+        assert!(
+            read_manifest(&sparse_dir).is_none(),
+            "sparse record must be rejected"
+        );
+
+        // Valid record exactly at the boundary parses.
+        let exact_dir = base.join("exact");
+        std::fs::create_dir_all(&exact_dir).unwrap();
+        let mut exact = Vec::from(valid.as_slice());
+        exact.resize(MAX_MANIFEST_BYTES as usize, b' ');
+        std::fs::write(exact_dir.join("runtime.json"), &exact).unwrap();
+        assert!(
+            read_manifest(&exact_dir).is_some(),
+            "boundary record must parse"
+        );
+
+        // One byte beyond the boundary is rejected even though the content
+        // alone would parse (audit RT-05 V2).
+        let beyond_dir = base.join("beyond");
+        std::fs::create_dir_all(&beyond_dir).unwrap();
+        let mut beyond = exact.clone();
+        beyond.push(b' ');
+        std::fs::write(beyond_dir.join("runtime.json"), &beyond).unwrap();
+        assert!(
+            read_manifest(&beyond_dir).is_none(),
+            "oversized record must be rejected"
+        );
+
+        // Malformed within the limit stays rejected.
+        let malformed_dir = base.join("malformed");
+        std::fs::create_dir_all(&malformed_dir).unwrap();
+        std::fs::write(malformed_dir.join("runtime.json"), b"{not json").unwrap();
+        assert!(read_manifest(&malformed_dir).is_none());
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn rt05_discovery_rejects_excessive_trees_and_keeps_valid_boundaries() {
+        let base = std::env::temp_dir().join(format!(
+            "localmotive-rt05-scan-{}-{:016x}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        let limits = ScanLimits {
+            max_depth: 4,
+            max_entries: 8,
+        };
+
+        // A valid boundary tree within both budgets is found.
+        let valid_root = base.join("valid");
+        let mut cursor = valid_root.clone();
+        for depth in 0..3 {
+            cursor = cursor.join(format!("d{depth}"));
+        }
+        std::fs::create_dir_all(&cursor).unwrap();
+        std::fs::write(cursor.join("llama-server.exe"), b"stub").unwrap();
+        assert!(
+            find_runtime_with_limits(
+                &valid_root,
+                ScanLimits {
+                    max_depth: 4,
+                    max_entries: 8
+                }
+            )
+            .is_some(),
+            "a tree within the budgets must be discovered"
+        );
+
+        // Empty directories count too: a chain one entry past the budget is
+        // rejected before the executable at its end can be visited.
+        let busy_root = base.join("busy");
+        let mut cursor = busy_root.clone();
+        for depth in 0..8 {
+            cursor = cursor.join("n");
+        }
+        std::fs::create_dir_all(&cursor).unwrap();
+        std::fs::write(cursor.join("llama-server.exe"), b"stub").unwrap();
+        assert!(
+            find_runtime_with_limits(
+                &busy_root,
+                ScanLimits {
+                    max_depth: 12,
+                    max_entries: 8
+                }
+            )
+            .is_none(),
+            "an over-budget inventory must be rejected"
+        );
+
+        // Excessive nesting is rejected by the depth budget alone.
+        let deep_root = base.join("deep");
+        let mut cursor = deep_root.clone();
+        for depth in 0..7 {
+            cursor = cursor.join("n");
+        }
+        std::fs::create_dir_all(&cursor).unwrap();
+        std::fs::write(cursor.join("llama-server.exe"), b"stub").unwrap();
+        assert!(
+            find_runtime_with_limits(
+                &deep_root,
+                ScanLimits {
+                    max_depth: 4,
+                    max_entries: 1000
+                }
+            )
+            .is_none(),
+            "a tree past the depth budget must be rejected"
+        );
+
+        let _ = std::fs::remove_dir_all(base);
     }
 
     #[test]
