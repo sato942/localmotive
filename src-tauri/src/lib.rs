@@ -36,6 +36,11 @@ struct ManagedServer {
     validation: LaunchValidation,
     log_path: String,
     started_at: u64,
+    /// Read-shared handles that pin the verified managed runtime content for
+    /// the whole server lifetime (audit RT-04). Dropped when the server is
+    /// stopped or replaced.
+    #[allow(dead_code)]
+    runtime_lease: Option<runtime::ManagedExecutionLease>,
 }
 
 trait HealthProcess {
@@ -530,9 +535,25 @@ fn validate_profile_paths(profile: &LaunchProfile) -> Result<(), String> {
 fn spawn_server(
     profile: &LaunchProfile,
     log_name: &str,
-) -> Result<(proc::ContainedProcess, LaunchValidation, String), String> {
+) -> Result<
+    (
+        proc::ContainedProcess,
+        LaunchValidation,
+        String,
+        Option<runtime::ManagedExecutionLease>,
+    ),
+    String,
+> {
     let validation = prepare_launch(profile)
         .map_err(|message| launch_failure("validation", message, "", None, false))?;
+    // Acquire the execution-identity lease after verification and before the
+    // process starts: for a managed runtime the approved bytes stay pinned by
+    // read-shared handles for as long as the returned lease lives, so the
+    // content cannot change between the trust check and image/DLL loading
+    // (audit RT-04). An external runtime deliberately keeps no lease.
+    let execution_lease =
+        runtime::authorize_managed_execution_lease(Path::new(&profile.runtime))
+            .map_err(|message| launch_failure("validation", message, "", None, false))?;
 
     let log_dir = std::env::temp_dir().join("localmotive");
     fs::create_dir_all(&log_dir).map_err(|error| {
@@ -581,7 +602,7 @@ fn spawn_server(
             false,
         )
     })?;
-    Ok((child, validation, log_path_text))
+    Ok((child, validation, log_path_text, execution_lease))
 }
 
 fn connect_host(host: &str) -> &str {
@@ -1432,7 +1453,7 @@ fn start_server(
     {
         return Err("A tuning session is running; stop it before starting a server".into());
     }
-    let (mut child, mut validation, log_path) =
+    let (mut child, mut validation, log_path, execution_lease) =
         spawn_server(&profile, &format!("server-{}", profile.port))?;
     if let Err(error) = wait_until_healthy(
         &mut child,
@@ -1468,6 +1489,7 @@ fn start_server(
         validation,
         log_path,
         started_at,
+        runtime_lease: execution_lease,
     });
     Ok(status_from(&mut slot))
 }
@@ -1747,7 +1769,9 @@ fn run_benchmark_snapshot(
             if cancelled.load(Ordering::Relaxed) {
                 return Err("Benchmark cancelled before fresh runtime launch".into());
             }
-            let (mut child, _, log_path) = spawn_server(&profile, "benchmark-cold")?;
+            // The lease binding pins the verified runtime content for the whole
+            // cold attempt (audit RT-04); it drops with this scope.
+            let (mut child, _, log_path, _lease) = spawn_server(&profile, "benchmark-cold")?;
             let attempt = wait_until_healthy_cancellable(
                 &mut child,
                 &profile.host,
@@ -2479,7 +2503,9 @@ impl tune::Bench for LiveBench<'_> {
                 trial: None,
             },
         );
-        let (mut child, mut validation, log_path) = spawn_server(profile, "tuning")?;
+        // The lease binding pins the verified runtime content for the whole
+        // tuning session (audit RT-04); it drops when the session ends.
+        let (mut child, mut validation, log_path, _lease) = spawn_server(profile, "tuning")?;
         let command = validation.arguments.command.clone();
         let result = (|| {
             wait_until_healthy(
@@ -3733,6 +3759,33 @@ mod release_security_tests {
         assert!(spawn_source.contains("\"log_setup\""));
         assert!(spawn_source.contains("\"spawn\""));
         assert!(spawn_source.matches("launch_failure(").count() >= 3);
+    }
+
+    #[test]
+    fn spawn_holds_the_execution_lease_across_process_creation() {
+        let source = include_str!("lib.rs");
+        let body = source
+            .split_once("fn spawn_server(")
+            .and_then(|(_, rest)| rest.split_once("fn connect_host(").map(|(body, _)| body))
+            .unwrap();
+
+        // The managed execution lease must be acquired after verification and
+        // before the process starts, so the approved content cannot change
+        // between the trust check and image/DLL loading (audit RT-04).
+        let lease = body
+            .find("authorize_managed_execution_lease")
+            .expect("spawn_server must acquire the managed execution lease");
+        let spawn = body
+            .find("spawn_contained_process")
+            .expect("spawn_server must use the contained process runner");
+        assert!(
+            lease < spawn,
+            "the execution lease must be held before the process starts"
+        );
+        assert!(
+            body.contains("execution_lease"),
+            "spawn_server must return the lease to its caller"
+        );
     }
 
     #[test]

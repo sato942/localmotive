@@ -166,6 +166,10 @@ pub(crate) struct ManagedHealthContext {
     pub adapter_name: Option<String>,
     pub expected_model: String,
     pub model_path: PathBuf,
+    /// Read-shared handles that pin the verified runtime content for the whole
+    /// health run so a long preparation interval cannot reopen a modification
+    /// window before the CLI, benchmark, and server launches (audit RT-04).
+    pub execution_lease: Option<crate::runtime::ManagedExecutionLease>,
 }
 
 pub fn completion_matches(value: &CompletionEvidence) -> bool {
@@ -264,6 +268,7 @@ pub(crate) fn trust_failure_result(
         adapter_name: None,
         expected_model: String::new(),
         model_path: PathBuf::new(),
+        execution_lease: None,
     };
     finish_run(
         &context,
@@ -719,6 +724,11 @@ pub(crate) fn run_managed_health(
     context: ManagedHealthContext,
     cancel: &AtomicBool,
 ) -> HealthRunResult {
+    // The execution lease (audit RT-04) lives with the context for the whole
+    // run: its read-shared handles pin the verified runtime content across the
+    // CLI, benchmark, and server launches below. Hold an explicit reference so
+    // the guarantee is visible at the health entry point.
+    let _execution_lease = context.execution_lease.as_ref();
     let started_at = epoch_millis();
     let mut stages = Vec::with_capacity(HealthStage::ALL.len());
 
@@ -1347,6 +1357,7 @@ mod tests {
             adapter_name: None,
             expected_model: "SmolLM2-135M-Q4_K_M.gguf".into(),
             model_path: PathBuf::new(),
+            execution_lease: None,
         };
         let completion = CompletionEvidence {
             temperature: 0.0,
@@ -1720,6 +1731,7 @@ mod tests {
             adapter_name: None,
             expected_model: "approved fixture".into(),
             model_path,
+            execution_lease: None,
         };
 
         let result = run_managed_health(context, &AtomicBool::new(false));

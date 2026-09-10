@@ -3322,7 +3322,15 @@ fn reject_managed_file_alternate_streams(_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn digest_regular_file(path: &Path, relative: &str) -> Result<(u64, String), String> {
+/// Open one managed file with read-only sharing protection, run the complete
+/// file-identity checks, and hash the retained handle.
+///
+/// The returned handle is the one whose bytes were hashed, so a caller that
+/// keeps it (an execution lease) holds exactly the verified content.
+fn open_and_digest_managed_file(
+    path: &Path,
+    relative: &str,
+) -> Result<(File, u64, String), String> {
     let metadata = fs::symlink_metadata(path)
         .map_err(|error| format!("Could not inspect managed file {relative}: {error}"))?;
     if !metadata.is_file()
@@ -3374,7 +3382,12 @@ fn digest_regular_file(path: &Path, relative: &str) -> Result<(u64, String), Str
             "Managed file {relative} changed during verification"
         ));
     }
-    Ok((read, hex::encode(hasher.finalize())))
+    Ok((file, read, hex::encode(hasher.finalize())))
+}
+
+fn digest_regular_file(path: &Path, relative: &str) -> Result<(u64, String), String> {
+    let (_handle, bytes, digest) = open_and_digest_managed_file(path, relative)?;
+    Ok((bytes, digest))
 }
 
 fn collect_install_files(root: &Path) -> Result<Vec<String>, String> {
@@ -3522,33 +3535,31 @@ fn validate_content_manifest_authority(
     Ok(trusted)
 }
 
-fn verify_installed_runtime(
-    root: &Path,
-    install: &ResolvedRuntimeInstall,
-    trusted_content_bytes: &[u8],
-    trusted_content_sha256: &str,
-) -> Result<PathBuf, String> {
-    if trusted_content_sha256 != install.content_manifest_sha256 {
-        return Err("Runtime install record used a non-approved content-manifest anchor".into());
+/// Read one managed runtime install record with its metadata bounds.
+fn read_install_record(directory: &Path) -> Result<RuntimeInstallRecord, String> {
+    let manifest_path = directory.join("runtime.json");
+    let metadata = fs::symlink_metadata(&manifest_path)
+        .map_err(|error| format!("Managed runtime record is unavailable: {error}"))?;
+    if !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || is_reparse_point(&metadata)
+        || metadata.len() > 64 * 1024
+    {
+        return Err("Managed runtime record is not a bounded regular file".into());
     }
-    let trusted = validate_content_manifest_authority(install, trusted_content_bytes)?;
-    let manifest_path = root.join("runtime.json");
-    let (manifest_bytes, _) = {
-        let metadata = fs::symlink_metadata(&manifest_path)
-            .map_err(|error| format!("Managed runtime record is unavailable: {error}"))?;
-        if !metadata.is_file()
-            || metadata.file_type().is_symlink()
-            || is_reparse_point(&metadata)
-            || metadata.len() > 64 * 1024
-        {
-            return Err("Managed runtime record is not a bounded regular file".into());
-        }
-        let bytes = fs::read(&manifest_path)
-            .map_err(|error| format!("Could not read managed runtime record: {error}"))?;
-        (bytes, metadata)
-    };
-    let record: RuntimeInstallRecord = serde_json::from_slice(&manifest_bytes)
-        .map_err(|error| format!("Managed runtime record is invalid: {error}"))?;
+    let bytes = fs::read(&manifest_path)
+        .map_err(|error| format!("Could not read managed runtime record: {error}"))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| format!("Managed runtime record is invalid: {error}"))
+}
+
+/// The record identity rules shared by launch verification and execution
+/// leases.
+fn validate_record_identity(
+    record: &RuntimeInstallRecord,
+    install: &ResolvedRuntimeInstall,
+    trusted_content_sha256: &str,
+) -> Result<(), String> {
     if record.schema_version != 1
         || record.release_tag != install.tag
         || record.release_commit != install.release_commit
@@ -3559,6 +3570,21 @@ fn verify_installed_runtime(
     {
         return Err("Managed runtime record does not match compiled approval".into());
     }
+    Ok(())
+}
+
+fn verify_installed_runtime(
+    root: &Path,
+    install: &ResolvedRuntimeInstall,
+    trusted_content_bytes: &[u8],
+    trusted_content_sha256: &str,
+) -> Result<PathBuf, String> {
+    if trusted_content_sha256 != install.content_manifest_sha256 {
+        return Err("Runtime install record used a non-approved content-manifest anchor".into());
+    }
+    let trusted = validate_content_manifest_authority(install, trusted_content_bytes)?;
+    let record = read_install_record(root)?;
+    validate_record_identity(&record, install, trusted_content_sha256)?;
     let actual_files = collect_install_files(root)?;
     let expected_files = trusted
         .files
@@ -3623,16 +3649,23 @@ struct VerifiedInstallation {
     install: ResolvedRuntimeInstall,
 }
 
-/// Locate and content-verify the managed installation that contains
-/// `executable_path` under `root`.
+/// A managed installation whose record was located and matched against
+/// compiled approval, but whose file content is not yet verified.
+struct LocatedInstallation {
+    install_dir: PathBuf,
+    install: ResolvedRuntimeInstall,
+    record: RuntimeInstallRecord,
+}
+
+/// Walk up from an executable inside `root` to the managed installation that
+/// owns it and check its record against compiled approval.
 ///
-/// Returns `Ok(None)` when the path is not inside `root`; the caller then
-/// applies its own policy for deliberately selected external runtimes.
-fn verified_installation_in_with(
+/// Returns `Ok(None)` when the path is not inside `root`.
+fn locate_installation_in_with(
     executable_path: &Path,
     root: &Path,
     approval: ManagedApprovalSource<'_>,
-) -> Result<Option<VerifiedInstallation>, String> {
+) -> Result<Option<LocatedInstallation>, String> {
     if !path_is_under(executable_path, root) {
         return Ok(None);
     }
@@ -3644,13 +3677,7 @@ fn verified_installation_in_with(
         .ok_or("Managed runtime executable has no parent directory")?;
     while directory.starts_with(root) && directory != root {
         if directory.join("runtime.json").exists() {
-            let record_bytes = fs::read(directory.join("runtime.json"))
-                .map_err(|error| format!("Could not read managed runtime record: {error}"))?;
-            if record_bytes.len() > 64 * 1024 {
-                return Err("Managed runtime record exceeds the size limit".into());
-            }
-            let record: RuntimeInstallRecord = serde_json::from_slice(&record_bytes)
-                .map_err(|error| format!("Managed runtime record is invalid: {error}"))?;
+            let record = read_install_record(directory)?;
             let install = (approval.resolve_install)(&record.install_key)?;
             let expected_directory = root.join(managed_runtime_relative_path(
                 &install.tag,
@@ -3659,17 +3686,10 @@ fn verified_installation_in_with(
             if directory != expected_directory {
                 return Err("Managed runtime directory does not match compiled approval".into());
             }
-            let content = (approval.content_manifest)(&install.install_key)?;
-            let server_path = verify_installed_runtime(
-                directory,
-                &install,
-                content,
-                &install.content_manifest_sha256,
-            )?;
-            return Ok(Some(VerifiedInstallation {
+            return Ok(Some(LocatedInstallation {
                 install_dir: directory.to_path_buf(),
-                server_path,
                 install,
+                record,
             }));
         }
         directory = directory
@@ -3677,6 +3697,122 @@ fn verified_installation_in_with(
             .ok_or("Managed runtime path escaped its root")?;
     }
     Err("Managed runtime has no trusted installation record".into())
+}
+
+fn verified_installation_in_with(
+    executable_path: &Path,
+    root: &Path,
+    approval: ManagedApprovalSource<'_>,
+) -> Result<Option<VerifiedInstallation>, String> {
+    let Some(located) = locate_installation_in_with(executable_path, root, approval)? else {
+        return Ok(None);
+    };
+    let content = (approval.content_manifest)(&located.install.install_key)?;
+    let server_path = verify_installed_runtime(
+        &located.install_dir,
+        &located.install,
+        content,
+        &located.install.content_manifest_sha256,
+    )?;
+    Ok(Some(VerifiedInstallation {
+        install_dir: located.install_dir,
+        server_path,
+        install: located.install,
+    }))
+}
+
+/// An execution-identity lease for one verified managed installation.
+///
+/// Holds one read-shared handle for every file of the compiled inventory
+/// (explanation on Windows: `FILE_SHARE_READ` mode). While the lease lives,
+/// the approved bytes cannot be modified and the file names cannot be
+/// replaced, so a process created from this installation loads exactly the
+/// content the lease verified (audit RT-04). Drop the lease when the launched
+/// process no longer loads from the installation.
+pub(crate) struct ManagedExecutionLease {
+    // Never read: the handles exist purely to keep the content pinned.
+    #[allow(dead_code)]
+    files: Vec<File>,
+    #[allow(dead_code)]
+    install_dir: PathBuf,
+}
+
+/// Open the complete compiled inventory of a verified installation and hash
+/// every file through the handle that stays open.
+///
+/// The bytes that pass this check are the bytes the returned lease pins: there
+/// is no reopen between verification and protection.
+fn lease_verified_installation(
+    install: &ResolvedRuntimeInstall,
+    install_dir: &Path,
+    approval: ManagedApprovalSource<'_>,
+) -> Result<ManagedExecutionLease, String> {
+    let content = (approval.content_manifest)(&install.install_key)?;
+    let trusted = validate_content_manifest_authority(install, content)?;
+    let mut files = Vec::with_capacity(trusted.files.len());
+    for file in &trusted.files {
+        let relative = path_from_manifest(&file.path)?;
+        let (handle, bytes, digest) =
+            open_and_digest_managed_file(&install_dir.join(relative), &file.path)?;
+        if bytes != file.bytes || digest != file.sha256 {
+            return Err(format!(
+                "Managed file {} failed execution-identity verification",
+                file.path
+            ));
+        }
+        files.push(handle);
+    }
+    Ok(ManagedExecutionLease {
+        files,
+        install_dir: install_dir.to_path_buf(),
+    })
+}
+
+/// Verify a managed installation and retain an execution-identity lease.
+///
+/// Returns `Ok(None)` for a deliberately selected external runtime, which
+/// keeps the separate external-runtime policy and no compiled-content lease.
+fn authorize_managed_execution_lease_with(
+    executable: &Path,
+    primary: &Path,
+    legacy: &Path,
+    approval: ManagedApprovalSource<'_>,
+) -> Result<Option<ManagedExecutionLease>, String> {
+    for root in [primary, legacy] {
+        let Some(located) = locate_installation_in_with(executable, root, approval)? else {
+            continue;
+        };
+        let content = (approval.content_manifest)(&located.install.install_key)?;
+        let trusted = validate_content_manifest_authority(&located.install, content)?;
+        validate_record_identity(
+            &located.record,
+            &located.install,
+            &located.install.content_manifest_sha256,
+        )?;
+        let actual_files = collect_install_files(&located.install_dir)?;
+        let expected_files = trusted
+            .files
+            .iter()
+            .map(|file| file.path.clone())
+            .collect::<Vec<_>>();
+        if actual_files != expected_files {
+            return Err("Managed runtime file inventory does not match compiled approval".into());
+        }
+        let lease = lease_verified_installation(&located.install, &located.install_dir, approval)?;
+        return Ok(Some(lease));
+    }
+    Ok(None)
+}
+
+pub(crate) fn authorize_managed_execution_lease(
+    executable: &Path,
+) -> Result<Option<ManagedExecutionLease>, String> {
+    authorize_managed_execution_lease_with(
+        executable,
+        &runtime_data_dir("Localmotive"),
+        &runtime_data_dir("GGUF Pilot"),
+        ManagedApprovalSource::compiled(),
+    )
 }
 
 fn managed_runtime_verified_in_with(
@@ -3876,6 +4012,39 @@ fn runtime_download_target(
         .join(&asset.name))
 }
 
+/// True when the existing installation cannot be replaced because a lease or
+/// another holder keeps its approved content open.
+fn installation_in_use(directory: &Path) -> bool {
+    let Ok(record) = read_install_record(directory) else {
+        return false;
+    };
+    let Ok(relative) = path_from_manifest(&record.runtime) else {
+        return false;
+    };
+    let server = directory.join(relative);
+    if !server.exists() {
+        return false;
+    }
+    // A write request against content pinned by a read-shared lease fails
+    // while any holder remains.
+    OpenOptions::new().write(true).open(&server).is_err()
+}
+
+/// Reject a replacement while an execution lease keeps the existing
+/// installation open, with a repair instruction the user can act on.
+fn ensure_installation_replaceable(directory: &Path) -> Result<(), String> {
+    if !directory.exists() {
+        return Ok(());
+    }
+    if installation_in_use(directory) {
+        return Err(format!(
+            "The runtime at {} could not be replaced because its approved files are in use, most likely by a running server, benchmark, health, or tuning process. Stop the process that uses this runtime, then retry.",
+            directory.display()
+        ));
+    }
+    Ok(())
+}
+
 fn replace_verified_runtime_directory(staging: &Path, destination: &Path) -> Result<(), String> {
     let root = staging
         .parent()
@@ -3972,6 +4141,12 @@ pub fn install_runtime(
     }
     let final_dir = root.join(managed_runtime_relative_path(tag, &option.install_key));
     validate_no_reparse_ancestors("Managed runtime destination", &final_dir)?;
+
+    // Replacing an existing installation requires that no running process
+    // (server, benchmark, health, or tuning) still holds its content open
+    // through an execution lease (audit RT-04). Report that outcome as a clear
+    // repair instruction instead of a bare filesystem error.
+    ensure_installation_replaceable(&final_dir)?;
 
     let staging = create_runtime_staging(&root, tag, &option.install_key)?;
     let install = (|| {
@@ -4119,7 +4294,22 @@ pub(crate) fn ensure_pinned_health_model(
 pub(crate) fn managed_health_context(
     request: &crate::health::ManagedHealthRequest,
 ) -> Result<crate::health::ManagedHealthContext, String> {
-    let install = resolve_approved_install(&request.install_key)?;
+    managed_health_context_with(
+        request,
+        &[
+            managed_runtime_install_root(),
+            runtime_data_dir("GGUF Pilot"),
+        ],
+        ManagedApprovalSource::compiled(),
+    )
+}
+
+fn managed_health_context_with(
+    request: &crate::health::ManagedHealthRequest,
+    roots: &[PathBuf],
+    approval: ManagedApprovalSource<'_>,
+) -> Result<crate::health::ManagedHealthContext, String> {
+    let install = (approval.resolve_install)(&request.install_key)?;
     let hardware = detect_hardware();
     validate_install_adapter(
         &install,
@@ -4134,15 +4324,16 @@ pub(crate) fn managed_health_context(
             .find(|adapter| &adapter.adapter_id == adapter_id)
             .map(|adapter| adapter.name.clone())
     });
-    let (install_root, server_path) = verified_install_paths(
-        &install,
-        &[
-            managed_runtime_install_root(),
-            runtime_data_dir("GGUF Pilot"),
-        ],
-        ManagedApprovalSource::compiled(),
-    )
-    .map_err(|error| format!("Managed runtime health trust verification failed: {error}"))?;
+    let (install_root, server_path) = verified_install_paths(&install, roots, approval)
+        .map_err(|error| format!("Managed runtime health trust verification failed: {error}"))?;
+    // Retain protected handles from now until the health run ends so the
+    // pinned-model download interval cannot reopen a modification window
+    // before the CLI, benchmark, and server launches (audit RT-04).
+    let execution_lease = Some(
+        lease_verified_installation(&install, &install_root, approval).map_err(|error| {
+            format!("Managed runtime health trust verification failed: {error}")
+        })?,
+    );
     let model_path = pinned_health_model_path()?;
     let pin = crate::core::pinned_model_load_pin();
     Ok(crate::health::ManagedHealthContext {
@@ -4154,6 +4345,7 @@ pub(crate) fn managed_health_context(
         adapter_name,
         expected_model: format!("{}@{}/{}", pin.repository, pin.revision, pin.name),
         model_path,
+        execution_lease,
     })
 }
 
@@ -4172,7 +4364,7 @@ pub(crate) mod test_fixtures {
             concat!(
                 "{{\"schemaVersion\":1,\"releaseTag\":\"b77777\",",
                 "\"releaseCommit\":\"rt01fixture\",",
-                "\"installKey\":\"rt-fixture\",\"backend\":\"rt-fixture\",\"artifacts\":[",
+                "\"installKey\":\"rt-fixture\",\"backend\":\"cpu\",\"artifacts\":[",
                 "{{\"name\":\"rt-fixture.zip\",\"bytes\":1,\"sha256\":\"{}\"}}],\"files\":[",
                 "{{\"path\":\"bin/ggml-cpu.dll\",\"bytes\":15,\"sha256\":\"{}\"}},",
                 "{{\"path\":\"bin/llama-cli.exe\",\"bytes\":11,\"sha256\":\"{}\"}},",
@@ -4192,7 +4384,7 @@ pub(crate) mod test_fixtures {
             tag: "b77777".into(),
             release_commit: "rt01fixture".into(),
             architecture: "x64".into(),
-            backend: "rt-fixture".into(),
+            backend: "cpu".into(),
             install_key: "rt-fixture".into(),
             asset: GithubAsset {
                 name: "rt-fixture.zip".into(),
@@ -6598,6 +6790,106 @@ Connection: close
         assert!(
             authorize_managed_execution_with(&legacy_server, &primary, &legacy, source).is_err()
         );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn rt04_execution_lease_pins_approved_content_through_repair_and_launch() {
+        let base = std::env::temp_dir().join(format!(
+            "localmotive-rt04-lease-{}-{}",
+            std::process::id(),
+            observed_at_ms()
+        ));
+        let primary = base.join("Localmotive").join("runtimes");
+        let legacy = base.join("GGUF Pilot").join("runtimes");
+        std::fs::create_dir_all(&legacy).unwrap();
+        let source = test_fixtures::fixture_source();
+        let (server, cli) = test_fixtures::place_fixture_install(&primary);
+        let install_dir = server.parent().unwrap().parent().unwrap().to_path_buf();
+
+        // A synchronized writer attempts to replace the approved executable
+        // and DLL after verification succeeds; both attempts must fail while
+        // the lease holds read-shared handles for the pinned inventory.
+        let lease = authorize_managed_execution_lease_with(&server, &primary, &legacy, source)
+            .unwrap()
+            .expect("a verified managed fixture must produce a lease");
+        assert!(
+            std::fs::write(&server, b"replaced executable").is_err(),
+            "the approved server EXE was replaced while leased"
+        );
+        assert!(
+            std::fs::write(&cli, b"replaced cli").is_err(),
+            "the approved companion CLI was replaced while leased"
+        );
+        assert_eq!(std::fs::read(&server).unwrap(), b"trusted executable");
+
+        // The interval that matters is not instantaneous: after a delay that
+        // simulates the pinned-health-model preparation, the protection still
+        // holds (audit RT-04: no time-based release).
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        assert!(std::fs::write(&server, b"replaced executable").is_err());
+
+        // Repair/replacement while the lease is active yields the documented
+        // rejection with a recovery action, not a bare filesystem error.
+        let message = ensure_installation_replaceable(&install_dir).unwrap_err();
+        assert!(message.contains("in use"), "{message}");
+        assert!(message.contains("Stop the process"), "{message}");
+        assert_eq!(std::fs::read(&server).unwrap(), b"trusted executable");
+
+        // After release the same checks clear and replacement succeeds: no
+        // abandoned locks remain.
+        drop(lease);
+        ensure_installation_replaceable(&install_dir).unwrap();
+        std::fs::write(&server, b"replaced executable").unwrap();
+        assert_eq!(std::fs::read(&server).unwrap(), b"replaced executable");
+
+        // A deliberately selected external runtime keeps the separate policy:
+        // no compiled-content lease and no live handle.
+        let external = base.join("external").join("llama-server.exe");
+        std::fs::create_dir_all(external.parent().unwrap()).unwrap();
+        std::fs::write(&external, b"external runtime").unwrap();
+        assert!(
+            authorize_managed_execution_lease_with(&external, &primary, &legacy, source)
+                .unwrap()
+                .is_none()
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn rt04_managed_health_context_carries_the_execution_lease_across_preparation() {
+        let base = std::env::temp_dir().join(format!(
+            "localmotive-rt04-health-{}-{}",
+            std::process::id(),
+            observed_at_ms()
+        ));
+        let primary = base.join("Localmotive").join("runtimes");
+        let legacy = base.join("GGUF Pilot").join("runtimes");
+        std::fs::create_dir_all(&legacy).unwrap();
+        let (server, _cli) = test_fixtures::place_fixture_install(&primary);
+        let request = crate::health::ManagedHealthRequest {
+            install_key: "rt-fixture".into(),
+            adapter_id: None,
+        };
+
+        let context = managed_health_context_with(
+            &request,
+            &[primary.clone(), legacy.clone()],
+            test_fixtures::fixture_source(),
+        )
+        .unwrap();
+        assert!(
+            context.execution_lease.is_some(),
+            "managed health preparation must retain the execution lease"
+        );
+
+        // The pinned-model download interval cannot reopen a modification
+        // window: the context's lease blocks replacement until it drops.
+        assert!(std::fs::write(&server, b"replaced during health prep").is_err());
+        drop(context);
+        assert!(std::fs::write(&server, b"replaced after prep").is_ok());
 
         let _ = std::fs::remove_dir_all(&base);
     }
