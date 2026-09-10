@@ -1,6 +1,6 @@
 # Localmotive 0.5 implementation tracker
 
-- **Status:** PHASE 0 FOUNDATION IN PROGRESS
+- **Status:** PHASES 1–7 DONE 2026-09-10. SQLITE MIRROR + 0.5.0 SHIP GATE OPEN.
 - **Target:** `0.5.0`
 - **Tree at creation:** `30c28bfb2b4db1244f19424dc67326a074965535`
 - **Tag at creation:** `v0.4.1` @ `a0ef02cf4b35a31ff10af1bd8c0a58064f86ab2e`
@@ -337,7 +337,27 @@ Append every check with exact command and observed result. Never write should wo
 
 - Pending: Latest repair commands and output. Done 2026-09-10. See Phase 0 evidence.
 - Pending: release-gates RED and GREEN runs. Done 2026-09-10. RED 71 pass 2 fail. GREEN 73 pass 0 fail. Pins PASS. Workflow gates PASS.
-- Pending: catalog dry-run numbers. Append after run.
+- Pending: catalog dry-run numbers. Done 2026-09-10. See Phase 2 evidence.
+
+### 2026-09-10 Final gate suite (HEAD `d388471`, before tracker closeout)
+
+- Command: `cargo test --locked --lib` in `src-tauri`
+- Observed: 397 pass, 0 fail, 2 ignored.
+- Command: `cargo fmt --check` / `cargo clippy --locked --all-targets -- -D warnings`
+- Observed: both clean, zero errors.
+- Command: `npm test`
+- Observed: Vitest 52 pass; release-gates 78 pass 0 fail.
+- Command: `npx tsc --noEmit -p tsconfig.json`
+- Observed: exit 0.
+- Command: `npm run catalog:validate`
+- Observed: `valid v2 (158 models, 1417 files)`.
+- Command: `node scripts/verify_workflow_pins.mjs` / `node scripts/verify_workflow_gates.mjs` / `node scripts/verify_versions.mjs 0.4.1` / `npm run branding:verify` / `npm run build`
+- Observed: all PASS; production frontend builds.
+- Command: `RUSTDOCFLAGS='-D warnings' cargo test --locked --doc`
+- Observed: 0 pass, 0 fail, clean.
+- Command: `gh api repos/sato942/localmotive/releases/latest --jq '{tag, name, prerelease}'`
+- Observed: `v0.4.1`, `Localmotive 0.4.1 (unsigned)`, `prerelease:false`. No `v0.5.0` tag exists. Nothing published.
+- CI on pushed HEAD `d388471`: run `34487771471` in progress at closeout (rust-audit, check, Security audit success; package-smoke running). Local suite above is the closeout evidence; CI read-back appends on completion.
 
 ## 6. Reproduction and verification commands
 
@@ -393,18 +413,22 @@ wc -c catalog/catalog.json
 | Material criterion | Result | Reason |
 |---|---|---|
 | 0.5 tracker exists and covers the mandate | PASS | File exists with phases, pointers, ledger, acceptance table. |
-| Latest points at current tip while unsigned | PASS | `releases/latest` is `v0.4.1`. `v0.4.1` is `prerelease:false` with name `(unsigned)`. `gh release list` shows 0.4.1 Latest. |
-| Workflow cannot mark ship as prerelease | PASS | `release.yml` sets `prerelease: false` and asserts `isPrerelease:false`. Release-gates 73 pass 0 fail. |
-| README matches product and unsigned Latest | FAIL | Root `README.md` still describes 0.3.0 assets. |
-| Catalog v2, signed publish, SQLite, filters | FAIL | Schema 1, hand-picked builder, no SQLite, no auto defaults. |
-| Input limits enforced in Rust | UNKNOWN | Audit not started. |
-| Real 0.3 to 0.5 docs | FAIL | No 0.5 narrative yet. |
-| 0.5.0 ship gates | BLOCKED | Owner ship approval pending. Do not tag. |
+| Latest points at current tip while unsigned | PASS | `releases/latest` is `v0.4.1`. `v0.4.1` is `prerelease:false` with name `(unsigned)`. |
+| Workflow cannot mark ship as prerelease | PASS | `release.yml` sets `prerelease: false` and asserts `isPrerelease:false`. Release-gates 78 pass 0 fail. |
+| README matches product and unsigned Latest | PASS | Rewritten in `921df5e`. Gates README test PASS. Branding PASS. |
+| Catalog v2 + signed publish | PASS | Schema 2 live, 158 models, 1417 files, CI-signed. Validator + gates PASS. |
+| Refresh cooldown + lock + last-success | PASS | `39d3684`. Cooldown 1560 live, guard live, stamp display live. Gates 78/0. Rust 397/0. |
+| Filters + hardware auto-defaults | PASS | Rich filters + fit rule + budget, UI toggle default ON. Rust + Vitest + gates PASS. |
+| Input limits enforced in Rust | PASS | Catalog + profile bounds at Tauri boundary. Rust + gates PASS. |
+| Real 0.3 to 0.5 docs | PASS | Phase 7 narrative in tracker, counts from git. No invented claims. `## 0.5.0` waits for bump. |
+| SQLite mirror + migrations + DB rebuild test | OPEN | rusqlite vendored, unused. Next increment. No hosted DB. |
+| User local catalog overrides | OPEN | Deferred to SQLite work. Network verification stays strict. |
+| 0.5.0 ship gates | BLOCKED | Owner ship approval pending. No tag. No publish. |
 
 ## Conclusion
 
-Phase 0 starts with tracker creation and Latest repair.
+Phases 0, 1, 2, 3, 5, 6, 7 are DONE. Phase 4 is DONE except the SQLite mirror
+(fill, query path, migrations, corrupt-DB rebuild test), which stays OPEN with
+rusqlite vendored and compiling.
 
-Complete Latest repair before catalog work.
-
-Do not publish 0.5.0 until the owner says ship.
+Do not tag or publish 0.5.0 until the owner says ship.
