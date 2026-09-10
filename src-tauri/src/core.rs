@@ -1158,6 +1158,17 @@ pub struct LaunchArgumentValidation {
     pub command: String,
 }
 
+/// Compose the provisional command line for a profile without probing the
+/// runtime, hashing artifacts, or filtering by advertised capabilities: a
+/// cheap composition so an ordinary profile edit never dispatches
+/// authoritative validation work (audit FE-04). The result is explicitly
+/// provisional; launch, start, preflight, and tuning still run the full
+/// capability-filtered, trust-checked path through `validate_launch_arguments`.
+pub fn compose_provisional_command(profile: &LaunchProfile) -> Result<String, String> {
+    let raw_args = profile.build_args()?;
+    Ok(profile.display_command_with_args(&raw_args))
+}
+
 pub fn validate_launch_arguments(
     profile: &LaunchProfile,
     capabilities: &RuntimeCapabilities,
@@ -3246,5 +3257,30 @@ fn main() {
     fn timing_parser_accepts_llama_completion_response() {
         let body = r#"{"timings":{"predicted_per_second":478.25}}"#;
         assert_eq!(parse_tps(body).unwrap(), 478.25);
+    }
+    #[test]
+    fn fe04_provisional_command_composes_without_capabilities_and_validation_still_filters() {
+        // Composition needs no runtime at all, while authoritative validation
+        // still refuses flags the runtime's help cannot advertise
+        // (audit FE-04 I2).
+        let mut profile = LaunchProfile {
+            name: "Fixture".into(),
+            alias: "fixture".into(),
+            model: "C:/models/fixture.gguf".into(),
+            runtime: "C:/runtimes/llama-server.exe".into(),
+            port: 8080,
+            ..LaunchProfile::default()
+        };
+        profile.flash_attention = "on".into();
+        let provisional = compose_provisional_command(&profile).unwrap();
+        assert!(provisional.contains("--flash-attn"), "{provisional}");
+        assert!(provisional.contains("fixture.gguf"), "{provisional}");
+
+        let bare_runtime = parse_capabilities("", "");
+        let error = validate_launch_arguments(&profile, &bare_runtime).unwrap_err();
+        assert!(
+            error.contains("does not advertise"),
+            "authoritative validation must filter against real capabilities: {error}"
+        );
     }
 }

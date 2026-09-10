@@ -1627,7 +1627,10 @@ async fn preflight_model(request: PreflightRequest) -> Result<PreflightResult, S
 
 #[tauri::command]
 fn preview_command(profile: LaunchProfile) -> Result<String, String> {
-    Ok(prepare_launch(&profile)?.arguments.command)
+    // Cheap provisional composition only: no runtime probes, no artifact
+    // hashing, no trust checks (audit FE-04 I2). Every authoritative check
+    // still runs at validation and launch.
+    core::compose_provisional_command(&profile)
 }
 
 #[tauri::command]

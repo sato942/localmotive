@@ -1143,6 +1143,26 @@ test("FE-07 cancellation state is separate from the run lifecycle", async () => 
   assert.match(panel, /busy !== "benchmark" \|\| cancelPending/);
 });
 
+test("FE-04 previews compose provisionally and launch trust stays authoritative", async () => {
+  const lib = await readFile(join(process.cwd(), "src-tauri", "src", "lib.rs"), "utf8");
+  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  // The preview command is cheap composition only: no probing or trust work
+  // on the profile-edit path (audit FE-04).
+  const preview = lib.split("fn preview_command(")[1].split("#[tauri::command]")[0];
+  assert.match(preview, /compose_provisional_command/);
+  assert.doesNotMatch(preview, /prepare_launch/);
+  // Validation and launch keep the authoritative checks.
+  const validate = lib.split("fn validate_launch_profile(")[1].split("#[tauri::command]")[0];
+  assert.match(validate, /prepare_launch/);
+  const start = lib.split("async fn start_server(")[1].split("fn start_server_worker(")[0];
+  assert.match(start, /start_server_worker/);
+  const worker = lib.split("fn start_server_worker(")[1].split("#[tauri::command]")[0];
+  assert.match(worker, /spawn_server/);
+  // The UI describes the provisional state honestly.
+  assert.match(app, /Provisional command/);
+  assert.match(app, /capability filtering, artifact checks, and managed-runtime trust are enforced/);
+});
+
 test("FE-16 status polling is single-flight with sequence guards", async () => {
   const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
   // Slow native polls cannot pile up, and a poll that started before a

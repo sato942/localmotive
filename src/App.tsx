@@ -973,7 +973,7 @@ function App() {
       setCommand(command);
     } catch (error) {
       if (keepLatestRequest(sequence, previewSeq.current)) {
-        setCommand(inTauri() ? String(error) : "Browser preview cannot build a trusted command. Use the packaged app.");
+        setCommand(inTauri() ? String(error) : "Browser preview cannot compose the command. Use the packaged app.");
       }
     }
   }
@@ -2069,8 +2069,9 @@ function App() {
               </div>
 
               <aside className="command-preview">
-                <div className="panel-title"><Braces size={17} /><h2>Exact command</h2></div>
-                <pre>{command || "Edit a setting to build the command."}</pre>
+                <div className="panel-title"><Braces size={17} /><h2>Provisional command</h2></div>
+                <pre>{command || "Edit a setting to compose the command."}</pre>
+                <p className="security-note">Composed without probing the runtime: capability filtering, artifact checks, and managed-runtime trust are enforced when the profile is validated and launched.</p>
                 <div className="capability-list">
                   <span>RUNTIME CAPABILITIES</span>
                   {(runtime?.specTypes ?? []).map((type) => <i key={type}>{type}</i>)}
