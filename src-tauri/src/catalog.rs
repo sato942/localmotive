@@ -313,6 +313,76 @@ pub fn validate_download_target(repo: &str, filename: &str) -> Result<(), String
     Ok(())
 }
 
+/// User-facing input bounds. Every string a user can type passes through these
+/// limits in Rust at the Tauri boundary. UI controls are hints only: a
+/// compromised webview can send any JSON, so oversize input must be rejected
+/// here, never panic or hang. Limits are generous enough that no legitimate
+/// use hits them; they exist to bound CPU, memory, and serialization work.
+pub const MAX_QUERY_TEXT_LEN: usize = 512;
+pub const MAX_QUERY_TERM_LEN: usize = 128;
+pub const MAX_FILTER_VALUE_LEN: usize = 128;
+pub const MAX_FILTER_MODELS: usize = 10_000;
+pub const MAX_FACET_MODELS: usize = 10_000;
+pub const MAX_BUDGET_ENTRIES: usize = 64;
+
+/// Validate a catalog query from an untrusted frontend. Rejects oversize
+/// text, oversize filter values, and absurd model lists before any filtering
+/// work starts.
+pub fn validate_catalog_query(query: &CatalogQuery, model_count: usize) -> Result<(), String> {
+    if query.text.len() > MAX_QUERY_TEXT_LEN {
+        return Err(format!(
+            "Search text is too long ({} bytes, maximum {MAX_QUERY_TEXT_LEN}). Shorten the search.",
+            query.text.len()
+        ));
+    }
+    for term in query.text.split_whitespace() {
+        if term.len() > MAX_QUERY_TERM_LEN {
+            return Err(format!(
+                "A search term is too long (maximum {MAX_QUERY_TERM_LEN} bytes). Split the search."
+            ));
+        }
+    }
+    for (name, value) in [
+        ("tag", query.tag.as_str()),
+        ("quant", query.quant.as_str()),
+        ("author", query.author.as_str()),
+        ("license", query.license.as_str()),
+        ("pipeline tag", query.pipeline_tag.as_str()),
+        ("architecture", query.architecture.as_str()),
+    ] {
+        if value.len() > MAX_FILTER_VALUE_LEN {
+            return Err(format!(
+                "The {name} filter is too long (maximum {MAX_FILTER_VALUE_LEN} bytes)."
+            ));
+        }
+    }
+    if model_count > MAX_FILTER_MODELS {
+        return Err(format!(
+            "Too many catalog models ({model_count}, maximum {MAX_FILTER_MODELS}). Refresh the catalog."
+        ));
+    }
+    Ok(())
+}
+
+/// Validate facet and budget inputs before work starts.
+pub fn validate_facet_models(model_count: usize) -> Result<(), String> {
+    if model_count > MAX_FACET_MODELS {
+        return Err(format!(
+            "Too many catalog models ({model_count}, maximum {MAX_FACET_MODELS}). Refresh the catalog."
+        ));
+    }
+    Ok(())
+}
+
+pub fn validate_budget_inputs(dedicated: usize, shared: usize) -> Result<(), String> {
+    if dedicated > MAX_BUDGET_ENTRIES || shared > MAX_BUDGET_ENTRIES {
+        return Err(format!(
+            "Too many hardware budget entries (maximum {MAX_BUDGET_ENTRIES} per kind)."
+        ));
+    }
+    Ok(())
+}
+
 /// How the catalog list is ordered in the interface.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -1535,6 +1605,56 @@ mod tests {
                 "file key {key} must parse"
             );
         }
+    }
+
+    #[test]
+    fn catalog_query_limits_reject_oversize_text_filters_and_model_lists() {
+        // A compromised webview can send any JSON to the filter command. The
+        // Rust boundary must reject oversize input with a clear error, never
+        // panic or hang. Seen live: filter_catalog took Vec + query with no
+        // length checks, so a hostile frontend could submit megabytes of text.
+        let big_text = "x".repeat(MAX_QUERY_TEXT_LEN + 1);
+        let query = CatalogQuery {
+            text: big_text,
+            ..Default::default()
+        };
+        assert!(validate_catalog_query(&query, 0).is_err());
+        let big_term = format!("{} {}", "y".repeat(MAX_QUERY_TERM_LEN + 1), "z");
+        let query = CatalogQuery {
+            text: big_term,
+            ..Default::default()
+        };
+        assert!(validate_catalog_query(&query, 0).is_err());
+        for field in [
+            ("tag", "tag"),
+            ("quant", "quant"),
+            ("author", "author"),
+            ("license", "license"),
+            ("pipeline_tag", "pipeline_tag"),
+            ("architecture", "architecture"),
+        ] {
+            let mut query = CatalogQuery::default();
+            let big = "v".repeat(MAX_FILTER_VALUE_LEN + 1);
+            match field.1 {
+                "tag" => query.tag = big,
+                "quant" => query.quant = big,
+                "author" => query.author = big,
+                "license" => query.license = big,
+                "pipeline_tag" => query.pipeline_tag = big,
+                _ => query.architecture = big,
+            }
+            assert!(
+                validate_catalog_query(&query, 0).is_err(),
+                "oversize {} was accepted",
+                field.0
+            );
+        }
+        assert!(validate_catalog_query(&CatalogQuery::default(), MAX_FILTER_MODELS + 1).is_err());
+        assert!(validate_catalog_query(&CatalogQuery::default(), MAX_FILTER_MODELS).is_ok());
+        assert!(validate_facet_models(MAX_FACET_MODELS + 1).is_err());
+        assert!(validate_budget_inputs(MAX_BUDGET_ENTRIES + 1, 0).is_err());
+        assert!(validate_budget_inputs(0, MAX_BUDGET_ENTRIES + 1).is_err());
+        assert!(validate_budget_inputs(1, 1).is_ok());
     }
 
     #[test]

@@ -8,6 +8,81 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+/// User-facing launch-profile input bounds. The Tauri boundary owns truth:
+/// UI controls are hints only, and a compromised webview can send any JSON.
+/// Limits are generous; no legitimate profile hits them. Oversize input is
+/// rejected with a clear error, never panic or hang.
+pub const MAX_PROFILE_TEXT_LEN: usize = 1_024;
+pub const MAX_PROFILE_PATH_LEN: usize = 32_767;
+pub const MAX_TENSOR_SPLIT_ENTRIES: usize = 64;
+pub const MAX_TENSOR_SPLIT_CHARS: usize = 1_024;
+
+/// Validate string lengths on a launch profile before any launch work.
+/// Filesystem existence is checked separately; this bounds serialization,
+///
+/// CPU, and error-string work from hostile input.
+pub fn validate_profile_input_bounds(profile: &LaunchProfile) -> Result<(), String> {
+    for (name, value) in [
+        ("name", profile.name.as_str()),
+        ("runtime", profile.runtime.as_str()),
+        ("model", profile.model.as_str()),
+        ("host", profile.host.as_str()),
+        ("alias", profile.alias.as_str()),
+        ("gpu layers", profile.gpu_layers.as_str()),
+        ("flash attention", profile.flash_attention.as_str()),
+        ("fit target", profile.fit_target.as_str()),
+        ("cache type K", profile.cache_type_k.as_str()),
+        ("cache type V", profile.cache_type_v.as_str()),
+        ("load mode", profile.load_mode.as_str()),
+        ("lazy mode", profile.lazy_mode.as_str()),
+        ("split mode", profile.split_mode.as_str()),
+        ("device", profile.device.as_str()),
+        ("CORS origins", profile.cors_origins.as_str()),
+        ("API key file", profile.api_key_file.as_str()),
+        ("SSL private key", profile.ssl_key_file.as_str()),
+        ("SSL certificate", profile.ssl_cert_file.as_str()),
+        ("chat template file", profile.chat_template_file.as_str()),
+        ("reasoning", profile.reasoning.as_str()),
+        ("reasoning effort", profile.reasoning_effort.as_str()),
+        ("LoRA adapter", profile.lora.as_str()),
+        ("scaled LoRA adapter", profile.lora_scaled.as_str()),
+        ("tensor override", profile.override_tensor.as_str()),
+        ("KV override", profile.override_kv.as_str()),
+        ("speculative type", profile.spec_type.as_str()),
+        ("draft GPU layers", profile.draft_gpu_layers.as_str()),
+        ("draft cache type K", profile.draft_cache_type_k.as_str()),
+        ("draft cache type V", profile.draft_cache_type_v.as_str()),
+        ("mmproj device", profile.mmproj_device.as_str()),
+    ] {
+        if value.len() > MAX_PROFILE_TEXT_LEN {
+            return Err(format!(
+                "The profile {name} is too long (maximum {MAX_PROFILE_TEXT_LEN} bytes)."
+            ));
+        }
+    }
+    for (name, value) in [
+        ("draft model", profile.draft_model.as_deref().unwrap_or("")),
+        ("vision projector", profile.mmproj.as_deref().unwrap_or("")),
+    ] {
+        if value.len() > MAX_PROFILE_PATH_LEN {
+            return Err(format!(
+                "The profile {name} path is too long (maximum {MAX_PROFILE_PATH_LEN} bytes)."
+            ));
+        }
+    }
+    if profile.tensor_split.len() > MAX_TENSOR_SPLIT_CHARS {
+        return Err(format!(
+            "Tensor split is too long (maximum {MAX_TENSOR_SPLIT_CHARS} bytes)."
+        ));
+    }
+    if profile.tensor_split.split(',').count() > MAX_TENSOR_SPLIT_ENTRIES {
+        return Err(format!(
+            "Tensor split has too many entries (maximum {MAX_TENSOR_SPLIT_ENTRIES})."
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Companion {
@@ -475,6 +550,7 @@ impl Default for LaunchProfile {
 
 impl LaunchProfile {
     pub fn build_args(&self) -> Result<Vec<String>, String> {
+        validate_profile_input_bounds(self)?;
         if self.alias.trim().is_empty() {
             return Err("Model alias is required".into());
         }
@@ -1739,6 +1815,35 @@ pub fn benchmark_server(
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn launch_profile_input_bounds_reject_oversize_strings_and_splits() {
+        // A compromised webview can send any profile JSON. build_args must
+        // reject oversize strings before launch work, never panic or hang.
+        // Seen live: no length check existed on any profile string, so a
+        // hostile frontend could submit megabyte paths or tensor splits.
+        let profile = LaunchProfile {
+            alias: "x".repeat(MAX_PROFILE_TEXT_LEN + 1),
+            ..LaunchProfile::default()
+        };
+        assert!(profile.build_args().unwrap_err().contains("too long"));
+        let profile = LaunchProfile {
+            tensor_split: "0.5,".repeat(MAX_TENSOR_SPLIT_ENTRIES + 1),
+            alias: "fixture".into(),
+            model: "fixture.gguf".into(),
+            ..LaunchProfile::default()
+        };
+        assert!(profile
+            .build_args()
+            .unwrap_err()
+            .contains("too many entries"));
+        let profile = LaunchProfile {
+            alias: "fixture".into(),
+            model: "fixture.gguf".into(),
+            ..LaunchProfile::default()
+        };
+        assert!(validate_profile_input_bounds(&profile).is_ok());
+    }
 
     #[test]
     fn launch_profile_rejects_port_zero() {

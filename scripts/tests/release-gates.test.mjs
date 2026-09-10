@@ -230,6 +230,33 @@ test("Windows installers use the bootstrapper WebView2 mode until offline bundli
   assert.equal(config.bundle?.windows?.webviewInstallMode?.type, "downloadBootstrapper");
 });
 
+test("launch profiles reject oversize input at the Rust boundary", async () => {
+  const core = await readFile(join(process.cwd(), "src-tauri", "src", "core.rs"), "utf8");
+  // Profile strings flow from the UI into build_args. UI limits are hints
+  // only; the Rust boundary owns truth. Seen live: no length check existed on
+  // any profile string, so a hostile frontend could submit megabyte paths.
+  assert.match(core, /MAX_PROFILE_TEXT_LEN/);
+  assert.match(core, /MAX_TENSOR_SPLIT_ENTRIES/);
+  assert.match(core, /validate_profile_input_bounds/);
+});
+
+test("catalog commands reject oversize input at the Rust boundary", async () => {
+  const backend = await readFile(join(process.cwd(), "src-tauri", "src", "catalog.rs"), "utf8");
+  const lib = await readFile(join(process.cwd(), "src-tauri", "src", "lib.rs"), "utf8");
+  // A compromised webview can send any JSON. UI limits are hints only; the
+  // Rust boundary owns truth. Seen live: filter_catalog took Vec + query with
+  // no length checks, so a hostile frontend could submit megabytes of text.
+  assert.match(backend, /MAX_QUERY_TEXT_LEN/);
+  assert.match(backend, /MAX_FILTER_VALUE_LEN/);
+  assert.match(backend, /MAX_FILTER_MODELS/);
+  assert.match(backend, /validate_catalog_query/);
+  assert.match(backend, /validate_facet_models/);
+  assert.match(backend, /validate_budget_inputs/);
+  assert.match(lib, /validate_catalog_query\(&query, models\.len\(\)\)/);
+  assert.match(lib, /validate_facet_models\(models\.len\(\)\)/);
+  assert.match(lib, /validate_budget_inputs\(dedicated_bytes\.len\(\), shared_bytes\.len\(\)\)/);
+});
+
 test("model catalog exposes rich filters with hardware auto-fit defaults", async () => {
   const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
   const model = await readFile(join(process.cwd(), "src", "model.ts"), "utf8");

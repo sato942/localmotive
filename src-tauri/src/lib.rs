@@ -2703,18 +2703,25 @@ async fn fetch_model_catalog(
 fn filter_catalog(
     models: Vec<catalog::CatalogModel>,
     query: catalog::CatalogQuery,
-) -> Vec<catalog::CatalogModel> {
-    catalog::filter_models(&models, &query)
+) -> Result<Vec<catalog::CatalogModel>, String> {
+    catalog::validate_catalog_query(&query, models.len())?;
+    Ok(catalog::filter_models(&models, &query))
 }
 
 #[tauri::command]
-fn catalog_facets(models: Vec<catalog::CatalogModel>) -> (Vec<String>, Vec<String>) {
-    catalog::facets(&models)
+fn catalog_facets(
+    models: Vec<catalog::CatalogModel>,
+) -> Result<(Vec<String>, Vec<String>), String> {
+    catalog::validate_facet_models(models.len())?;
+    Ok(catalog::facets(&models))
 }
 
 #[tauri::command]
-fn catalog_rich_facets(models: Vec<catalog::CatalogModel>) -> catalog::CatalogFacets {
-    catalog::rich_facets(&models)
+fn catalog_rich_facets(
+    models: Vec<catalog::CatalogModel>,
+) -> Result<catalog::CatalogFacets, String> {
+    catalog::validate_facet_models(models.len())?;
+    Ok(catalog::rich_facets(&models))
 }
 
 #[tauri::command]
@@ -2722,13 +2729,14 @@ fn catalog_fit_budget(
     dedicated_bytes: Vec<u64>,
     shared_bytes: Vec<u64>,
     system_bytes: u64,
-) -> catalog::FitBudget {
+) -> Result<catalog::FitBudget, String> {
+    catalog::validate_budget_inputs(dedicated_bytes.len(), shared_bytes.len())?;
     let (budget, source) =
         catalog::hardware_fit_budget(&dedicated_bytes, &shared_bytes, system_bytes);
-    catalog::FitBudget {
+    Ok(catalog::FitBudget {
         budget_bytes: budget,
         source: source.into(),
-    }
+    })
 }
 
 #[tauri::command]
