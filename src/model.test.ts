@@ -14,6 +14,9 @@ import {
   errorText,
   hardwareFitBudget,
   keepLatestRequest,
+  applySuggestedPort,
+  profileIdentity,
+  responseIsCurrent,
   managedHealthRequest,
   manualGpuOverride,
   modelHiddenByFitRule,
@@ -819,5 +822,71 @@ describe("hardware auto-fit budget", () => {
     expect(modelHiddenByFitRule(20_000_000_000, 500, 0)).toBe(false);
     expect(modelHiddenByFitRule(20_000_000_000, 1000, 20_000_000_000)).toBe(false);
     expect(modelHiddenByFitRule(20_000_000_000, undefined, 34_359_738_368)).toBe(false);
+  });
+});
+
+describe("FE-03 stale response guards", () => {
+  const profile = (
+    over: Partial<import("./model").LaunchProfile> = {},
+  ): import("./model").LaunchProfile =>
+    ({
+      name: "profile-a",
+      runtime: "C:/runtime/llama-server.exe",
+      model: "C:/models/a.gguf",
+      draftModel: null,
+      mmproj: null,
+      host: "127.0.0.1",
+      port: 8080,
+      alias: "a",
+      context: 4096,
+      gpuLayers: "all",
+      batch: 2048,
+      ubatch: 512,
+      flashAttention: "auto",
+      threads: -1,
+      threadsBatch: -1,
+      cacheTypeK: "f16",
+      cacheTypeV: "f16",
+      ...over,
+    }) as unknown as import("./model").LaunchProfile;
+
+  it("accepts only the latest response for the current resource identity", () => {
+    expect(responseIsCurrent(3, 3, "openrouter", "openrouter")).toBe(true);
+    // A newer request exists: the stale response is discarded.
+    expect(responseIsCurrent(2, 3, "openrouter", "openrouter")).toBe(false);
+    // The resource changed: a late response for the old provider is discarded.
+    expect(responseIsCurrent(3, 3, "openrouter", "anthropic")).toBe(false);
+  });
+
+  it("applies a suggested port only to the unchanged originating profile", () => {
+    const original = profile();
+    const identity = profileIdentity(original);
+    const applied = applySuggestedPort(original, identity, 8080, 8081);
+    expect(applied.port).toBe(8081);
+    expect(applied.model).toBe(original.model);
+
+    // A later manual edit (different port) is never overwritten.
+    const edited = profile({ port: 9000 });
+    expect(applySuggestedPort(edited, identity, 8080, 8081).port).toBe(9000);
+    // A newly selected profile is never overwritten.
+    const other = profile({ model: "C:/models/b.gguf" });
+    expect(applySuggestedPort(other, identity, 8080, 8081)).toBe(other);
+
+    // No-op cases return the same reference, so callers can compare identity.
+    expect(applySuggestedPort(original, identity, 8080, 8080)).toBe(original);
+  });
+
+  it("derives profile identity from the fields a stale response must match", () => {
+    const base = profile();
+    expect(profileIdentity(base)).toBe(profileIdentity(profile()));
+    expect(profileIdentity(base)).not.toBe(
+      profileIdentity(profile({ name: "renamed" })),
+    );
+    expect(profileIdentity(base)).not.toBe(
+      profileIdentity(profile({ model: "C:/models/b.gguf" })),
+    );
+    expect(profileIdentity(base)).not.toBe(
+      profileIdentity(profile({ runtime: "C:/runtime/other.exe" })),
+    );
   });
 });

@@ -1514,6 +1514,37 @@ export function keepLatestRequest(sequence: number, current: number): boolean {
   return sequence === current;
 }
 
+/** Stable identity of a launch profile for deferred-response checks (FE-03). */
+export function profileIdentity(profile: Pick<LaunchProfile, "name" | "model" | "runtime">): string {
+  return `${profile.name}\u0000${profile.model}\u0000${profile.runtime}`;
+}
+
+/** True when a deferred response still matches both the latest request for a
+ * resource and the resource's current identity: obsolete completions must not
+ * replace current state (audit FE-03). */
+export function responseIsCurrent(
+  sequence: number,
+  latest: number,
+  identity: string,
+  currentIdentity: string,
+): boolean {
+  return sequence === latest && identity === currentIdentity;
+}
+
+/** Apply a suggested port only while the profile is still the exact one the
+ * suggestion was requested for and its port is unchanged: a later manual edit
+ * or a newly selected profile is never overwritten (audit FE-03). */
+export function applySuggestedPort(
+  profile: LaunchProfile,
+  identity: string,
+  expectedPort: number,
+  suggested: number,
+): LaunchProfile {
+  if (profileIdentity(profile) !== identity || profile.port !== expectedPort) return profile;
+  if (suggested === profile.port) return profile;
+  return { ...profile, port: suggested };
+}
+
 export function retainOrDisposeListener(disposed: boolean, stop: () => void): (() => void) | null {
   if (disposed) {
     stop();

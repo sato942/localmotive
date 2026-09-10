@@ -49,6 +49,9 @@ import {
   etaLabel,
   hardwareFitBudget,
   keepLatestRequest,
+  profileIdentity,
+  applySuggestedPort,
+  responseIsCurrent,
   managedHealthRequest,
   managedHealthOutcome,
   normalizeProfile,
@@ -154,6 +157,11 @@ function App() {
   const [runtime, setRuntime] = useState<RuntimeCapabilities | null>(null);
   const [status, setStatus] = useState<ServerStatus>(idleStatus);
   const [command, setCommand] = useState("");
+  // FE-03: per-resource request sequences and live identity mirrors, so a
+  // deferred response can never commit against a newer resource state.
+  const cloudSeq = useRef(0);
+  const ggufSeq = useRef(0);
+  const previewSeq = useRef(0);
   const [log, setLog] = useState("Waiting for a managed server.");
   const [notice, setNotice] = useState("Inventory not scanned yet.");
   const [busy, setBusy] = useState("");
@@ -164,6 +172,12 @@ function App() {
   const [managedRuntimes, setManagedRuntimes] = useState<ManagedRuntimeRecord[]>([]);
   const [providers, setProviders] = useState<CloudProvider[]>([]);
   const [providerId, setProviderId] = useState(CLOUD_PROVIDER);
+  // Live mirrors for stale-response checks (audit FE-03): refs track the
+  // committed values without re-rendering on assignment.
+  const providerIdRef = useRef(providerId);
+  providerIdRef.current = providerId;
+  const profileRef = useRef<LaunchProfile | null>(profile);
+  profileRef.current = profile;
   const [credential, setCredential] = useState<CredentialStatus | null>(null);
   const [keyDraft, setKeyDraft] = useState("");
   const [cloudModels, setCloudModels] = useState<CloudModel[]>([]);
@@ -624,26 +638,32 @@ function App() {
   // ---- Cloud provider & credentials ------------------------------------------
 
   async function loadCloud(nextProvider = providerId) {
+    const sequence = ++cloudSeq.current;
     try {
       const list = providers.length ? providers : await invoke<CloudProvider[]>("cloud_providers");
+      if (sequence !== cloudSeq.current) return;
       if (!providers.length) setProviders(list);
       const status = await invoke<CredentialStatus>("cloud_credential_status", { provider: nextProvider });
+      if (!responseIsCurrent(sequence, cloudSeq.current, nextProvider, providerIdRef.current)) return;
       setCredential(status);
       setCloudModels([]);
       setCloudCheck("");
+      setCloudModel("");
       if (status.configured) {
         try {
           const modelsList = await invoke<CloudModel[]>("cloud_list_models", { provider: nextProvider });
+          if (!responseIsCurrent(sequence, cloudSeq.current, nextProvider, providerIdRef.current)) return;
           setCloudModels(modelsList);
           const fallback = list.find((entry) => entry.id === nextProvider)?.defaultModel ?? "";
           const stored = readRecord(`cloud-model:${nextProvider}`);
           const chosen = stored && modelsList.some((m) => m.id === stored) ? stored : modelsList.some((m) => m.id === fallback) ? fallback : (modelsList[0]?.id ?? fallback);
           setCloudModel(chosen);
         } catch (error) {
-          setCloudCheck(String(error));
+          if (responseIsCurrent(sequence, cloudSeq.current, nextProvider, providerIdRef.current)) setCloudCheck(String(error));
         }
       }
     } catch (error) {
+      if (sequence !== cloudSeq.current) return;
       if (!inTauri()) {
         setProviders([
           { id: "openrouter", label: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", keyPrefixHint: "sk-or-", consoleUrl: "https://openrouter.ai/settings/keys", supportsOauth: true, defaultModel: "anthropic/claude-sonnet-4.6", listsModels: true },
@@ -662,62 +682,82 @@ function App() {
     setProviderId(next);
     localStorage.setItem("localmotive:cloud-provider", next);
     setKeyDraft("");
+    // FE-03: clear provider-specific presentation at switch start; a slow
+    // previous provider can never relabel the new tab while it loads.
+    cloudSeq.current += 1;
+    setCredential(null);
+    setCloudModels([]);
+    setCloudCheck("");
     await loadCloud(next);
   }
 
   async function saveKey() {
     if (!keyDraft.trim()) return;
+    const forProvider = providerId;
+    const sequence = ++cloudSeq.current;
     setBusy("cloud");
     try {
-      const status = await invoke<CredentialStatus>("cloud_save_credential", { provider: providerId, secret: keyDraft });
+      const status = await invoke<CredentialStatus>("cloud_save_credential", { provider: forProvider, secret: keyDraft });
+      if (!responseIsCurrent(sequence, cloudSeq.current, forProvider, providerIdRef.current)) return;
       setKeyDraft("");
       setCredential(status);
-      setNotice(`${provider?.label ?? providerId} key stored in Windows Credential Manager.`);
-      await loadCloud(providerId);
+      setNotice(`${providers.find((entry) => entry.id === forProvider)?.label ?? forProvider} key stored in Windows Credential Manager.`);
+      await loadCloud(forProvider);
     } catch (error) {
-      setNotice(String(error));
+      if (responseIsCurrent(sequence, cloudSeq.current, forProvider, providerIdRef.current)) setNotice(String(error));
     } finally {
       setBusy("");
     }
   }
 
   async function forgetKey() {
+    const forProvider = providerId;
+    const sequence = ++cloudSeq.current;
     setBusy("cloud");
     try {
-      setCredential(await invoke<CredentialStatus>("cloud_clear_credential", { provider: providerId }));
+      const status = await invoke<CredentialStatus>("cloud_clear_credential", { provider: forProvider });
+      if (!responseIsCurrent(sequence, cloudSeq.current, forProvider, providerIdRef.current)) return;
+      setCredential(status);
       setCloudModels([]);
       setCloudCheck("");
-      setNotice(`${provider?.label ?? providerId} key removed from Windows Credential Manager.`);
+      setNotice(`${providers.find((entry) => entry.id === forProvider)?.label ?? forProvider} key removed from Windows Credential Manager.`);
     } catch (error) {
-      setNotice(String(error));
+      if (responseIsCurrent(sequence, cloudSeq.current, forProvider, providerIdRef.current)) setNotice(String(error));
     } finally {
       setBusy("");
     }
   }
 
   async function openRouterLogin() {
+    const sequence = ++cloudSeq.current;
     setBusy("oauth");
     setNotice("Finish signing in to OpenRouter in your browser. Localmotive is waiting on a local callback.");
     try {
       const status = await invoke<CredentialStatus>("cloud_openrouter_login");
+      if (!responseIsCurrent(sequence, cloudSeq.current, "openrouter", providerIdRef.current)) return;
       setCredential(status);
       setNotice("OpenRouter connected. A user-controlled key was issued and stored in Windows Credential Manager.");
       await loadCloud("openrouter");
     } catch (error) {
-      setNotice(String(error));
+      // A cancelled/timed-out sign-in must not relabel another provider's tab.
+      if (responseIsCurrent(sequence, cloudSeq.current, "openrouter", providerIdRef.current)) setNotice(String(error));
     } finally {
       setBusy("");
     }
   }
 
   async function probeCloud() {
+    const forProvider = providerId;
+    const forModel = cloudModel;
+    const sequence = ++cloudSeq.current;
     setBusy("probe");
     setCloudCheck("Contacting provider…");
     try {
-      const reply = await invoke<string>("cloud_probe", { provider: providerId, model: cloudModel });
-      setCloudCheck(`Connected · ${cloudModel} replied “${reply.trim().slice(0, 40)}”`);
+      const reply = await invoke<string>("cloud_probe", { provider: forProvider, model: forModel });
+      if (!responseIsCurrent(sequence, cloudSeq.current, forProvider, providerIdRef.current)) return;
+      setCloudCheck(`Connected · ${forModel} replied “${reply.trim().slice(0, 40)}”`);
     } catch (error) {
-      setCloudCheck(String(error));
+      if (responseIsCurrent(sequence, cloudSeq.current, forProvider, providerIdRef.current)) setCloudCheck(String(error));
     } finally {
       setBusy("");
     }
@@ -732,16 +772,23 @@ function App() {
   // ---- AI tuning -------------------------------------------------------------
 
   async function loadGguf(model: LogicalModel | undefined) {
-    if (!model) return;
+    const sequence = ++ggufSeq.current;
+    if (!model) {
+      // FE-03: an absent selection clears metadata instead of retaining
+      // another model's facts.
+      setGguf(null);
+      return;
+    }
     try {
       const summary = await invoke<GgufSummary>("read_gguf_summary", { path: model.firstShard });
+      if (!keepLatestRequest(sequence, ggufSeq.current)) return;
       setGguf(summary);
       if (summary.contextLength && tuneContext > summary.contextLength) {
         const choices = contextChoices(summary.contextLength);
         setTuneContext(choices[choices.length - 1] ?? 2048);
       }
     } catch {
-      setGguf(null);
+      if (keepLatestRequest(sequence, ggufSeq.current)) setGguf(null);
     }
   }
 
@@ -796,6 +843,8 @@ function App() {
   }
 
   function loadProfile(model: LogicalModel) {
+    // A new selection invalidates any pending preview for the old profile.
+    previewSeq.current += 1;
     const stored = readRecord(`profile:${model.id}`);
     const next = stored
       ? normalizeProfile(JSON.parse(stored), model, runtimePath)
@@ -809,12 +858,19 @@ function App() {
 
   /** Suggest a currently unused port without claiming that the released socket stays available. */
   async function suggestPortCandidate(candidate: LaunchProfile) {
+    const identity = profileIdentity(candidate);
     try {
       const free = await invoke<number>("suggest_port", { host: candidate.host, preferred: candidate.port });
-      if (free !== candidate.port) {
-        setProfile((current) => (current ? { ...current, port: free } : current));
-        setNotice(`Port ${candidate.port} is in use. Trying ${free}; launch validation will confirm it.`);
-      }
+      if (free === candidate.port) return;
+      // FE-03: apply only while the profile is still the exact candidate and
+      // its port is unchanged; a later manual edit or a newly selected
+      // profile is never overwritten.
+      const current = profileRef.current;
+      if (!current) return;
+      const nextProfile = applySuggestedPort(current, identity, candidate.port, free);
+      if (nextProfile === current) return;
+      setProfile(nextProfile);
+      setNotice(`Port ${candidate.port} is in use. Trying ${free}; launch validation will confirm it.`);
     } catch {
       // Browser preview, or no free port in range: keep the requested one and
       // let child startup and health validation report the authoritative result.
@@ -829,10 +885,19 @@ function App() {
 
   async function preview() {
     if (!profile) return;
+    const identity = profileIdentity(profile);
+    const sequence = ++previewSeq.current;
     try {
-      setCommand(await invoke<string>("preview_command", { profile }));
+      const command = await invoke<string>("preview_command", { profile });
+      // FE-03: an old preview must not overwrite a newer one; an old profile
+      // must not label the current one's command.
+      const currentIdentity = profileRef.current ? profileIdentity(profileRef.current) : "";
+      if (!responseIsCurrent(sequence, previewSeq.current, identity, currentIdentity)) return;
+      setCommand(command);
     } catch (error) {
-      setCommand(inTauri() ? String(error) : "Browser preview cannot build a trusted command. Use the packaged app.");
+      if (keepLatestRequest(sequence, previewSeq.current)) {
+        setCommand(inTauri() ? String(error) : "Browser preview cannot build a trusted command. Use the packaged app.");
+      }
     }
   }
 

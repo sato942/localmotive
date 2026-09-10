@@ -1098,6 +1098,23 @@ test("override saves reject mixed-origin collisions inside an immediate transact
   assert.match(mirror, /transaction_with_behavior\(rusqlite::TransactionBehavior::Immediate\)/);
 });
 
+test("FE-03 stale responses are guarded before they can commit", async () => {
+  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  // Audit FE-03: every deferred commit checks its request sequence and the
+  // current resource identity, provider switches clear the previous
+  // provider's presentation first, GGUF metadata clears with its selection,
+  // and the port suggestion passes through the identity-checked helper.
+  assert.match(app, /responseIsCurrent\(/);
+  assert.match(app, /applySuggestedPort\(/);
+  assert.match(app, /profileIdentity\(/);
+  assert.match(app, /cloudSeq\.current \+= 1;\n    setCredential\(null\);/);
+  assert.match(
+    app,
+    /async function loadGguf\(model: LogicalModel \| undefined\) \{\n    const sequence = \+\+ggufSeq\.current;\n    if \(!model\) \{/,
+  );
+  assert.match(app, /const sequence = \+\+previewSeq\.current;/);
+});
+
 test("user catalog overrides stay local, marked, and outside network verification", async () => {
   const mirror = await readFile(join(process.cwd(), "src-tauri", "src", "catalog_db.rs"), "utf8");
   const lib = await readFile(join(process.cwd(), "src-tauri", "src", "lib.rs"), "utf8");
