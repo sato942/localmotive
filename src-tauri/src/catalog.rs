@@ -117,6 +117,10 @@ pub struct CatalogModel {
     pub created_at: String,
     #[serde(default)]
     pub files: Vec<CatalogFile>,
+    /// Local user-added rows carry true. Network rows always carry false.
+    /// Serde default keeps older JSON parsing; the mirror always writes it.
+    #[serde(default)]
+    pub user_sourced: bool,
 }
 
 impl CatalogModel {
@@ -267,7 +271,7 @@ fn verify_catalog_signature(body: &[u8], encoded: &str) -> bool {
 
 /// `owner/name`, the only shape Hugging Face uses. Rejecting anything else
 /// keeps a malformed or hostile catalog from producing surprising URLs.
-fn is_valid_repo(repo: &str) -> bool {
+pub fn is_valid_repo(repo: &str) -> bool {
     let mut parts = repo.split('/');
     let (Some(owner), Some(name), None) = (parts.next(), parts.next(), parts.next()) else {
         return false;

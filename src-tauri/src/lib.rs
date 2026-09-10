@@ -1,6 +1,7 @@
 pub mod artifact;
 pub mod calibration;
 mod catalog;
+mod catalog_db;
 mod cloud;
 mod core;
 mod download;
@@ -2727,12 +2728,91 @@ async fn fetch_model_catalog(
         ));
     }
     let url = catalog::DEFAULT_CATALOG_URL.to_string();
+    let fetch_root = root.clone();
     let snapshot =
-        tauri::async_runtime::spawn_blocking(move || catalog::fetch_catalog(&url, &root))
+        tauri::async_runtime::spawn_blocking(move || catalog::fetch_catalog(&url, &fetch_root))
             .await
             .map_err(|error| format!("Catalog fetch failed: {error}"))??;
+    // Mirror verified rows locally for fast browse/filter/sort. The mirror
+    // never authorizes anything: downloads still resolve against the signed
+    // snapshot in state. A corrupt mirror rebuilds from these verified bytes.
+    let mirror_models = snapshot.catalog.models.clone();
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        if let Ok(connection) = catalog_db::open_catalog_db(&root) {
+            if catalog_db::migrate_catalog_db(&connection).is_ok() {
+                // Rebuild recovers from corruption; mirror preserves user
+                // rows, so a failed write keeps the previous mirror.
+                let _ = catalog_db::rebuild_catalog_db_from_verified(
+                    &root,
+                    &catalog::Catalog {
+                        schema_version: catalog::SUPPORTED_SCHEMA,
+                        updated: String::new(),
+                        source: String::new(),
+                        note: String::new(),
+                        models: mirror_models,
+                    },
+                );
+            }
+        }
+    })
+    .await;
     *state.catalog.lock().unwrap() = Some(snapshot.catalog.clone());
     Ok(snapshot)
+}
+
+/// Read the local SQLite mirror: verified rows plus marked user rows.
+/// Falls back to the in-memory snapshot when the mirror is unavailable, so
+/// the tab never goes empty because of a local database problem.
+#[tauri::command]
+fn catalog_local_models(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<catalog::CatalogModel>, String> {
+    let root = catalog_cache_root(&app);
+    let connection = catalog_db::open_catalog_db(&root)?;
+    if catalog_db::migrate_catalog_db(&connection).is_err() {
+        return fallback_local_models(&state);
+    }
+    match catalog_db::read_catalog_db_models(&connection) {
+        Ok(models) if !models.is_empty() => Ok(models),
+        _ => fallback_local_models(&state),
+    }
+}
+
+fn fallback_local_models(
+    state: &tauri::State<'_, AppState>,
+) -> Result<Vec<catalog::CatalogModel>, String> {
+    match state.catalog.lock().unwrap().clone() {
+        Some(catalog) => Ok(catalog.models),
+        None => Ok(catalog::bundled_catalog()?.models),
+    }
+}
+
+/// Save one user-added catalog row locally. The row is marked user-sourced,
+/// never touches the signed artifact, and never passes signature checks.
+#[tauri::command]
+fn save_user_catalog_override(
+    app: tauri::AppHandle,
+    model: catalog::CatalogModel,
+) -> Result<Vec<catalog::CatalogModel>, String> {
+    let root = catalog_cache_root(&app);
+    let connection = catalog_db::open_catalog_db(&root)?;
+    catalog_db::migrate_catalog_db(&connection)?;
+    catalog_db::save_user_catalog_override(&connection, &model)?;
+    catalog_db::read_catalog_db_models(&connection)
+}
+
+/// Remove one user-added catalog row. Curated rows are never deleted here.
+#[tauri::command]
+fn remove_user_catalog_override(
+    app: tauri::AppHandle,
+    id: String,
+) -> Result<Vec<catalog::CatalogModel>, String> {
+    let root = catalog_cache_root(&app);
+    let connection = catalog_db::open_catalog_db(&root)?;
+    catalog_db::migrate_catalog_db(&connection)?;
+    catalog_db::remove_user_catalog_override(&connection, &id)?;
+    catalog_db::read_catalog_db_models(&connection)
 }
 
 #[tauri::command]
@@ -3107,6 +3187,9 @@ pub fn run() {
             suggest_port,
             about_info,
             fetch_model_catalog,
+            catalog_local_models,
+            save_user_catalog_override,
+            remove_user_catalog_override,
             filter_catalog,
             catalog_facets,
             catalog_rich_facets,

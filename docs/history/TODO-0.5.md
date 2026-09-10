@@ -1,6 +1,6 @@
 # Localmotive 0.5 implementation tracker
 
-- **Status:** PHASES 1–7 DONE 2026-09-10. SQLITE MIRROR + 0.5.0 SHIP GATE OPEN.
+- **Status:** PHASES 0–7 DONE 2026-09-10. PHASE 8 SHIP GATE OPEN (owner approval).
 - **Target:** `0.5.0`
 - **Tree at creation:** `30c28bfb2b4db1244f19424dc67326a074965535`
 - **Tag at creation:** `v0.4.1` @ `a0ef02cf4b35a31ff10af1bd8c0a58064f86ab2e`
@@ -148,7 +148,7 @@ Acceptance:
 - [x] Set `SUPPORTED_SCHEMA` to 2 with clear failure on older schema.
 - [x] Update `catalog/README.md`, parser, validate script, Rust tests, Publish workflow.
 - [x] Ship the allowlist inside the signed artifact or signed sidecar.
-- [ ] Allow user local overrides. Mark user-sourced entries. Keep network verification strict.
+- [x] Allow user local overrides. Mark user-sourced entries. Keep network verification strict.
 - [x] Publish the signed artifact through CI.
 
 Phase 3 evidence (2026-09-10, HEAD `634426a` + working tree):
@@ -171,7 +171,7 @@ Acceptance:
 - v2 validates. Old schema fails clearly.
 - Author add needs catalog publish only, not app release.
 
-### Phase 4 — Refresh cooldown, lock, last-success (DONE 2026-09-10); SQLite mirror (OPEN, next)
+### Phase 4 — Local SQLite mirror, first start, refresh, cooldown (DONE 2026-09-10)
 
 - [x] Fill from verified artifact, then last-good cache, then bundled fallback.
 - [x] Show honest source in UI.
@@ -180,16 +180,23 @@ Acceptance:
 - [x] Implement in-flight lock.
 - [x] Show last success and remaining cooldown.
 - [x] Rebuild corrupt cache from verified artifact or fallback.
-- [ ] SQLite mirror fill from verified bytes.
-- [ ] Query browse, filter, and sort from SQLite.
-- [ ] Versioned migrations.
-- [ ] Corrupt-DB rebuild test.
+- [x] SQLite mirror fill from verified bytes.
+- [x] Query browse, filter, and sort from SQLite.
+- [x] Versioned migrations.
+- [x] Corrupt-DB rebuild test.
 
 Phase 4 evidence (2026-09-10, commit `39d3684`):
 
 - RED: new release-gates test `catalog refresh honors cooldown, lock, and last-success display` with impl stashed. Observed 77 pass, 1 fail on the new test.
 - GREEN: `catalog.rs` adds `CATALOG_REFRESH_COOLDOWN_MINUTES = 1560`, `refresh_cooldown_remaining_minutes` (missing/unparsable stamp never blocks first fill), `CatalogRefreshGuard` (one refresh at a time, releases on drop), stamp read/write beside the cache, snapshot carries `lastSuccessSecs` + `cooldownRemainingMinutes` on all four origin paths. `fetch_model_catalog` acquires the guard, enforces cooldown with remaining-minutes errors, stamps success. `model.ts`/`App.tsx` render LAST SUCCESS plus COOLDOWN minutes. Observed gates 78 pass 0 fail. Rust lib 397 pass 0 fail. tsc clean. Catalog v2 valid (158/1417). Pins plus workflow gates clean. Clippy plus fmt clean.
 - First start always fills: no stamp means no cooldown. Clock skew into the past caps at the full wait, never more.
+
+Phase 4 closeout (2026-09-10, SQLite mirror + user overrides land):
+
+- RED: two new release-gates tests (`local catalog SQLite mirror stores verified models with migrations and rebuilds`, `user catalog overrides stay local, marked, and outside network verification`). Ran `node --test scripts/tests/release-gates.test.mjs`. Observed 78 pass, 2 fail on the new tests.
+- GREEN: new `src-tauri/src/catalog_db.rs` (rusqlite, local-only): `catalog_db_path` beside the JSON cache, `CATALOG_DB_SCHEMA_VERSION = 1`, `migrate_catalog_db` in one transaction with `PRAGMA user_version`, `mirror_verified_catalog` replacing network rows while preserving `user_sourced = 1` rows, `read_catalog_db_models` feeding the existing `filter_models`/`facets`/`rich_facets` (SQLite is storage, not a second filter), `rebuild_catalog_db_from_verified` deleting garbage and rebuilding from verified bytes. `CatalogModel.user_sourced` added with serde default; network parse keeps false. `fetch_model_catalog` mirrors verified rows after each fetch; `catalog_local_models` serves mirror rows with snapshot/bundled fallback so the tab never goes empty on a DB problem. `save_user_catalog_override` / `remove_user_catalog_override` commands enforce `validate_user_override` (repo shape, filename guards, SHA-256, 512-byte text cap, 200-row cap); remove refuses curated rows with a curated message. UI reads `catalog_local_models`, marks rows `USER ADDED · LOCAL ONLY`, and notes the count in the load notice. Observed gates 80 pass 0 fail. Rust lib 403 pass 0 fail 2 ignored. tsc exit 0. Vitest 52 pass. Catalog v2 valid (158/1417). fmt clean. Clippy zero errors.
+- User rows never touch the signed artifact, never pass signature checks, and never leave the PC. Downloads still resolve against the signed snapshot in state, so a user row cannot authorize a network file.
+- Rust tests: `mirror_stores_verified_models_and_reads_them_back`, `migrations_stamp_the_schema_version`, `corrupt_database_rebuilds_from_verified_bytes`, `user_override_is_marked_and_survives_network_refresh`, `user_override_rejects_bad_repos_missing_digests_and_oversize_text`, `user_override_remove_never_touches_network_rows` (all PASS in the 403-pass lib run).
 
 Phase 4 decision (2026-09-10, SQLite stays local-only, mirror is next):
 
@@ -421,14 +428,14 @@ wc -c catalog/catalog.json
 | Filters + hardware auto-defaults | PASS | Rich filters + fit rule + budget, UI toggle default ON. Rust + Vitest + gates PASS. |
 | Input limits enforced in Rust | PASS | Catalog + profile bounds at Tauri boundary. Rust + gates PASS. |
 | Real 0.3 to 0.5 docs | PASS | Phase 7 narrative in tracker, counts from git. No invented claims. `## 0.5.0` waits for bump. |
-| SQLite mirror + migrations + DB rebuild test | OPEN | rusqlite vendored, unused. Next increment. No hosted DB. |
-| User local catalog overrides | OPEN | Deferred to SQLite work. Network verification stays strict. |
+| SQLite mirror + migrations + DB rebuild test | PASS | `catalog_db.rs` local-only; mirror/rebuild/migration tests PASS; gates 80/0. |
+| User local catalog overrides | PASS | Marked `user_sourced`, local-only, strict verification; remove refuses curated rows. |
 | 0.5.0 ship gates | BLOCKED | Owner ship approval pending. No tag. No publish. |
 
 ## Conclusion
 
-Phases 0, 1, 2, 3, 5, 6, 7 are DONE. Phase 4 is DONE except the SQLite mirror
-(fill, query path, migrations, corrupt-DB rebuild test), which stays OPEN with
-rusqlite vendored and compiling.
+Phases 0–7 are DONE. The SQLite mirror (fill, query path, migrations,
+corrupt-DB rebuild) and user local overrides (marked, local-only, strict
+verification) are implemented with RED-first tests and gate proof above.
 
-Do not tag or publish 0.5.0 until the owner says ship.
+Do not tag or publish 0.5.0 until the owner says ship. Phase 8 stays [ ].

@@ -465,16 +465,22 @@ function App() {
     setCatalogBusy(true);
     try {
       const snapshot = await invoke<CatalogSnapshot>("fetch_model_catalog");
+      // Local mirror: verified rows plus marked user rows. Falls back to the
+      // snapshot when the mirror is unavailable, so the tab never goes empty
+      // because of a local database problem.
+      const localModels = await invoke<CatalogModel[]>("catalog_local_models").catch(
+        () => snapshot.catalog.models,
+      );
       const [tags, quants] = await invoke<[string[], string[]]>("catalog_facets", {
-        models: snapshot.catalog.models,
+        models: localModels,
       });
       const rich = await invoke<CatalogFacets>("catalog_rich_facets", {
-        models: snapshot.catalog.models,
+        models: localModels,
       }).catch(() => null);
       const token = await invoke<TokenStatus>("hf_token_status");
       if (!keepLatestRequest(sequence, catalogLoadSeq.current)) return;
       setCatalogSnapshot(snapshot);
-      setCatalogRows(snapshot.catalog.models);
+      setCatalogRows(localModels);
       setCatalogTags(tags);
       setCatalogQuants(quants);
       if (rich) {
@@ -484,7 +490,9 @@ function App() {
         setCatalogArchitectures(rich.architectures);
       }
       setHfToken(token);
-      setNotice(`${snapshot.catalog.models.length} curated Hugging Face models loaded from ${snapshot.origin}.`);
+      const userCount = localModels.filter((model) => model.userSourced).length;
+      const userNote = userCount > 0 ? ` (includes ${userCount} USER ADDED local row${userCount === 1 ? "" : "s"})` : "";
+      setNotice(`${localModels.length} curated Hugging Face models loaded from ${snapshot.origin}${userNote}.`);
     } catch (error) {
       if (keepLatestRequest(sequence, catalogLoadSeq.current)) setNotice(String(error));
     } finally {
@@ -1264,6 +1272,7 @@ function App() {
                           <span>{model.parameters || "PARAMETERS UNKNOWN"} · BY {model.publisher || model.repo.split("/")[0]}</span>
                         </div>
                         {model.gated && <span className="state-tag warning">GATED · TOKEN + LICENCE</span>}
+                        {model.userSourced && <span className="state-tag">USER ADDED · LOCAL ONLY</span>}
                       </div>
                       {model.summary && <p className="catalog-summary">{model.summary}</p>}
                       <div className="catalog-meta">

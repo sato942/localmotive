@@ -1539,6 +1539,8 @@ export type CatalogModel = {
   lastModified?: string;
   createdAt?: string;
   files: CatalogFile[];
+  /** Local user-added rows carry true. Network rows always carry false. */
+  userSourced?: boolean;
 };
 
 export type Catalog = {

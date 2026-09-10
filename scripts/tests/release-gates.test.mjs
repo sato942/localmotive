@@ -1064,3 +1064,25 @@ test("branding history set covers the archived docs layout", async () => {
   // RED: HISTORICAL_FILES pins root paths that will no longer exist.
   assert.match(source, /docs\/history\/TODO-0\.4\.1\.md/);
 });
+
+test("local catalog SQLite mirror stores verified models with migrations and rebuilds", async () => {
+  const mirror = await readFile(join(process.cwd(), "src-tauri", "src", "catalog_db.rs"), "utf8");
+  assert.match(mirror, /catalog_db_path/);
+  assert.match(mirror, /CATALOG_DB_SCHEMA_VERSION/);
+  assert.match(mirror, /rebuild_catalog_db_from_verified/);
+  assert.match(mirror, /read_catalog_db_models/);
+  assert.match(mirror, /mirror_verified_catalog/);
+  assert.match(mirror, /migrate_catalog_db/);
+});
+
+test("user catalog overrides stay local, marked, and outside network verification", async () => {
+  const mirror = await readFile(join(process.cwd(), "src-tauri", "src", "catalog_db.rs"), "utf8");
+  const lib = await readFile(join(process.cwd(), "src-tauri", "src", "lib.rs"), "utf8");
+  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  assert.match(mirror, /user_sourced/);
+  assert.match(mirror, /validate_user_override/);
+  assert.match(lib, /save_user_catalog_override/);
+  assert.match(lib, /remove_user_catalog_override/);
+  assert.match(lib, /catalog_local_models/);
+  assert.match(app, /USER ADDED/);
+});
