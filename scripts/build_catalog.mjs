@@ -1,100 +1,243 @@
 // Build catalog entries from real Hugging Face metadata. Never invents values:
 // every repo, filename and byte size below is read from the live HF API, and a
 // repo that cannot be resolved aborts without replacing the last good catalog.
-//   node scripts/build_catalog.mjs          # preview JSON on stdout
-//   node scripts/build_catalog.mjs --write  # atomically replace catalog/catalog.json
-import { rename, writeFile } from "node:fs/promises";
+//   node scripts/build_catalog.mjs                       # preview JSON on stdout
+//   node scripts/build_catalog.mjs --write               # atomically replace catalog/catalog.json
+//   node scripts/build_catalog.mjs --dry-run             # author/repo/file counts only, no JSON
+//   node scripts/build_catalog.mjs --write --allow-empty # publish even when an author has no recent rows
+import { rename, readFile, writeFile } from "node:fs/promises";
 import { createPrivateKey, sign } from "node:crypto";
 
-const WANTED = [
-  { repo: 'unsloth/Qwen3.8-27B-GGUF', prefer: ['Q4_K_M', 'Q5_K_M', 'Q8_0'], family: 'Qwen3.8', params: '27B', tags: ['general', 'reasoning'] },
-  { repo: 'unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF', prefer: ['Q4_K_M', 'Q6_K'], family: 'Qwen3 Coder', params: '30B-A3B', tags: ['code', 'moe'] },
-  { repo: 'bartowski/Llama-3.2-1B-Instruct-GGUF', prefer: ['Q4_K_M', 'Q8_0'], family: 'Llama 3.2', params: '1B', tags: ['small', 'general'] },
-  { repo: 'unsloth/Llama-3.2-3B-Instruct-GGUF', prefer: ['Q4_K_M', 'Q8_0'], family: 'Llama 3.2', params: '3B', tags: ['small', 'general'] },
-  { repo: 'unsloth/gemma-4-31B-it-GGUF', prefer: ['Q4_K_M', 'Q6_K'], family: 'Gemma 4', params: '31B', tags: ['general'] },
-  { repo: 'unsloth/Phi-4-mini-instruct-GGUF', prefer: ['Q4_K_M', 'Q8_0'], family: 'Phi-4', params: 'mini', tags: ['small', 'general'] },
-  { repo: 'MaziyarPanahi/phi-4-GGUF', prefer: ['Q4_K_M', 'Q6_K'], family: 'Phi-4', params: '14B', tags: ['general'] },
-  { repo: 'lmstudio-community/Qwen3.8-27B-GGUF', prefer: ['Q4_K_M'], family: 'Qwen3.8', params: '27B', tags: ['general'] },
-];
+const providers = JSON.parse(await readFile("catalog/providers.json", "utf8"));
+const ALLOWLIST = providers.allowlist ?? [];
+const CUTOFF_DAYS = providers.cutoffDays ?? 90;
+const MAX_REPOS = process.argv.includes("--full") ? 100 : (providers.maxReposPerAuthor ?? 20);
+const DRY_RUN = process.argv.includes("--dry-run");
+const ALLOW_EMPTY = process.argv.includes("--allow-empty");
+const cutoff = new Date("2026-09-10T00:00:00Z");
+cutoff.setUTCDate(cutoff.getUTCDate() - CUTOFF_DAYS);
+const excludePatterns = (providers.excludeFilenamePatterns ?? []).map(
+  (pattern) => new RegExp(pattern, "i"),
+);
 
-const api = async (url) => {
-  const r = await fetch(url, { headers: { 'User-Agent': 'localmotive-catalog-builder' } });
-  if (!r.ok) throw new Error(`${r.status} ${url}`);
-  return r.json();
+const api = async (url, token, retries = 5) => {
+  const headers = { "User-Agent": "localmotive-catalog-builder" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  for (let attempt = 0; ; attempt += 1) {
+    const r = await fetch(url, { headers });
+    if (r.status === 429 && attempt < retries) {
+      const wait = Math.min(30000, 2000 * 2 ** attempt);
+      console.error(`429 ${url}, retry ${attempt + 1}/${retries} after ${wait}ms`);
+      await new Promise((resolve) => setTimeout(resolve, wait));
+      continue;
+    }
+    if (!r.ok) throw new Error(`${r.status} ${url}`);
+    return r.json();
+  }
+};
+const token = process.env.HF_TOKEN ?? process.env.HUGGING_FACE_TOKEN ?? "";
+
+const licenseOf = (meta) => {
+  const tags = meta.tags || [];
+  const found = tags.find((tag) => tag.startsWith("license:"));
+  if (found) return found.slice("license:".length);
+  if (meta.cardData && typeof meta.cardData.license === "string") return meta.cardData.license;
+  return "";
 };
 
 const entries = [];
 const problems = [];
+let scannedRepos = 0;
+let scannedFiles = 0;
+let skippedExcluded = 0;
+let skippedNoSha = 0;
+// Filenames collide across publishers with different bytes. The client
+// downloads into one shared folder, so dedupe happens here at build time.
+const seenFilenames = new Set();
+const pending = [];
 
-for (const want of WANTED) {
+for (const author of ALLOWLIST) {
+  let list;
   try {
-    const meta = await api(`https://huggingface.co/api/models/${want.repo}?blobs=true`);
-    const ggufs = (meta.siblings || []).filter((s) => s.rfilename.toLowerCase().endsWith('.gguf'));
-    if (!ggufs.length) { problems.push(`${want.repo}: no .gguf files`); continue; }
-
-    const files = [];
-    for (const quant of want.prefer) {
-      // Single-file build for this quant, ignoring split shards and companions.
-      const match = ggufs.find((s) => {
-        const n = s.rfilename;
-        return n.toUpperCase().includes(quant.toUpperCase())
-          && !/-\d{5}-of-\d{5}\./.test(n)
-          && !/mmproj|dspark|dflash|eagle3|-mtp-/i.test(n);
-      });
-      if (!match) continue;
-      if (typeof match.size !== 'number' || match.size <= 0) { problems.push(`${want.repo}/${match.rfilename}: no size`); continue; }
-      const sha256 = match.lfs?.sha256 ?? match.lfs?.oid;
-      if (!/^[a-f0-9]{64}$/i.test(sha256 ?? '')) { problems.push(`${want.repo}/${match.rfilename}: no SHA-256`); continue; }
-      files.push({ quant, filename: match.rfilename, sizeBytes: match.size, sha256 });
-    }
-    if (!files.length) { problems.push(`${want.repo}: none of ${want.prefer.join('/')} found`); continue; }
-
-    entries.push({
-      id: want.repo.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-      repo: want.repo,
-      family: want.family,
-      parameters: want.params,
-      publisher: want.repo.split('/')[0],
-      summary: (meta.cardData && meta.cardData.summary) || '',
-      tags: want.tags,
-      gated: Boolean(meta.gated),
-      downloads: meta.downloads ?? 0,
-      likes: meta.likes ?? 0,
-      files,
-    });
+    list = await api(
+      `https://huggingface.co/api/models?author=${encodeURIComponent(author)}&filter=gguf&sort=lastModified&direction=-1&limit=100`,
+      token,
+    );
   } catch (error) {
-    problems.push(`${want.repo}: ${error.message}`);
+    problems.push(`${author}: list failed: ${error.message}`);
+    continue;
   }
+  const recent = list.filter((model) => new Date(model.lastModified) >= cutoff);
+  for (const summary of recent.slice(0, MAX_REPOS)) {
+    const repo = summary.id;
+    try {
+      const meta = await api(`https://huggingface.co/api/models/${repo}?blobs=true`, token);
+      const ggufs = (meta.siblings || []).filter((s) =>
+        s.rfilename.toLowerCase().endsWith(".gguf"),
+      );
+      if (!ggufs.length) {
+        continue;
+      }
+      const files = [];
+      for (const sibling of ggufs) {
+        scannedFiles += 1;
+        const name = sibling.rfilename;
+        // Only root-level files: subdirectories hold MTP drafts, DSpark
+        // variants, imatrix data, and experiments, none of which are direct
+        // single-file download targets. A slash also fails the client
+        // filename guard, so exclude here instead of emitting dead rows.
+        if (name.includes("/") || name.includes("\\")) {
+          skippedExcluded += 1;
+          continue;
+        }
+        if (excludePatterns.some((pattern) => pattern.test(name))) {
+          skippedExcluded += 1;
+          continue;
+        }
+        if (typeof sibling.size !== "number" || sibling.size <= 0) {
+          skippedNoSha += 1;
+          problems.push(`${repo}/${name}: no size`);
+          continue;
+        }
+        const sha256 = sibling.lfs?.sha256 ?? sibling.lfs?.oid;
+        if (!/^[a-f0-9]{64}$/i.test(sha256 ?? "")) {
+          skippedNoSha += 1;
+          problems.push(`${repo}/${name}: no SHA-256`);
+          continue;
+        }
+        const quant = (name.match(/-([A-Za-z0-9_]+)\.gguf$/i) || [])[1] || "UNKNOWN";
+        files.push({
+          quant,
+          filename: name,
+          sizeBytes: sibling.size,
+          sha256,
+          lastModified: meta.lastModified ?? "",
+          createdAt: meta.createdAt ?? "",
+        });
+      }
+      if (!files.length) {
+        continue;
+      }
+      scannedRepos += 1;
+      pending.push({
+        id: repo.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+        repo,
+        family: repo.split("/")[1].replace(/-GGUF$/i, "").replace(/-/g, " "),
+        parameters: "",
+        publisher: repo.split("/")[0],
+        author: meta.author ?? repo.split("/")[0],
+        summary: (meta.cardData && meta.cardData.summary) || "",
+        tags: (meta.tags || []).filter((tag) => !tag.includes(":")),
+        gated: Boolean(meta.gated),
+        downloads: meta.downloads ?? 0,
+        likes: meta.likes ?? 0,
+        license: licenseOf(meta),
+        pipeline_tag: meta.pipeline_tag ?? "",
+        library_name: meta.library_name ?? "",
+        architecture: meta.gguf?.architecture ?? "",
+        lastModified: meta.lastModified ?? "",
+        createdAt: meta.createdAt ?? "",
+        files: files.sort((a, b) => a.sizeBytes - b.sizeBytes),
+      });
+    } catch (error) {
+      problems.push(`${repo}: ${error.message}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  await new Promise((resolve) => setTimeout(resolve, 800));
+}
+
+if (DRY_RUN) {
+  for (const entry of pending.sort((a, b) => b.downloads - a.downloads)) {
+    const kept = [];
+    for (const file of entry.files) {
+      const key = file.filename.toLowerCase();
+      if (seenFilenames.has(key)) {
+        skippedExcluded += 1;
+        continue;
+      }
+      seenFilenames.add(key);
+      kept.push(file);
+    }
+    if (!kept.length) continue;
+    entries.push({ ...entry, files: kept });
+  }
+  console.log(
+    JSON.stringify(
+      {
+        cutoff: cutoff.toISOString().slice(0, 10),
+        authors: ALLOWLIST.length,
+        repos: scannedRepos,
+        files: entries.reduce((n, e) => n + e.files.length, 0),
+        bytes: entries.reduce((n, e) => n + e.files.reduce((a, f) => a + f.sizeBytes, 0), 0),
+        scannedFiles,
+        skippedExcluded,
+        skippedNoSha,
+        problems: problems.slice(0, 20),
+      },
+      null,
+      1,
+    ),
+  );
+  process.exit(0);
+}
+
+// Two publishers may ship the same filename with different bytes (seen live:
+// 61 colliding names with different SHA-256 across unsloth,
+// lmstudio-community, AtomicChat, LiquidAI). The client downloads into one
+// shared folder, so the second write would clobber or race the first. Sort
+// repos by downloads first so the most-used publisher wins each filename,
+// then drop colliding files from later repos.
+for (const entry of pending.sort((a, b) => b.downloads - a.downloads)) {
+  const kept = [];
+  for (const file of entry.files) {
+    const key = file.filename.toLowerCase();
+    if (seenFilenames.has(key)) {
+      skippedExcluded += 1;
+      continue;
+    }
+    seenFilenames.add(key);
+    kept.push(file);
+  }
+  if (!kept.length) continue;
+  entries.push({ ...entry, files: kept });
 }
 
 const catalog = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   updated: new Date().toISOString().slice(0, 10),
-  source: 'https://github.com/sato942/localmotive/blob/main/catalog/catalog.json',
-  note: 'Curated list of GGUF builds. Localmotive downloads directly from Hugging Face; this file only decides what is offered.',
+  source: "https://github.com/sato942/localmotive/blob/main/catalog/catalog.json",
+  note: "Curated list of GGUF builds. Localmotive downloads directly from Hugging Face; this file only decides what is offered.",
+  providers: {
+    source: "catalog/providers.json",
+    cutoffDays: CUTOFF_DAYS,
+    allowlist: ALLOWLIST,
+  },
   models: entries.sort((a, b) => b.downloads - a.downloads),
 };
-const rendered = JSON.stringify(catalog, null, 2) + '\n';
-console.error(`resolved ${entries.length}/${WANTED.length} repos, ${entries.reduce((n, e) => n + e.files.length, 0)} files`);
+const rendered = JSON.stringify(catalog, null, 2) + "\n";
+console.error(
+  `resolved ${entries.length} repos, ${entries.reduce((n, e) => n + e.files.length, 0)} files (${scannedRepos} scanned, ${skippedExcluded} excluded, ${skippedNoSha} no-sha)`,
+);
 
-if (problems.length) {
-  console.error('UNRESOLVED (catalog not replaced):\n  ' + problems.join('\n  '));
+if (problems.length && !ALLOW_EMPTY) {
+  console.error("UNRESOLVED (catalog not replaced):\n  " + problems.join("\n  "));
   process.exitCode = 1;
-} else if (process.argv.includes('--write')) {
+} else if (process.argv.includes("--write")) {
   const signingKey = process.env.LOCALMOTIVE_CATALOG_SIGNING_KEY_PEM;
   if (!signingKey) {
-    console.error('LOCALMOTIVE_CATALOG_SIGNING_KEY_PEM is required to publish the catalog');
+    console.error("LOCALMOTIVE_CATALOG_SIGNING_KEY_PEM is required to publish the catalog");
     process.exitCode = 1;
     process.exit();
   }
-  const signature = sign(null, Buffer.from(rendered), createPrivateKey(signingKey)).toString('base64');
-  const temporary = 'catalog/catalog.json.next';
-  const signatureTemporary = 'catalog/catalog.json.sig.next';
-  await writeFile(temporary, rendered, 'utf8');
-  await writeFile(signatureTemporary, signature, 'utf8');
-  await rename(temporary, 'catalog/catalog.json');
-  await rename(signatureTemporary, 'catalog/catalog.json.sig');
-  console.error('wrote catalog/catalog.json and its Ed25519 signature');
+  const signature = sign(null, Buffer.from(rendered), createPrivateKey(signingKey)).toString("base64");
+  const temporary = "catalog/catalog.json.next";
+  const signatureTemporary = "catalog/catalog.json.sig.next";
+  await writeFile(temporary, rendered, "utf8");
+  await writeFile(signatureTemporary, signature, "utf8");
+  await rename(temporary, "catalog/catalog.json");
+  await rename(signatureTemporary, "catalog/catalog.json.sig");
+  console.error("wrote catalog/catalog.json and its Ed25519 signature");
 } else {
   process.stdout.write(rendered);
 }

@@ -1,13 +1,19 @@
-name: Verify curated catalog
+name: Publish curated catalog
 
 on:
   workflow_dispatch:
+    inputs:
+      sign_only:
+        description: "Sign the checked-in catalog without rebuilding from HF"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
-  verify:
+  build:
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -27,5 +33,60 @@ jobs:
       - name: Verify fail-fast workflow gates
         run: node scripts/verify_workflow_gates.mjs
 
-      - name: Validate the current curated catalog
-        run: npm run catalog:validate
+      - name: Rebuild the catalog from the allowlist
+        if: ${{ !inputs.sign_only }}
+        run: node scripts/build_catalog.mjs
+
+      - name: Validate the rebuilt catalog structure
+        run: node scripts/validate_catalog.mjs catalog/catalog.json
+
+      - name: Retain the unsigned catalog candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: localmotive-catalog-candidate
+          path: catalog/catalog.json
+          if-no-files-found: error
+          retention-days: 7
+
+  sign:
+    permissions:
+      contents: read
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Retrieve the unsigned catalog candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: localmotive-catalog-candidate
+          path: catalog
+
+      - name: Sign exact catalog candidate
+        env:
+          LOCALMOTIVE_CATALOG_SIGNING_KEY_PEM: ${{ secrets.CATALOG_SIGNING_KEY_PEM }}
+        run: node scripts/sign_catalog_candidate.mjs
+
+      - name: Verify detached signature and catalog structure
+        run: node scripts/validate_catalog.mjs catalog/catalog.json
+
+      - name: Record candidate digests
+        run: sha256sum catalog/catalog.json catalog/catalog.json.sig > catalog/SHA256SUMS-candidate.txt
+
+      - name: Retain signature without publishing
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: localmotive-catalog-signature
+          path: |
+            catalog/catalog.json
+            catalog/catalog.json.sig
+            catalog/SHA256SUMS-candidate.txt
+          if-no-files-found: error
+          retention-days: 7

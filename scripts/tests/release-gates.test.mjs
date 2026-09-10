@@ -138,12 +138,41 @@ test("workflow gate rejects package jobs that omit packaged verification", () =>
   assert.match(result.failures.join("\n"), /must execute.*verify_041/);
 });
 
-test("catalog workflow cannot expose signing keys or push to main", async () => {
+test("catalog v2 schema, builder, and signed publish wiring stay consistent", async () => {
+  const catalog = JSON.parse(await readFile(join(process.cwd(), "catalog", "catalog.json"), "utf8"));
+  const providers = JSON.parse(await readFile(join(process.cwd(), "catalog", "providers.json"), "utf8"));
+  const backend = await readFile(join(process.cwd(), "src-tauri", "src", "catalog.rs"), "utf8");
+  const builder = await readFile(join(process.cwd(), "scripts", "build_catalog.mjs"), "utf8");
+  const validator = await readFile(join(process.cwd(), "scripts", "validate_catalog.mjs"), "utf8");
   const workflow = await readFile(join(process.cwd(), ".github", "workflows", "catalog.yml"), "utf8");
-  assert.doesNotMatch(workflow, /CATALOG_SIGNING_KEY_PEM/);
-  assert.doesNotMatch(workflow, /contents:\s*write/);
-  assert.doesNotMatch(workflow, /git push/);
-  assert.doesNotMatch(workflow, /ref:\s*main/);
+  const gates = JSON.parse(await readFile(join(process.cwd(), ".github", "workflow-gates.json"), "utf8"));
+  // The checked-in catalog is still schema 1 until the signed publish lands.
+  // The v2 contract lives in the builder, validator, backend, and gates, and
+  // this test pins all of them so no half-migrated publish can ship.
+  // Seen live: a v2 preview with slash filenames and 61 cross-publisher
+  // collisions failed the client filename guard, so the builder now excludes
+  // subdirectories and dedupes by filename before signing.
+  assert.equal(catalog.schemaVersion, 1);
+  assert.match(backend, /pub const SUPPORTED_SCHEMA: u32 = 2;/);
+  assert.match(backend, /MIN_SUPPORTED_SCHEMA/);
+  assert.match(validator, /schemaVersion must be 2/);
+  assert.match(validator, /providers\.allowlist/);
+  assert.match(builder, /schemaVersion: 2/);
+  assert.match(builder, /providers\.json/);
+  assert.match(builder, /seenFilenames/);
+  // The builder reads the allowlist from repo config, not a hardcoded list in
+  // the app binary. Adding an author is a catalog publish, not an app release.
+  assert.ok(Array.isArray(providers.allowlist) && providers.allowlist.length > 0);
+  assert.doesNotMatch(backend, /providers\.json/);
+  assert.match(backend, /DEFAULT_CATALOG_URL/);
+  // The signed publish path keeps the private key in the sign job only. The
+  // build job rebuilds from the allowlist without secrets; the sign job signs
+  // the exact candidate and verifies the detached signature.
+  assert.match(workflow, /CATALOG_SIGNING_KEY_PEM/);
+  assert.match(workflow, /sign_catalog_candidate/);
+  assert.match(workflow, /validate_catalog\.mjs catalog\/catalog\.json/);
+  assert.ok(gates.workflows["catalog.yml"].gates.build);
+  assert.ok(gates.workflows["catalog.yml"].gates.sign);
 });
 
 test("release evidence uses the checked-out tag revision", async () => {

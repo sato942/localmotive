@@ -3,10 +3,15 @@
   "workflows": {
     "catalog.yml": {
       "gates": {
-        "verify": [
+        "build": [
           "node scripts/verify_workflow_pins.mjs",
           "node scripts/verify_workflow_gates.mjs",
-          "npm run catalog:validate"
+          "node scripts/build_catalog.mjs",
+          "node scripts/validate_catalog.mjs catalog/catalog.json"
+        ],
+        "sign": [
+          "node scripts/sign_catalog_candidate.mjs",
+          "node scripts/validate_catalog.mjs catalog/catalog.json"
         ]
       },
       "packageJobs": {},
