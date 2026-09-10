@@ -346,6 +346,33 @@ Append every check with exact command and observed result. Never write should wo
 - Pending: release-gates RED and GREEN runs. Done 2026-09-10. RED 71 pass 2 fail. GREEN 73 pass 0 fail. Pins PASS. Workflow gates PASS.
 - Pending: catalog dry-run numbers. Done 2026-09-10. See Phase 2 evidence.
 
+### 2026-09-10 SQLite mirror closeout (HEAD `75b2531`, CI run `34495934762` success)
+
+- Command: `node --test scripts/tests/release-gates.test.mjs` (RED before impl)
+- Observed: 78 pass, 2 fail on the two new SQLite/override tests.
+- Command: `node --test scripts/tests/release-gates.test.mjs` (GREEN after impl)
+- Observed: 80 pass, 0 fail.
+- Command: `cargo test --locked --lib` in `src-tauri`
+- Observed: 403 pass, 0 fail, 2 ignored.
+- Command: `cargo fmt --check` / `cargo clippy --locked --all-targets -- -D warnings`
+- Observed: both clean, zero errors.
+- Command: `npx tsc --noEmit -p tsconfig.json`
+- Observed: exit 0.
+- Command: `npx vitest run`
+- Observed: 52 pass.
+- Command: `npm run catalog:validate`
+- Observed: `valid v2 (158 models, 1417 files)`.
+- Command: `node scripts/verify_workflow_pins.mjs` / `node scripts/verify_workflow_gates.mjs` / `node scripts/verify_versions.mjs 0.4.1` / `npm run branding:verify` / `RUSTDOCFLAGS='-D warnings' cargo test --locked --doc`
+- Observed: all PASS; doc tests 0 pass 0 fail clean.
+- Command: `node -e` catalog size check on `catalog/catalog.json`
+- Observed: bytes 630182, gzip 105130, schema 2, models 158, files 1417.
+- Command: `git push origin main` of `75b2531`
+- Observed: `71cbb95..75b2531 main -> main`.
+- Command: `gh run view 34495934762 --json jobs`
+- Observed: completed success on `75b2531`: rust-audit, check, Security audit, package-smoke all success.
+- Command: `gh api repos/sato942/localmotive/releases/latest`
+- Observed: still `v0.4.1`, `prerelease:false`. No `v0.5.0` tag exists. Nothing published. Phase 8 stays [ ] for owner ship approval.
+
 ### 2026-09-10 Final gate suite (HEAD `d388471`, before tracker closeout)
 
 - Command: `cargo test --locked --lib` in `src-tauri`
