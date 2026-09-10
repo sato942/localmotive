@@ -359,6 +359,7 @@ Append every check with exact command and observed result. Never write should wo
 - Observed: tag object `eb52220`, `* [new tag] v0.5.0 -> v0.5.0`. Tag points at `a4b7127`.
 - Command: Release run `34514283693` (tag-push path)
 - Observed: completed success: rust-audit, quality, package, publish all success. Hardware-qualify run `34514283563` is unrelated to ship: host proof success, Sandbox clean-account failure (Sandbox unavailable on runner + `release not found` polling before publish), not a ship gate.
+- Correction (2026-09-11, additive, audit GH-03): the run's Sandbox step DID find Windows Sandbox available on the runner ("Found ...WindowsSandbox.exe"); the demonstrated failure was `host-run-lifecycle.ps1` polling for public release assets the publish job had not created yet (release-not-found after the five-minute wait). The installers themselves were never exercised. Sequencing repaired under V06-GH-03: the clean-account lifecycle is now a dependent release job that consumes freshly built candidates through `-CandidateDir`, with no prepublication wait.
 - Command: `gh release view v0.5.0 --json tagName,name,isDraft,isPrerelease,assets`
 - Observed: tag `v0.5.0`, name `Localmotive 0.5.0 (unsigned)`, draft false, prerelease false, 6 assets (`Localmotive_0.5.0_x64-setup.exe`, `Localmotive_0.5.0_x64.msi`, `Localmotive_0.5.0_x64-portable.exe`, `SHA256SUMS-0.5.0.txt`, `packaged-verification-0.4.1.json`, `candidate-inventory-0.5.0.json`).
 - Command: `gh api repos/sato942/localmotive/releases/latest`

@@ -68,7 +68,8 @@
           "cargo test --locked --doc"
         ],
         "rust-audit": [],
-        "resolve": []
+        "resolve": [],
+        "clean-account-lifecycle": []
       },
       "packageJobs": {
         "package": ["quality", "rust-audit"]
@@ -82,6 +83,9 @@
         "publish": [
           "LOCALMOTIVE_SOURCE_REVISION=\"$RESOLVED_SHA\" node scripts/verify_candidate_inventory.mjs --verify \"artifacts/candidate-inventory-${VERSION}.json\"",
           "(cd artifacts && sha256sum -c \"SHA256SUMS-${VERSION}.txt\")"
+        ],
+        "clean-account-lifecycle": [
+          "& \".\\scripts\\sandbox\\host-run-lifecycle.ps1\" -Tag \"${{ needs.resolve.outputs.tag }}\" -Version \"${{ needs.quality.outputs.version }}\" -PreviousTag \"$env:UPGRADE_BASELINE\" -CandidateDir \"artifacts\""
         ]
       },
       "publicationJobs": {
@@ -90,12 +94,9 @@
     },
     "hardware-qualify.yml": {
       "gates": {
-        "hardware-qualify": [],
-        "clean-account-lifecycle": []
+        "hardware-qualify": []
       },
-      "packageJobs": {
-        "clean-account-lifecycle": ["hardware-qualify"]
-      },
+      "packageJobs": {},
       "publicationJobs": {}
     }
   }

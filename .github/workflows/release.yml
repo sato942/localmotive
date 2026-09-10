@@ -308,6 +308,78 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # Clean-account lifecycle verification, rewritten per audit GH-03: it
+  # consumes the candidate installers the package job just built
+  # (-CandidateDir), so no job ever waits for public release assets that the
+  # producer has not published. Policy decision (GH-03 I3): this job is NOT
+  # a publication gate — Sandbox availability depends on an interactive
+  # Windows feature, and the release does not silently claim its result.
+  # The summary and evidence state plainly whether it ran, passed, failed or
+  # was skipped, and publication proceeds with that status visible.
+  clean-account-lifecycle:
+    needs: [resolve, package]
+    runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]
+    timeout-minutes: 120
+    env:
+      # Explicit supported upgrade baseline matrix: update this variable
+      # when a new baseline is supported (audit GH-04 I4).
+      UPGRADE_BASELINE: v0.4.0
+    steps:
+      - name: Pin LF line endings before checkout
+        shell: bash
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - name: Ensure Windows Sandbox is available
+        shell: pwsh
+        run: |
+          $exe = Join-Path $env:WINDIR "System32\WindowsSandbox.exe"
+          if (-not (Test-Path $exe)) {
+            throw "Windows Sandbox is not available on this PC. Enable it (Windows Features) then re-run."
+          }
+          Write-Host "Found $exe"
+
+      - name: Retrieve the verified candidate installers
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: localmotive-${{ needs.quality.outputs.version }}-verified
+          path: artifacts
+
+      - name: Run clean-account lifecycle in Sandbox from the candidate bytes
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LOCALMOTIVE_SOURCE_REVISION: ${{ needs.resolve.outputs.sha }}
+        run: |
+          & ".\scripts\sandbox\host-run-lifecycle.ps1" -Tag "${{ needs.resolve.outputs.tag }}" -Version "${{ needs.quality.outputs.version }}" -PreviousTag "$env:UPGRADE_BASELINE" -CandidateDir "artifacts"
+
+      - name: Lifecycle evidence summary
+        if: always()
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.quality.outputs.version }}
+        run: |
+          $evidence = "release-evidence/$($env:VERSION)/attestations/sandbox-clean-account-lifecycle.json"
+          $status = if (Test-Path $evidence) { (Get-Content $evidence -Raw | ConvertFrom-Json).status } else { "MISSING" }
+          @"
+          ## Clean-account lifecycle (Windows Sandbox)
+
+          - Candididate installers: consumed from the package job through -CandidateDir (no prepublication wait)
+          - Upgrade baseline: ``$env:UPGRADE_BASELINE``
+          - Scenario status: **$status** (non-gating policy; publication does not claim this result)
+          - Evidence file: ``$evidence``
+          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8
+
+      - name: Upload lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sandbox-lifecycle-${{ needs.quality.outputs.version }}
+          path: release-evidence/${{ needs.quality.outputs.version }}/attestations/
+          if-no-files-found: error
+
   publish:
     # Preferred ship path: pushing the version tag publishes after package
     # PASS in the same run, so no second parallel package ever shares the

@@ -39,7 +39,7 @@ function Launch-Smoke($exe) {
   if ($p.HasExited) { throw "App exited during smoke launch code=$($p.ExitCode)" }
   Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
   Start-Sleep -Seconds 2
-  Log "Launch smoke OK"
+  Log "Startup smoke OK: the process survived 8 seconds; this is a startup smoke, not full functional verification"
 }
 function Install-Nsis($setup) {
   Log "NSIS install: $setup"
@@ -74,6 +74,32 @@ function Install-Msi($msi) {
   if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { throw "MSI install exit $($p.ExitCode)" }
   Start-Sleep -Seconds 2
 }
+function Test-MsiProductInstalled {
+  # The MSI registers the product under an uninstall key; a leftover
+  # executable search alone cannot prove removal (audit GH-04 I1).
+  $roots = @(
+    "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+    "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+    "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
+  )
+  foreach ($root in $roots) {
+    $hit = Get-ItemProperty $root -ErrorAction SilentlyContinue |
+      Where-Object { $_.DisplayName -like "*Localmotive*" } |
+      Select-Object -First 1
+    if ($hit) { return $true }
+  }
+  return $false
+}
+function Assert-AppVersion($exe, $expected, $label) {
+  # An upgrade verdict must prove the INSTALLED executable carries the new
+  # version, not merely that the installer exited zero (audit GH-04 I2).
+  $version = (Get-Item $exe).VersionInfo.FileVersion
+  if (-not $version -or -not $version.StartsWith($expected)) {
+    Fail "$label expected executable version $expected but found '$version' at $exe"
+  }
+  Log "$label executable version $version at $exe"
+  return $version
+}
 function Uninstall-Msi($msi) {
   Log "MSI uninstall via package: $msi"
   $p = Start-Process -FilePath "msiexec.exe" -ArgumentList "/x `"$msi`" /qn /norestart" -Wait -PassThru
@@ -106,30 +132,40 @@ try {
   Launch-Smoke $exe
   Uninstall-Nsis
   if (Find-AppExe) { Fail "Localmotive.exe still present after NSIS uninstall" }
-  $steps += @{ name = "nsis-fresh-install-launch-uninstall"; status = "PASS" }
+  $steps += @{ name = "nsis-fresh-install-launch-uninstall"; status = "PASS"; detail = "uninstall removed the executable" }
   Log "NSIS fresh path PASS"
 
   # 2) MSI fresh install + launch + uninstall
   Install-Msi $curMsi
   $exe = Find-AppExe
   if (-not $exe) { Fail "Localmotive.exe not found after MSI install" }
+  $msiVersion = Assert-AppVersion $exe $meta.version "MSI fresh install"
   Launch-Smoke $exe
   Uninstall-Msi $curMsi
   Start-Sleep -Seconds 2
-  if (Find-AppExe) { Log "WARNING: exe still present after MSI uninstall; continuing" }
-  $steps += @{ name = "msi-fresh-install-launch-uninstall"; status = "PASS" }
+  # Audit GH-04: a leftover expected application or product registration is
+  # a FAILED uninstall verdict, never a warning to continue past.
+  $leftoverExe = Find-AppExe
+  if ($leftoverExe) { Fail "Localmotive.exe still present after MSI uninstall: $leftoverExe" }
+  if (Test-MsiProductInstalled) { Fail "MSI product registration still present after uninstall" }
+  $steps += @{ name = "msi-fresh-install-launch-uninstall"; status = "PASS"; detail = "installed version $msiVersion; uninstall removed the executable and the product registration" }
   Log "MSI fresh path PASS"
 
-  # 3) Update: previous NSIS -> current NSIS
+  # 3) Update: previous NSIS -> current NSIS, with version evidence on both
+  #    sides of the upgrade (audit GH-04 I2).
+  $previousVersion = $meta.previousTag.TrimStart("v")
   Install-Nsis $oldSetup
-  if (-not (Find-AppExe)) { Fail "Previous version missing after old NSIS install" }
+  $oldExe = Find-AppExe
+  if (-not $oldExe) { Fail "Previous version missing after old NSIS install" }
+  $installedOldVersion = Assert-AppVersion $oldExe $previousVersion "Pre-update install"
   Install-Nsis $curSetup
   $exe = Find-AppExe
   if (-not $exe) { Fail "App missing after update install" }
+  $installedNewVersion = Assert-AppVersion $exe $meta.version "Post-update install"
   Launch-Smoke $exe
   Uninstall-Nsis
   if (Find-AppExe) { Fail "App still present after post-update uninstall" }
-  $steps += @{ name = "nsis-update-from-previous-launch-uninstall"; status = "PASS" }
+  $steps += @{ name = "nsis-update-from-previous-launch-uninstall"; status = "PASS"; detail = "executable version $installedOldVersion -> $installedNewVersion" }
   Log "NSIS update path PASS"
 
   $doc = @{
@@ -139,6 +175,7 @@ try {
     version = $meta.version
     previousTag = $meta.previousTag
     finishedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+    coverageNote = "NSIS and MSI fresh install/launch/uninstall and the NSIS update path with executable version evidence. Eight-second process survival is a startup smoke, not full functional verification. Persisted-profile migration scenarios are not exercised in this harness."
     steps = $steps
   }
   ($doc | ConvertTo-Json -Depth 6) | Set-Content -Path $ResultPath -Encoding UTF8

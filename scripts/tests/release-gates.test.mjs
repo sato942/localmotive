@@ -955,30 +955,52 @@ test("signed build configuration requires certificate-store identity and timesta
   assert.doesNotMatch(script, /Export-PfxCertificate|ConvertTo-SecureString/);
 });
 
-test("hardware qualify workflow pins every remote action and orders sandbox after host proof", async () => {
+test("hardware qualify workflow pins every remote action and owns the host proof", async () => {
   const workflow = await readFile(join(process.cwd(), ".github", "workflows", "hardware-qualify.yml"), "utf8");
   assert.doesNotMatch(workflow, /uses:\s*actions\/checkout@v/);
   assert.doesNotMatch(workflow, /uses:\s*actions\/upload-artifact@v/);
   assert.match(workflow, /actions\/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09/);
   assert.match(workflow, /actions\/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a/);
-  assert.match(workflow, /needs:\s*hardware-qualify/);
-  assert.match(workflow, /supportClaimPolicy = "Do not mark SUPPORTED \/ L4_PASS without a successful packaged run/);
+  // The clean-account lifecycle moved to release.yml (audit GH-03); this
+  // workflow owns the host attestation job only.
+  assert.doesNotMatch(workflow, /clean-account-lifecycle/);
+  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  assert.match(release, /clean-account-lifecycle:\n    needs: \[resolve, package\]/);
+  const generator = await readFile(
+    join(process.cwd(), "scripts", "qualification", "build_host_attestation.mjs"),
+    "utf8",
+  );
+  assert.match(generator, /supportClaimPolicy/);
 });
 
 test("hardware qualify workflow cannot claim L4 support from host match alone", async () => {
   const workflow = await readFile(join(process.cwd(), ".github", "workflows", "hardware-qualify.yml"), "utf8");
-  assert.match(workflow, /Packaged L4 checks still required/);
-  assert.match(workflow, /schema = "localmotive\.attestation\.v0"/);
-  assert.match(workflow, /status = "HOST_MATCH"/);
-  assert.doesNotMatch(workflow, /status = "L4_PASS"/);
-  assert.doesNotMatch(workflow, /id = ".*"; status = "SUPPORTED"/);
+  const generator = await readFile(
+    join(process.cwd(), "scripts", "qualification", "build_host_attestation.mjs"),
+    "utf8",
+  );
+  // Statuses are DERIVED from detected hardware (audit GH-10): no static
+  // HOST_MATCH rows exist in the workflow, and the generator's policy string
+  // keeps host presence separate from packaged L4 qualification.
+  assert.doesNotMatch(workflow, /status = "HOST_MATCH"/);
+  assert.match(workflow, /build_host_attestation\.mjs/);
+  assert.match(generator, /schema: "localmotive\.attestation\.v0"/);
+  assert.match(generator, /supportClaimPolicy:/);
+  assert.doesNotMatch(generator, /L4_PASS"/);
+  assert.match(generator, /Packaged L4 checks still required\./);
 });
 
 test("workflow gate policy covers the hardware qualify night path", async () => {
   const policy = JSON.parse(await readFile(join(process.cwd(), ".github", "workflow-gates.json"), "utf8"));
   assert.ok(policy.workflows["hardware-qualify.yml"]);
-  assert.deepEqual(Object.keys(policy.workflows["hardware-qualify.yml"].gates).sort(), ["clean-account-lifecycle", "hardware-qualify"]);
-  assert.deepEqual(policy.workflows["hardware-qualify.yml"].packageJobs["clean-account-lifecycle"], ["hardware-qualify"]);
+  // The lifecycle gate moved to release.yml with the job (audit GH-03).
+  assert.deepEqual(Object.keys(policy.workflows["hardware-qualify.yml"].gates).sort(), ["hardware-qualify"]);
+  assert.deepEqual(policy.workflows["hardware-qualify.yml"].packageJobs, {});
+  assert.ok(policy.workflows["release.yml"].gates["clean-account-lifecycle"]);
+  assert.equal(
+    policy.workflows["release.yml"].requiredCommands["clean-account-lifecycle"].length,
+    1,
+  );
 });
 
 test("release ship gates default to the self-hosted runner, never windows-latest", async () => {
@@ -1164,6 +1186,62 @@ test("GH-01 pull requests run only on the isolated hosted runner", async () => {
     assert.match(block, /if: github\.event_name == 'push'/);
     assert.match(block, /self-hosted/);
   }
+});
+
+test("GH-03 the lifecycle consumes candidates instead of waiting for publication", async () => {
+  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  const hardware = await readFile(join(process.cwd(), ".github", "workflows", "hardware-qualify.yml"), "utf8");
+  const lifecycle = release.split("clean-account-lifecycle:")[1].split("\n  publish:")[0];
+  assert.match(lifecycle, /needs: \[resolve, package\]/);
+  assert.match(lifecycle, /-CandidateDir "artifacts"/);
+  assert.doesNotMatch(lifecycle, /ReleaseWaitMinutes/);
+  const publishHead = release.split("\n  publish:")[1].split("steps:")[0];
+  assert.doesNotMatch(publishHead, /clean-account-lifecycle/, "publication must not gate on the interactive Sandbox feature");
+  assert.doesNotMatch(hardware, /clean-account-lifecycle/, "the lifecycle job belongs to release.yml");
+});
+
+test("GH-04 installer verdicts fail on leftovers and verify installed versions", async () => {
+  const sandbox = await readFile(join(process.cwd(), "scripts", "sandbox", "run-lifecycle-in-sandbox.ps1"), "utf8");
+  assert.doesNotMatch(sandbox, /WARNING: exe still present after MSI uninstall/);
+  assert.match(sandbox, /Fail "Localmotive\.exe still present after MSI uninstall/);
+  assert.match(sandbox, /Test-MsiProductInstalled/);
+  assert.match(sandbox, /Assert-AppVersion \$exe \$meta\.version "MSI fresh install"/);
+  assert.match(sandbox, /Assert-AppVersion \$exe \$meta\.version "Post-update install"/);
+  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  assert.match(release, /UPGRADE_BASELINE: v0\.4\.0/);
+  assert.doesNotMatch(release, /-PreviousTag "v0\.4\.0"/, "the baseline flows through the explicit matrix variable");
+});
+
+test("GH-06 lifecycle evidence survives every terminal outcome", async () => {
+  const host = await readFile(join(process.cwd(), "scripts", "sandbox", "host-run-lifecycle.ps1"), "utf8");
+  assert.match(host, /function Write-FailureEvidence/);
+  assert.match(host, /Write-FailureEvidence "TIMEOUT"/);
+  assert.match(host, /Write-FailureEvidence "FAIL" \$_\.Exception\.Message/);
+  assert.match(host, /Copy-Item \$resultPath \$EvidencePath/);
+  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  const upload = release.split("Upload lifecycle evidence")[1] ?? "";
+  assert.match(upload, /if: always\(\)/);
+  assert.match(upload, /if-no-files-found: error/);
+});
+
+test("GH-10 host attestation statuses derive from detected hardware", async () => {
+  const { deriveHostRows } = await import("../qualification/build_host_attestation.mjs");
+  const match = deriveHostRows({ cpu: "AMD Ryzen 9 9950X3D 16-Core Processor", gpu: "NVIDIA GeForce RTX 5090" });
+  assert.equal(match.verdict, "MATCH");
+  assert.ok(match.rows.every((row) => row.status === "HOST_MATCH"));
+  assert.equal(match.rows[0].observation, "AMD Ryzen 9 9950X3D 16-Core Processor");
+  const cpuMismatch = deriveHostRows({ cpu: "Intel Core i9-13900K", gpu: "NVIDIA GeForce RTX 5090" });
+  assert.equal(cpuMismatch.verdict, "NO_MATCH");
+  assert.equal(cpuMismatch.rows[0].status, "HOST_NO_MATCH");
+  const gpuMismatch = deriveHostRows({ cpu: "AMD Ryzen 9 9950X3D", gpu: "NVIDIA GeForce RTX 4080" });
+  assert.equal(gpuMismatch.verdict, "NO_MATCH");
+  assert.equal(gpuMismatch.rows[1].status, "HOST_NO_MATCH");
+  const unknown = deriveHostRows({ cpu: "AMD Ryzen 9 9950X3D", gpu: "" });
+  assert.equal(unknown.verdict, "UNKNOWN");
+  assert.equal(unknown.rows[1].status, "HOST_UNKNOWN");
+  const hardware = await readFile(join(process.cwd(), ".github", "workflows", "hardware-qualify.yml"), "utf8");
+  assert.doesNotMatch(hardware, /status = "HOST_MATCH"/, "no static match rows may remain");
+  assert.match(hardware, /build_host_attestation\.mjs/);
 });
 
 test("GH-02 release jobs share one resolved immutable revision", async () => {

@@ -1,7 +1,9 @@
 name: Hardware qualify (self-hosted)
 
 # Runs only on version tags. The owner's Windows runner is online 01:00-06:00
-# Asia/Dubai; jobs queue until then. Main Release stays on windows-latest.
+# Asia/Dubai; jobs queue until then. The clean-account lifecycle now lives in
+# release.yml as a dependent job that consumes freshly built candidates
+# (audit GH-03): this workflow owns the host attestation only.
 on:
   push:
     tags:
@@ -38,7 +40,9 @@ jobs:
 
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          ref: ${{ steps.meta.outputs.tag }}
+          # github.sha is the tagged commit for tag pushes: pin it instead of
+          # the movable tag ref (audit GH-02/GH-10).
+          ref: ${{ github.sha }}
 
       - name: Record host hardware
         id: hw
@@ -57,42 +61,26 @@ jobs:
             Write-Warning "GPU name did not match expected RTX 5090; attestation will still record the actual name."
           }
 
-      - name: Write attestation stub
+      - name: Derive and write the host attestation
         shell: pwsh
         env:
           TAG: ${{ steps.meta.outputs.tag }}
           VERSION: ${{ steps.meta.outputs.version }}
           CPU: ${{ steps.hw.outputs.cpu }}
           GPU: ${{ steps.hw.outputs.gpu }}
+          SOURCE_REVISION: ${{ github.sha }}
           RUN_ID: ${{ github.run_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          # Every status is derived from the DETECTED hardware (audit GH-10):
+          # MATCH, NO_MATCH and UNKNOWN are explicit, and a definite mismatch
+          # fails this intended host-proof job instead of recording a match.
+          $os = [System.Environment]::OSVersion.VersionString
+          $driver = (Get-CimInstance Win32_VideoController | Select-Object -First 1 -ExpandProperty DriverVersion)
           $dir = Join-Path "release-evidence" $env:VERSION "attestations"
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
-          $now = (Get-Date).ToUniversalTime().ToString("o")
-          $doc = [ordered]@{
-            schema = "localmotive.attestation.v0"
-            version = $env:VERSION
-            tag = $env:TAG
-            recordedAtUtc = $now
-            runner = "DESKTOP-HPTF57N-zen5-blackwell"
-            host = @{
-              cpu = $env:CPU
-              gpu = $env:GPU
-              os = [System.Environment]::OSVersion.VersionString
-            }
-            matrixRows = @(
-              @{ id = "amd-zen5-cpu"; status = "HOST_MATCH"; note = "Host CPU is Zen 5 (9950X3D class). Packaged L4 checks still required." },
-              @{ id = "nvidia-blackwell-cuda"; status = "HOST_MATCH"; note = "Host GPU is Blackwell (5090 class). Packaged CUDA L4 checks still required." },
-              @{ id = "nvidia-blackwell-vulkan"; status = "HOST_MATCH"; note = "Host GPU is Blackwell (5090 class). Packaged Vulkan L4 checks still required." }
-            )
-            supportClaimPolicy = "Do not mark SUPPORTED / L4_PASS without a successful packaged run recorded in this attestation."
-            githubRun = $env:RUN_URL
-            githubRunId = $env:RUN_ID
-          }
-          $path = Join-Path $dir "host-zen5-blackwell.json"
-          ($doc | ConvertTo-Json -Depth 6) | Set-Content -Path $path -Encoding UTF8
-          Write-Host "Wrote $path"
+          node scripts/qualification/build_host_attestation.mjs --out (Join-Path $dir "host-zen5-blackwell.json") --cpu "$env:CPU" --gpu "$env:GPU" --os "$os" --driver "$driver" --version "$env:VERSION" --tag "$env:TAG" --source-revision "$env:SOURCE_REVISION" --run-url "$env:RUN_URL" --run-id "$env:RUN_ID"
+          if ($LASTEXITCODE -ne 0) { throw "Host attestation verdict is NO_MATCH: the intended host-proof job fails (audit GH-10 I2)." }"
 
       - name: Job summary
         shell: pwsh
@@ -118,70 +106,3 @@ jobs:
           name: hardware-attestation-${{ steps.meta.outputs.version }}
           path: release-evidence/${{ steps.meta.outputs.version }}/attestations/
           if-no-files-found: error
-
-  clean-account-lifecycle:
-    name: Clean-account install/update/uninstall (Sandbox)
-    runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]
-    needs: hardware-qualify
-    timeout-minutes: 120
-    steps:
-      - name: Resolve tag
-        id: meta
-        shell: pwsh
-        env:
-          RAW_TAG: ${{ github.event.inputs.tag || github.ref_name }}
-        run: |
-          $raw = $env:RAW_TAG
-          if ($raw -notmatch '^v\d+\.\d+\.\d+$') {
-            throw "Tag must match vMAJOR.MINOR.PATCH (got: $raw)"
-          }
-          $version = $raw.Substring(1)
-          "tag=$raw" >> $env:GITHUB_OUTPUT
-          "version=$version" >> $env:GITHUB_OUTPUT
-
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          ref: ${{ github.sha }}
-
-      - name: Ensure Windows Sandbox is available
-        shell: pwsh
-        run: |
-          $exe = Join-Path $env:WINDIR "System32\WindowsSandbox.exe"
-          if (-not (Test-Path $exe)) {
-            throw "Windows Sandbox is not available on this PC. Enable it (Windows Features) then re-run."
-          }
-          Write-Host "Found $exe"
-
-      - name: Run clean-account lifecycle in Sandbox
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          & ".\scripts\sandbox\host-run-lifecycle.ps1" -Tag "${{ steps.meta.outputs.tag }}" -Version "${{ steps.meta.outputs.version }}" -PreviousTag "v0.4.0"
-
-      - name: Job summary
-        if: always()
-        shell: pwsh
-        env:
-          TAG: ${{ steps.meta.outputs.tag }}
-          VERSION: ${{ steps.meta.outputs.version }}
-        run: |
-          $evidence = "release-evidence/$($env:VERSION)/attestations/sandbox-clean-account-lifecycle.json"
-          $status = if (Test-Path $evidence) { (Get-Content $evidence -Raw | ConvertFrom-Json).status } else { "MISSING" }
-          @"
-          ## Clean-account lifecycle (Windows Sandbox)
-
-          - Tag: ``$($env:TAG)``
-          - Update baseline: ``v0.4.0``
-          - Checks: NSIS install/launch/uninstall, MSI install/launch/uninstall, NSIS update from 0.4.0
-          - Result: **$status**
-          - Runs on the owner interactive self-hosted runner (24/7 while logged in)
-          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8
-
-      - name: Upload sandbox evidence
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: sandbox-lifecycle-${{ steps.meta.outputs.version }}
-          path: release-evidence/${{ steps.meta.outputs.version }}/attestations/
-          if-no-files-found: ignore
