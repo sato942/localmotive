@@ -30,7 +30,7 @@ already does, it does not belong here.
 ### Architecture
 
 ```
-TODO.md                 v0.3 implementation strategy, status, and evidence ledger
+docs/history/TODO.md                 v0.3 implementation strategy, status, and evidence ledger
 src/                    React + TypeScript frontend (one screen per nav item)
   App.tsx               All screens; state lives here
   App.css               The entire design system, hand-written
@@ -120,7 +120,7 @@ exactly.
 
 ### v0.3 tracker and research inputs
 
-Read `TODO.md` after this file before starting v0.3 work. Treat `TODO.md` as the
+Read `docs/history/TODO.md` after this file before starting v0.3 work. Treat `docs/history/TODO.md` as the
 authoritative phase tracker, but never treat a checkbox as verification evidence.
 
 For model-fit or measurement work, read these research files in this order:
@@ -129,7 +129,7 @@ For model-fit or measurement work, read these research files in this order:
 2. `research/measuring/SYNTHESIS.md`
 3. Relevant project notes, source files, and tests
 
-Update `TODO.md` after each acceptance check. Keep only one implementation phase
+Update `docs/history/TODO.md` after each acceptance check. Keep only one implementation phase
 in progress. Record exact commands and observed results in its verification ledger.
 
 Keep `research/` ignored and unmodified during product implementation. Vitest is
@@ -289,7 +289,7 @@ your process even if it is not committed.
 
 ### CSS and design
 
-`DESIGN.md` is normative — token frontmatter plus the "machine-room control
+`docs/DESIGN.md` is normative — token frontmatter plus the "machine-room control
 cabinet" spec. Before touching `App.css`, read it. The load-bearing rules:
 
 - `border-radius: 0` everywhere except indicator lamps.
@@ -305,8 +305,8 @@ After UI changes, run the design detector and fix everything it reports:
 node <impeccable-skill>/scripts/detect.mjs --json src/App.tsx src/App.css
 ```
 
-New components need an entry in `DESIGN.md` (frontmatter token + a prose
-section) and must keep `designmd lint DESIGN.md` at zero errors.
+New components need an entry in `docs/DESIGN.md` (frontmatter token + a prose
+section) and must keep `designmd lint docs/DESIGN.md` at zero errors.
 
 ---
 
