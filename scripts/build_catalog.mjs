@@ -1,12 +1,11 @@
 // Build catalog entries from real Hugging Face metadata. Never invents values:
 // every repo, filename and byte size below is read from the live HF API, and a
 // repo that cannot be resolved aborts without replacing the last good catalog.
-//   node scripts/build_catalog.mjs                       # preview JSON on stdout
-//   node scripts/build_catalog.mjs --write               # atomically replace catalog/catalog.json
+//   node scripts/build_catalog.mjs                       # write catalog/catalog.json (CI build job)
+//   node scripts/build_catalog.mjs --write               # legacy alias for the same write
 //   node scripts/build_catalog.mjs --dry-run             # author/repo/file counts only, no JSON
-//   node scripts/build_catalog.mjs --write --allow-empty # publish even when an author has no recent rows
+//   node scripts/build_catalog.mjs --stdout              # preview JSON on stdout, no write
 import { rename, readFile, writeFile } from "node:fs/promises";
-import { createPrivateKey, sign } from "node:crypto";
 
 const providers = JSON.parse(await readFile("catalog/providers.json", "utf8"));
 const ALLOWLIST = providers.allowlist ?? [];
@@ -223,21 +222,14 @@ console.error(
 if (problems.length && !ALLOW_EMPTY) {
   console.error("UNRESOLVED (catalog not replaced):\n  " + problems.join("\n  "));
   process.exitCode = 1;
-} else if (process.argv.includes("--write")) {
-  const signingKey = process.env.LOCALMOTIVE_CATALOG_SIGNING_KEY_PEM;
-  if (!signingKey) {
-    console.error("LOCALMOTIVE_CATALOG_SIGNING_KEY_PEM is required to publish the catalog");
-    process.exitCode = 1;
-    process.exit();
-  }
-  const signature = sign(null, Buffer.from(rendered), createPrivateKey(signingKey)).toString("base64");
-  const temporary = "catalog/catalog.json.next";
-  const signatureTemporary = "catalog/catalog.json.sig.next";
-  await writeFile(temporary, rendered, "utf8");
-  await writeFile(signatureTemporary, signature, "utf8");
-  await rename(temporary, "catalog/catalog.json");
-  await rename(signatureTemporary, "catalog/catalog.json.sig");
-  console.error("wrote catalog/catalog.json and its Ed25519 signature");
-} else {
+} else if (process.argv.includes("--stdout") && !process.argv.includes("--write")) {
   process.stdout.write(rendered);
+} else {
+  // Default and --write: atomically replace catalog/catalog.json without
+  // touching the signature. The sign job signs the exact committed candidate
+  // afterwards, so build never needs the private key.
+  const temporary = "catalog/catalog.json.next";
+  await writeFile(temporary, rendered, "utf8");
+  await rename(temporary, "catalog/catalog.json");
+  console.error("wrote catalog/catalog.json (unsigned; the sign job signs it)");
 }
