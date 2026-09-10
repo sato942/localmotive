@@ -73,7 +73,52 @@ export async function verifyCandidateInventory({
   return record;
 }
 
+/// Consumer-side verification (audit GH-02 I2): check the downloaded
+/// artifacts against the PRODUCER's inventory and checksum file without
+/// regenerating anything, and require the recorded source revision to equal
+/// the resolved release revision.
+export async function verifyPublishedInventory({
+  artifactDirectory = directory,
+  inventoryPath = output,
+  expectedSourceRevision,
+} = {}) {
+  if (!/^[0-9a-f]{40}$/u.test(expectedSourceRevision ?? "")) {
+    throw new Error("The expected source revision must be one full Git commit");
+  }
+  const record = JSON.parse(await readFile(inventoryPath, "utf8"));
+  if (record.sourceRevision !== expectedSourceRevision) {
+    throw new Error(
+      `candidate inventory records source ${record.sourceRevision}, expected ${expectedSourceRevision}`,
+    );
+  }
+  const checksumsPath = join(artifactDirectory, record.checksumFile);
+  const declared = parseChecksums(await readFile(checksumsPath, "utf8"));
+  for (const artifact of record.artifacts) {
+    const path = join(artifactDirectory, artifact.name);
+    const details = await stat(path);
+    if (!details.isFile() || details.size !== artifact.sizeBytes) {
+      throw new Error(`${artifact.name} size does not match the producer inventory`);
+    }
+    const sha256 = await sha256File(path);
+    if (sha256 !== artifact.sha256 || declared.get(artifact.name) !== artifact.sha256) {
+      throw new Error(`${artifact.name} digest does not match the producer inventory`);
+    }
+  }
+  return record;
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const record = await verifyCandidateInventory();
-  console.log(`PASS candidate inventory: ${record.artifacts.length} artifacts`);
+  const verifyIndex = process.argv.indexOf("--verify");
+  if (verifyIndex !== -1) {
+    // --verify <inventory>: consumer publication boundary.
+    process.argv[4] = process.argv[verifyIndex + 1];
+    const record = await verifyPublishedInventory({
+      inventoryPath: resolve(process.argv[verifyIndex + 1]),
+      expectedSourceRevision: gitRevision(),
+    });
+    console.log(`PASS producer inventory verified: ${record.artifacts.length} artifacts at source ${record.sourceRevision}`);
+  } else {
+    const record = await verifyCandidateInventory();
+    console.log(`PASS candidate inventory: ${record.artifacts.length} artifacts`);
+  }
 }

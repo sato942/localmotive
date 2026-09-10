@@ -31,7 +31,19 @@
           "cargo test --locked",
           "cargo test --locked --doc"
         ],
-        "rust-audit": []
+        "rust-audit": [],
+        "pr-check": [
+          "node scripts/verify_versions.mjs 0.5.0",
+          "node scripts/verify_workflow_pins.mjs",
+          "node scripts/verify_workflow_gates.mjs",
+          "node --test scripts/tests/release-gates.test.mjs",
+          "npm run check",
+          "npm audit --audit-level=moderate",
+          "cargo fmt --check",
+          "cargo clippy --locked --all-targets -- -D warnings",
+          "cargo test --locked",
+          "cargo test --locked --doc"
+        ]
       },
       "packageJobs": {
         "package-smoke": ["check", "rust-audit"]
@@ -55,7 +67,8 @@
           "cargo test --locked",
           "cargo test --locked --doc"
         ],
-        "rust-audit": []
+        "rust-audit": [],
+        "resolve": []
       },
       "packageJobs": {
         "package": ["quality", "rust-audit"]
@@ -67,7 +80,7 @@
           "node scripts/verify_candidate_inventory.mjs artifacts \"$VERSION\" \"artifacts/candidate-inventory-${VERSION}.json\""
         ],
         "publish": [
-          "node scripts/verify_candidate_inventory.mjs artifacts \"$VERSION\" \"artifacts/candidate-inventory-${VERSION}.json\"",
+          "LOCALMOTIVE_SOURCE_REVISION=\"$RESOLVED_SHA\" node scripts/verify_candidate_inventory.mjs --verify \"artifacts/candidate-inventory-${VERSION}.json\"",
           "(cd artifacts && sha256sum -c \"SHA256SUMS-${VERSION}.txt\")"
         ]
       },

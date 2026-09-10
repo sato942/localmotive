@@ -176,6 +176,24 @@ cargo test                           # Rust tests
 CI runs exactly this on every push and PR. If it fails locally it will fail
 there; do not push hoping otherwise.
 
+### CI, pull requests, and branch protection
+
+- Main pushes run the trusted `CI` jobs (`check`, `rust-audit`,
+  `package-smoke`) on the self-hosted runner. Each carries
+  `if: github.event_name == 'push'` and must never run for a pull request.
+- Pull requests run only `pr-check` on the ephemeral `windows-latest`
+  runner: no secrets, read-only token, stable check name. Untrusted fork
+  code never reaches the self-hosted machine.
+- Workflow `needs:` gates only order jobs inside a run. Blocking a merge is
+  repository configuration: the main-branch ruleset must require the
+  `pr-check` status and forbid force pushes and deletions (owner action;
+  record the bypass actors in the 0.6 closeout evidence).
+- Release tags (`v*`) are covered by a ruleset that blocks updates and
+  deletions (owner action). The release workflow resolves the requested tag
+  to one full commit SHA once (`resolve` job) and every later job checks
+  out exactly that revision; changing source requires a new version
+  identity, never a retargeted tag.
+
 ### Self-hosted runner Rust isolation
 
 The runner (`C:\actions-runner-localmotive`, Listener started hidden via

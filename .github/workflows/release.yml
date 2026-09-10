@@ -25,7 +25,48 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Resolve the requested tag to ONE immutable commit once, and verify its
+  # main ancestry here; every later job checks out exactly this revision, so
+  # a moved or re-created tag can never mix sources across jobs
+  # (audit GH-02 I1).
+  resolve:
+    runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - name: Pin LF line endings before checkout
+        shell: bash
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Resolve the release tag to one immutable revision
+        id: resolve
+        shell: bash
+        env:
+          RAW_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          raw="$RAW_TAG"
+          test "$raw" = "v0.5.0" \
+            || { echo "::error::This workflow builds only v0.5.0"; exit 1; }
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "tag=v${raw#v}" >> "$GITHUB_OUTPUT"
+          echo "version=${raw#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the resolved revision is on main
+        shell: bash
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor "${{ steps.resolve.outputs.sha }}" origin/main \
+            || { echo "::error::Release tags must point to a commit on main"; exit 1; }
+
   rust-audit:
+    needs: resolve
     runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]
     permissions:
       contents: read
@@ -40,7 +81,7 @@ jobs:
         run: git config --global core.autocrlf false
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ needs.resolve.outputs.sha }}
       # The self-hosted runner keeps no cargo on PATH for fresh shells, and
       # audit-check shells out to cargo. Install the pinned toolchain first.
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable reviewed 2026-09-05
@@ -66,29 +107,24 @@ jobs:
         run: git config --global core.autocrlf false
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ needs.resolve.outputs.sha }}
           fetch-depth: 0
 
-      - name: Resolve version
+      - name: Confirm the checked-out revision is the resolved release source
         id: version
         shell: bash
         env:
           RAW_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
         run: |
           raw="$RAW_TAG"
           test "$raw" = "v0.5.0" \
             || { echo "::error::This workflow builds only v0.5.0"; exit 1; }
+          test "$(git rev-parse HEAD)" = "$RESOLVED_SHA" \
+            || { echo "::error::quality checkout does not match the resolved release revision"; exit 1; }
           version="${raw#v}"
           echo "tag=v${version}" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
-
-      - name: Verify release commit is on main
-        shell: bash
-        run: |
-          git fetch origin main
-          release_commit=$(git rev-parse HEAD)
-          git merge-base --is-ancestor "$release_commit" origin/main \
-            || { echo "::error::Release tags must point to a commit on main"; exit 1; }
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -152,11 +188,16 @@ jobs:
         run: git config --global core.autocrlf false
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ needs.resolve.outputs.sha }}
 
-      - name: Resolve exact source revision
+      - name: Record the resolved source revision
         shell: bash
-        run: echo "LOCALMOTIVE_SOURCE_REVISION=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+        env:
+          RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$RESOLVED_SHA" \
+            || { echo "::error::package checkout does not match the resolved release revision"; exit 1; }
+          echo "LOCALMOTIVE_SOURCE_REVISION=$RESOLVED_SHA" >> "$GITHUB_ENV"
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -287,7 +328,7 @@ jobs:
         run: git config --global core.autocrlf false
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ needs.resolve.outputs.sha }}
 
       - name: Retrieve verified release candidates
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -295,14 +336,14 @@ jobs:
           name: localmotive-${{ needs.quality.outputs.version }}-verified
           path: artifacts
 
-      - name: Verify checksums and inventory for the honestly unsigned full release
+      - name: Verify the producer inventory and checksums without rewriting them
         shell: bash
         env:
           VERSION: ${{ needs.quality.outputs.version }}
+          RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
         run: |
-          node scripts/verify_candidate_inventory.mjs artifacts "$VERSION" "artifacts/candidate-inventory-${VERSION}.json"
+          LOCALMOTIVE_SOURCE_REVISION="$RESOLVED_SHA" node scripts/verify_candidate_inventory.mjs --verify "artifacts/candidate-inventory-${VERSION}.json"
           (cd artifacts && sha256sum -c "SHA256SUMS-${VERSION}.txt")
-          node -e "const v=JSON.parse(require('fs').readFileSync('artifacts/candidate-inventory-${VERSION}.json','utf8')); if(v.release!=='${VERSION}') throw new Error('inventory release mismatch')"
           echo "Honestly unsigned full release: Authenticode is DEFERRED_BY_OWNER; no signature is claimed. SmartScreen may warn."
 
       - name: Extract this version's changelog section

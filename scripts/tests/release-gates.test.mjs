@@ -175,9 +175,13 @@ test("catalog v2 schema, builder, and signed publish wiring stay consistent", as
   assert.ok(gates.workflows["catalog.yml"].gates.sign);
 });
 
-test("release evidence uses the checked-out tag revision", async () => {
+test("release evidence uses one resolved immutable revision", async () => {
   const workflow = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
-  assert.match(workflow, /LOCALMOTIVE_SOURCE_REVISION=\$\(git rev-parse HEAD\)/);
+  // The producer records the resolver's SHA only after proving its checkout
+  // matches it (audit GH-02 I1); workflow-generated context SHAs are never
+  // accepted as the evidence identity.
+  assert.match(workflow, /test "\$\(git rev-parse HEAD\)" = "\$RESOLVED_SHA"/);
+  assert.match(workflow, /LOCALMOTIVE_SOURCE_REVISION=\$RESOLVED_SHA/);
   assert.doesNotMatch(workflow, /LOCALMOTIVE_SOURCE_REVISION:\s*\$\{\{ github\.sha \}\}/);
 });
 
@@ -1141,6 +1145,44 @@ test("FE-07 cancellation state is separate from the run lifecycle", async () => 
   assert.doesNotMatch(panel, /runAction\("cancel"/);
   assert.match(panel, /await invoke<void>\("cancel_benchmark"\)/);
   assert.match(panel, /busy !== "benchmark" \|\| cancelPending/);
+});
+
+test("GH-01 pull requests run only on the isolated hosted runner", async () => {
+  const ci = await readFile(join(process.cwd(), ".github", "workflows", "ci.yml"), "utf8");
+  // A moveable PR trigger exists so required checks can execute per PR.
+  assert.match(ci, /pull_request:\n    branches: \[main\]/);
+  const pr = ci.split("  pr-check:")[1];
+  assert.match(pr, /if: github\.event_name == 'pull_request'/);
+  assert.match(pr, /runs-on: windows-latest/);
+  assert.doesNotMatch(pr, /self-hosted/);
+  assert.doesNotMatch(pr, /secrets\./);
+  // Trusted self-hosted jobs are unreachable from a pull request.
+  const check = ci.split("\n  check:")[1].split("\n  rust-audit:")[0];
+  const audit = ci.split("\n  rust-audit:")[1].split("\n  package-smoke:")[0];
+  const smoke = ci.split("\n  package-smoke:")[1].split("\n  pr-check:")[0];
+  for (const block of [check, audit, smoke]) {
+    assert.match(block, /if: github\.event_name == 'push'/);
+    assert.match(block, /self-hosted/);
+  }
+});
+
+test("GH-02 release jobs share one resolved immutable revision", async () => {
+  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  // One resolver pins the tag to a full SHA once; every later job checks
+  // out exactly that revision (audit GH-02 I1).
+  assert.match(release, /\n  resolve:\n/);
+  const pinned = release.match(/ref: \$\{\{ needs\.resolve\.outputs\.sha \}\}/gu) ?? [];
+  assert.ok(pinned.length >= 4, `expected at least four pinned checkouts, saw ${pinned.length}`);
+  assert.equal(
+    (release.match(/github\.event\.inputs\.tag \|\| github\.ref \}\}/gu) ?? []).length,
+    1,
+    "only the resolver may check out the requested tag ref",
+  );
+  // Publication verifies the producer inventory instead of rewriting it.
+  const publish = release.split("\n  publish:")[1];
+  assert.match(publish, /verify_candidate_inventory\.mjs --verify/);
+  assert.doesNotMatch(publish, /verify_candidate_inventory\.mjs artifacts "\$VERSION"/);
+  assert.match(publish, /LOCALMOTIVE_SOURCE_REVISION="\$RESOLVED_SHA"/);
 });
 
 test("FE-04 previews compose provisionally and launch trust stays authoritative", async () => {
