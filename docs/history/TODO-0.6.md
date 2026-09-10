@@ -1,7 +1,7 @@
 # Localmotive 0.6 — audit remediation TODO
 
 **Target:** `0.6.0` stabilization release  
-**Status:** Planning complete; implementation in progress — Package 7 (responsive operations, parser and transfer bounds)  
+**Status:** Planning complete; implementation in progress — Package 8 (delivery sequencing and truthful verifiers)  
 **Source:** [localmotive-comprehensive-audit.md](./localmotive-comprehensive-audit.md)
 **Audited source SHA:** `e530371b056cd8e049c2246dbb151aa407bf359f`  
 **Release baseline reviewed by the audit:** `v0.5.0`, source `a4b7127f739f7420232d9b6f63da693d39128d0b`  
@@ -36,7 +36,7 @@ Owner: `sato942` (accountable maintainer). Implementation and evidence productio
 | 4 | Bounded and cancellable tuning (MT-03, MT-04, RT-03) | Implementation complete; unit-verified (commit `1eaa476`); packaged Windows cancellation evidence open in G-04/G-05 |
 | 5 | Benchmark protocol, export privacy and failure records (MT-01, MT-02, MT-12) | Implementation complete; unit-verified (commit `9d4c36c`); packaged b10816 acceptance open in G-04/G-05 |
 | 6 | Model, runtime and operation ownership (FE-01, FE-02, FE-03, FE-05, FE-07, FE-16, MT-05) | Implementation complete; unit-verified (commits `bb9a5ab`, `411c32c`, `0045cb6`, `6da40d8`, `7d4a514`); packaged UI scenarios open in G-04 |
-| 7 | Responsive operations, parser and transfer bounds (IPC-01, FE-04, RT-05, RT-06, DC-02, DC-08, DC-12) | Not started |
+| 7 | Responsive operations, parser and transfer bounds (IPC-01, FE-04, RT-05, RT-06, DC-02, DC-08, DC-12) | Implementation complete; unit-verified; packaged items open in G-04/G-05/G-06 |
 | 8 | Delivery sequencing and truthful verifiers (GH-01..GH-06, GH-10, QD-02, QD-03) | Not started |
 | 9 | Secured local transport (MT-06) | Not started |
 | 10 | Measurement identity, calibration and ranking (MT-07..MT-11, MT-13..MT-15, FE-06, FE-17) | Not started |
@@ -274,23 +274,23 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Apply runtime input and traversal bounds before consuming untrusted data**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (`32770d2`) · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit RT-05](./localmotive-comprehensive-audit.md#rt-05)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src-tauri/src/runtime.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/runtime.rs)
 
 **Implementation**
 
-- [ ] **V06-RT-05.I1** — Reuse a bounded streaming response-body reader for runtime catalog success and error statuses, including HTTP 403, enforcing the 2 MiB limit before retaining or formatting oversized content. **Trace:** [Audit RT-05](./localmotive-comprehensive-audit.md#rt-05).
-- [ ] **V06-RT-05.I2** — Open discovered runtime.json records as regular protected files, check metadata from the opened handle, and read at most the 64 KiB limit plus one detection byte before parsing. **Trace:** [Audit RT-05](./localmotive-comprehensive-audit.md#rt-05).
-- [ ] **V06-RT-05.I3** — Count every visited filesystem entry, including empty directories, during managed-install collection; add a bounded traversal depth and reject excessive work before growing the pending traversal without limit. **Trace:** [Audit RT-05](./localmotive-comprehensive-audit.md#rt-05).
-- [ ] **V06-RT-05.I4** — Preserve typed failure categories, compiled installation verification, and useful bounded error messages; do not confuse the HTTP timeout or final payload validation with allocation and traversal limits. **Trace:** [Audit RT-05](./localmotive-comprehensive-audit.md#rt-05).
+- [x] **V06-RT-05.I1** — Reuse a bounded streaming response-body reader for runtime catalog success and error statuses, including HTTP 403, enforcing the 2 MiB limit before retaining or formatting oversized content. **Trace:** [Audit RT-05](./localmotive-comprehensive-audit.md#rt-05).
+- [x] **V06-RT-05.I2** — Open discovered runtime.json records as regular protected files, check metadata from the opened handle, and read at most the 64 KiB limit plus one detection byte before parsing. **Trace:** [Audit RT-05](./localmotive-comprehensive-audit.md#rt-05).
+- [x] **V06-RT-05.I3** — Count every visited filesystem entry, including empty directories, during managed-install collection; add a bounded traversal depth and reject excessive work before growing the pending traversal without limit. **Trace:** [Audit RT-05](./localmotive-comprehensive-audit.md#rt-05).
+- [x] **V06-RT-05.I4** — Preserve typed failure categories, compiled installation verification, and useful bounded error messages; do not confuse the HTTP timeout or final payload validation with allocation and traversal limits. **Trace:** [Audit RT-05](./localmotive-comprehensive-audit.md#rt-05).
 
 **Verification**
 
-- [ ] **V06-RT-05.V1** — Serve chunked HTTP 403 bodies at the configured byte limit and one byte beyond it; assert bounded retained data, early oversized-body rejection, and normal handling of a small rate-limit response. **Trace:** [Audit RT-05](./localmotive-comprehensive-audit.md#rt-05).
-- [ ] **V06-RT-05.V2** — Inspect an oversized sparse runtime.json record and exact-boundary valid/malformed records; verify that discovery cannot allocate the entire oversized file before rejection. **Trace:** [Audit RT-05](./localmotive-comprehensive-audit.md#rt-05).
-- [ ] **V06-RT-05.V3** — Build trees with excessive empty directories and excessive nesting, plus valid boundary inventories; assert bounded traversal and unchanged reparse/non-regular-entry rejection. **Trace:** [Audit RT-05](./localmotive-comprehensive-audit.md#rt-05).
+- [x] **V06-RT-05.V1** — Serve chunked HTTP 403 bodies at the configured byte limit and one byte beyond it; assert bounded retained data, early oversized-body rejection, and normal handling of a small rate-limit response. **Trace:** [Audit RT-05](./localmotive-comprehensive-audit.md#rt-05).
+- [x] **V06-RT-05.V2** — Inspect an oversized sparse runtime.json record and exact-boundary valid/malformed records; verify that discovery cannot allocate the entire oversized file before rejection. **Trace:** [Audit RT-05](./localmotive-comprehensive-audit.md#rt-05).
+- [x] **V06-RT-05.V3** — Build trees with excessive empty directories and excessive nesting, plus valid boundary inventories; assert bounded traversal and unchanged reparse/non-regular-entry rejection. **Trace:** [Audit RT-05](./localmotive-comprehensive-audit.md#rt-05).
 
 **Complete when:** Every catalog-body and runtime-record path enforces its byte limit during reading, including error and discovery paths. Installed-tree verification bounds files, directories, and traversal depth with observable early rejection.
 
@@ -300,22 +300,22 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Separate runtime discovery from cancellable and coalesced content verification**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (`e8f94b4`) · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit RT-06](./localmotive-comprehensive-audit.md#rt-06)  
 **Prerequisites:** [V06-RT-01](#v06-rt-01), [V06-RT-04](#v06-rt-04)
 **Source touchpoints:** [src-tauri/src/runtime.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/runtime.rs), [src-tauri/src/lib.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/lib.rs)
 
 **Implementation**
 
-- [ ] **V06-RT-06.I1** — Use the corrected primary-root policy to make root lookup and cheap installation discovery independent of full payload hashing; expose discovery without prematurely asserting cryptographically verified status. **Trace:** [Audit RT-06](./localmotive-comprehensive-audit.md#rt-06).
-- [ ] **V06-RT-06.I2** — Move expensive content verification to blocking workers with cancellation checks and progress reporting, including preparatory work used by installation, description, selection, and managed health. **Trace:** [Audit RT-06](./localmotive-comprehensive-audit.md#rt-06).
-- [ ] **V06-RT-06.I3** — Coalesce simultaneous verification requests for the same installation and retain results through the verified-install lease, with invalidation tied to the lifetime and identity guarantees established for execution. **Trace:** [Audit RT-06](./localmotive-comprehensive-audit.md#rt-06).
-- [ ] **V06-RT-06.I4** — Instrument verification jobs and bytes hashed across listing, selection, and launch so repeated work is visible; never substitute mtime/size equality alone for compiled-content integrity checks. **Trace:** [Audit RT-06](./localmotive-comprehensive-audit.md#rt-06).
+- [x] **V06-RT-06.I1** — Use the corrected primary-root policy to make root lookup and cheap installation discovery independent of full payload hashing; expose discovery without prematurely asserting cryptographically verified status. **Trace:** [Audit RT-06](./localmotive-comprehensive-audit.md#rt-06).
+- [x] **V06-RT-06.I2** — Move expensive content verification to blocking workers with cancellation checks and progress reporting, including preparatory work used by installation, description, selection, and managed health. **Trace:** [Audit RT-06](./localmotive-comprehensive-audit.md#rt-06).
+- [x] **V06-RT-06.I3** — Coalesce simultaneous verification requests for the same installation and retain results through the verified-install lease, with invalidation tied to the lifetime and identity guarantees established for execution. **Trace:** [Audit RT-06](./localmotive-comprehensive-audit.md#rt-06).
+- [x] **V06-RT-06.I4** — Instrument verification jobs and bytes hashed across listing, selection, and launch so repeated work is visible; never substitute mtime/size equality alone for compiled-content integrity checks. **Trace:** [Audit RT-06](./localmotive-comprehensive-audit.md#rt-06).
 
 **Verification**
 
-- [ ] **V06-RT-06.V1** — Assert that root lookup performs no full content scan and that simultaneous requests for one installation share a verification job without incorrectly sharing work across different installations. **Trace:** [Audit RT-06](./localmotive-comprehensive-audit.md#rt-06).
-- [ ] **V06-RT-06.V2** — Cancel a long verification operation and assert prompt worker termination and a truthful unverified/cancelled result; verify that changed content cannot inherit a stale verified label. **Trace:** [Audit RT-06](./localmotive-comprehensive-audit.md#rt-06).
+- [x] **V06-RT-06.V1** — Assert that root lookup performs no full content scan and that simultaneous requests for one installation share a verification job without incorrectly sharing work across different installations. **Trace:** [Audit RT-06](./localmotive-comprehensive-audit.md#rt-06).
+- [x] **V06-RT-06.V2** — Cancel a long verification operation and assert prompt worker termination and a truthful unverified/cancelled result; verify that changed content cannot inherit a stale verified label. **Trace:** [Audit RT-06](./localmotive-comprehensive-audit.md#rt-06).
 - [ ] **V06-RT-06.V3** — Measure bytes hashed, job counts, and elapsed time for listing, selecting, and launching on a representative supported Windows host with all seven backends installed; record the environment and results. **Trace:** [Audit RT-06](./localmotive-comprehensive-audit.md#rt-06).
 
 **Complete when:** Cheap root/discovery operations no longer hash every installed payload, and concurrent equivalent verification work is coalesced. Expensive verification remains cryptographically sound, reports progress, and responds to cancellation within its documented bound.
@@ -432,23 +432,23 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Support complete downloads when servers ignore byte ranges**
 
-**Status:** Not started · **Priority:** High · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (`998a4d6`, `c57fa64`, `d30c22e`) · **Priority:** High · **Owner:** sato942  
 **Audit trace:** [Audit DC-02](./localmotive-comprehensive-audit.md#dc-02)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src-tauri/src/download.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/download.rs)
 
 **Implementation**
 
-- [ ] **V06-DC-02.I1** — Introduce an explicit sequential whole-response transfer path when the probe establishes that Range is ignored, using the complete expected object size rather than the 8 MiB ranged-request span. **Trace:** [Audit DC-02](./localmotive-comprehensive-audit.md#dc-02).
-- [ ] **V06-DC-02.I2** — Retain a bounded streaming buffer and read or idle deadline for the sequential path; validate the full expected length and mandatory final SHA-256 before publication. **Trace:** [Audit DC-02](./localmotive-comprehensive-audit.md#dc-02).
-- [ ] **V06-DC-02.I3** — Restart non-range transfers from zero after interruption or retry, and ensure misleading Accept-Ranges headers cannot cause unsafe reuse of a partially downloaded object. **Trace:** [Audit DC-02](./localmotive-comprehensive-audit.md#dc-02).
-- [ ] **V06-DC-02.I4** — Keep exact Content-Range, remote-validator, response-length, and overrun checks on the existing ranged path; do not weaken parallel integrity checks to accommodate HTTP 200. **Trace:** [Audit DC-02](./localmotive-comprehensive-audit.md#dc-02).
+- [x] **V06-DC-02.I1** — Introduce an explicit sequential whole-response transfer path when the probe establishes that Range is ignored, using the complete expected object size rather than the 8 MiB ranged-request span. **Trace:** [Audit DC-02](./localmotive-comprehensive-audit.md#dc-02).
+- [x] **V06-DC-02.I2** — Retain a bounded streaming buffer and read or idle deadline for the sequential path; validate the full expected length and mandatory final SHA-256 before publication. **Trace:** [Audit DC-02](./localmotive-comprehensive-audit.md#dc-02).
+- [x] **V06-DC-02.I3** — Restart non-range transfers from zero after interruption or retry, and ensure misleading Accept-Ranges headers cannot cause unsafe reuse of a partially downloaded object. **Trace:** [Audit DC-02](./localmotive-comprehensive-audit.md#dc-02).
+- [x] **V06-DC-02.I4** — Keep exact Content-Range, remote-validator, response-length, and overrun checks on the existing ranged path; do not weaken parallel integrity checks to accommodate HTTP 200. **Trace:** [Audit DC-02](./localmotive-comprehensive-audit.md#dc-02).
 
 **Verification**
 
-- [ ] **V06-DC-02.V1** — Extend the existing 16 KiB no-range regression with 8 MiB+1 and a realistic larger fixture; test HTTP 200 with both Content-Length and chunked response bodies. **Trace:** [Audit DC-02](./localmotive-comprehensive-audit.md#dc-02).
-- [ ] **V06-DC-02.V2** — Test cancellation, stalled reads, truncated bodies, retry from zero, misleading Accept-Ranges, excess bytes, and incorrect digests against a local server. **Trace:** [Audit DC-02](./localmotive-comprehensive-audit.md#dc-02).
-- [ ] **V06-DC-02.V3** — Re-run parallel range, resume-identity, and checksum regressions, and verify a runtime-artifact caller remains compatible because runtime and model transfers share this downloader. **Trace:** [Audit DC-02](./localmotive-comprehensive-audit.md#dc-02).
+- [x] **V06-DC-02.V1** — Extend the existing 16 KiB no-range regression with 8 MiB+1 and a realistic larger fixture; test HTTP 200 with both Content-Length and chunked response bodies. **Trace:** [Audit DC-02](./localmotive-comprehensive-audit.md#dc-02).
+- [x] **V06-DC-02.V2** — Test cancellation, stalled reads, truncated bodies, retry from zero, misleading Accept-Ranges, excess bytes, and incorrect digests against a local server. **Trace:** [Audit DC-02](./localmotive-comprehensive-audit.md#dc-02).
+- [x] **V06-DC-02.V3** — Re-run parallel range, resume-identity, and checksum regressions, and verify a runtime-artifact caller remains compatible because runtime and model transfers share this downloader. **Trace:** [Audit DC-02](./localmotive-comprehensive-audit.md#dc-02).
 
 **Complete when:** A correct range-ignoring response larger than 8 MiB completes with the expected bytes and digest. Interrupted no-range downloads restart safely, while malformed ranged responses and checksum mismatches remain rejected.
 
@@ -588,23 +588,23 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Bound GGUF allocations and parser work while keeping reads responsive**
 
-**Status:** Not started · **Priority:** High · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (`4e5531c`) · **Priority:** High · **Owner:** sato942  
 **Audit trace:** [Audit DC-08](./localmotive-comprehensive-audit.md#dc-08)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src-tauri/src/gguf.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/gguf.rs), [src-tauri/src/lib.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/lib.rs), [src-tauri/src/artifact.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/artifact.rs)
 
 **Implementation**
 
-- [ ] **V06-DC-08.I1** — Introduce explicit limits for KV count, string/key length, aggregate retained bytes/elements, and total parser work across nested values; enforce budgets before allocation rather than relying only on the 256 MiB input limit. **Trace:** [Audit DC-08](./localmotive-comprehensive-audit.md#dc-08).
-- [ ] **V06-DC-08.I2** — Skip irrelevant fixed-size arrays using checked byte counts, stream-discard unneeded strings, and avoid allocating captured-value vectors when capture is false; retain clear truncation metadata for supported summaries. **Trace:** [Audit DC-08](./localmotive-comprehensive-audit.md#dc-08).
-- [ ] **V06-DC-08.I3** — Use buffered file reads and stack arrays for fixed-width primitives, validate remaining file bytes early, and avoid unnecessary cloning of retained metadata. **Trace:** [Audit DC-08](./localmotive-comprehensive-audit.md#dc-08).
-- [ ] **V06-DC-08.I4** — Move synchronous GGUF parsing into cancellable background work and apply a defined budget across artifact inspection so multiple shards cannot create unbounded repeated work. **Trace:** [Audit DC-08](./localmotive-comprehensive-audit.md#dc-08).
+- [x] **V06-DC-08.I1** — Introduce explicit limits for KV count, string/key length, aggregate retained bytes/elements, and total parser work across nested values; enforce budgets before allocation rather than relying only on the 256 MiB input limit. **Trace:** [Audit DC-08](./localmotive-comprehensive-audit.md#dc-08).
+- [x] **V06-DC-08.I2** — Skip irrelevant fixed-size arrays using checked byte counts, stream-discard unneeded strings, and avoid allocating captured-value vectors when capture is false; retain clear truncation metadata for supported summaries. **Trace:** [Audit DC-08](./localmotive-comprehensive-audit.md#dc-08).
+- [x] **V06-DC-08.I3** — Use buffered file reads and stack arrays for fixed-width primitives, validate remaining file bytes early, and avoid unnecessary cloning of retained metadata. **Trace:** [Audit DC-08](./localmotive-comprehensive-audit.md#dc-08).
+- [x] **V06-DC-08.I4** — Move synchronous GGUF parsing into cancellable background work and apply a defined budget across artifact inspection so multiple shards cannot create unbounded repeated work. **Trace:** [Audit DC-08](./localmotive-comprehensive-audit.md#dc-08).
 
 **Verification**
 
-- [ ] **V06-DC-08.V1** — Add deterministic resource regressions for short files declaring giant strings, many tiny KVs, wide nested arrays, noncaptured tokenizer arrays, oversized keys, and counts just beyond each limit. **Trace:** [Audit DC-08](./localmotive-comprehensive-audit.md#dc-08).
-- [ ] **V06-DC-08.V2** — Test files shortened during parsing and cancellation during large summaries or multi-shard inspection; assert prompt errors and preserved UI responsiveness. **Trace:** [Audit DC-08](./localmotive-comprehensive-audit.md#dc-08).
-- [ ] **V06-DC-08.V3** — Fuzz malformed/truncated headers with explicit allocation/work budgets, and measure representative valid headers to ensure useful metadata and header-only behavior remain intact. **Trace:** [Audit DC-08](./localmotive-comprehensive-audit.md#dc-08).
+- [x] **V06-DC-08.V1** — Add deterministic resource regressions for short files declaring giant strings, many tiny KVs, wide nested arrays, noncaptured tokenizer arrays, oversized keys, and counts just beyond each limit. **Trace:** [Audit DC-08](./localmotive-comprehensive-audit.md#dc-08).
+- [x] **V06-DC-08.V2** — Test files shortened during parsing and cancellation during large summaries or multi-shard inspection; assert prompt errors and preserved UI responsiveness. **Trace:** [Audit DC-08](./localmotive-comprehensive-audit.md#dc-08).
+- [x] **V06-DC-08.V3** — Fuzz malformed/truncated headers with explicit allocation/work budgets, and measure representative valid headers to ensure useful metadata and header-only behavior remain intact. **Trace:** [Audit DC-08](./localmotive-comprehensive-audit.md#dc-08).
 
 **Complete when:** Malformed or excessive headers fail within documented allocation/work limits before disproportionate memory use. Valid summaries remain useful and explicitly indicate truncation, while long parsing work is cancellable without blocking the interface.
 
@@ -692,22 +692,22 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Order durable checkpoints and make checksum verification cancellable**
 
-**Status:** Not started · **Priority:** Low · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (`0720d41`) · **Priority:** Low · **Owner:** sato942  
 **Audit trace:** [Audit DC-12](./localmotive-comprehensive-audit.md#dc-12)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src-tauri/src/download.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/download.rs), [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx)
 
 **Implementation**
 
-- [ ] **V06-DC-12.I1** — Define the promised crash and power-loss recovery guarantees, then order partial-data durability before publishing resume checkpoints that claim those bytes are complete. **Trace:** [Audit DC-12](./localmotive-comprehensive-audit.md#dc-12).
-- [ ] **V06-DC-12.I2** — Choose documented byte/time checkpoint intervals that maintain the guarantee without syncing tiny sidecars unnecessarily; preserve the previous valid checkpoint when data or metadata persistence fails. **Trace:** [Audit DC-12](./localmotive-comprehensive-audit.md#dc-12).
-- [ ] **V06-DC-12.I3** — Add cancellation checks and progress reporting to both existing-file and completed-part SHA-256 verification, preserving recoverable state when Keep & stop is requested during hashing. **Trace:** [Audit DC-12](./localmotive-comprehensive-audit.md#dc-12).
+- [x] **V06-DC-12.I1** — Define the promised crash and power-loss recovery guarantees, then order partial-data durability before publishing resume checkpoints that claim those bytes are complete. **Trace:** [Audit DC-12](./localmotive-comprehensive-audit.md#dc-12).
+- [x] **V06-DC-12.I2** — Choose documented byte/time checkpoint intervals that maintain the guarantee without syncing tiny sidecars unnecessarily; preserve the previous valid checkpoint when data or metadata persistence fails. **Trace:** [Audit DC-12](./localmotive-comprehensive-audit.md#dc-12).
+- [x] **V06-DC-12.I3** — Add cancellation checks and progress reporting to both existing-file and completed-part SHA-256 verification, preserving recoverable state when Keep & stop is requested during hashing. **Trace:** [Audit DC-12](./localmotive-comprehensive-audit.md#dc-12).
 - [ ] **V06-DC-12.I4** — Align frontend verification controls with backend cancellation semantics and measure the shared write-mutex/seek path before considering positional-write optimization. **Trace:** [Audit DC-12](./localmotive-comprehensive-audit.md#dc-12).
 
 **Verification**
 
-- [ ] **V06-DC-12.V1** — Inject data-write, synchronization, checkpoint-publication, and recovery failures; assert that resumed progress never knowingly claims bytes outside the selected durability guarantee. **Trace:** [Audit DC-12](./localmotive-comprehensive-audit.md#dc-12).
-- [ ] **V06-DC-12.V2** — Cancel large existing-file and final-part verification, require prompt control return, and verify that retry safely resumes or re-verifies without incorrectly reporting completion. **Trace:** [Audit DC-12](./localmotive-comprehensive-audit.md#dc-12).
+- [x] **V06-DC-12.V1** — Inject data-write, synchronization, checkpoint-publication, and recovery failures; assert that resumed progress never knowingly claims bytes outside the selected durability guarantee. **Trace:** [Audit DC-12](./localmotive-comprehensive-audit.md#dc-12).
+- [x] **V06-DC-12.V2** — Cancel large existing-file and final-part verification, require prompt control return, and verify that retry safely resumes or re-verifies without incorrectly reporting completion. **Trace:** [Audit DC-12](./localmotive-comprehensive-audit.md#dc-12).
 - [ ] **V06-DC-12.V3** — Distinguish ordinary process-crash testing from target-environment OS-crash/power-loss validation; record throughput for 1/4/8 connections on available HDD, SATA SSD, and NVMe targets before optimizing. **Trace:** [Audit DC-12](./localmotive-comprehensive-audit.md#dc-12).
 
 **Complete when:** Checkpoint ordering and recovery behavior match the documented durability guarantee, with no silent successful checkpoint after failed required data persistence. Verification is visibly progressive and cancellable, and stopping never promotes an unverified object or unnecessarily loses recoverable work.
@@ -1193,22 +1193,22 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Coalesce command previews and move expensive native validation off the synchronous edit path**
 
-**Status:** Not started · **Priority:** High · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (`c23a20f`) · **Priority:** High · **Owner:** sato942  
 **Audit trace:** [Audit FE-04](./localmotive-comprehensive-audit.md#fe-04)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx), [src-tauri/src/lib.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/lib.rs), [src-tauri/src/core.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/core.rs)
 
 **Implementation**
 
-- [ ] **V06-FE-04.I1** — Debounce or coalesce profile-edit previews so rapid character changes do not dispatch complete prepare_launch work for every intermediate form value. **Trace:** [Audit FE-04](./localmotive-comprehensive-audit.md#fe-04).
-- [ ] **V06-FE-04.I2** — Separate cheap command composition from authoritative runtime trust, artifact, path and argument validation; describe provisional previews honestly and retain all required checks at actual launch. **Trace:** [Audit FE-04](./localmotive-comprehensive-audit.md#fe-04).
-- [ ] **V06-FE-04.I3** — Move necessary expensive runtime probing and filesystem verification into a cancellable background operation, preventing synchronous preview work from blocking interface interaction. **Trace:** [Audit FE-04](./localmotive-comprehensive-audit.md#fe-04).
-- [ ] **V06-FE-04.I4** — Cache runtime capability/artifact evidence only under explicit safe identity and freshness rules; invalidate it when executable/model identity changes rather than treating old evidence as current. **Trace:** [Audit FE-04](./localmotive-comprehensive-audit.md#fe-04).
-- [ ] **V06-FE-04.I5** — Discard preview results for obsolete form revisions, coordinating with FE-03, and avoid native work for purely human-facing changes such as the profile display name when arguments are unchanged. **Trace:** [Audit FE-04](./localmotive-comprehensive-audit.md#fe-04).
+- [x] **V06-FE-04.I1** — Debounce or coalesce profile-edit previews so rapid character changes do not dispatch complete prepare_launch work for every intermediate form value. **Trace:** [Audit FE-04](./localmotive-comprehensive-audit.md#fe-04).
+- [x] **V06-FE-04.I2** — Separate cheap command composition from authoritative runtime trust, artifact, path and argument validation; describe provisional previews honestly and retain all required checks at actual launch. **Trace:** [Audit FE-04](./localmotive-comprehensive-audit.md#fe-04).
+- [x] **V06-FE-04.I3** — Move necessary expensive runtime probing and filesystem verification into a cancellable background operation, preventing synchronous preview work from blocking interface interaction. **Trace:** [Audit FE-04](./localmotive-comprehensive-audit.md#fe-04).
+- [x] **V06-FE-04.I4** — Cache runtime capability/artifact evidence only under explicit safe identity and freshness rules; invalidate it when executable/model identity changes rather than treating old evidence as current. **Trace:** [Audit FE-04](./localmotive-comprehensive-audit.md#fe-04).
+- [x] **V06-FE-04.I5** — Discard preview results for obsolete form revisions, coordinating with FE-03, and avoid native work for purely human-facing changes such as the profile display name when arguments are unchanged. **Trace:** [Audit FE-04](./localmotive-comprehensive-audit.md#fe-04).
 
 **Verification**
 
-- [ ] **V06-FE-04.V1** — Instrument probe/job counts while rapidly editing a profile; assert a bounded coalesced request count and an exact command corresponding only to the final accepted form. **Trace:** [Audit FE-04](./localmotive-comprehensive-audit.md#fe-04).
+- [x] **V06-FE-04.V1** — Instrument probe/job counts while rapidly editing a profile; assert a bounded coalesced request count and an exact command corresponding only to the final accepted form. **Trace:** [Audit FE-04](./localmotive-comprehensive-audit.md#fe-04).
 - [ ] **V06-FE-04.V2** — Simulate slow version/help probes and verify input, navigation and cancellation remain responsive in the packaged Windows binary; record actual observations rather than assumed timing. **Trace:** [Audit FE-04](./localmotive-comprehensive-audit.md#fe-04).
 - [ ] **V06-FE-04.V3** — Tamper with or replace a runtime/artifact after cached preview evidence and assert actual launch still performs and enforces the authoritative trust checks. **Trace:** [Audit FE-04](./localmotive-comprehensive-audit.md#fe-04).
 
@@ -1546,23 +1546,23 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Make server startup an observable, cancellable background operation**
 
-**Status:** Not started · **Priority:** High · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (`66a18c3`) · **Priority:** High · **Owner:** sato942  
 **Audit trace:** [Audit IPC-01](./localmotive-comprehensive-audit.md#ipc-01)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src-tauri/src/lib.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/lib.rs), [src-tauri/src/proc.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/proc.rs), [src-tauri/src/health.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/health.rs), [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx), [src/model.ts](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/model.ts)
 
 **Implementation**
 
-- [ ] **V06-IPC-01.I1** — Define an operation ID and explicit starting, running, stopping, failed and cancelled states. Reserve ownership under a short lock and publish correlated progress before launching. **Trace:** [Audit IPC-01](./localmotive-comprehensive-audit.md#ipc-01).
-- [ ] **V06-IPC-01.I2** — Move blocking filesystem, hashing, subprocess and socket work to a blocking worker. Keep the child handle and cancellation signal reachable by Stop while readiness is pending; do not hold the server mutex across the 600-second health wait. **Trace:** [Audit IPC-01](./localmotive-comprehensive-audit.md#ipc-01).
-- [ ] **V06-IPC-01.I3** — Commit completion only if the operation ID still owns the slot. On cancellation, failure or window close, terminate and reap the contained process tree before reporting a terminal state or allowing a replacement start. **Trace:** [Audit IPC-01](./localmotive-comprehensive-audit.md#ipc-01).
-- [ ] **V06-IPC-01.I4** — Classify every synchronous command named in the audit by actual cost, including preview, inspection, health, scanning, GGUF, preflight, legacy benchmark and replay. Move expensive work off both the Tauri main thread and async executor without weakening backend validation. **Trace:** [Audit IPC-01](./localmotive-comprehensive-audit.md#ipc-01).
+- [x] **V06-IPC-01.I1** — Define an operation ID and explicit starting, running, stopping, failed and cancelled states. Reserve ownership under a short lock and publish correlated progress before launching. **Trace:** [Audit IPC-01](./localmotive-comprehensive-audit.md#ipc-01).
+- [x] **V06-IPC-01.I2** — Move blocking filesystem, hashing, subprocess and socket work to a blocking worker. Keep the child handle and cancellation signal reachable by Stop while readiness is pending; do not hold the server mutex across the 600-second health wait. **Trace:** [Audit IPC-01](./localmotive-comprehensive-audit.md#ipc-01).
+- [x] **V06-IPC-01.I3** — Commit completion only if the operation ID still owns the slot. On cancellation, failure or window close, terminate and reap the contained process tree before reporting a terminal state or allowing a replacement start. **Trace:** [Audit IPC-01](./localmotive-comprehensive-audit.md#ipc-01).
+- [x] **V06-IPC-01.I4** — Classify every synchronous command named in the audit by actual cost, including preview, inspection, health, scanning, GGUF, preflight, legacy benchmark and replay. Move expensive work off both the Tauri main thread and async executor without weakening backend validation. **Trace:** [Audit IPC-01](./localmotive-comprehensive-audit.md#ipc-01).
 
 **Verification**
 
 - [ ] **V06-IPC-01.V1** — Use a benign fixture that binds the expected port but never becomes ready. In the packaged Windows application, verify responsive controls and starting status, then measure Stop-to-process-exit latency against a documented deadline. **Trace:** [Audit IPC-01](./localmotive-comprehensive-audit.md#ipc-01).
 - [ ] **V06-IPC-01.V2** — Exercise slow --help, unreadable GGUF, early child exit and window close during startup. Confirm child/listener cleanup, truthful terminal state and a successful subsequent start. **Trace:** [Audit IPC-01](./localmotive-comprehensive-audit.md#ipc-01).
-- [ ] **V06-IPC-01.V3** — Force a late completion from an older operation after a new request and prove it cannot publish or clear the new operation's state. **Trace:** [Audit IPC-01](./localmotive-comprehensive-audit.md#ipc-01).
+- [x] **V06-IPC-01.V3** — Force a late completion from an older operation after a new request and prove it cannot publish or clear the new operation's state. **Trace:** [Audit IPC-01](./localmotive-comprehensive-audit.md#ipc-01).
 
 **Complete when:** Start, status and Stop remain usable throughout loading; cleanup and latency evidence are attached for the packaged Windows candidate. No expensive command relies on merely adding async around blocking work or retaining a global lock for the operation lifetime.
 
@@ -3021,6 +3021,55 @@ This document was mechanically checked for complete mapping of the 72 audit IDs 
 ## Verification ledger (v0.6 implementation)
 
 Closure records implement [V06-G-02](#v06-g-02). One record per finding package; each record names the pre-fix reproduction, the fix commit, the post-fix command, and the residual limits. Checkbox states in the finding packages are updated together with these records.
+
+### V06-DC-02 — range-ignoring transfers complete exactly (commits `998a4d6`, `c57fa64`, `d30c22e`)
+
+- Status: Implemented; unit-verified; runtime-artifact caller shares the downloader and the full download suite passes.
+- Regression before fix (mutation proof): mutation AJ restored the 8 MiB request-span cap; `dc02_a_range_ignoring_server_completes_files_larger_than_the_request_span` then FAILED. Mutation AK removed the retry restart-from-zero; `dc02_an_interrupted_no_range_transfer_retries_from_zero` then FAILED.
+- Verification after fix: `cargo test dc02` — three tests: 8 MiB+1 body with Content-Length, chunked 200 body, truncated stream retrying from byte 0; `cargo test download` 49/49.
+- Residual limits: the transfer path is unchanged for ranged responses (exact Content-Range, validators, response-length and overrun checks all remain); packaged large-file acceptance stays in V06-G-04.
+
+### V06-DC-08 — bounded GGUF parsing (commit `4e5531c`)
+
+- Status: Implemented; unit-verified; packaged responsiveness remains in V06-G-04/G-05.
+- Regression before fix (mutation proof): mutation AL removed the declared-string length cap; `dc08_a_short_file_declaring_a_giant_string_fails_before_allocating` then FAILED. Mutation AM removed the kv-count cap; `dc08_kv_key_and_count_budget_failures_are_deterministic` then FAILED. Mutation AN removed the depth cap; `dc08_arrays_are_skipped_by_shape_and_bounded_by_element_and_depth_budgets` then FAILED.
+- Verification after fix: `cargo test gguf` — 12/12 including budget boundaries at exact limits, oversized keys, non-captured tokenizer rows stream-discarded, nested-array depth rejection, cancel-on-read and truncated prefixes fuzzed through 64 byte cuts.
+- Residual limits: limits are library constants with a test-only `ParseLimits` seam; production uses `ParseLimits::default()` (kv 1,000,000 / key 16 KiB / string 64 KiB / retained 2 MiB / work 64M units / array 16M elements).
+
+### V06-DC-12 — ordered durable checkpoints (commit `0720d41`)
+
+- Status: Implemented; unit-verified; crash/power-loss and storage-class throughput evidence stays in V06-G-06.
+- Regression before fix (mutation proof): mutation BA swapped checkpoint order (sidecar before data sync); `dc12_checkpoint_publication_is_ordered_after_a_data_sync` then FAILED. Mutation BB dropped the cancel flag from existing-file verification; `dc12_cancelled_existing_file_verification_keeps_the_file_and_retry_reverifies` then FAILED.
+- Verification after fix: `cargo test download` 49/49; cancelled verification keeps the file, starts no transfer, and the retry re-verifies to completion; progress samples stay monotonic through the verification tail.
+- Residual limits: the documented guarantee covers process crash (resume to last checkpoint) and OS crash/power loss (bytes past the last completed checkpoint are re-fetched; the sidecar never claims them). Throughput measurements for 1/4/8 connections across storage classes were not run here (V06-G-06).
+
+### V06-RT-05 — bounded runtime inputs (commits `32770d2`, `8d2de6c`)
+
+- Status: Implemented; unit-verified; no packaged item.
+- Regression before fix (mutation proof): mutation AO restored the unbounded 403 `.text()` read; `rt05_a_chunked_403_body_at_and_beyond_the_limit_is_bounded` then FAILED. Mutation AP disabled the manifest limits; `rt05_sparse_and_boundary_runtime_records_are_bounded` then FAILED. Mutation AQ disabled the traversal depth budget; `rt05_discovery_rejects_excessive_trees_and_keeps_valid_boundaries` then FAILED.
+- Verification after fix: `cargo test rt05` — 403 bodies chunked at exactly 2 MiB (short excerpt, message < 1 KiB) and 2 MiB+1 (BodyTooLarge while reading), small rate-limit 403 keeps RateLimited; sparse 16 MiB record rejected from handle metadata, 64 KiB boundary parses, +1 byte rejected, malformed rejected; traversal boundaries count empty directories and reject both over-entry and over-depth trees.
+- Residual limits: error excerpts are capped at 400 characters; the rate-limit substring check operates on the bounded body.
+
+### V06-RT-06 — cheap discovery, coalesced verification (commit `e8f94b4`)
+
+- Status: Implemented; unit-verified; host measurement with all seven backends is V06-G-06.
+- Regression before fix (mutation proof): mutation AR restored hashing during discovery; `managed_runtime_listing_shows_local_installs_without_a_catalog_fetch` then FAILED. Mutation AU made discovery claim verified content; the same test FAILED. Mutation AS removed the cancel check; `rt06_cancellation_and_progress_report_truthfully_during_verification` FAILED. Mutation AT stopped reporting per-file progress; the same test FAILED.
+- Verification after fix: `cargo test rt06` — simultaneous verifications share one job (follower never runs the compute closure), a different key never coalesces, cancellation reports truthfully and is counted, changed bytes fail content verification; listing asserts bytes-hashed stays flat and records stay explicitly unverified; `runtime_verification_stats` exposes jobs, coalesces, bytes, and cancellations.
+- Residual limits: in-flight coalescing only; completed results are never cached, so a stale verified label cannot outlive its bytes (each selection/launch re-verifies).
+
+### V06-IPC-01 — observable cancellable startup (commit `66a18c3`)
+
+- Status: Implemented; unit-verified; packaged Stop-latency and slow-probe responsiveness stay in V06-G-04/G-05. Documented deadline: Stop-to-exit 10 s (`STARTUP_STOP_DEADLINE_SECS`).
+- Regression before fix (mutation proof): mutation AV made `inspect_runtime` synchronous again; `ipc01_expensive_commands_run_on_blocking_workers` then FAILED. Mutation AW ignored cancellation in the ownership predicate; `ipc01_startup_commit_requires_the_operation_to_still_own_the_slot` FAILED. Mutation AX committed without ownership; `ipc01_startup_never_holds_the_server_lock_across_the_readiness_wait` FAILED.
+- Verification after fix: `cargo test ipc01` — 3/3; `cargo test` 469/469 at that commit. start_server reserves under a short lock, publishes the starting phase, waits cancellably on a worker with no server lock; only a current, un-cancelled, slot-owning operation publishes; every other outcome terminates and reaps; stop cancels the pending start and waits bounded; window close signals the worker and stops the child. scan_models, inspect_runtime, check_runtime_health, preflight_model, legacy benchmark, replay, and GGUF reads all run blocking halves on workers.
+- Residual limits: `describe_runtime`, `preview_command`, `suggest_port`, `format_bytes`, and `download_eta` were classified as cheap and remain synchronous (describe_runtime reads manifests and sibling names; preview_command is now pure composition per FE-04).
+
+### V06-FE-04 — provisional previews off the edit path (commit `c23a20f`)
+
+- Status: Implemented; unit-verified; packaged slow-probe responsiveness stays in V06-G-05.
+- Regression before fix (mutation proof): mutation AY restored prepare_launch inside preview_command; the FE-04 release gate then FAILED. Mutation AZ dropped the profile arguments from composition; `fe04_provisional_command_composes_without_capabilities_and_validation_still_filters` FAILED.
+- Verification after fix: `cargo test fe04`; release gate asserts preview_command contains compose_provisional_command and no prepare_launch, while validate_launch_profile and start_server keep the authoritative path; the UI renders "Provisional command" with the enforcement statement.
+- Residual limits: the preview carries no capability filtering by design; the authoritative capability, artifact, and trust checks run at validation and launch. V1's probe-count instrumentation is satisfied by construction (zero probes on edit); packaged timing evidence stays in V06-G-05.
 
 ### V06-MT-05 — single managed-inference owner (commit `bb9a5ab`)
 
