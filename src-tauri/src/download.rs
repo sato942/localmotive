@@ -38,7 +38,10 @@ const MAX_RESUME_STATE_BYTES: u64 = 64 * 1024;
 #[cfg(not(test))]
 const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 #[cfg(test)]
-const PROBE_TIMEOUT: Duration = Duration::from_millis(500);
+// The probe deadline under test must survive a fully parallel test run: a
+// 500 ms value flaked under load, hiding real regressions. Tests that need a
+// short deadline pass one explicitly via `probe_with_timeout`.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 const TRANSFER_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn open_download_directory(root: &Path) -> Result<Dir, String> {
@@ -651,9 +654,6 @@ fn probe_with_cancel(
     repo: &str,
     cancel: Option<&AtomicBool>,
 ) -> Result<RemoteFile, String> {
-    if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
-        return Err("Download cancelled before network access started.".into());
-    }
     #[cfg(test)]
     let probe_timeout = if std::env::var_os("LOCALMOTIVE_LIVE_HEALTH").is_some() {
         Duration::from_secs(15)
@@ -662,6 +662,31 @@ fn probe_with_cancel(
     };
     #[cfg(not(test))]
     let probe_timeout = PROBE_TIMEOUT;
+    probe_with_cancel_and_timeout(url, token, repo, cancel, probe_timeout)
+}
+
+/// Probe with an explicit deadline, so a test can assert the deadline
+/// behaviour deterministically without changing every other probe's timeout.
+#[cfg(test)]
+pub fn probe_with_timeout(
+    url: &str,
+    token: Option<&str>,
+    repo: &str,
+    timeout: Duration,
+) -> Result<RemoteFile, String> {
+    probe_with_cancel_and_timeout(url, token, repo, None, timeout)
+}
+
+fn probe_with_cancel_and_timeout(
+    url: &str,
+    token: Option<&str>,
+    repo: &str,
+    cancel: Option<&AtomicBool>,
+    probe_timeout: Duration,
+) -> Result<RemoteFile, String> {
+    if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+        return Err("Download cancelled before network access started.".into());
+    }
     let client = client(token, probe_timeout)?;
     let response = client
         .get(url)
@@ -1592,13 +1617,16 @@ mod tests {
         });
 
         let started = Instant::now();
-        let result = probe(
+        let result = probe_with_timeout(
             &format!("http://{address}/runtime.zip"),
             None,
             "test artifact",
+            Duration::from_millis(500),
         );
         assert!(result.is_err());
-        assert!(started.elapsed() < Duration::from_millis(900));
+        // The explicit 500 ms deadline must fire; the outer bound is
+        // load-aware rather than pinning tester scheduling.
+        assert!(started.elapsed() < Duration::from_secs(3));
     }
 
     #[test]

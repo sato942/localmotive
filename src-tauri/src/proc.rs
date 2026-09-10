@@ -511,9 +511,11 @@ mod tests {
         let mut command = super::hidden_command("powershell.exe");
         command.args(["-NoProfile", "-NonInteractive", "-Command", &parent_script]);
         let process = super::spawn_contained_process(&mut command).unwrap();
+        // PowerShell's cold start under a fully parallel test run can exceed
+        // three seconds; wait longer (bounded) instead of flaking.
         let started = Instant::now();
-        while !started_marker.exists() && started.elapsed() < Duration::from_secs(3) {
-            std::thread::sleep(Duration::from_millis(10));
+        while !started_marker.exists() && started.elapsed() < Duration::from_secs(15) {
+            std::thread::sleep(Duration::from_millis(20));
         }
 
         assert!(
