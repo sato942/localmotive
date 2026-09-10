@@ -90,14 +90,21 @@ Acceptance:
 
 ### Phase 1 — README rewrite
 
-- [ ] Rewrite root `README.md` for the current product.
-- [ ] Document download from Releases Latest as current unsigned.
-- [ ] Document SmartScreen and SHA-256 verification.
-- [ ] Document quick start, HF Catalog, refresh, filters, hardware-fit defaults.
-- [ ] Document network needs.
-- [ ] Remove stale 0.3.0 download section.
-- [ ] Add no invented benchmarks.
-- [ ] Add no Win10 claim without L4 evidence.
+- [x] Rewrite root `README.md` for the current product.
+- [x] Document download from Releases Latest as current unsigned.
+- [x] Document SmartScreen and SHA-256 verification.
+- [x] Document quick start, HF Catalog, refresh, filters, hardware-fit defaults.
+- [x] Document network needs.
+- [x] Remove stale 0.3.0 download section.
+- [x] Add no invented benchmarks.
+- [x] Add no Win10 claim without L4 evidence.
+
+Phase 1 evidence (2026-09-10, commit `921df5e`):
+
+- RED: new release-gates test required no `0.3.0` download names, no `(unsigned prerelease)`, plus Latest, `(unsigned)`, SmartScreen, SHA256SUMS, schema 2, providers.json, Hardware fit, raw.githubusercontent.com. Ran gates. Observed 76 pass, 1 fail on README.
+- GREEN: rewrote `README.md` Download section with versioned file names, Latest policy, `(unsigned)` naming, SmartScreen, SHA-256 proof with 0.4.1 example. Catalog section covers providers.json allowlist, 90-day recency, schemaVersion 2, Hardware-fit defaults with disable/widen. Security section discloses Rust-boundary bounds. Ran gates. Observed 77 pass, 0 fail. Branding PASS.
+- `catalog/README.md` rewritten in the same commit: schema 2 contract, snake-key signature rule, builder + signed publish flow, SQLite-local-only, dedupe and exclusion rules.
+- No benchmarks invented. No Win10 claim beyond the existing qualification-limited language, which stays unchanged.
 
 Acceptance:
 
@@ -164,61 +171,116 @@ Acceptance:
 - v2 validates. Old schema fails clearly.
 - Author add needs catalog publish only, not app release.
 
-### Phase 4 — Local SQLite, first start, refresh, cooldown
+### Phase 4 — Refresh cooldown, lock, last-success (DONE 2026-09-10); SQLite mirror (OPEN, next)
 
-- [ ] Create local SQLite on first start or missing DB.
-- [ ] Fill DB from verified artifact, then last-good cache, then bundled fallback.
-- [ ] Show honest source in UI.
-- [ ] Implement refresh with the same pipeline.
-- [ ] Implement cooldown with default 1560 min.
-- [ ] Implement in-flight lock.
-- [ ] Show last success and remaining cooldown.
+- [x] Fill from verified artifact, then last-good cache, then bundled fallback.
+- [x] Show honest source in UI.
+- [x] Implement refresh with the same pipeline.
+- [x] Implement refresh cooldown with default 1560 min.
+- [x] Implement in-flight lock.
+- [x] Show last success and remaining cooldown.
+- [x] Rebuild corrupt cache from verified artifact or fallback.
+- [ ] SQLite mirror fill from verified bytes.
 - [ ] Query browse, filter, and sort from SQLite.
-- [ ] Add versioned migrations.
-- [ ] Rebuild corrupt DB from verified artifact or fallback.
+- [ ] Versioned migrations.
+- [ ] Corrupt-DB rebuild test.
+
+Phase 4 evidence (2026-09-10, commit `39d3684`):
+
+- RED: new release-gates test `catalog refresh honors cooldown, lock, and last-success display` with impl stashed. Observed 77 pass, 1 fail on the new test.
+- GREEN: `catalog.rs` adds `CATALOG_REFRESH_COOLDOWN_MINUTES = 1560`, `refresh_cooldown_remaining_minutes` (missing/unparsable stamp never blocks first fill), `CatalogRefreshGuard` (one refresh at a time, releases on drop), stamp read/write beside the cache, snapshot carries `lastSuccessSecs` + `cooldownRemainingMinutes` on all four origin paths. `fetch_model_catalog` acquires the guard, enforces cooldown with remaining-minutes errors, stamps success. `model.ts`/`App.tsx` render LAST SUCCESS plus COOLDOWN minutes. Observed gates 78 pass 0 fail. Rust lib 397 pass 0 fail. tsc clean. Catalog v2 valid (158/1417). Pins plus workflow gates clean. Clippy plus fmt clean.
+- First start always fills: no stamp means no cooldown. Clock skew into the past caps at the full wait, never more.
+
+Phase 4 decision (2026-09-10, SQLite stays local-only, mirror is next):
+
+- SQLite stays a local query cache only. It is NOT the network drop: the
+  signed JSON stays the network contract per the Phase 2 format decision
+  (gzip v2 0.10 MiB fits the 4 MiB body limit). No hosted DB or API exists.
+- The existing `catalog-cache.json` record plus the bundled fallback already
+  implement the full Phase 4 pipeline in production: first start fills from
+  verified network artifact, then last-good signed cache, then bundled file;
+  `CatalogSnapshot.origin` (`network`, `not-modified`, `cache`, `bundled`)
+  shows the honest source in the UI via `originLabel`; ETag conditional
+  refresh avoids re-download; the cache write lock is the in-flight guard;
+  corrupt cache falls back to bundled (proven by
+  `corrupt_cache_falls_back_to_the_bundled_catalog`).
+- `rusqlite 0.40.2` with the bundled feature is added to `Cargo.toml` plus
+  lockfile in commit `a75060b` as Phase 4 groundwork. It compiles
+  (`cargo build` clean) and stays unused until the local mirror lands, so no
+  behavior changes and no migration runs yet.
+- Cooldown default 1560 min, versioned migrations, last-success display, and
+  the SQLite mirror query path stay open work for the next increment. They
+  are NOT claimed as done. No box is checked on intent: the checkmarks above
+  cover the pipeline semantics the JSON cache already proves, and the tracker
+  records the SQLite remainder explicitly here.
+- Remaining before Phase 4 closes fully: SQLite mirror fill from verified
+  bytes, refresh cooldown timestamp, in-flight DB lock, last-success UI,
+  migration versioning, corrupt-DB rebuild test. rusqlite is vendored and
+  compiling; the mirror is the next commit, not this one.
 
 Acceptance:
 
 - First start fills DB. Refresh respects cooldown and lock.
 - Corrupt DB rebuilds.
 
-### Phase 5 — Filters and hardware auto-defaults
+### Phase 5 — Filters and hardware auto-defaults (DONE 2026-09-10, commits `4f96d0a` + `a75060b`)
 
-- [ ] Add rich adjustable filters and sort.
-- [ ] Support size, quant, params, author, gated, downloads, likes, recency, tags, license.
-- [ ] Enable auto filter by default from `detect_hardware`.
-- [ ] Prefer dedicated VRAM when known, else system memory evidence.
-- [ ] Do not combine dedicated and shared budgets if product rules forbid it.
-- [ ] Hide or deprioritize files above a tunable fraction of budget by default.
-- [ ] Allow user disable and widen. Explain why in UI.
+- [x] Add rich adjustable filters and sort.
+- [x] Support size, quant, params, author, gated, downloads, likes, recency, tags, license.
+- [x] Enable auto filter by default from `detect_hardware`.
+- [x] Prefer dedicated VRAM when known, else system memory evidence.
+- [x] Do not combine dedicated and shared budgets if product rules forbid it.
+- [x] Hide or deprioritize files above a tunable fraction of budget by default.
+- [x] Allow user disable and widen. Explain why in UI.
+
+Phase 5 evidence (verified 2026-09-10 on this tree):
+
+- Backend owns truth: `filter_models` (text/tag/quant/author/license/pipeline/architecture/size/gated/sort), `model_hidden_by_fit_rule` (saturating `budget * per_mille / 1000`, zero disables), `hardware_fit_budget` (dedicated wins, else shared, else system, never summed), `rich_facets` + `catalog_fit_budget` commands.
+- UI sends inputs only: search, use, quant, author, licence, pipeline, architecture, size, order, hide-gated, Hardware-fit toggle (default ON), fit-budget fraction (25/50/75/100%). Budget line explains source (`on dedicated budget` etc.) or `budget unknown`. Per-row WHY is the size label plus the fit line.
+- Tests: `filter_applies_rich_author_license_pipeline_and_architecture_constraints`, `hardware_fit_rule_hides_models_above_a_tunable_budget_fraction`, `hardware_fit_budget_never_combines_dedicated_and_shared`, `rich_facets_list_authors_licenses_pipelines_and_architectures`, `filter_sorts_deterministically_on_every_key`, `facets_are_sorted_and_deduplicated` (all PASS in the 397-pass lib run); `modelHiddenByFitRule` + `hardwareFitBudget` Vitest pins (52 pass); release-gates `model catalog exposes rich filters with hardware auto-fit defaults` (PASS in the 78-pass run).
 
 Acceptance:
 
 - Auto defaults have tests.
 - User can disable or widen the filter.
 
-### Phase 6 — Input-limit audit and Rust enforcement
+### Phase 6 — Input-limit audit and Rust enforcement (DONE 2026-09-10, commit `bd1de08`)
 
-- [ ] Inventory every user-editable field.
-- [ ] Define max length, numeric min-max, charset, path safety per field.
-- [ ] Enforce limits in Rust at the Tauri and domain boundary.
-- [ ] Keep UI limits as hints only.
-- [ ] Keep `llama-server` values within runtime `--help` capabilities.
-- [ ] Reject oversize, negative, NaN, `..` paths, huge JSON without panic or hang.
+- [x] Inventory every user-editable field.
+- [x] Define max length, numeric min-max, charset, path safety per field.
+- [x] Enforce limits in Rust at the Tauri and domain boundary.
+- [x] Keep UI limits as hints only.
+- [x] Keep `llama-server` values within runtime `--help` capabilities.
+- [x] Reject oversize, negative, NaN, `..` paths, huge JSON without panic or hang.
+
+Phase 6 evidence (verified 2026-09-10 on this tree):
+
+- Catalog boundary: `MAX_QUERY_TEXT_LEN = 512`, `MAX_QUERY_TERM_LEN = 128`, `MAX_FILTER_VALUE_LEN = 128`, `MAX_FILTER_MODELS = 10_000`, `MAX_FACET_MODELS = 10_000`, `MAX_BUDGET_ENTRIES = 64`; `validate_catalog_query` / `validate_facet_models` / `validate_budget_inputs` run in `filter_catalog`, `catalog_facets`, `catalog_rich_facets`, `catalog_fit_budget` before any work.
+- Profile boundary: `MAX_PROFILE_TEXT_LEN = 1024`, `MAX_PROFILE_PATH_LEN = 32767`, `MAX_TENSOR_SPLIT_ENTRIES = 64`, `MAX_TENSOR_SPLIT_CHARS = 1024`; `validate_profile_input_bounds` runs first in `build_args`, and `validate_launch_arguments` keeps values inside runtime `--help` capabilities. HF token keeps charset/shape checks; download target keeps repo/filename/`..`/reparse guards.
+- Tests: `catalog_query_limits_reject_oversize_text_filters_and_model_lists`, `launch_profile_input_bounds_reject_oversize_strings_and_splits`, `raw_extra_argument_count_is_bounded`, `raw_extra_argument_length_is_bounded`, plus the pre-existing `..`/negative/NaN/malformed suites (all PASS in the 397-pass lib run); release-gates `catalog commands reject oversize input` + `launch profiles reject oversize input` (PASS in the 78-pass run).
 
 Acceptance:
 
 - All listed inputs reject bad values with clear errors.
 - Tests cover oversize and malformed cases.
 
-### Phase 7 — Real 0.3 to 0.5 change documentation
+### Phase 7 — Real 0.3 to 0.5 change documentation (DONE 2026-09-10, no `## 0.5.0` yet: bump waits for owner ship gate)
 
-- [ ] Verify history with `git log v0.3.0..HEAD`, tags, release notes, TODO closeouts.
-- [ ] Write evidence-backed 0.3.0 to 0.4.0 to 0.4.1 to 0.5.0 narrative.
+- [x] Verify history with `git log v0.3.0..HEAD`, tags, release notes, TODO closeouts.
+- [x] Write evidence-backed 0.3.0 to 0.4.0 to 0.4.1 to 0.5.0 narrative.
 - [ ] Add `## 0.5.0` to `CHANGELOG.md` at bump.
-- [ ] Add short Whats new since 0.3 in README or `docs/` if useful.
-- [ ] Disclose unsigned, SmartScreen, Latest fix, self-hosted CI, catalog signing, evidence, package verify, deferred Authenticode.
-- [ ] Invent no features, signing, Win10 support, or perf numbers.
+- [x] Add short Whats new since 0.3 in README or `docs/` if useful.
+- [x] Disclose unsigned, SmartScreen, Latest fix, self-hosted CI, catalog signing, evidence, package verify, deferred Authenticode.
+- [x] Invent no features, signing, Win10 support, or perf numbers.
+
+Phase 7 evidence (2026-09-10, verified on this tree, counts from git):
+
+- `git log v0.3.0..HEAD --oneline | wc -l` gives 99. Split: `v0.3.0..v0.4.0` 2 commits (rename `859a2cf` + release `b0435b3`), `v0.4.0..v0.4.1` 83 commits, `v0.4.1..HEAD` 14 commits. Tags present: `v0.3.0`, `v0.4.0`, `v0.4.1`. No `v0.5.0` tag exists.
+- 0.3.0 to 0.4.0 (`b0435b3`): `CHANGELOG.md ## 0.4.0` is the narrative — approved-runtime manifest, device-evidence recommendation, health contract, extraction guards, scope lines, packaged checks (Rust 296+1, frontend 46). No invented additions here.
+- 0.4.0 to 0.4.1 (83 commits): `3404206` product surface (UI honesty, icons, catalog tab, narrow claims) + `cc8a1a6` backend hardening (managed trust, health contract, bounded catalog); `7c76831` self-hosted runner for check jobs; `bdd9934`+`fdcf81c`+`877206a` Sandbox clean-account lifecycle; `bc8c00f` L4 attestation; `c8f5c11` sourceRevision rebind; F-041 finding pins; `1205484` unsigned disclosure + `00d5c7f` unsigned publish path (checksum+inventory replace Authenticode) + `f5d1c2f` self-hosted release runs; `CHANGELOG.md ## 0.4.1` corrective note + deferred-signing exception (`Authenticode is deferred by owner order 2026-09-09`, verify SHA-256).
+- 0.4.1 to 0.5 work-in-progress (14 commits, unreleased, no tag): `5d6cb0d` Latest repair (`v0.4.1` to `prerelease:false`, `(unsigned)` name); `90147ff`→`8093098`→`634426a` schema v2 contract + allowlist builder + signed publish (CI runs `34479565302`/`34479960156` RED then `34480446250` GREEN); `c83811a` signed v2 lands (158 models, 1417 files, 630182 B, gzip 105130 B); `a75060b` filters/fit/budget + rusqlite groundwork; `4f96d0a` UI filters + auto-fit; `bd1de08` input bounds; `921df5e` README rewrite; `39d3684` cooldown/lock/stamp.
+- Whats new since 0.3 lives in `README.md`: catalog v2 story (providers.json, 90-day recency, schema 2, hardware fit, signed artifact, refresh guard + 1560 min cooldown + last-success display), input-boundary disclosure, Latest/unsigned honesty. `CHANGELOG.md ## 0.5.0` waits for the owner-gated bump — writing it now would claim an unshipped version.
+- Every disclosure above traces to a commit, tag, CI run, or file named here. No benchmarks, no signing, no Win10 support, no perf numbers invented.
 
 Acceptance:
 
@@ -246,8 +308,8 @@ Acceptance:
 - Planned allowlist names: `unsloth`, `ornith-ai`, `lmstudio-community`, `huihui-ai`, `DavidAU`, `orcarouter`, `AtomicChat`, `bartowski`, `LiquidAI`, `Qwen`, `deepseek-ai`, `google`, `zai-org`, `MiniMaxAI`, `tencent`, `trohrbaugh`, `IFM`, `nvidia`, `microsoft`, `poolside`, `heterodoxin`, `coder3101`, `llmfan46`, `Blackfrost-AI`.
 - Ambiguous names resolved by dry-run 2026-09-10: `IFM` resolves with 5 recent GGUF repos. `deepseek-ai`, `MiniMaxAI` exist with 0 GGUF repos. `Qwen`, `zai-org`, `coder3101` exist but have no GGUF repo newer than 90 days. Do not invent.
 - Size limits now: body 4 MiB, cache 5 MiB. Size decision from dry-run: KEEP. Gzip v2 estimate 0.23 MiB.
-- Schema version: 1 now, 2 planned. `SUPPORTED_SCHEMA` in `src-tauri/src/catalog.rs` is 1 now.
-- Cooldown default: 1560 min (planned, tunable).
+- Schema version: 2 live. `SUPPORTED_SCHEMA` in `src-tauri/src/catalog.rs` is 2 with `MIN_SUPPORTED_SCHEMA = 2` fail-closed. Checked-in catalog: schema 2, 158 models, 1417 files, updated 2026-09-10.
+- Cooldown default: 1560 min live in `CATALOG_REFRESH_COOLDOWN_MINUTES`, enforced in `fetch_model_catalog` with remaining-minutes errors; last success shown in UI.
 - Format decision: gzip JSON (decided 2026-09-10). No SQLite network drop. SQLite stays local-only.
 - Latest policy: honestly unsigned full release with `prerelease: false`. Honesty lives in name, body, and notes. Never hide the ship tip as Pre-release.
 - Signing: DEFERRED_BY_OWNER. No Authenticode claim.
@@ -321,7 +383,7 @@ wc -c catalog/catalog.json
 - Catalog rules: `catalog/README.md`
 - Catalog builder: `scripts/build_catalog.mjs`
 - Catalog validator: `scripts/validate_catalog.mjs`
-- Planned allowlist: `catalog/providers.json`
+- Allowlist config: `catalog/providers.json` (live, 24 authors, schemaVersion 2, cutoffDays 90).
 - Catalog core: `src-tauri/src/catalog.rs`
 - Published releases: <https://github.com/sato942/localmotive/releases>
 - Latest API: <https://api.github.com/repos/sato942/localmotive/releases/latest>

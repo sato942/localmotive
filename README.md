@@ -162,6 +162,7 @@ The 0.4.1 ARM64 assets remain dormant and do not create install options.
 - Reject symbolic links and Windows reparse points in the download path.
 - Accept network catalog changes only after Ed25519 verification.
 - Fall back to the signed cache or embedded catalog when necessary.
+- Refresh is guarded: one refresh runs at a time, repeats within 1560 min get a remaining-minutes message, and the list shows last success plus any cooldown.
 
 The catalog file is schemaVersion 2. The allowlist ships inside the signed
 artifact, so adding a trusted author is a catalog publish, never an app
