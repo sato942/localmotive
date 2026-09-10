@@ -2713,6 +2713,25 @@ fn catalog_facets(models: Vec<catalog::CatalogModel>) -> (Vec<String>, Vec<Strin
 }
 
 #[tauri::command]
+fn catalog_rich_facets(models: Vec<catalog::CatalogModel>) -> catalog::CatalogFacets {
+    catalog::rich_facets(&models)
+}
+
+#[tauri::command]
+fn catalog_fit_budget(
+    dedicated_bytes: Vec<u64>,
+    shared_bytes: Vec<u64>,
+    system_bytes: u64,
+) -> catalog::FitBudget {
+    let (budget, source) =
+        catalog::hardware_fit_budget(&dedicated_bytes, &shared_bytes, system_bytes);
+    catalog::FitBudget {
+        budget_bytes: budget,
+        source: source.into(),
+    }
+}
+
+#[tauri::command]
 fn hf_token_status() -> catalog::TokenStatus {
     catalog::hf_token_status()
 }
@@ -3046,6 +3065,8 @@ pub fn run() {
             fetch_model_catalog,
             filter_catalog,
             catalog_facets,
+            catalog_rich_facets,
+            catalog_fit_budget,
             hf_token_status,
             save_hf_token,
             clear_hf_token,

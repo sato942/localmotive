@@ -131,6 +131,10 @@ for (const author of ALLOWLIST) {
         downloads: meta.downloads ?? 0,
         likes: meta.likes ?? 0,
         license: licenseOf(meta),
+        // Wire keys stay snake_case: the checked-in v2 contract (signed run
+        // 34482317368) uses pipeline_tag/library_name, and the signature
+        // covers those exact bytes. camelCase rename_all covers the Tauri IPC
+        // boundary, not the file format.
         pipeline_tag: meta.pipeline_tag ?? "",
         library_name: meta.library_name ?? "",
         architecture: meta.gguf?.architecture ?? "",

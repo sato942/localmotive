@@ -69,8 +69,8 @@ fn default_revision() -> String {
     "main".into()
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
 pub struct CatalogModel {
     pub id: String,
     pub repo: String,
@@ -97,10 +97,14 @@ pub struct CatalogModel {
     #[serde(default)]
     pub license: String,
     /// Hub pipeline tag, e.g. `text-generation`. Empty when unobserved.
-    #[serde(default)]
+    /// File key is `pipeline_tag` (signed v2 artifact); the builder emits the
+    /// same key. `rename_all` is intentionally absent on this struct so file
+    /// keys stay stable under signature.
+    #[serde(default, alias = "pipeline_tag")]
     pub pipeline_tag: String,
     /// Hub library name, e.g. `transformers`. Empty when unobserved.
-    #[serde(default)]
+    /// File key is `library_name` for the same signed-artifact reason.
+    #[serde(default, alias = "library_name")]
     pub library_name: String,
     /// GGUF architecture from Hub metadata, e.g. `qwen35`. Empty when unknown.
     #[serde(default)]
@@ -120,6 +124,14 @@ impl CatalogModel {
     /// see first.
     pub fn smallest_bytes(&self) -> u64 {
         self.files.iter().map(|f| f.size_bytes).min().unwrap_or(0)
+    }
+
+    /// Test helper: the fit-rule inputs as a query pair. Proves the serde
+    /// defaults exist without reaching into query construction.
+    #[cfg(test)]
+    fn fit_query(&self, per_mille: u64, budget: u64) -> (u64, u64) {
+        let _ = self.smallest_bytes();
+        (per_mille, budget)
     }
 }
 
@@ -326,6 +338,20 @@ pub struct CatalogQuery {
     /// Hide models that require accepting a licence on Hugging Face.
     pub hide_gated: bool,
     pub sort: CatalogSort,
+    /// Exact author match; empty means any.
+    pub author: String,
+    /// Exact license match, e.g. `apache-2.0`; empty means any.
+    pub license: String,
+    /// Exact pipeline-tag match, e.g. `text-generation`; empty means any.
+    pub pipeline_tag: String,
+    /// Exact architecture match, e.g. `qwen35`; empty means any.
+    pub architecture: String,
+    /// Hide models whose smallest file exceeds this fraction of the hardware
+    /// budget, scaled by 1000 (500 = half the budget). 0 disables the rule.
+    /// The UI auto-filter sets this from detected VRAM or system memory.
+    pub fit_per_mille: u64,
+    /// Hardware budget in bytes for the fit rule. 0 disables the rule.
+    pub budget_bytes: u64,
 }
 
 /// Apply a query. Case-insensitive throughout, because users type lowercase and
@@ -334,11 +360,30 @@ pub fn filter_models(models: &[CatalogModel], query: &CatalogQuery) -> Vec<Catal
     let text = query.text.trim().to_ascii_lowercase();
     let tag = query.tag.trim().to_ascii_lowercase();
     let quant = query.quant.trim().to_ascii_lowercase();
+    let author = query.author.trim().to_ascii_lowercase();
+    let license = query.license.trim().to_ascii_lowercase();
+    let pipeline = query.pipeline_tag.trim().to_ascii_lowercase();
+    let architecture = query.architecture.trim().to_ascii_lowercase();
 
     let mut out: Vec<CatalogModel> = models
         .iter()
         .filter(|model| {
             if query.hide_gated && model.gated {
+                return false;
+            }
+            if !author.is_empty()
+                && model.author.to_ascii_lowercase() != author
+                && model.publisher.to_ascii_lowercase() != author
+            {
+                return false;
+            }
+            if !license.is_empty() && model.license.to_ascii_lowercase() != license {
+                return false;
+            }
+            if !pipeline.is_empty() && model.pipeline_tag.to_ascii_lowercase() != pipeline {
+                return false;
+            }
+            if !architecture.is_empty() && model.architecture.to_ascii_lowercase() != architecture {
                 return false;
             }
             if !tag.is_empty() && !model.tags.iter().any(|t| t.to_ascii_lowercase() == tag) {
@@ -353,6 +398,9 @@ pub fn filter_models(models: &[CatalogModel], query: &CatalogQuery) -> Vec<Catal
                 return false;
             }
             if query.max_bytes > 0 && model.smallest_bytes() > query.max_bytes {
+                return false;
+            }
+            if model_hidden_by_fit_rule(model, query) {
                 return false;
             }
             if text.is_empty() {
@@ -398,6 +446,41 @@ pub fn filter_models(models: &[CatalogModel], query: &CatalogQuery) -> Vec<Catal
     out
 }
 
+/// Whether the hardware-fit rule hides this model. The rule compares the
+/// smallest offered file against a tunable fraction of the detected budget:
+/// `smallest > budget * per_mille / 1000` hides the row. A zero budget or a
+/// zero fraction disables the rule, and saturating math keeps huge budgets
+/// from overflowing. Dedicated and shared budgets are never combined here;
+/// the caller picks one budget before calling.
+pub fn model_hidden_by_fit_rule(model: &CatalogModel, query: &CatalogQuery) -> bool {
+    if query.fit_per_mille == 0 || query.budget_bytes == 0 {
+        return false;
+    }
+    let per_mille = query.fit_per_mille.min(1000);
+    let limit = (query.budget_bytes as u128)
+        .saturating_mul(per_mille as u128)
+        .saturating_div(1000);
+    (model.smallest_bytes() as u128) > limit
+}
+
+/// Pick the single budget the fit rule uses. Dedicated VRAM wins when any
+/// adapter reports it; otherwise the largest shared figure; otherwise system
+/// memory. Budgets are never summed: combining dedicated and shared memory
+/// overstates what one load can use.
+pub fn hardware_fit_budget(
+    dedicated: &[u64],
+    shared: &[u64],
+    system_bytes: u64,
+) -> (u64, &'static str) {
+    if let Some(best) = dedicated.iter().copied().filter(|b| *b > 0).max() {
+        return (best, "dedicated");
+    }
+    if let Some(best) = shared.iter().copied().filter(|b| *b > 0).max() {
+        return (best, "shared");
+    }
+    (system_bytes, "system")
+}
+
 /// Every distinct tag and quantisation in the catalog, for the filter controls.
 pub fn facets(models: &[CatalogModel]) -> (Vec<String>, Vec<String>) {
     let mut tags: Vec<String> = models
@@ -414,6 +497,63 @@ pub fn facets(models: &[CatalogModel]) -> (Vec<String>, Vec<String>) {
         .into_iter()
         .collect();
     (tags, quants)
+}
+
+/// The single budget the fit rule uses, plus which evidence it came from.
+/// The frontend shows the source so the user knows why rows are hidden.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FitBudget {
+    pub budget_bytes: u64,
+    pub source: String,
+}
+
+/// Distinct authors, licenses, pipeline tags, and architectures, for the rich
+/// filter controls. Sorted and deduplicated; empty values are omitted.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogFacets {
+    pub tags: Vec<String>,
+    pub quants: Vec<String>,
+    pub authors: Vec<String>,
+    pub licenses: Vec<String>,
+    pub pipeline_tags: Vec<String>,
+    pub architectures: Vec<String>,
+}
+
+pub fn rich_facets(models: &[CatalogModel]) -> CatalogFacets {
+    let collect = |pick: fn(&CatalogModel) -> &str| {
+        models
+            .iter()
+            .map(pick)
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>()
+    };
+    let authors: Vec<String> = models
+        .iter()
+        .map(|m| {
+            if m.author.trim().is_empty() {
+                m.publisher.clone()
+            } else {
+                m.author.clone()
+            }
+        })
+        .filter(|value| !value.trim().is_empty())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let (tags, quants) = facets(models);
+    CatalogFacets {
+        tags,
+        quants,
+        authors,
+        licenses: collect(|m| m.license.as_str()),
+        pipeline_tags: collect(|m| m.pipeline_tag.as_str()),
+        architectures: collect(|m| m.architecture.as_str()),
+    }
 }
 
 /// A catalog plus how it was obtained, so the interface can be honest about
@@ -1208,6 +1348,141 @@ mod tests {
     }
 
     #[test]
+    fn filter_applies_rich_author_license_pipeline_and_architecture_constraints() {
+        // The 0.5 filter bar narrows by author, license, pipeline tag, and
+        // architecture from live HF metadata. A model missing the field is
+        // hidden when the filter is set, never treated as a match.
+        let catalog = parse_catalog(
+            r#"{"schemaVersion":2,"providers":{"source":"t","cutoffDays":90,"allowlist":["a"]},"models":[
+              {"id":"a","repo":"unsloth/Alpha-GGUF","author":"unsloth","publisher":"unsloth","license":"apache-2.0","pipelineTag":"text-generation","architecture":"qwen35","downloads":10,"likes":1,"files":[{"quant":"Q4_K_M","filename":"a-Q4_K_M.gguf","sizeBytes":100,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]},
+              {"id":"b","repo":"bartowski/Beta-GGUF","author":"bartowski","publisher":"bartowski","license":"llama3.2","pipelineTag":"","architecture":"llama","downloads":5,"likes":1,"files":[{"quant":"Q8_0","filename":"b-Q8_0.gguf","sizeBytes":200,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}
+            ]}"#,
+        )
+        .unwrap();
+        let one = |query: CatalogQuery| filter_models(&catalog.models, &query).len();
+        assert_eq!(
+            one(CatalogQuery {
+                author: "UNSLOTH".into(),
+                ..Default::default()
+            }),
+            1,
+            "author match is case-insensitive"
+        );
+        assert_eq!(
+            one(CatalogQuery {
+                license: "llama3.2".into(),
+                ..Default::default()
+            }),
+            1
+        );
+        assert_eq!(
+            one(CatalogQuery {
+                pipeline_tag: "text-generation".into(),
+                ..Default::default()
+            }),
+            1,
+            "empty pipeline tag is not a match"
+        );
+        assert_eq!(
+            one(CatalogQuery {
+                architecture: "LLAMA".into(),
+                ..Default::default()
+            }),
+            1
+        );
+        assert_eq!(
+            one(CatalogQuery {
+                author: "nobody".into(),
+                ..Default::default()
+            }),
+            0
+        );
+    }
+
+    #[test]
+    fn hardware_fit_rule_hides_models_above_a_tunable_budget_fraction() {
+        // Default auto-filter: hide files above half the detected budget so a
+        // 32 GiB card does not offer a 27 GiB Q8 row first. The user can
+        // disable the rule (per_mille 0) or widen it; the UI explains why.
+        let model = CatalogModel {
+            id: "big".into(),
+            repo: "unsloth/Big-GGUF".into(),
+            files: vec![CatalogFile {
+                quant: "Q8_0".into(),
+                filename: "big-Q8_0.gguf".into(),
+                size_bytes: 20_000_000_000,
+                sha256: "a".repeat(64),
+                revision: "main".into(),
+                last_modified: String::new(),
+                created_at: String::new(),
+            }],
+            ..Default::default()
+        };
+        // Serde defaults must exist so older JSON without the new keys keeps
+        // parsing; deserializing `{}`-shaped models proves the default path.
+        let decoded: CatalogModel = serde_json::from_str(
+            r#"{"id":"big","repo":"unsloth/Big-GGUF","files":[{"quant":"Q8_0","filename":"big-Q8_0.gguf","sizeBytes":20000000000,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(decoded.fit_query(0, 0).0, 0);
+        let fit = |per_mille, budget| CatalogQuery {
+            fit_per_mille: per_mille,
+            budget_bytes: budget,
+            ..Default::default()
+        };
+        assert!(model_hidden_by_fit_rule(&model, &fit(500, 34_359_738_368)));
+        assert!(!model_hidden_by_fit_rule(&model, &fit(0, 34_359_738_368)));
+        assert!(!model_hidden_by_fit_rule(&model, &fit(500, 0)));
+        assert!(!model_hidden_by_fit_rule(
+            &model,
+            &fit(1000, 20_000_000_000)
+        ));
+        assert!(model_hidden_by_fit_rule(&model, &fit(1000, 19_999_999_999)));
+        assert!(!model_hidden_by_fit_rule(&model, &fit(9999, u64::MAX)));
+    }
+
+    #[test]
+    fn hardware_fit_budget_never_combines_dedicated_and_shared() {
+        // Dedicated VRAM wins outright; shared is a fallback, never an addend.
+        // Seen live: manual overrides already refuse aggregation, and the
+        // auto-filter must follow the same rule or it overstates capacity.
+        assert_eq!(
+            hardware_fit_budget(&[8_000_000_000], &[32_000_000_000], 64_000_000_000),
+            (8_000_000_000, "dedicated")
+        );
+        assert_eq!(
+            hardware_fit_budget(&[], &[32_000_000_000], 64_000_000_000),
+            (32_000_000_000, "shared")
+        );
+        assert_eq!(
+            hardware_fit_budget(&[], &[], 64_000_000_000),
+            (64_000_000_000, "system")
+        );
+        assert_eq!(hardware_fit_budget(&[], &[], 0), (0, "system"));
+    }
+
+    #[test]
+    fn rich_facets_list_authors_licenses_pipelines_and_architectures() {
+        let catalog = sample();
+        let facets = rich_facets(&catalog.models);
+        // sample() omits author but carries publisher, so the facet falls back
+        // to publisher rather than dropping the row from the author control.
+        assert!(facets.authors.contains(&"unsloth".to_string()));
+        assert!(facets.authors.contains(&"bartowski".to_string()));
+        assert_eq!(facets.tags.len(), 4);
+        assert_eq!(facets.quants.len(), 3);
+        let authored = parse_catalog(
+            r#"{"schemaVersion":2,"providers":{"source":"t","cutoffDays":90,"allowlist":["unsloth"]},"models":[{"id":"a","repo":"unsloth/A-GGUF","author":"unsloth","publisher":"unsloth","license":"apache-2.0","pipelineTag":"text-generation","architecture":"qwen35","files":[{"quant":"Q4_K_M","filename":"a.gguf","sizeBytes":1,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}]}"#,
+        )
+        .unwrap();
+        let rich = rich_facets(&authored.models);
+        assert_eq!(rich.authors, vec!["unsloth"]);
+        assert_eq!(rich.licenses, vec!["apache-2.0"]);
+        assert_eq!(rich.pipeline_tags, vec!["text-generation"]);
+        assert_eq!(rich.architectures, vec!["qwen35"]);
+    }
+
+    #[test]
     fn filter_sorts_deterministically_on_every_key() {
         let catalog = sample();
         let sorted = |sort| {
@@ -1242,6 +1517,24 @@ mod tests {
         let (tags, quants) = facets(&sample().models);
         assert_eq!(tags, vec!["code", "general", "moe", "small"]);
         assert_eq!(quants, vec!["Q4_K_M", "Q6_K", "Q8_0"]);
+    }
+
+    #[test]
+    fn snake_file_keys_parse_to_real_values() {
+        // The signed v2 artifact uses snake_case file keys. If these parse to
+        // "" the pipeline/architecture filters silently hide nothing and the
+        // UI lies about what it filters. Seen live: rename_all camelCase
+        // ignored pipeline_tag, so this test pins both spellings.
+        for key in ["pipeline_tag", "pipelineTag"] {
+            let json = format!(
+                r#"{{"schemaVersion":2,"providers":{{"source":"t","cutoffDays":90,"allowlist":["u"]}},"models":[{{"id":"a","repo":"u/A-GGUF","files":[{{"quant":"Q4","filename":"a.gguf","sizeBytes":1,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}],"{key}":"text-generation"}}]}}"#
+            );
+            let catalog = parse_catalog(&json).unwrap();
+            assert_eq!(
+                catalog.models[0].pipeline_tag, "text-generation",
+                "file key {key} must parse"
+            );
+        }
     }
 
     #[test]
