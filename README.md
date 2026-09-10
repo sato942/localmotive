@@ -291,7 +291,7 @@ macOS remains out of scope for this matrix.
 
 Code signing status is DEFERRED_BY_OWNER: Authenticode is postponed until the project is more mature (owner order 2026-09-09). No paid cert. SignPath stays pending or ignored and blocks no gate.
 
-Windows installers remain honestly unsigned with disclosure. Windows SmartScreen can show a warning when you start an unsigned file. Unsigned artifacts stay testing-only or pre-release.
+Windows installers remain honestly unsigned with disclosure. Windows SmartScreen can show a warning when you start an unsigned file. Unsigned artifacts ship as full releases, not GitHub Pre-releases, so the current tip stays visible as Latest.
 
 ## Current limitations
 

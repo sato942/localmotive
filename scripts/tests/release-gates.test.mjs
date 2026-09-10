@@ -330,7 +330,7 @@ test("MSI manufacturer equals the approved publisher value", async () => {
   assert.equal(wixFragment, "", `unexpected Manufacturer override: ${wixFragment}`);
 });
 
-test("unsigned prerelease publication verifies checksums and inventory instead of Authenticode", async () => {
+test("honestly unsigned full release verifies checksums and inventory instead of Authenticode", async () => {
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
   assert.doesNotMatch(release, /signtool/);
   assert.doesNotMatch(release, /Get-AuthenticodeSignature/);
@@ -340,13 +340,19 @@ test("unsigned prerelease publication verifies checksums and inventory instead o
   assert.match(release, /SmartScreen/);
   assert.match(release, /verify_candidate_inventory/);
   assert.match(release, /sha256sum -c/);
+  // The ship tip stays visible as Latest, so the publish path must not mark
+  // the release as a GitHub Pre-release. Seen live: v0.4.1 shipped with
+  // prerelease:true and releases/latest still pointed at v0.4.0.
+  assert.match(release, /prerelease:\s*false/);
+  assert.doesNotMatch(release, /\(unsigned prerelease\)/);
 });
 
-test("unsigned prerelease publication reads back a prerelease with the unsigned asset set", async () => {
+test("honestly unsigned full release reads back Latest with the unsigned asset set", async () => {
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
-  assert.match(release, /prerelease:\s*true/);
+  assert.match(release, /prerelease:\s*false/);
   assert.match(release, /\.isPrerelease/);
   assert.match(release, /honestly unsigned/);
+  assert.match(release, /\(unsigned\)/);
 });
 
 test("correct the three L2 claims in the new 0.4.1 changelog section", async () => {

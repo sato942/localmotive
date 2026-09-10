@@ -118,7 +118,17 @@ exactly.
 
 ## 3. Development workflow
 
-### v0.3 tracker and research inputs
+### v0.5 tracker
+
+Read `docs/history/TODO-0.5.md` before starting v0.5 work. Treat `docs/history/TODO-0.5.md` as the
+authoritative phase tracker, but never treat a checkbox as verification evidence.
+
+Keep `docs/history/TODO-0.4.1.md` frozen. Add only a pointer to the 0.5 tracker. Do not rewrite closeout evidence.
+
+Update `docs/history/TODO-0.5.md` after each acceptance check. Keep only one implementation phase
+in progress. Record exact commands and observed results in its verification ledger.
+
+### v0.3 tracker and research inputs (archived)
 
 Read `docs/history/TODO.md` after this file before starting v0.3 work. Treat `docs/history/TODO.md` as the
 authoritative phase tracker, but never treat a checkbox as verification evidence.

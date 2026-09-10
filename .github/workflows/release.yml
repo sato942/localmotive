@@ -295,7 +295,7 @@ jobs:
           name: localmotive-${{ needs.quality.outputs.version }}-verified
           path: artifacts
 
-      - name: Verify checksums and inventory for the honestly-unsigned prerelease
+      - name: Verify checksums and inventory for the honestly unsigned full release
         shell: bash
         env:
           VERSION: ${{ needs.quality.outputs.version }}
@@ -303,7 +303,7 @@ jobs:
           node scripts/verify_candidate_inventory.mjs artifacts "$VERSION" "artifacts/candidate-inventory-${VERSION}.json"
           (cd artifacts && sha256sum -c "SHA256SUMS-${VERSION}.txt")
           node -e "const v=JSON.parse(require('fs').readFileSync('artifacts/candidate-inventory-${VERSION}.json','utf8')); if(v.release!=='${VERSION}') throw new Error('inventory release mismatch')"
-          echo "Unsigned prerelease: Authenticode is DEFERRED_BY_OWNER; no signature is claimed. SmartScreen may warn."
+          echo "Honestly unsigned full release: Authenticode is DEFERRED_BY_OWNER; no signature is claimed. SmartScreen may warn."
 
       - name: Extract this version's changelog section
         shell: bash
@@ -330,15 +330,15 @@ jobs:
             echo
             echo "Target scope: Windows 10 and Windows 11 x64. See the qualification limitations above."
             echo ""
-            echo "This prerelease is honestly unsigned: Authenticode is DEFERRED_BY_OWNER, no signature is claimed, and Windows SmartScreen may warn. Verify the published SHA-256 checksums before use."
+            echo "This full release is honestly unsigned: Authenticode is DEFERRED_BY_OWNER, no signature is claimed, and Windows SmartScreen may warn. Verify the published SHA-256 checksums before use."
           } > release-notes.md
 
-      - name: Publish the explicitly approved unsigned prerelease
+      - name: Publish the explicitly approved honestly unsigned full release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ needs.quality.outputs.tag }}
-          name: Localmotive ${{ needs.quality.outputs.version }} (unsigned prerelease)
-          prerelease: true
+          name: Localmotive ${{ needs.quality.outputs.version }} (unsigned)
+          prerelease: false
           body_path: release-notes.md
           files: |
             artifacts/Localmotive_${{ needs.quality.outputs.version }}_x64-setup.exe
@@ -361,7 +361,7 @@ jobs:
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
             --json tagName,name,isDraft,isPrerelease,assets,body \
             > public-readback/release.json
-          node -e "const r=JSON.parse(require('fs').readFileSync('public-readback/release.json','utf8')); const assert=require('assert'); assert.equal(r.tagName,process.env.TAG); assert.equal(r.name,'Localmotive '+process.env.VERSION+' (unsigned prerelease)'); assert.equal(r.isDraft,false); assert.equal(r.isPrerelease,true); assert.equal(r.assets.length,6);"
+          node -e "const r=JSON.parse(require('fs').readFileSync('public-readback/release.json','utf8')); const assert=require('assert'); assert.equal(r.tagName,process.env.TAG); assert.equal(r.name,'Localmotive '+process.env.VERSION+' (unsigned)'); assert.equal(r.isDraft,false); assert.equal(r.isPrerelease,false); assert.equal(r.assets.length,6);"
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
             --dir public-readback --clobber
           for name in \
