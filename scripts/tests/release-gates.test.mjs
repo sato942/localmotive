@@ -888,10 +888,46 @@ test("release verify step waits for the candidate WebView before driving checks"
   assert.match(block, /json\/list/);
 });
 
+test("release workflow serializes runs so two packages never share one runner", async () => {
+  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  // Tag-push and publish-dispatch each ran package on the same single
+  // runner; the second CDP session attached to the first WebView.
+  assert.match(release, /concurrency:\s*\n\s*group:\s*localmotive-release/);
+  assert.match(release, /cancel-in-progress:\s*true/);
+});
+
+test("release verify step isolates the candidate behind a per-run CDP port with tree cleanup", async () => {
+  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  const at = release.indexOf("Verify the packaged executable");
+  assert.ok(at >= 0, "verify step is missing");
+  const block = release.slice(at, at + 6000);
+  // Fixed port 10041 plus parent-only Stop-Process leaves an orphan
+  // WebView2 holding CDP; the next run attaches to the stale page.
+  // RED: the step hard-codes one port with no pre/post cleanup.
+  assert.match(block, /GITHUB_RUN_ID/);
+  assert.match(block, /taskkill \/F \/T/);
+  assert.match(block, /webSocketDebuggerUrl/);
+});
+
 test("release publish verification avoids hosted-only shell dependencies", async () => {
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
   // Git-bash on the self-hosted runner has no jq: parse the inventory
   // with node so the publish gate cannot fail on missing tooling.
-  // RED: the publish step shells out to jq, which is absent on the runner.
   assert.doesNotMatch(release, /jq -r/);
+});
+
+test("tag-push publish runs the same gates as the dispatch path", async () => {
+  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  // Preferred ship path: pushing the version tag publishes after package
+  // PASS, so no second parallel package run ever shares the runner CDP.
+  assert.match(release, /github\.ref == 'refs\/tags\/v0\.4\.1'/);
+});
+
+test("catalog harness install retries until the App fiber commits its hooks", async () => {
+  const source = await readFile(join(process.cwd(), "scripts", "verify_041.mjs"), "utf8");
+  // CDP attaches before React commits: one-shot discovery fails on a
+  // partial tree. The same shape predicates must retry with backoff.
+  // RED: installCatalogHarness evaluates the fiber walk exactly once.
+  assert.match(source, /Date\.now\(\) \+ 45_000/);
+  assert.match(source, /setTimeout\(resolve, 1000\)/);
 });

@@ -20,6 +20,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: localmotive-release
+  cancel-in-progress: true
+
 jobs:
   rust-audit:
     runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]
@@ -178,30 +182,60 @@ jobs:
           New-Item -ItemType Directory -Force -Path "artifacts" | Out-Null
           $isolatedRoot = Join-Path $env:RUNNER_TEMP "localmotive-verify-appdata"
           $profile = Join-Path $env:RUNNER_TEMP "localmotive-verify-webview2"
+          # Unique CDP port per run: a fixed port plus parent-only
+          # Stop-Process leaves an orphan WebView2 holding CDP, and the next
+          # run attaches to the stale page.
+          $cdpPort = 10041 + ([int]($env:GITHUB_RUN_ID % 2000))
+          function Stop-VerifyLeftovers([int]$Port) {
+            $pids = @()
+            try {
+              $conns = Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue
+              if ($conns) { $pids += @($conns | Select-Object -ExpandProperty OwningProcess -Unique) }
+            } catch { }
+            $pids += @(Get-Process -Name "localmotive","msedgewebview2" -ErrorAction SilentlyContinue |
+              Where-Object { $_.Path -like "*$env:RUNNER_TEMP*" } |
+              Select-Object -ExpandProperty Id)
+            foreach ($procId in ($pids | Select-Object -Unique)) {
+              if ($procId -and $procId -ne 0) {
+                cmd /c "taskkill /F /T /PID $procId" | Out-Null
+              }
+            }
+          }
+          Stop-VerifyLeftovers -Port $cdpPort
+          Stop-VerifyLeftovers -Port 10041
+          Remove-Item -LiteralPath $isolatedRoot,$profile -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path $isolatedRoot | Out-Null
+          New-Item -ItemType Directory -Force -Path $profile | Out-Null
           $env:LOCALAPPDATA = $isolatedRoot
           $env:LOCALMOTIVE_VERIFY_ISOLATED_ROOT = $isolatedRoot
           $env:WEBVIEW2_USER_DATA_FOLDER = $profile
-          $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=10041 --user-data-dir=$profile"
+          $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$cdpPort --user-data-dir=$profile"
           $process = Start-Process $portable -PassThru
           try {
             # The WebView needs seconds to expose CDP: poll /json/list
-            # until the page appears instead of racing first connect.
+            # for a real page target, not an empty or stale list.
             $deadline = (Get-Date).AddSeconds(90)
             while ($true) {
               try {
-                $tabs = Invoke-RestMethod "http://127.0.0.1:10041/json/list"
-                if ($tabs) { break }
+                $tabs = Invoke-RestMethod "http://127.0.0.1:$cdpPort/json/list"
+                $ready = @($tabs | Where-Object {
+                  $_.type -eq 'page' -and $_.webSocketDebuggerUrl -and
+                  ($_.url -match 'tauri|localhost|localmotive|asset' -or $_.title)
+                })
+                if ($ready.Count -gt 0) { break }
               } catch { }
-              if ((Get-Date) -gt $deadline) { throw "Candidate WebView did not expose CDP in 90s" }
+              if ((Get-Date) -gt $deadline) { throw "Candidate WebView did not expose a page CDP target in 90s (port $cdpPort)" }
               Start-Sleep -Seconds 2
             }
-            node scripts/verify_041.mjs 10041 $portable "artifacts/packaged-verification-0.4.1.json"
+            node scripts/verify_041.mjs $cdpPort $portable "artifacts/packaged-verification-0.4.1.json"
             if ($LASTEXITCODE -ne 0) { throw "verify_041 failed with code $LASTEXITCODE" }
             $record = Get-Content "artifacts/packaged-verification-0.4.1.json" -Raw | ConvertFrom-Json
             if ($record.overall_status -ne "PASS") { throw "Packaged verification record is not PASS" }
           } finally {
-            if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+            if ($process -and -not $process.HasExited) {
+              cmd /c "taskkill /F /T /PID $($process.Id)" | Out-Null
+            }
+            Stop-VerifyLeftovers -Port $cdpPort
           }
 
       - name: Stage release artifacts
@@ -234,7 +268,13 @@ jobs:
           retention-days: 14
 
   publish:
-    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    # Preferred ship path: pushing the version tag publishes after package
+    # PASS in the same run, so no second parallel package ever shares the
+    # runner CDP. Dispatch + publish=true stays for republish only.
+    if: >-
+      needs.quality.outputs.tag == 'v0.4.1' &&
+      (github.ref == 'refs/tags/v0.4.1' ||
+        (github.event_name == 'workflow_dispatch' && inputs.publish))
     needs: [rust-audit, quality, package]
     runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]
     permissions:

@@ -387,7 +387,13 @@ async function installCatalogHarness(setup) {
       },
     },
   };
-  const result = await client.evaluate(`(() => {
+  // CDP can attach before React commits the App fiber tree, and the first
+  // walk then sees a partial hook list. Retry the same shape predicates
+  // with backoff instead of failing one-shot; predicates are unchanged.
+  const deadline = Date.now() + 45_000;
+  let result = null;
+  for (;;) {
+    result = await client.evaluate(`(() => {
     const host = document.querySelector('.app-shell');
     const fiberKey = host && Object.keys(host).find((key) => key.startsWith('__reactFiber$'));
     let fiber = fiberKey ? host[fiberKey] : null;
@@ -444,6 +450,10 @@ async function installCatalogHarness(setup) {
     }
     return { ok: false, reason: 'The App catalog state hooks were not found' };
   })()`);
+    if (result?.ok) break;
+    if (Date.now() >= deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
   requireCondition(result?.ok, result?.reason ?? "The React catalog harness failed");
 }
 

@@ -58,7 +58,7 @@
       "requiredCommands": {
         "package": [
           "npm run tauri build",
-          "node scripts/verify_041.mjs 10041 $portable \"artifacts/packaged-verification-0.4.1.json\"",
+          "node scripts/verify_041.mjs $cdpPort $portable \"artifacts/packaged-verification-0.4.1.json\"",
           "node scripts/verify_candidate_inventory.mjs artifacts \"$VERSION\" \"artifacts/candidate-inventory-${VERSION}.json\""
         ],
         "publish": [
