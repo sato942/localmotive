@@ -14,6 +14,7 @@ import {
   errorText,
   hardwareFitBudget,
   keepLatestRequest,
+  evidenceRunLabel,
   applySuggestedPort,
   profileIdentity,
   responseIsCurrent,
@@ -874,6 +875,11 @@ describe("FE-03 stale response guards", () => {
 
     // No-op cases return the same reference, so callers can compare identity.
     expect(applySuggestedPort(original, identity, 8080, 8080)).toBe(original);
+  });
+
+  it("labels the app-wide evidence run for every screen", () => {
+    expect(evidenceRunLabel("benchmark")).toBe("Benchmark running");
+    expect(evidenceRunLabel("quality")).toBe("Quality suite running");
   });
 
   it("derives profile identity from the fields a stale response must match", () => {

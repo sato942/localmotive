@@ -49,6 +49,7 @@ import {
   etaLabel,
   hardwareFitBudget,
   keepLatestRequest,
+  evidenceRunLabel,
   profileIdentity,
   applySuggestedPort,
   responseIsCurrent,
@@ -136,6 +137,9 @@ const idleStatus: ServerStatus = {
 
 function App() {
   const [view, setView] = useState<View>(RUNTIME ? "dashboard" : "runtime");
+  // FE-05: the active evidence run's status and cancel handle, published by
+  // the always-mounted evidence panel so any screen can show it.
+  const [evidenceRun, setEvidenceRun] = useState<{ kind: "benchmark" | "quality"; cancel: (() => void) | null } | null>(null);
   const [modelRoot, setModelRoot] = useState(MODEL_ROOT);
   const [runtimePath, setRuntimePath] = useState(RUNTIME);
   const [hardware, setHardware] = useState<HardwareInfo | null>(null);
@@ -1141,6 +1145,17 @@ function App() {
       </aside>
 
       <main className="workspace">
+        {evidenceRun && (
+          <div className="warning-band evidence-run-band" role="status">
+            <Activity size={17} />
+            <strong>{evidenceRunLabel(evidenceRun.kind)}</strong>
+            <span>The run continues while you work on other screens.</span>
+            {evidenceRun.cancel && (
+              <button className="button secondary" onClick={evidenceRun.cancel}>Cancel</button>
+            )}
+            <button className="button secondary" onClick={() => setView("benchmark")}>Open Benchmark</button>
+          </div>
+        )}
         <header className="topbar">
           <div>
             <p className="product-name">LOCALMOTIVE</p>
@@ -2176,8 +2191,12 @@ function App() {
           </section>
         )}
 
-        {view === "benchmark" && (
-          <section className="screen benchmark-screen">
+        {/* FE-05: the evidence panel stays mounted for the app's lifetime so
+            navigation cannot erase active runs or completed evidence. */}
+        <section
+          className="screen benchmark-screen"
+          style={view === "benchmark" ? undefined : { display: "none" }}
+        >
             <div className="section-heading">
               <div>
                 <h1>Generation benchmark</h1>
@@ -2218,9 +2237,9 @@ function App() {
               profile={profile}
               serverStatus={status}
               initialHardware={hardware}
+              onRunStateChange={setEvidenceRun}
             />
           </section>
-        )}
       </main>
     </div>
   );

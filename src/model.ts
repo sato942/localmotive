@@ -1534,6 +1534,11 @@ export function responseIsCurrent(
 /** Apply a suggested port only while the profile is still the exact one the
  * suggestion was requested for and its port is unchanged: a later manual edit
  * or a newly selected profile is never overwritten (audit FE-03). */
+/** App-wide label for the active evidence run shown outside Benchmark (FE-05). */
+export function evidenceRunLabel(kind: "benchmark" | "quality"): string {
+  return kind === "benchmark" ? "Benchmark running" : "Quality suite running";
+}
+
 export function applySuggestedPort(
   profile: LaunchProfile,
   identity: string,

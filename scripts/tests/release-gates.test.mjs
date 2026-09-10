@@ -1098,6 +1098,25 @@ test("override saves reject mixed-origin collisions inside an immediate transact
   assert.match(mirror, /transaction_with_behavior\(rusqlite::TransactionBehavior::Immediate\)/);
 });
 
+test("FE-05 evidence history and active runs survive navigation", async () => {
+  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const panel = await readFile(join(process.cwd(), "src", "V03EvidencePanel.tsx"), "utf8");
+  // The evidence panel is always mounted (hidden by style), never gated on
+  // the benchmark view, so navigation cannot erase its state (audit FE-05).
+  assert.doesNotMatch(app, /view === "benchmark" && \(/);
+  assert.match(
+    app,
+    /style=\{view === "benchmark" \? undefined : \{ display: "none" \}\}/,
+  );
+  assert.match(app, /onRunStateChange=\{setEvidenceRun\}/);
+  // The active run's status and cancel handle are available app-wide.
+  assert.match(app, /evidenceRun\.cancel && \(/);
+  // Completed runs are retained across model/profile changes.
+  assert.doesNotMatch(panel, /setHistory\(\[\]\)/);
+  // Export approval resets when the reviewed payload changes.
+  assert.match(panel, /\[benchmark\?\.manifestPath, quality\?\.observedAtMs\]/);
+});
+
 test("FE-03 stale responses are guarded before they can commit", async () => {
   const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
   // Audit FE-03: every deferred commit checks its request sequence and the

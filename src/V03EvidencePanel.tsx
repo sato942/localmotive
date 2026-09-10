@@ -133,6 +133,9 @@ type Props = {
   profile: LaunchProfile | null;
   serverStatus: ServerStatus;
   initialHardware: HardwareInfo | null;
+  /** FE-05: publishes the active evidence run so the whole app can show its
+   * status and offer the same cancellation handle on any screen. */
+  onRunStateChange?: (state: { kind: "benchmark" | "quality"; cancel: (() => void) | null } | null) => void;
 };
 
 export function V03EvidencePanel({
@@ -140,6 +143,7 @@ export function V03EvidencePanel({
   profile,
   serverStatus,
   initialHardware,
+  onRunStateChange,
 }: Props) {
   const [artifact, setArtifact] = useState<ArtifactInspection | null>(null);
   const [hardware, setHardware] = useState<HardwareInfo | null>(initialHardware);
@@ -188,18 +192,22 @@ export function V03EvidencePanel({
   }, [initialHardware]);
 
   useEffect(() => {
+    // FE-05: a different model or an edited profile invalidates the current
+    // editable evidence (artifact, preflight, ranking input, export
+    // approval) but completed runs stay in the history with their immutable
+    // model/runtime/workload identities.
     setArtifact(null);
     setPreflight(null);
-    setBenchmark(null);
-    setHistory([]);
-    setQuality(null);
     setRanking([]);
-    setAnchors([]);
-    setCalibration(null);
-    setCalibrated(null);
     setShareConfirmed(false);
     setMessage(null);
   }, [model?.id, profileFingerprint]);
+
+  // FE-05: a new reviewed payload (a different run or quality result)
+  // requires a fresh export approval.
+  useEffect(() => {
+    setShareConfirmed(false);
+  }, [benchmark?.manifestPath, quality?.observedAtMs]);
 
   useEffect(() => {
     if (selectedAdapterIds.length === 0 && hardware?.adapters[0]) {
@@ -235,6 +243,23 @@ export function V03EvidencePanel({
       active = false;
     };
   }, [benchmark?.compatibilityKey]);
+
+  useEffect(() => {
+    // FE-05 I2: navigation must not orphan a dispatched measurement; the app
+    // keeps this run's status and cancel handle visible everywhere.
+    if (busy === "benchmark") {
+      onRunStateChange?.({ kind: "benchmark", cancel: () => void cancelBenchmark() });
+      return () => onRunStateChange?.(null);
+    }
+    if (busy === "quality") {
+      onRunStateChange?.({ kind: "quality", cancel: null });
+      return () => onRunStateChange?.(null);
+    }
+    onRunStateChange?.(null);
+    // `onRunStateChange` is a stable setState; the run state only depends on
+    // which action is busy.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy]);
 
   async function runAction<T>(name: string, action: () => Promise<T>): Promise<T | null> {
     setBusy(name);
