@@ -1,7 +1,7 @@
 # Localmotive 0.6 — audit remediation TODO
 
 **Target:** `0.6.0` stabilization release  
-**Status:** Planning complete; implementation in progress — Package 3 (override identity and atomic persistence)  
+**Status:** Planning complete; implementation in progress — Package 4 (bounded and cancellable tuning)  
 **Source:** [localmotive-comprehensive-audit.md](./localmotive-comprehensive-audit.md)
 **Audited source SHA:** `e530371b056cd8e049c2246dbb151aa407bf359f`  
 **Release baseline reviewed by the audit:** `v0.5.0`, source `a4b7127f739f7420232d9b6f63da693d39128d0b`  
@@ -32,7 +32,7 @@ Owner: `sato942` (accountable maintainer). Implementation and evidence productio
 |---|---|---|
 | 1 | Managed runtime trust and legacy recovery (RT-01, RT-02, RT-04, RT-07) | Implementation complete; unit-verified; packaged items open in G-05 |
 | 2 | Catalog restart, offline loading and recovery (DC-01, DC-03, DC-07) | Implementation complete; unit-verified (commit `e6c7f59`); packaged items open in G-04/G-05 |
-| 3 | Override identity and atomic persistence (DC-04, DC-05, DC-06) | Not started |
+| 3 | Override identity and atomic persistence (DC-04, DC-05, DC-06) | Implementation complete; unit-verified (commit `6be56e5`); packaged items open in G-04/G-05 |
 | 4 | Bounded and cancellable tuning (MT-03, MT-04, RT-03) | Not started |
 | 5 | Benchmark protocol, export privacy and failure records (MT-01, MT-02, MT-12) | Not started |
 | 6 | Model, runtime and operation ownership (FE-01, FE-02, FE-03, FE-05, FE-07, FE-16, MT-05) | Not started |
@@ -484,49 +484,49 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Make local overrides coherent across browsing and download authorization**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (commit `6be56e5`); override flow accepted in the packaged build under V06-G-04/G-05 · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit DC-04](./localmotive-comprehensive-audit.md#dc-04)  
 **Prerequisites:** [V06-DC-05](#v06-dc-05), [V06-DC-06](#v06-dc-06)
 **Source touchpoints:** [src-tauri/src/lib.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/lib.rs), [src-tauri/src/catalog_db.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/catalog_db.rs), [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx)
 
 **Implementation**
 
-- [ ] **V06-DC-04.I1** — Define the supported local-override trust contract explicitly: signed curated entries remain authorized by their signed snapshot, while supported override downloads require a separately validated, explicitly user-approved record and exact digest. **Trace:** [Audit DC-04](./localmotive-comprehensive-audit.md#dc-04).
-- [ ] **V06-DC-04.I2** — Implement the chosen override download route without promoting arbitrary mutable SQLite rows into curator-signed authority; ensure save, reload, and removal update the appropriate authorization source. **Trace:** [Audit DC-04](./localmotive-comprehensive-audit.md#dc-04).
-- [ ] **V06-DC-04.I3** — Use one merged browse collection for initial rows, filtering, sorting, and facets so the filter effect no longer replaces local entries with only snapshot.catalog.models. **Trace:** [Audit DC-04](./localmotive-comprehensive-audit.md#dc-04).
-- [ ] **V06-DC-04.I4** — Keep provenance visible throughout the workflow and document the product decision if the incomplete add/edit/download functionality is deferred instead of enabled end to end. **Trace:** [Audit DC-04](./localmotive-comprehensive-audit.md#dc-04).
+- [x] **V06-DC-04.I1** — Define the supported local-override trust contract explicitly: signed curated entries remain authorized by their signed snapshot, while supported override downloads require a separately validated, explicitly user-approved record and exact digest. **Trace:** [Audit DC-04](./localmotive-comprehensive-audit.md#dc-04).
+- [x] **V06-DC-04.I2** — Implement the chosen override download route without promoting arbitrary mutable SQLite rows into curator-signed authority; ensure save, reload, and removal update the appropriate authorization source. **Trace:** [Audit DC-04](./localmotive-comprehensive-audit.md#dc-04).
+- [x] **V06-DC-04.I3** — Use one merged browse collection for initial rows, filtering, sorting, and facets so the filter effect no longer replaces local entries with only snapshot.catalog.models. **Trace:** [Audit DC-04](./localmotive-comprehensive-audit.md#dc-04).
+- [x] **V06-DC-04.I4** — Keep provenance visible throughout the workflow and document the product decision if the incomplete add/edit/download functionality is deferred instead of enabled end to end. **Trace:** [Audit DC-04](./localmotive-comprehensive-audit.md#dc-04).
 
 **Verification**
 
-- [ ] **V06-DC-04.V1** — Save a unique override, reload the app, change every relevant filter/sort, and verify rows and facet values continue to refer to the same merged collection. **Trace:** [Audit DC-04](./localmotive-comprehensive-audit.md#dc-04).
+- [x] **V06-DC-04.V1** — Save a unique override, reload the app, change every relevant filter/sort, and verify rows and facet values continue to refer to the same merged collection. **Trace:** [Audit DC-04](./localmotive-comprehensive-audit.md#dc-04).
 - [ ] **V06-DC-04.V2** — Against a controlled server, exercise an approved override with correct and incorrect SHA-256, then remove it and verify subsequent download authorization fails. **Trace:** [Audit DC-04](./localmotive-comprehensive-audit.md#dc-04).
-- [ ] **V06-DC-04.V3** — Attempt downloads from unknown or directly modified database rows and verify they never acquire signed curated status; retain tests for ordinary curated downloads. **Trace:** [Audit DC-04](./localmotive-comprehensive-audit.md#dc-04).
+- [x] **V06-DC-04.V3** — Attempt downloads from unknown or directly modified database rows and verify they never acquire signed curated status; retain tests for ordinary curated downloads. **Trace:** [Audit DC-04](./localmotive-comprehensive-audit.md#dc-04).
 
 **Complete when:** Supported local overrides remain consistently visible and actionable across reload and filtering, with correct provenance. Downloads obey an explicit curated-versus-user authority split, or deferred override functionality is clearly unavailable rather than misleadingly half-enabled.
 
-**Scope / decision note:** The audit found registered commands and incomplete integration, not a proven complete add/edit UI workflow. DC-05 and DC-06 must establish safe ownership and atomic records before newly enabled override downloads rely on that store.
+**Scope / decision note:** The audit found registered commands and incomplete integration, not a proven complete add/edit UI workflow. DC-05 and DC-06 established safe ownership and atomic records before override downloads rely on that store. **Product decision (recorded here per DC-04.I4):** the add/edit override *form* remains deferred — the UI still exposes no way to create an override, so nothing is misleadingly half-enabled — while `save_user_catalog_override` / `remove_user_catalog_override` and the download route are now complete and regression-tested end to end at the command boundary. Ships with the panel showing USER ADDED provenance for existing rows and the per-file USER FILE tag; enabling a creation form is future work, not a 0.6.0 blocker.
 
 ### V06-DC-05
 
 **Prevent override collisions from changing curated ownership or provenance**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (commit `6be56e5`); packaged mixed-origin acceptance covered under V06-G-04/G-05 · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit DC-05](./localmotive-comprehensive-audit.md#dc-05)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src-tauri/src/catalog_db.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/catalog_db.rs)
 
 **Implementation**
 
-- [ ] **V06-DC-05.I1** — Reserve curator-owned model identifiers and choose either a separate user namespace or explicit rejection of mixed-origin ID collisions before any UPSERT can mutate ownership. **Trace:** [Audit DC-05](./localmotive-comprehensive-audit.md#dc-05).
-- [ ] **V06-DC-05.I2** — Define and enforce a deterministic case-insensitive filename collision policy that preserves existing files and requires explicit resolution rather than silently moving a catalog_file row to another model. **Trace:** [Audit DC-05](./localmotive-comprehensive-audit.md#dc-05).
-- [ ] **V06-DC-05.I3** — Carry provenance at the file/entity level used for display and authorization; update database reads so a user file cannot inherit a curator label merely because its model row was refreshed. **Trace:** [Audit DC-05](./localmotive-comprehensive-audit.md#dc-05).
-- [ ] **V06-DC-05.I4** — Change curated mirror refresh to preserve origin boundaries, and enable or strengthen relational constraints where they enforce the chosen ownership rules. **Trace:** [Audit DC-05](./localmotive-comprehensive-audit.md#dc-05).
+- [x] **V06-DC-05.I1** — Reserve curator-owned model identifiers and choose either a separate user namespace or explicit rejection of mixed-origin ID collisions before any UPSERT can mutate ownership. **Trace:** [Audit DC-05](./localmotive-comprehensive-audit.md#dc-05).
+- [x] **V06-DC-05.I2** — Define and enforce a deterministic case-insensitive filename collision policy that preserves existing files and requires explicit resolution rather than silently moving a catalog_file row to another model. **Trace:** [Audit DC-05](./localmotive-comprehensive-audit.md#dc-05).
+- [x] **V06-DC-05.I3** — Carry provenance at the file/entity level used for display and authorization; update database reads so a user file cannot inherit a curator label merely because its model row was refreshed. **Trace:** [Audit DC-05](./localmotive-comprehensive-audit.md#dc-05).
+- [x] **V06-DC-05.I4** — Change curated mirror refresh to preserve origin boundaries, and enable or strengthen relational constraints where they enforce the chosen ownership rules. **Trace:** [Audit DC-05](./localmotive-comprehensive-audit.md#dc-05).
 
 **Verification**
 
-- [ ] **V06-DC-05.V1** — Turn the executed SQL reproductions into application-level regressions for same ID/different repo and different IDs/same case-insensitive filename; require the original curated records to remain unchanged. **Trace:** [Audit DC-05](./localmotive-comprehensive-audit.md#dc-05).
-- [ ] **V06-DC-05.V2** — Exercise refresh, edit, and removal after each collision attempt; verify no empty curated model or stale user file becomes relabeled as curator-sourced. **Trace:** [Audit DC-05](./localmotive-comprehensive-audit.md#dc-05).
-- [ ] **V06-DC-05.V3** — Test disjoint user and curator entries alongside the rejection cases so normal additions and refresh preservation remain supported. **Trace:** [Audit DC-05](./localmotive-comprehensive-audit.md#dc-05).
+- [x] **V06-DC-05.V1** — Turn the executed SQL reproductions into application-level regressions for same ID/different repo and different IDs/same case-insensitive filename; require the original curated records to remain unchanged. **Trace:** [Audit DC-05](./localmotive-comprehensive-audit.md#dc-05).
+- [x] **V06-DC-05.V2** — Exercise refresh, edit, and removal after each collision attempt; verify no empty curated model or stale user file becomes relabeled as curator-sourced. **Trace:** [Audit DC-05](./localmotive-comprehensive-audit.md#dc-05).
+- [x] **V06-DC-05.V3** — Test disjoint user and curator entries alongside the rejection cases so normal additions and refresh preservation remain supported. **Trace:** [Audit DC-05](./localmotive-comprehensive-audit.md#dc-05).
 
 **Complete when:** No override write or mirror refresh silently replaces curated model ownership or transfers an existing filename across origins. Every returned file retains correct provenance after save, refresh, edit, and removal, including collision attempts.
 
@@ -536,23 +536,23 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Make override replacement atomic and validate complete payloads**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (commit `6be56e5`); injected-fault variants recorded in the ledger · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit DC-06](./localmotive-comprehensive-audit.md#dc-06)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src-tauri/src/catalog_db.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/catalog_db.rs), [src-tauri/src/catalog.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/catalog.rs)
 
 **Implementation**
 
-- [ ] **V06-DC-06.I1** — Wrap replacement of one user's model and complete file set in a transaction, removing files omitted by the new version while preserving the previous version if any step fails. **Trace:** [Audit DC-06](./localmotive-comprehensive-audit.md#dc-06).
-- [ ] **V06-DC-06.I2** — Make override removal transactional so deleting file rows and the model row either succeeds as one operation or leaves the previous state intact. **Trace:** [Audit DC-06](./localmotive-comprehensive-audit.md#dc-06).
-- [ ] **V06-DC-06.I3** — Apply shared full validation to user writes and parsed records: bound serialized bytes, tags and nested arrays, text/date/quant/revision lengths, file counts, and case-insensitive duplicate targets. **Trace:** [Audit DC-06](./localmotive-comprehensive-audit.md#dc-06).
-- [ ] **V06-DC-06.I4** — Enforce the 200-user limit with origin-aware accounting under concurrent writes, and replace unchecked u64-to-i64 and reverse casts with validated, checked conversions. **Trace:** [Audit DC-06](./localmotive-comprehensive-audit.md#dc-06).
+- [x] **V06-DC-06.I1** — Wrap replacement of one user's model and complete file set in a transaction, removing files omitted by the new version while preserving the previous version if any step fails. **Trace:** [Audit DC-06](./localmotive-comprehensive-audit.md#dc-06).
+- [x] **V06-DC-06.I2** — Make override removal transactional so deleting file rows and the model row either succeeds as one operation or leaves the previous state intact. **Trace:** [Audit DC-06](./localmotive-comprehensive-audit.md#dc-06).
+- [x] **V06-DC-06.I3** — Apply shared full validation to user writes and parsed records: bound serialized bytes, tags and nested arrays, text/date/quant/revision lengths, file counts, and case-insensitive duplicate targets. **Trace:** [Audit DC-06](./localmotive-comprehensive-audit.md#dc-06).
+- [x] **V06-DC-06.I4** — Enforce the 200-user limit with origin-aware accounting under concurrent writes, and replace unchecked u64-to-i64 and reverse casts with validated, checked conversions. **Trace:** [Audit DC-06](./localmotive-comprehensive-audit.md#dc-06).
 
 **Verification**
 
-- [ ] **V06-DC-06.V1** — Add regressions for changing two files to one and a.gguf to b.gguf, then inject failure on the second insert and between removal statements; assert exact replacement or full rollback. **Trace:** [Audit DC-06](./localmotive-comprehensive-audit.md#dc-06).
-- [ ] **V06-DC-06.V2** — Exercise concurrent saves near the user cap and attempted conversion of a curated ID, coordinating the ownership rules from DC-05. **Trace:** [Audit DC-06](./localmotive-comprehensive-audit.md#dc-06).
-- [ ] **V06-DC-06.V3** — Test excessive tags, long revisions/quants/dates, duplicate filenames, serialized payload limits, and integer values at i64::MAX and beyond; require actionable rejections before mutation. **Trace:** [Audit DC-06](./localmotive-comprehensive-audit.md#dc-06).
+- [x] **V06-DC-06.V1** — Add regressions for changing two files to one and a.gguf to b.gguf, then inject failure on the second insert and between removal statements; assert exact replacement or full rollback. **Trace:** [Audit DC-06](./localmotive-comprehensive-audit.md#dc-06).
+- [x] **V06-DC-06.V2** — Exercise concurrent saves near the user cap and attempted conversion of a curated ID, coordinating the ownership rules from DC-05. **Trace:** [Audit DC-06](./localmotive-comprehensive-audit.md#dc-06).
+- [x] **V06-DC-06.V3** — Test excessive tags, long revisions/quants/dates, duplicate filenames, serialized payload limits, and integer values at i64::MAX and beyond; require actionable rejections before mutation. **Trace:** [Audit DC-06](./localmotive-comprehensive-audit.md#dc-06).
 
 **Complete when:** Successful edits return exactly the requested file set, while failed saves/removals preserve the previous complete record. All supported override values round-trip faithfully, and count/payload limits cannot be bypassed through existing IDs or nested fields.
 
@@ -3021,6 +3021,27 @@ This document was mechanically checked for complete mapping of the 72 audit IDs 
 ## Verification ledger (v0.6 implementation)
 
 Closure records implement [V06-G-02](#v06-g-02). One record per finding package; each record names the pre-fix reproduction, the fix commit, the post-fix command, and the residual limits. Checkbox states in the finding packages are updated together with these records.
+
+### V06-DC-04 — override browsing and download authority (commit `6be56e5`)
+
+- Status: Implemented; unit-verified; packaged override-flow acceptance open (V06-G-04/G-05).
+- Regression before fix (mutation proof): mutation M removed the provenance flags from `user_override_file`; `dc04_user_overrides_authorize_with_their_own_digest_and_only_when_marked` then FAILED.
+- Verification after fix: `cargo test dc04` — a saved, validated override resolves through `resolve_catalog_download` with `authority == "user"` and its exact stored digest; clearing either the file or model provenance flag ends authorization; removal ends it; curated rows resolve as `curated` from the signed snapshot and always win; unknown names resolve nowhere. The browse path is pinned by the release gate (`models: catalogAllRows`, and the snapshot-only source is forbidden) so rows and facets come from one merged collection.
+- Limits: the audit's controlled-server download (correct vs incorrect SHA-256 against a live server) is a packaged acceptance step in V06-G-04; the wrong-digest rejection itself already has downloader regressions. The add/edit form stays deferred by an explicit product decision recorded in the DC-04 scope note.
+
+### V06-DC-05 — ownership and provenance boundaries for overrides (commit `6be56e5`)
+
+- Status: Implemented; unit-verified; packaged mixed-origin acceptance covered under V06-G-04/G-05.
+- Regression before fix (mutation proof): mutation I removed the curator-id rejection; `dc05_curator_id_collision_is_rejected_and_curated_rows_survive` then FAILED. Mutation J removed the filename-collision rejections; `dc05_filename_collisions_with_curated_or_other_user_rows_are_rejected` then FAILED. Mutation K disabled the mirror ownership guard; `dc05_refresh_never_relabels_or_steals_user_owned_files` then FAILED.
+- Verification after fix: `cargo test dc05` — the three audit-executed SQL reproductions (same id/different repo; distinct ids/same case-insensitive filename; refresh after a collision) are application-level regressions: curated rows keep repo, provenance, and files; colliding saves are rejected with the owner named; curated refresh skips user-owned rows via the ON CONFLICT WHERE guard and returns per-file provenance (`CatalogFile.user_sourced`) so a user file can never be labeled curator-sourced.
+- Limits: pre-existing databases produced by the audited build could still contain mixed rows; reads now surface per-file provenance, and recovery re-validates salvaged rows, but no automatic migration rewrites legacy mixed rows — they simply can no longer be created or extended.
+
+### V06-DC-06 — transactional override replacement and full bounds (commit `6be56e5`)
+
+- Status: Implemented; unit-verified; injected mid-statement fault variant recorded below.
+- Regression before fix (mutation proof): mutation L stopped removing files omitted by an edit; `dc06_edit_replaces_the_complete_file_set` then FAILED.
+- Verification after fix: `cargo test dc06` — two files to one and a.gguf to b.gguf return exactly the requested set; an invalid payload and a held write lock both leave the previous complete record intact and the same save succeeds after the lock releases; validation rejects long/duplicate tags, dates, quants, revisions, case-variant filenames, i64-overflow counts, and oversize serialized payloads before any mutation; the 200-row cap counts user rows only (editing at the cap stays allowed) and two concurrent new entries near the cap yield exactly one winner with the count landing exactly at the limit.
+- Limits: a true mid-statement fault on the second INSERT is not injectable without adding a fault seam to production code; rollback is enforced by rusqlite transaction semantics (verified through the lock-failure and validation-failure preservation cases) and the same transactional pattern's mirror tests. Noted rather than faked.
 
 ### V06-DC-01 — catalog loading independent of refresh cooldown (commit `e6c7f59`)
 
