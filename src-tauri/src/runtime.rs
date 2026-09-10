@@ -6835,11 +6835,6 @@ Connection: close
             std::process::id(),
             rand::random::<u64>()
         ));
-        let limits = ScanLimits {
-            max_depth: 4,
-            max_entries: 8,
-        };
-
         // A valid boundary tree within both budgets is found.
         let valid_root = base.join("valid");
         let mut cursor = valid_root.clone();
@@ -6864,7 +6859,7 @@ Connection: close
         // rejected before the executable at its end can be visited.
         let busy_root = base.join("busy");
         let mut cursor = busy_root.clone();
-        for depth in 0..8 {
+        for _ in 0..8 {
             cursor = cursor.join("n");
         }
         std::fs::create_dir_all(&cursor).unwrap();
@@ -6884,7 +6879,7 @@ Connection: close
         // Excessive nesting is rejected by the depth budget alone.
         let deep_root = base.join("deep");
         let mut cursor = deep_root.clone();
-        for depth in 0..7 {
+        for _ in 0..7 {
             cursor = cursor.join("n");
         }
         std::fs::create_dir_all(&cursor).unwrap();
