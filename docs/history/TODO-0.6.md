@@ -1,7 +1,7 @@
 # Localmotive 0.6 — audit remediation TODO
 
 **Target:** `0.6.0` stabilization release  
-**Status:** Planning complete; implementation in progress — Package 2 (catalog restart, offline loading and recovery)  
+**Status:** Planning complete; implementation in progress — Package 3 (override identity and atomic persistence)  
 **Source:** [localmotive-comprehensive-audit.md](./localmotive-comprehensive-audit.md)
 **Audited source SHA:** `e530371b056cd8e049c2246dbb151aa407bf359f`  
 **Release baseline reviewed by the audit:** `v0.5.0`, source `a4b7127f739f7420232d9b6f63da693d39128d0b`  
@@ -31,7 +31,7 @@ Owner: `sato942` (accountable maintainer). Implementation and evidence productio
 | Package | Scope | Status |
 |---|---|---|
 | 1 | Managed runtime trust and legacy recovery (RT-01, RT-02, RT-04, RT-07) | Implementation complete; unit-verified; packaged items open in G-05 |
-| 2 | Catalog restart, offline loading and recovery (DC-01, DC-03, DC-07) | Not started |
+| 2 | Catalog restart, offline loading and recovery (DC-01, DC-03, DC-07) | Implementation complete; unit-verified (commit `e6c7f59`); packaged items open in G-04/G-05 |
 | 3 | Override identity and atomic persistence (DC-04, DC-05, DC-06) | Not started |
 | 4 | Bounded and cancellable tuning (MT-03, MT-04, RT-03) | Not started |
 | 5 | Benchmark protocol, export privacy and failure records (MT-01, MT-02, MT-12) | Not started |
@@ -406,22 +406,22 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Keep catalog loading available during refresh cooldowns**
 
-**Status:** Not started · **Priority:** High · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (commit `e6c7f59`); packaged restart acceptance open (V06-G-04/G-05) · **Priority:** High · **Owner:** sato942  
 **Audit trace:** [Audit DC-01](./localmotive-comprehensive-audit.md#dc-01)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src-tauri/src/catalog.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/catalog.rs), [src-tauri/src/lib.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/lib.rs), [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx)
 
 **Implementation**
 
-- [ ] **V06-DC-01.I1** — Separate loading an existing catalog from requesting a network refresh. Resolve a supported, signature-verified local snapshot or the bundled fallback before applying the persisted 1,560-minute refresh throttle. **Trace:** [Audit DC-01](./localmotive-comprehensive-audit.md#dc-01).
-- [ ] **V06-DC-01.I2** — Populate the backend's authoritative curated catalog state during local loading, including a fresh app instance, and return origin, last-success time, and remaining cooldown without turning a valid local read into an error. **Trace:** [Audit DC-01](./localmotive-comprehensive-audit.md#dc-01).
-- [ ] **V06-DC-01.I3** — Update the frontend load sequence to display available rows independently of network-refresh success, retain them when refresh is throttled, and show the cooldown alongside the refresh control. **Trace:** [Audit DC-01](./localmotive-comprehensive-audit.md#dc-01).
-- [ ] **V06-DC-01.I4** — Preserve the in-flight refresh guard and network throttling, while keeping signed curated authorization distinct from mutable SQLite browsing data. **Trace:** [Audit DC-01](./localmotive-comprehensive-audit.md#dc-01).
+- [x] **V06-DC-01.I1** — Separate loading an existing catalog from requesting a network refresh. Resolve a supported, signature-verified local snapshot or the bundled fallback before applying the persisted 1,560-minute refresh throttle. **Trace:** [Audit DC-01](./localmotive-comprehensive-audit.md#dc-01).
+- [x] **V06-DC-01.I2** — Populate the backend's authoritative curated catalog state during local loading, including a fresh app instance, and return origin, last-success time, and remaining cooldown without turning a valid local read into an error. **Trace:** [Audit DC-01](./localmotive-comprehensive-audit.md#dc-01).
+- [x] **V06-DC-01.I3** — Update the frontend load sequence to display available rows independently of network-refresh success, retain them when refresh is throttled, and show the cooldown alongside the refresh control. **Trace:** [Audit DC-01](./localmotive-comprehensive-audit.md#dc-01).
+- [x] **V06-DC-01.I4** — Preserve the in-flight refresh guard and network throttling, while keeping signed curated authorization distinct from mutable SQLite browsing data. **Trace:** [Audit DC-01](./localmotive-comprehensive-audit.md#dc-01).
 
 **Verification**
 
-- [ ] **V06-DC-01.V1** — Add a failing command/UI regression that starts with a signed cache, populated mirror, fresh persisted stamp, and new AppState; require populated rows and no network request. **Trace:** [Audit DC-01](./localmotive-comprehensive-audit.md#dc-01).
-- [ ] **V06-DC-01.V2** — Exercise missing and corrupt caches, bundled fallback, unavailable network, repeated Refresh, and clock rollback; verify that the selected supported snapshot initializes backend authorization. **Trace:** [Audit DC-01](./localmotive-comprehensive-audit.md#dc-01).
+- [x] **V06-DC-01.V1** — Add a failing command/UI regression that starts with a signed cache, populated mirror, fresh persisted stamp, and new AppState; require populated rows and no network request. **Trace:** [Audit DC-01](./localmotive-comprehensive-audit.md#dc-01).
+- [x] **V06-DC-01.V2** — Exercise missing and corrupt caches, bundled fallback, unavailable network, repeated Refresh, and clock rollback; verify that the selected supported snapshot initializes backend authorization. **Trace:** [Audit DC-01](./localmotive-comprehensive-audit.md#dc-01).
 - [ ] **V06-DC-01.V3** — Run the packaged Windows sequence: successful refresh, close, restart within 26 hours, open HF Catalog, and browse/filter a cached entry; record the displayed cooldown and request behavior. **Trace:** [Audit DC-01](./localmotive-comprehensive-audit.md#dc-01).
 
 **Complete when:** A new app instance displays a usable verified catalog throughout the refresh cooldown and while offline. Explicit refresh remains throttled without clearing rows or leaving curated authorization unnecessarily at the bundled version.
@@ -458,22 +458,22 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Refresh healthy catalog mirrors and recover damaged databases explicitly**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (commit `e6c7f59`); packaged open-handle acceptance open (V06-G-04/G-05) · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit DC-03](./localmotive-comprehensive-audit.md#dc-03)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src-tauri/src/lib.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/lib.rs), [src-tauri/src/catalog_db.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/catalog_db.rs)
 
 **Implementation**
 
-- [ ] **V06-DC-03.I1** — Replace the healthy-migration rebuild branch with a transactional call to mirror_verified_catalog on the valid connection, preserving existing user records during ordinary refresh. **Trace:** [Audit DC-03](./localmotive-comprehensive-audit.md#dc-03).
-- [ ] **V06-DC-03.I2** — Route confirmed migration or corruption failures into controlled recovery, closing relevant connections before quarantine or replacement instead of depending on removal of an open SQLite file. **Trace:** [Audit DC-03](./localmotive-comprehensive-audit.md#dc-03).
-- [ ] **V06-DC-03.I3** — Preserve or export readable user overrides before rebuilding; define a non-destructive downgrade policy for unknown-newer schemas and report any irrecoverable loss rather than deleting silently. **Trace:** [Audit DC-03](./localmotive-comprehensive-audit.md#dc-03).
-- [ ] **V06-DC-03.I4** — Propagate database-open, migration, mirror, and publication failures into an explicit persistence notice while continuing to serve an available verified in-memory catalog. **Trace:** [Audit DC-03](./localmotive-comprehensive-audit.md#dc-03).
+- [x] **V06-DC-03.I1** — Replace the healthy-migration rebuild branch with a transactional call to mirror_verified_catalog on the valid connection, preserving existing user records during ordinary refresh. **Trace:** [Audit DC-03](./localmotive-comprehensive-audit.md#dc-03).
+- [x] **V06-DC-03.I2** — Route confirmed migration or corruption failures into controlled recovery, closing relevant connections before quarantine or replacement instead of depending on removal of an open SQLite file. **Trace:** [Audit DC-03](./localmotive-comprehensive-audit.md#dc-03).
+- [x] **V06-DC-03.I3** — Preserve or export readable user overrides before rebuilding; define a non-destructive downgrade policy for unknown-newer schemas and report any irrecoverable loss rather than deleting silently. **Trace:** [Audit DC-03](./localmotive-comprehensive-audit.md#dc-03).
+- [x] **V06-DC-03.I4** — Propagate database-open, migration, mirror, and publication failures into an explicit persistence notice while continuing to serve an available verified in-memory catalog. **Trace:** [Audit DC-03](./localmotive-comprehensive-audit.md#dc-03).
 
 **Verification**
 
-- [ ] **V06-DC-03.V1** — Create a real temporary database with curated and user records; refresh repeatedly and assert both provenance and user contents survive. **Trace:** [Audit DC-03](./localmotive-comprehensive-audit.md#dc-03).
-- [ ] **V06-DC-03.V2** — Exercise corrupt databases, unknown-newer schemas, unavailable database paths, held locks, and injected write failures; verify recovery policy and preservation of the prior readable state. **Trace:** [Audit DC-03](./localmotive-comprehensive-audit.md#dc-03).
+- [x] **V06-DC-03.V1** — Create a real temporary database with curated and user records; refresh repeatedly and assert both provenance and user contents survive. **Trace:** [Audit DC-03](./localmotive-comprehensive-audit.md#dc-03).
+- [x] **V06-DC-03.V2** — Exercise corrupt databases, unknown-newer schemas, unavailable database paths, held locks, and injected write failures; verify recovery policy and preservation of the prior readable state. **Trace:** [Audit DC-03](./localmotive-comprehensive-audit.md#dc-03).
 - [ ] **V06-DC-03.V3** — Run the open-handle and recovery cases in the packaged Windows application, recording actual NTFS/SQLite sharing outcomes and confirming that every failed persistence action is visible. **Trace:** [Audit DC-03](./localmotive-comprehensive-audit.md#dc-03).
 
 **Complete when:** Normal refresh updates curated rows without rebuilding the healthy database or losing user overrides. Corruption and unsupported-schema handling follow a documented recoverable path, and persistence errors are observable without making valid signed browsing data unavailable.
@@ -562,23 +562,23 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Retain the last supported catalog for every failed refresh candidate**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (commit `e6c7f59`); packaged fallback acceptance open (V06-G-04/G-05) · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit DC-07](./localmotive-comprehensive-audit.md#dc-07)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src-tauri/src/catalog.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/catalog.rs), [src-tauri/src/lib.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/lib.rs)
 
 **Implementation**
 
-- [ ] **V06-DC-07.I1** — Route candidate body-read, streamed size-limit, UTF-8, signature-body, signature-validation, and catalog-parse failures through one consistent fallback path instead of early propagation that suppresses usable data. **Trace:** [Audit DC-07](./localmotive-comprehensive-audit.md#dc-07).
-- [ ] **V06-DC-07.I2** — Return the last supported signature-verified cache or bundled snapshot with explicit refresh-error status; preserve the distinction between a successful local load and a successful network refresh. **Trace:** [Audit DC-07](./localmotive-comprehensive-audit.md#dc-07).
-- [ ] **V06-DC-07.I3** — Keep unsupported future-schema and otherwise invalid candidates from replacing the last valid cache or becoming the authoritative curated download state. **Trace:** [Audit DC-07](./localmotive-comprehensive-audit.md#dc-07).
-- [ ] **V06-DC-07.I4** — Handle catalog database-open failure consistently with migration/read failure by selecting verified memory or bundled browsing data rather than depending solely on a frontend catch. **Trace:** [Audit DC-07](./localmotive-comprehensive-audit.md#dc-07).
+- [x] **V06-DC-07.I1** — Route candidate body-read, streamed size-limit, UTF-8, signature-body, signature-validation, and catalog-parse failures through one consistent fallback path instead of early propagation that suppresses usable data. **Trace:** [Audit DC-07](./localmotive-comprehensive-audit.md#dc-07).
+- [x] **V06-DC-07.I2** — Return the last supported signature-verified cache or bundled snapshot with explicit refresh-error status; preserve the distinction between a successful local load and a successful network refresh. **Trace:** [Audit DC-07](./localmotive-comprehensive-audit.md#dc-07).
+- [x] **V06-DC-07.I3** — Keep unsupported future-schema and otherwise invalid candidates from replacing the last valid cache or becoming the authoritative curated download state. **Trace:** [Audit DC-07](./localmotive-comprehensive-audit.md#dc-07).
+- [x] **V06-DC-07.I4** — Handle catalog database-open failure consistently with migration/read failure by selecting verified memory or bundled browsing data rather than depending solely on a frontend catch. **Trace:** [Audit DC-07](./localmotive-comprehensive-audit.md#dc-07).
 
 **Verification**
 
-- [ ] **V06-DC-07.V1** — Seed a valid signed cache and test truncated streaming responses, missing Content-Length with limit+1 data, invalid UTF-8, malformed signature bodies, and network/send failures. **Trace:** [Audit DC-07](./localmotive-comprehensive-audit.md#dc-07).
-- [ ] **V06-DC-07.V2** — Serve a validly signed unsupported schema and confirm the previous supported catalog remains visible and unchanged on disk. **Trace:** [Audit DC-07](./localmotive-comprehensive-audit.md#dc-07).
-- [ ] **V06-DC-07.V3** — Repeat fallback cases without a usable cache and with a database-open failure; verify a bundled snapshot, clear refresh status, and no unsigned authorization. **Trace:** [Audit DC-07](./localmotive-comprehensive-audit.md#dc-07).
+- [x] **V06-DC-07.V1** — Seed a valid signed cache and test truncated streaming responses, missing Content-Length with limit+1 data, invalid UTF-8, malformed signature bodies, and network/send failures. **Trace:** [Audit DC-07](./localmotive-comprehensive-audit.md#dc-07).
+- [x] **V06-DC-07.V2** — Serve a validly signed unsupported schema and confirm the previous supported catalog remains visible and unchanged on disk. **Trace:** [Audit DC-07](./localmotive-comprehensive-audit.md#dc-07).
+- [x] **V06-DC-07.V3** — Repeat fallback cases without a usable cache and with a database-open failure; verify a bundled snapshot, clear refresh status, and no unsigned authorization. **Trace:** [Audit DC-07](./localmotive-comprehensive-audit.md#dc-07).
 
 **Complete when:** Every rejected or interrupted network candidate leaves supported local catalog data available with an explicit status message. Invalid or future-schema candidates never overwrite the last-good cache or initialize curated authorization.
 
@@ -3021,6 +3021,27 @@ This document was mechanically checked for complete mapping of the 72 audit IDs 
 ## Verification ledger (v0.6 implementation)
 
 Closure records implement [V06-G-02](#v06-g-02). One record per finding package; each record names the pre-fix reproduction, the fix commit, the post-fix command, and the residual limits. Checkbox states in the finding packages are updated together with these records.
+
+### V06-DC-01 — catalog loading independent of refresh cooldown (commit `e6c7f59`)
+
+- Status: Implemented; unit-verified; packaged restart acceptance open (V06-G-04/G-05).
+- Regression before fix (mutation proof): mutation F trusted every cache record in `load_catalog_snapshot` instead of signature-verified records; `dc01_local_load_uses_bundled_data_for_missing_corrupt_or_untrusted_caches` then FAILED.
+- Verification after fix: `cargo test dc01` — command-level test `dc01_local_load_publishes_state_inside_the_cooldown_and_authorizes_downloads` starts with a signed cache, a fresh persisted stamp, and an empty state slot; requires populated rows, the reported cooldown, no network request (the load path constructs no HTTP client), and a working `authorized_catalog_file` resolution. Clock rollback and corrupt/missing caches covered separately.
+- Limits: no network request is verified structurally, not by request capture; the packaged close/restart sequence (V06-DC-01.V3) is part of V06-G-04/G-05. Repeated-Refresh throttling remains covered by `only_one_catalog_refresh_runs_at_a_time` plus the cooldown error path.
+
+### V06-DC-03 — transactional mirror refresh and controlled recovery (commit `e6c7f59`)
+
+- Status: Implemented; unit-verified; packaged open-handle acceptance open (V06-G-04/G-05).
+- Regression before fix (mutation proof): mutation G rebuilt (recovered) inside the healthy migration branch of `fetch_model_catalog`; `dc03_fetch_mirrors_healthy_databases_and_only_recovers_after_migration_failure` then FAILED. The source guard names `mirror_verified_catalog` in the healthy arm and `recover_catalog_db_from_verified` only in the failure arm.
+- Verification after fix: `cargo test catalog_db` — corrupt-file recovery quarantines the old database and reports; an unsupported newer schema preserves one user override through salvage; healthy refresh keeps user rows (`user_override_is_marked_and_survives_network_refresh`). Persistence failures surface through `CatalogSnapshot.persistence_notice`.
+- Limits: held-lock and open-handle NTFS/SQLite sharing outcomes are recorded in the packaged application under V06-G-04/G-05; the injected-quarantine-failure case is covered by the recovery error path returning `Err` (the caller then reports the notice) without a dedicated rename-failure fixture.
+
+### V06-DC-07 — one fallback path for candidate failures (commit `e6c7f59`)
+
+- Status: Implemented; unit-verified; packaged fallback acceptance open (V06-G-04/G-05).
+- Regression before fix (mutation proof): mutation H restored early `?` propagation on body-read failure; `dc07_truncated_invalid_utf8_and_malformed_signature_candidates_keep_the_cache` and `dc07_oversized_close_delimited_stream_keeps_the_cache_with_a_bounded_read` then FAILED.
+- Verification after fix: `cargo test dc07` — a local HTTP fixture serves truncated bodies, invalid UTF-8, malformed signature bodies, and a close-delimited 4 MiB+1 stream; each keeps the seeded signed cache with an explicit `refresh_error`, and the served body never replaces the cache on disk. A positive control (`fetch_catalog_succeeds_end_to_end_against_a_served_signed_pair`) proves a valid served pair still produces a network snapshot. A validly signed unsupported schema (schema 99) is rejected through the injected-verifier seam and cannot replace the cache. `dc07_database_open_and_migration_failures_select_verified_rows` covers database-open and migration failure fallbacks.
+- Limits: the future-schema case uses a test verifier seam, since the maintainer signing key is not available to tests; production always passes `verify_catalog_signature`.
 
 ### V06-RT-01 — launchable install destination (commit `bd33337`)
 

@@ -1065,11 +1065,15 @@ test("branding history set covers the archived docs layout", async () => {
   assert.match(source, /docs\/history\/TODO-0\.4\.1\.md/);
 });
 
-test("local catalog SQLite mirror stores verified models with migrations and rebuilds", async () => {
+test("local catalog SQLite mirror stores verified models with migrations and controlled recovery", async () => {
   const mirror = await readFile(join(process.cwd(), "src-tauri", "src", "catalog_db.rs"), "utf8");
   assert.match(mirror, /catalog_db_path/);
   assert.match(mirror, /CATALOG_DB_SCHEMA_VERSION/);
-  assert.match(mirror, /rebuild_catalog_db_from_verified/);
+  // Audit DC-03: recovery quarantines the previous file and rebuilds from
+  // verified bytes; the old silent rebuild symbol is gone for good.
+  assert.match(mirror, /recover_catalog_db_from_verified/);
+  assert.doesNotMatch(mirror, /rebuild_catalog_db_from_verified/);
+  assert.match(mirror, /quarantine/);
   assert.match(mirror, /read_catalog_db_models/);
   assert.match(mirror, /mirror_verified_catalog/);
   assert.match(mirror, /migrate_catalog_db/);
