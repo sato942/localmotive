@@ -118,10 +118,18 @@ exactly.
 
 ## 3. Development workflow
 
-### v0.5 tracker
+### v0.6 tracker (current)
 
-Read `docs/history/TODO-0.5.md` before starting v0.5 work. Treat `docs/history/TODO-0.5.md` as the
-authoritative phase tracker, but never treat a checkbox as verification evidence.
+Read `docs/history/TODO-0.6.md` before starting v0.6 work. It is the authoritative
+remediation tracker for the 0.6.0 stabilization release; its evidence source is
+`docs/history/localmotive-comprehensive-audit.md`. Treat the audit as the source of
+truth for each finding and never treat a checkbox as verification evidence. Every
+closed finding needs a regression-first record in the tracker's verification ledger.
+
+### v0.5 tracker (frozen)
+
+Read `docs/history/TODO-0.5.md` for v0.5 history. Treat v0.5 as a closed record; do
+not rewrite its evidence.
 
 Keep `docs/history/TODO-0.4.1.md` frozen. Add only a pointer to the 0.5 tracker. Do not rewrite closeout evidence.
 
