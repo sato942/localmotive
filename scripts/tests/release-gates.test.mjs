@@ -1079,6 +1079,25 @@ test("local catalog SQLite mirror stores verified models with migrations and con
   assert.match(mirror, /migrate_catalog_db/);
 });
 
+test("catalog browse uses one merged collection and never the snapshot alone", async () => {
+  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  // Audit DC-04: rows and facets are filtered from the merged local
+  // collection, so user rows survive filtering and facets stay truthful.
+  assert.match(app, /models: catalogAllRows/);
+  assert.doesNotMatch(app, /models: catalogSnapshot\.catalog\.models/);
+});
+
+test("override saves reject mixed-origin collisions inside an immediate transaction", async () => {
+  const mirror = await readFile(join(process.cwd(), "src-tauri", "src", "catalog_db.rs"), "utf8");
+  // Audit DC-05/DC-06: ownership is reserved with actionable rejections, and
+  // replacement runs in an IMMEDIATE transaction so reads inside it cannot
+  // race a concurrent writer.
+  assert.match(mirror, /belongs to a curated catalog entry and cannot be replaced/);
+  assert.match(mirror, /belongs to the curated catalog and cannot be reused/);
+  assert.match(mirror, /already belongs to the local override/);
+  assert.match(mirror, /transaction_with_behavior\(rusqlite::TransactionBehavior::Immediate\)/);
+});
+
 test("user catalog overrides stay local, marked, and outside network verification", async () => {
   const mirror = await readFile(join(process.cwd(), "src-tauri", "src", "catalog_db.rs"), "utf8");
   const lib = await readFile(join(process.cwd(), "src-tauri", "src", "lib.rs"), "utf8");

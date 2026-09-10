@@ -63,6 +63,11 @@ pub struct CatalogFile {
     /// Repo creation time, ISO 8601. Empty when unobserved.
     #[serde(default)]
     pub created_at: String,
+    /// True when this file was added locally by the user. Downloads still
+    /// require the exact stored SHA-256 (audit DC-05: provenance travels
+    /// with the entity that is displayed and downloaded).
+    #[serde(default)]
+    pub user_sourced: bool,
 }
 
 fn default_revision() -> String {
@@ -1746,6 +1751,7 @@ mod tests {
                 revision: "main".into(),
                 last_modified: String::new(),
                 created_at: String::new(),
+                user_sourced: false,
             }],
             ..Default::default()
         };

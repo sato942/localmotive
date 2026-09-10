@@ -173,6 +173,10 @@ function App() {
   const [about, setAbout] = useState<AboutInfo | null>(null);
   const [catalogSnapshot, setCatalogSnapshot] = useState<CatalogSnapshot | null>(null);
   const [catalogRows, setCatalogRows] = useState<CatalogModel[]>([]);
+  // One merged browse collection: verified curated rows plus user rows.
+  // Every filter, sort, and facet input reads this, never the snapshot alone
+  // (audit DC-04).
+  const [catalogAllRows, setCatalogAllRows] = useState<CatalogModel[]>([]);
   const [catalogTags, setCatalogTags] = useState<string[]>([]);
   const [catalogQuants, setCatalogQuants] = useState<string[]>([]);
   const [catalogAuthors, setCatalogAuthors] = useState<string[]>([]);
@@ -499,6 +503,7 @@ function App() {
       if (!keepLatestRequest(sequence, catalogLoadSeq.current)) return;
       setCatalogSnapshot(snapshot);
       setCatalogRows(localModels);
+      setCatalogAllRows(localModels);
       setCatalogTags(tags);
       setCatalogQuants(quants);
       if (rich) {
@@ -911,7 +916,7 @@ function App() {
       budget_bytes: catalogFitEnabled ? (catalogFitBudget?.budgetBytes ?? 0) : 0,
     };
     invoke<CatalogModel[]>("filter_catalog", {
-      models: catalogSnapshot.catalog.models,
+      models: catalogAllRows,
       query,
     })
       .then((rows) => {
@@ -920,7 +925,7 @@ function App() {
       .catch((error) => {
         if (keepLatestRequest(sequence, catalogFilterSeq.current)) setNotice(String(error));
       });
-  }, [catalogSnapshot, catalogSearch, catalogTag, catalogQuant, catalogAuthor, catalogLicense, catalogPipeline, catalogArchitecture, catalogMaxGiB, catalogHideGated, catalogSort, catalogFitEnabled, catalogFitPerMille, catalogFitBudget]);
+  }, [catalogSnapshot, catalogAllRows, catalogSearch, catalogTag, catalogQuant, catalogAuthor, catalogLicense, catalogPipeline, catalogArchitecture, catalogMaxGiB, catalogHideGated, catalogSort, catalogFitEnabled, catalogFitPerMille, catalogFitBudget]);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -1305,7 +1310,7 @@ function App() {
                       </div>
                       <div className="catalog-file-row">
                         <label>Build<select value={file.filename} onChange={(event) => setCatalogFiles((current) => ({ ...current, [model.id]: event.target.value }))}>{model.files.map((entry) => <option key={entry.filename} value={entry.filename}>{entry.quant} · {bytesLabel(entry.sizeBytes)}</option>)}</select></label>
-                        <div className="catalog-filename"><span>{file.filename}</span><small>{bytesLabel(file.sizeBytes)} · 4 PARALLEL RANGES</small></div>
+                        <div className="catalog-filename"><span>{file.filename}</span>{file.userSourced && <span className="state-tag">USER FILE · LOCAL DIGEST</span>}<small>{bytesLabel(file.sizeBytes)} · 4 PARALLEL RANGES</small></div>
                         {running ? (
                           <button className="button danger" onClick={() => cancelCatalogDownload(file)}><CircleStop size={15} /> Keep & stop</button>
                         ) : (

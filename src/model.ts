@@ -1502,6 +1502,8 @@ export type CatalogFile = {
   revision?: string;
   lastModified?: string;
   createdAt?: string;
+  /** True for files added locally: downloads use the stored exact digest. */
+  userSourced?: boolean;
 };
 
 export function catalogRevision(file: CatalogFile): string {

@@ -2888,9 +2888,9 @@ fn save_user_catalog_override(
     model: catalog::CatalogModel,
 ) -> Result<Vec<catalog::CatalogModel>, String> {
     let root = catalog_cache_root(&app);
-    let connection = catalog_db::open_catalog_db(&root)?;
+    let mut connection = catalog_db::open_catalog_db(&root)?;
     catalog_db::migrate_catalog_db(&connection)?;
-    catalog_db::save_user_catalog_override(&connection, &model)?;
+    catalog_db::save_user_catalog_override(&mut connection, &model)?;
     catalog_db::read_catalog_db_models(&connection)
 }
 
@@ -2901,9 +2901,9 @@ fn remove_user_catalog_override(
     id: String,
 ) -> Result<Vec<catalog::CatalogModel>, String> {
     let root = catalog_cache_root(&app);
-    let connection = catalog_db::open_catalog_db(&root)?;
+    let mut connection = catalog_db::open_catalog_db(&root)?;
     catalog_db::migrate_catalog_db(&connection)?;
-    catalog_db::remove_user_catalog_override(&connection, &id)?;
+    catalog_db::remove_user_catalog_override(&mut connection, &id)?;
     catalog_db::read_catalog_db_models(&connection)
 }
 
@@ -3028,16 +3028,28 @@ fn download_target(
     Ok((target, key))
 }
 
-/// Resolve the signed authorization for one download. Only rows that came
-/// from a signature-verified snapshot authorize a transfer: the loaded
-/// in-memory catalog or the bundled copy, never a mutable UI or mirror row
-/// (audit DC-07).
-fn authorized_catalog_file(
+/// One resolved download authorization, tagged with its authority.
+struct AuthorizedDownload {
+    file: catalog::CatalogFile,
+    /// `curated` for signature-verified snapshot rows, `user` for validated
+    /// local overrides carrying their own exact digest (audit DC-04).
+    authority: &'static str,
+}
+
+/// Resolve the authorization for one download with an explicit
+/// curated-versus-user split. Curated rows come only from the loaded
+/// signature-verified snapshot or the bundled copy. A row missing there may
+/// still match a validated local override record — marked `user_sourced` on
+/// both the model and the file — whose exact stored SHA-256 authorizes the
+/// transfer. No other mutable row can authorize anything (audit DC-04,
+/// DC-07).
+fn resolve_catalog_download(
     active: Option<&catalog::Catalog>,
+    cache_root: &std::path::Path,
     repo: &str,
     filename: &str,
     revision: &str,
-) -> Result<catalog::CatalogFile, String> {
+) -> Result<AuthorizedDownload, String> {
     let bundled;
     let catalog = match active {
         Some(catalog) => catalog,
@@ -3046,11 +3058,27 @@ fn authorized_catalog_file(
             &bundled
         }
     };
-    catalog::catalog_file(catalog, repo, filename, revision)
-        .cloned()
-        .ok_or_else(|| {
-            "That repository, file, or revision is not in the validated catalog.".to_string()
-        })
+    if let Some(file) = catalog::catalog_file(catalog, repo, filename, revision).cloned() {
+        return Ok(AuthorizedDownload {
+            file,
+            authority: "curated",
+        });
+    }
+    let connection = catalog_db::open_catalog_db(cache_root).map_err(|error| {
+        format!(
+            "That repository, file, or revision is not in the validated catalog, and the local override store is unavailable: {error}"
+        )
+    })?;
+    match catalog_db::user_override_file(&connection, repo, filename, revision)? {
+        Some(file) => Ok(AuthorizedDownload {
+            file,
+            authority: "user",
+        }),
+        None => Err(
+            "That repository, file, or revision is not in the validated catalog or in your local overrides."
+                .to_string(),
+        ),
+    }
 }
 
 /// Start a download. Progress is emitted as `download:progress` events so a
@@ -3069,12 +3097,20 @@ async fn download_catalog_file(
 
     catalog::validate_download_target(&repo, &filename)?;
     let revision = revision.unwrap_or_else(|| "main".into());
+    let root = catalog_cache_root(&app);
     let authorized = {
         let active = state.catalog.lock().unwrap();
-        authorized_catalog_file(active.as_ref(), &repo, &filename, &revision)?
+        resolve_catalog_download(active.as_ref(), &root, &repo, &filename, &revision)?
     };
-    let expected_size = authorized.size_bytes;
-    let expected_sha256 = authorized.sha256;
+    let expected_size = authorized.file.size_bytes;
+    let expected_sha256 = authorized.file.sha256;
+    // Which authority admitted this transfer stays visible to the user
+    // (audit DC-04: provenance travels through the whole workflow).
+    let completion_message = if authorized.authority == "user" {
+        "Download complete: checksum verified against your local override digest."
+    } else {
+        "Download complete and checksum verified."
+    };
     let (target, lock_key) = download_target(&destination, &filename)?;
     let event_key = format!("{repo}/{filename}");
     let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -3150,7 +3186,7 @@ async fn download_catalog_file(
                     total: expected_size,
                     bytes_per_second: 0,
                     state: "done".into(),
-                    message: "Download complete and checksum verified.".into(),
+                    message: completion_message.into(),
                     path: path.clone(),
                 },
             );
@@ -4365,7 +4401,7 @@ mod release_security_tests {
 mod catalog_command_tests {
     use super::*;
 
-    fn unique_dir(prefix: &str) -> std::path::PathBuf {
+    pub(crate) fn unique_dir(prefix: &str) -> std::path::PathBuf {
         for _ in 0..16 {
             let candidate = std::env::temp_dir().join(format!(
                 "{prefix}-{}-{:016x}",
@@ -4421,15 +4457,25 @@ mod catalog_command_tests {
             .iter()
             .find_map(|model| model.files.first().map(|file| (model, file)))
             .expect("the shipped catalog must carry at least one file");
-        let authorized =
-            authorized_catalog_file(active.as_ref(), &model.repo, &file.filename, &file.revision)
-                .expect("a published row must authorize its own file");
-        assert_eq!(authorized.sha256, file.sha256);
+        let authorized = resolve_catalog_download(
+            active.as_ref(),
+            &root,
+            &model.repo,
+            &file.filename,
+            &file.revision,
+        )
+        .expect("a published row must authorize its own file");
+        assert_eq!(authorized.file.sha256, file.sha256);
+        assert_eq!(authorized.authority, "curated");
         // ...and nothing else: an unlisted file stays unauthorized.
-        assert!(
-            authorized_catalog_file(active.as_ref(), &model.repo, "not-listed.gguf", "main")
-                .is_err()
-        );
+        assert!(resolve_catalog_download(
+            active.as_ref(),
+            &root,
+            &model.repo,
+            "not-listed.gguf",
+            "main"
+        )
+        .is_err());
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -4504,5 +4550,146 @@ mod catalog_persistence_source_tests {
             failure.contains("recover_catalog_db_from_verified"),
             "a failed migration must enter controlled recovery: {failure}"
         );
+    }
+}
+
+#[cfg(test)]
+mod override_authority_tests {
+    use super::*;
+
+    fn seed_user_override(root: &std::path::Path) -> (String, String, String) {
+        let model = catalog::CatalogModel {
+            id: "mine".into(),
+            repo: "local/Handmade-GGUF".into(),
+            family: "Handmade".into(),
+            parameters: "1B".into(),
+            publisher: "local".into(),
+            author: "local".into(),
+            summary: String::new(),
+            tags: Vec::new(),
+            gated: false,
+            downloads: 0,
+            likes: 0,
+            license: String::new(),
+            pipeline_tag: String::new(),
+            library_name: String::new(),
+            architecture: String::new(),
+            last_modified: String::new(),
+            created_at: String::new(),
+            files: vec![catalog::CatalogFile {
+                quant: "Q4_K_M".into(),
+                filename: "mine-Q4_K_M.gguf".into(),
+                size_bytes: 1024,
+                sha256: "d".repeat(64),
+                revision: "main".into(),
+                last_modified: String::new(),
+                created_at: String::new(),
+                user_sourced: true,
+            }],
+            user_sourced: true,
+        };
+        let mut connection = crate::catalog_db::open_catalog_db(root).unwrap();
+        crate::catalog_db::migrate_catalog_db(&connection).unwrap();
+        crate::catalog_db::save_user_catalog_override(&mut connection, &model).unwrap();
+        (
+            model.repo.clone(),
+            "mine-Q4_K_M.gguf".to_string(),
+            "d".repeat(64),
+        )
+    }
+
+    #[test]
+    fn dc04_user_overrides_authorize_with_their_own_digest_and_only_when_marked() {
+        // The explicit curated-versus-user split (audit DC-04): a saved,
+        // validated override authorizes a download with its exact stored
+        // digest; removal and provenance flags change that immediately, and
+        // nothing here ever acquires signed curated status.
+        let root = crate::catalog_command_tests::unique_dir("localmotive-lib-dc04");
+        let (repo, filename, sha256) = seed_user_override(&root);
+
+        let authorized = resolve_catalog_download(None, &root, &repo, &filename, "main").unwrap();
+        assert_eq!(authorized.authority, "user");
+        assert_eq!(authorized.file.sha256, sha256);
+        assert!(authorized.file.user_sourced);
+
+        // A directly modified row (provenance flag cleared) loses authority.
+        {
+            let connection = crate::catalog_db::open_catalog_db(&root).unwrap();
+            connection
+                .execute(
+                    "UPDATE catalog_file SET user_sourced = 0 WHERE filename_lower = ?1",
+                    [filename.to_lowercase()],
+                )
+                .unwrap();
+        }
+        assert!(resolve_catalog_download(None, &root, &repo, &filename, "main").is_err());
+        {
+            let connection = crate::catalog_db::open_catalog_db(&root).unwrap();
+            connection
+                .execute(
+                    "UPDATE catalog_file SET user_sourced = 1 WHERE filename_lower = ?1",
+                    [filename.to_lowercase()],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "UPDATE catalog_model SET user_sourced = 0 WHERE id = 'mine'",
+                    [],
+                )
+                .unwrap();
+        }
+        assert!(resolve_catalog_download(None, &root, &repo, &filename, "main").is_err());
+
+        // Restore provenance, then removal ends authorization.
+        {
+            let connection = crate::catalog_db::open_catalog_db(&root).unwrap();
+            connection
+                .execute(
+                    "UPDATE catalog_model SET user_sourced = 1 WHERE id = 'mine'",
+                    [],
+                )
+                .unwrap();
+        }
+        assert!(resolve_catalog_download(None, &root, &repo, &filename, "main").is_ok());
+        {
+            let mut connection = crate::catalog_db::open_catalog_db(&root).unwrap();
+            crate::catalog_db::remove_user_catalog_override(&mut connection, "mine").unwrap();
+        }
+        assert!(resolve_catalog_download(None, &root, &repo, &filename, "main").is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dc04_curated_authority_wins_and_unknown_rows_never_authorize() {
+        // A curated row resolves from the signed snapshot even when a user
+        // store also exists; an unknown filename resolves nowhere (DC-04).
+        let root = crate::catalog_command_tests::unique_dir("localmotive-lib-dc04-curated");
+        let (repo, _filename, _) = seed_user_override(&root);
+        let snapshot = catalog::load_catalog_snapshot(&root, catalog::DEFAULT_CATALOG_URL).unwrap();
+        let (model, file) = snapshot
+            .catalog
+            .models
+            .iter()
+            .find_map(|model| model.files.first().map(|file| (model, file)))
+            .expect("the bundled catalog must carry a file");
+        let authorized = resolve_catalog_download(
+            Some(&snapshot.catalog),
+            &root,
+            &model.repo,
+            &file.filename,
+            &file.revision,
+        )
+        .unwrap();
+        assert_eq!(authorized.authority, "curated");
+        assert_eq!(authorized.file.sha256, file.sha256);
+        assert!(resolve_catalog_download(
+            Some(&snapshot.catalog),
+            &root,
+            &repo,
+            "unknown.gguf",
+            "main"
+        )
+        .is_err());
+        let _ = std::fs::remove_dir_all(root);
     }
 }

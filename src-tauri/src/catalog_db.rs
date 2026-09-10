@@ -27,6 +27,15 @@ pub const CATALOG_DB_SCHEMA_VERSION: u32 = 1;
 /// user rows still require the exact SHA-256 the user supplied.
 pub const MAX_USER_OVERRIDE_MODELS: usize = 200;
 pub const MAX_USER_OVERRIDE_TEXT_LEN: usize = 512;
+pub const MAX_USER_OVERRIDE_TAGS: usize = 32;
+pub const MAX_USER_OVERRIDE_TAG_TEXT_LEN: usize = 256;
+pub const MAX_USER_OVERRIDE_DATE_LEN: usize = 64;
+pub const MAX_USER_OVERRIDE_QUANT_LEN: usize = 64;
+pub const MAX_USER_OVERRIDE_REVISION_LEN: usize = 128;
+/// Bound on the whole serialized override payload, independent of field and
+/// row caps: one paste cannot inflate the database or browse responses
+/// (audit DC-06).
+pub const MAX_USER_OVERRIDE_SERIALIZED_BYTES: usize = 64 * 1024;
 
 /// Where the local mirror lives, beside the JSON cache record.
 pub fn catalog_db_path(root: &Path) -> PathBuf {
@@ -120,7 +129,9 @@ pub fn mirror_verified_catalog(
         .execute("DELETE FROM catalog_model WHERE user_sourced = 0", [])
         .map_err(|error| format!("Could not clear the catalog mirror: {error}"))?;
     for model in models {
-        insert_model(&transaction, model, false)?;
+        // Curator inserts never overwrite rows the user owns: a filename the
+        // user added stays theirs (audit DC-05).
+        insert_model_guarded(&transaction, model, false)?;
     }
     transaction
         .commit()
@@ -128,15 +139,48 @@ pub fn mirror_verified_catalog(
     Ok(())
 }
 
+/// Insert one model row (and its files) as network or user content. Used for
+/// user writes, which must replace the user's own previous row verbatim.
 fn insert_model(
     connection: &Connection,
     model: &CatalogModel,
     user_sourced: bool,
 ) -> Result<(), String> {
+    insert_model_with_ownership_guard(connection, model, user_sourced, false)
+}
+
+/// Mirror-side insert for curated content: the ON CONFLICT update is skipped
+/// when the existing row belongs to the user, so a refresh can never relabel
+/// user rows as curator data or steal a user-owned filename (audit DC-05).
+fn insert_model_guarded(
+    connection: &Connection,
+    model: &CatalogModel,
+    user_sourced: bool,
+) -> Result<(), String> {
+    insert_model_with_ownership_guard(connection, model, user_sourced, true)
+}
+
+fn insert_model_with_ownership_guard(
+    connection: &Connection,
+    model: &CatalogModel,
+    user_sourced: bool,
+    preserve_user_owned: bool,
+) -> Result<(), String> {
     let flag: u32 = u32::from(user_sourced);
+    let model_guard = if preserve_user_owned {
+        " WHERE catalog_model.user_sourced = 0"
+    } else {
+        ""
+    };
+    let file_guard = if preserve_user_owned {
+        " WHERE catalog_file.user_sourced = 0"
+    } else {
+        ""
+    };
     connection
         .execute(
-            "INSERT INTO catalog_model
+            &format!(
+                "INSERT INTO catalog_model
              (id, repo, family, parameters, publisher, author, summary, tags_json,
               gated, downloads, likes, license, pipeline_tag, library_name,
               architecture, last_modified, created_at, user_sourced)
@@ -152,7 +196,8 @@ fn insert_model(
               architecture = excluded.architecture,
               last_modified = excluded.last_modified,
               created_at = excluded.created_at,
-              user_sourced = excluded.user_sourced",
+              user_sourced = excluded.user_sourced{model_guard}",
+            ),
             params![
                 model.id,
                 model.repo,
@@ -164,8 +209,10 @@ fn insert_model(
                 serde_json::to_string(&model.tags)
                     .map_err(|error| format!("Could not encode catalog tags: {error}"))?,
                 u32::from(model.gated),
-                model.downloads as i64,
-                model.likes as i64,
+                i64::try_from(model.downloads)
+                    .map_err(|_| format!("Catalog model {} downloads exceed the supported range.", model.id))?,
+                i64::try_from(model.likes)
+                    .map_err(|_| format!("Catalog model {} likes exceed the supported range.", model.id))?,
                 model.license,
                 model.pipeline_tag,
                 model.library_name,
@@ -177,9 +224,16 @@ fn insert_model(
         )
         .map_err(|error| format!("Could not mirror catalog model {}: {error}", model.id))?;
     for file in &model.files {
+        let size_bytes = i64::try_from(file.size_bytes).map_err(|_| {
+            format!(
+                "Catalog file {} is larger than the local database supports.",
+                file.filename
+            )
+        })?;
         connection
             .execute(
-                "INSERT INTO catalog_file
+                &format!(
+                    "INSERT INTO catalog_file
                  (filename_lower, model_id, quant, filename, size_bytes, sha256,
                   revision, last_modified, created_at, user_sourced)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
@@ -189,13 +243,14 @@ fn insert_model(
                   sha256 = excluded.sha256, revision = excluded.revision,
                   last_modified = excluded.last_modified,
                   created_at = excluded.created_at,
-                  user_sourced = excluded.user_sourced",
+                  user_sourced = excluded.user_sourced{file_guard}",
+                ),
                 params![
                     file.filename.to_ascii_lowercase(),
                     model.id,
                     file.quant,
                     file.filename,
-                    file.size_bytes as i64,
+                    size_bytes,
                     file.sha256,
                     file.revision,
                     file.last_modified,
@@ -234,8 +289,8 @@ pub fn read_catalog_db_models(connection: &Connection) -> Result<Vec<CatalogMode
                 row.get::<_, String>(6)?,
                 row.get::<_, String>(7)?,
                 row.get::<_, i64>(8)?,
-                row.get::<_, i64>(9)?,
-                row.get::<_, i64>(10)?,
+                u64::try_from(row.get::<_, i64>(9)?).ok(),
+                u64::try_from(row.get::<_, i64>(10)?).ok(),
                 row.get::<_, String>(11)?,
                 row.get::<_, String>(12)?,
                 row.get::<_, String>(13)?,
@@ -272,25 +327,47 @@ pub fn read_catalog_db_models(connection: &Connection) -> Result<Vec<CatalogMode
         let mut file_statement = connection
             .prepare(
                 "SELECT quant, filename, size_bytes, sha256, revision,
-                        last_modified, created_at
+                        last_modified, created_at, user_sourced
                  FROM catalog_file WHERE model_id = ?1 ORDER BY filename",
             )
             .map_err(|error| format!("Could not read the local catalog database: {error}"))?;
         let files = file_statement
             .query_map([&id], |row| {
-                Ok(CatalogFile {
-                    quant: row.get(0)?,
-                    filename: row.get(1)?,
-                    size_bytes: row.get::<_, i64>(2)? as u64,
-                    sha256: row.get(3)?,
-                    revision: row.get(4)?,
-                    last_modified: row.get(5)?,
-                    created_at: row.get(6)?,
-                })
+                Ok((
+                    CatalogFile {
+                        quant: row.get(0)?,
+                        filename: row.get(1)?,
+                        size_bytes: row.get::<_, i64>(2)? as u64,
+                        sha256: row.get(3)?,
+                        revision: row.get(4)?,
+                        last_modified: row.get(5)?,
+                        created_at: row.get(6)?,
+                        user_sourced: row.get::<_, i64>(7)? != 0,
+                    },
+                    row.get::<_, i64>(2)?,
+                ))
             })
             .map_err(|error| format!("Could not read the local catalog database: {error}"))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("Could not read the local catalog database: {error}"))?;
+            .map(|row| {
+                row.map_err(|error| format!("Could not read the local catalog database: {error}"))
+            })
+            .map(|row| {
+                row.and_then(|(file, raw_size)| {
+                    // Faithful round-trip: a negative or absent size is a
+                    // database integrity problem, not a silent wrap.
+                    let size = u64::try_from(raw_size).map_err(|_| {
+                        format!(
+                            "Catalog file {} has an out-of-range size in the local database.",
+                            file.filename
+                        )
+                    })?;
+                    Ok(CatalogFile {
+                        size_bytes: size,
+                        ..file
+                    })
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         models.push(CatalogModel {
             id,
             repo,
@@ -301,8 +378,8 @@ pub fn read_catalog_db_models(connection: &Connection) -> Result<Vec<CatalogMode
             summary,
             tags,
             gated: gated != 0,
-            downloads: downloads as u64,
-            likes: likes as u64,
+            downloads: downloads.unwrap_or(0),
+            likes: likes.unwrap_or(0),
             license,
             pipeline_tag,
             library_name,
@@ -348,7 +425,7 @@ pub fn recover_catalog_db_from_verified(
     mirror_verified_catalog(&mut connection, &verified.models)?;
     let mut preserved = 0_usize;
     for model in &salvage {
-        if save_user_catalog_override(&connection, model).is_ok() {
+        if save_user_catalog_override(&mut connection, model).is_ok() {
             preserved += 1;
         }
     }
@@ -397,6 +474,12 @@ pub fn validate_user_override(model: &CatalogModel) -> Result<(), String> {
     if !super::catalog::is_valid_repo(&model.repo) {
         return Err("The Hugging Face repository must have the form owner/name.".into());
     }
+    if model.downloads > i64::MAX as u64 || model.likes > i64::MAX as u64 {
+        // Rejected before any mutation: the local database stores signed
+        // integers, so values beyond i64::MAX have no faithful round-trip
+        // (audit DC-06).
+        return Err("Override download or like counts exceed the supported range.".into());
+    }
     if model.files.is_empty() || model.files.len() > 64 {
         return Err("The override must list 1 to 64 files.".into());
     }
@@ -417,10 +500,62 @@ pub fn validate_user_override(model: &CatalogModel) -> Result<(), String> {
             ));
         }
     }
+    if model.tags.len() > MAX_USER_OVERRIDE_TAGS {
+        return Err(format!(
+            "The override has too many tags (maximum {MAX_USER_OVERRIDE_TAGS})."
+        ));
+    }
+    for tag in &model.tags {
+        if tag.len() > MAX_USER_OVERRIDE_TAG_TEXT_LEN {
+            return Err(format!(
+                "A tag is too long (maximum {MAX_USER_OVERRIDE_TAG_TEXT_LEN} bytes)."
+            ));
+        }
+    }
+    for date in [&model.last_modified, &model.created_at] {
+        if date.len() > MAX_USER_OVERRIDE_DATE_LEN {
+            return Err(format!(
+                "A date field is too long (maximum {MAX_USER_OVERRIDE_DATE_LEN} bytes)."
+            ));
+        }
+    }
+    let mut seen_files = std::collections::HashSet::new();
     for file in &model.files {
         super::catalog::validate_download_target(&model.repo, &file.filename)?;
+        // The mirror keys files by lowercase name across the whole catalog,
+        // so a payload with two case-variants would silently overwrite one
+        // with the other (audit DC-06).
+        if !seen_files.insert(file.filename.to_ascii_lowercase()) {
+            return Err(format!(
+                "The override lists {} more than once (names are case-insensitive).",
+                file.filename
+            ));
+        }
         if file.size_bytes == 0 {
             return Err(format!("Override file {} has no size.", file.filename));
+        }
+        if file.size_bytes > i64::MAX as u64 {
+            return Err(format!(
+                "Override file {} is larger than the local database supports.",
+                file.filename
+            ));
+        }
+        if file.quant.len() > MAX_USER_OVERRIDE_QUANT_LEN {
+            return Err(format!(
+                "A quantization label is too long (maximum {MAX_USER_OVERRIDE_QUANT_LEN} bytes)."
+            ));
+        }
+        if file.revision.len() > MAX_USER_OVERRIDE_REVISION_LEN {
+            return Err(format!(
+                "A revision is too long (maximum {MAX_USER_OVERRIDE_REVISION_LEN} bytes)."
+            ));
+        }
+        for date in [&file.last_modified, &file.created_at] {
+            if date.len() > MAX_USER_OVERRIDE_DATE_LEN {
+                return Err(format!(
+                    "A file date field is too long (maximum {MAX_USER_OVERRIDE_DATE_LEN} bytes)."
+                ));
+            }
         }
         if file.sha256.len() != 64 || !file.sha256.chars().all(|c| c.is_ascii_hexdigit()) {
             return Err(format!(
@@ -429,24 +564,34 @@ pub fn validate_user_override(model: &CatalogModel) -> Result<(), String> {
             ));
         }
     }
+    let serialized = serde_json::to_vec(model)
+        .map_err(|error| format!("Could not size the override payload: {error}"))?;
+    if serialized.len() > MAX_USER_OVERRIDE_SERIALIZED_BYTES {
+        return Err(format!(
+            "The override payload is too large (maximum {} bytes).",
+            MAX_USER_OVERRIDE_SERIALIZED_BYTES
+        ));
+    }
     Ok(())
 }
 
-/// Insert or replace one user row. Marks `user_sourced = 1` so the UI can say
-/// USER ADDED and network refreshes never mistake it for curator data.
+/// Replace one user row and its complete file set, in one transaction, after
+/// ownership and collision checks. `user_sourced = 1` marks the result so the
+/// UI can say USER ADDED and network refreshes never mistake it for curator
+/// data. Curator ids and curator filenames are rejected instead of being
+/// overwritten, and files omitted by the new version are removed; any failure
+/// rolls the whole replacement back (audit DC-05, DC-06).
 pub fn save_user_catalog_override(
-    connection: &Connection,
+    connection: &mut Connection,
     model: &CatalogModel,
 ) -> Result<(), String> {
     validate_user_override(model)?;
-    let count: i64 = connection
-        .query_row(
-            "SELECT COUNT(*) FROM catalog_model WHERE user_sourced = 1",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|error| format!("Could not read the local catalog database: {error}"))?;
-    let already: Option<i64> = connection
+    // IMMEDIATE: the row-count and collision checks must hold under
+    // concurrent writers, so take the write lock before reading (DC-06).
+    let transaction = connection
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|error| format!("Could not start the override transaction: {error}"))?;
+    let existing: Option<i64> = transaction
         .query_row(
             "SELECT user_sourced FROM catalog_model WHERE id = ?1",
             [&model.id],
@@ -454,38 +599,102 @@ pub fn save_user_catalog_override(
         )
         .optional()
         .map_err(|error| format!("Could not read the local catalog database: {error}"))?;
-    if already.is_none() && count as usize >= MAX_USER_OVERRIDE_MODELS {
-        return Err(format!(
-            "Too many local overrides (maximum {MAX_USER_OVERRIDE_MODELS}). Remove one first."
-        ));
+    match existing {
+        Some(0) => {
+            return Err(format!(
+                "The id {} belongs to a curated catalog entry and cannot be replaced by a local override.",
+                model.id
+            ))
+        }
+        Some(_) => {}
+        None => {
+            let count: i64 = transaction
+                .query_row(
+                    "SELECT COUNT(*) FROM catalog_model WHERE user_sourced = 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|error| format!("Could not read the local catalog database: {error}"))?;
+            if count as usize >= MAX_USER_OVERRIDE_MODELS {
+                return Err(format!(
+                    "Too many local overrides (maximum {MAX_USER_OVERRIDE_MODELS}). Remove one first."
+                ));
+            }
+        }
     }
+    for file in &model.files {
+        let owner: Option<(String, i64)> = transaction
+            .query_row(
+                "SELECT model_id, user_sourced FROM catalog_file WHERE filename_lower = ?1",
+                [file.filename.to_ascii_lowercase()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|error| format!("Could not read the local catalog database: {error}"))?;
+        match owner {
+            // A curated filename is curator-owned: the user must pick another
+            // name instead of silently stealing the catalog row (DC-05).
+            Some((_, 0)) => {
+                return Err(format!(
+                    "The filename {} belongs to the curated catalog and cannot be reused by a local override.",
+                    file.filename
+                ))
+            }
+            // A file of another local entry needs explicit resolution: remove
+            // or rename it there first; never move it silently (DC-05).
+            Some((owner_id, _)) if owner_id != model.id => {
+                return Err(format!(
+                    "The filename {} already belongs to the local override {}.",
+                    file.filename, owner_id
+                ))
+            }
+            _ => {}
+        }
+    }
+    // Exact replacement: drop the previous version's files, then write the
+    // complete new set. Files omitted by the new version are gone; a failure
+    // above or below leaves the previous version intact.
+    transaction
+        .execute(
+            "DELETE FROM catalog_file WHERE model_id = ?1 AND user_sourced = 1",
+            [&model.id],
+        )
+        .map_err(|error| format!("Could not replace the local override files: {error}"))?;
     let mut marked = model.clone();
     marked.user_sourced = true;
-    insert_model(connection, &marked, true)?;
-    Ok(())
+    insert_model(&transaction, &marked, true)?;
+    transaction
+        .commit()
+        .map_err(|error| format!("Could not publish the local override: {error}"))
 }
 
 /// Remove one user row and its files. Network rows are never deleted here: a
 /// typo in the id reports missing instead of touching curator data.
-pub fn remove_user_catalog_override(connection: &Connection, id: &str) -> Result<(), String> {
+pub fn remove_user_catalog_override(connection: &mut Connection, id: &str) -> Result<(), String> {
     if id.trim().is_empty() || id.len() > MAX_USER_OVERRIDE_TEXT_LEN {
         return Err("The override id is missing or too long.".into());
     }
-    let removed = connection
+    // One transaction: files and the model row disappear together or not at
+    // all, so a crash between the statements cannot strand file rows
+    // (audit DC-06).
+    let transaction = connection
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|error| format!("Could not start the override transaction: {error}"))?;
+    let removed = transaction
         .execute(
             "DELETE FROM catalog_file WHERE model_id IN
              (SELECT id FROM catalog_model WHERE id = ?1 AND user_sourced = 1)",
             [&id],
         )
         .map_err(|error| format!("Could not remove the local override: {error}"))?;
-    connection
+    transaction
         .execute(
             "DELETE FROM catalog_model WHERE id = ?1 AND user_sourced = 1",
             [&id],
         )
         .map_err(|error| format!("Could not remove the local override: {error}"))?;
     if removed == 0 {
-        let exists: Option<i64> = connection
+        let exists: Option<i64> = transaction
             .query_row("SELECT 1 FROM catalog_model WHERE id = ?1", [&id], |row| {
                 row.get(0)
             })
@@ -498,7 +707,62 @@ pub fn remove_user_catalog_override(connection: &Connection, id: &str) -> Result
         }
         return Err("No local override with that id exists.".into());
     }
-    Ok(())
+    transaction
+        .commit()
+        .map_err(|error| format!("Could not publish the local removal: {error}"))
+}
+
+/// Resolve one user-owned file row for download authorization. Only rows
+/// explicitly marked `user_sourced = 1` (on both the file and its model) are
+/// returned; the exact stored SHA-256 and size are the authorization. Mutable
+/// rows never become signed authority: this is the separate, validated
+/// override route from the curated snapshot (audit DC-04).
+pub fn user_override_file(
+    connection: &Connection,
+    repo: &str,
+    filename: &str,
+    revision: &str,
+) -> Result<Option<CatalogFile>, String> {
+    let row: Option<(String, String, i64, String, String, String, String)> = connection
+        .query_row(
+            "SELECT f.quant, f.filename, f.size_bytes, f.sha256, f.revision,
+                    f.last_modified, f.created_at
+             FROM catalog_file f
+             JOIN catalog_model m ON m.id = f.model_id
+             WHERE m.repo = ?1 AND f.filename_lower = ?2 AND f.revision = ?3
+               AND f.user_sourced = 1 AND m.user_sourced = 1",
+            params![repo, filename.to_ascii_lowercase(), revision],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| format!("Could not read the local override store: {error}"))?;
+    let Some((quant, filename, size_bytes, sha256, revision, last_modified, created_at)) = row
+    else {
+        return Ok(None);
+    };
+    let size_bytes = u64::try_from(size_bytes).map_err(|_| {
+        format!("Override file {filename} has an out-of-range size in the local database.")
+    })?;
+    Ok(Some(CatalogFile {
+        quant,
+        filename,
+        size_bytes,
+        sha256,
+        revision,
+        last_modified,
+        created_at,
+        user_sourced: true,
+    }))
 }
 
 #[cfg(test)]
@@ -553,6 +817,7 @@ mod tests {
                 revision: "main".into(),
                 last_modified: String::new(),
                 created_at: String::new(),
+                user_sourced: false,
             }],
             user_sourced: true,
         }
@@ -661,8 +926,8 @@ mod tests {
         let verified = sample_catalog();
         seed_mirror(&root, &verified);
         {
-            let connection = open_catalog_db(&root).unwrap();
-            save_user_catalog_override(&connection, &sample_override("mine")).unwrap();
+            let mut connection = open_catalog_db(&root).unwrap();
+            save_user_catalog_override(&mut connection, &sample_override("mine")).unwrap();
             connection
                 .execute_batch("PRAGMA user_version = 99")
                 .unwrap();
@@ -691,7 +956,7 @@ mod tests {
         let connection = open_catalog_db(&root).unwrap();
         migrate_catalog_db(&connection).unwrap();
         let mut owned = connection;
-        save_user_catalog_override(&owned, &sample_override("mine")).unwrap();
+        save_user_catalog_override(&mut owned, &sample_override("mine")).unwrap();
         mirror_verified_catalog(&mut owned, &verified.models).unwrap();
         let rows = read_catalog_db_models(&owned).unwrap();
         assert_eq!(rows.len(), 3);
@@ -711,19 +976,20 @@ mod tests {
         let root = unique_test_dir("localmotive-catalog-db-limits");
         let connection = open_catalog_db(&root).unwrap();
         migrate_catalog_db(&connection).unwrap();
+        let mut connection = connection;
         let mut bad = sample_override("bad");
         bad.repo = "not a repo!!".into();
-        assert!(save_user_catalog_override(&connection, &bad).is_err());
+        assert!(save_user_catalog_override(&mut connection, &bad).is_err());
         let mut bad = sample_override("bad");
         bad.files[0].sha256 = "zz".into();
-        assert!(save_user_catalog_override(&connection, &bad).is_err());
+        assert!(save_user_catalog_override(&mut connection, &bad).is_err());
         let mut bad = sample_override("bad");
         bad.files[0].filename = "../evil.gguf".into();
-        assert!(save_user_catalog_override(&connection, &bad).is_err());
+        assert!(save_user_catalog_override(&mut connection, &bad).is_err());
         let mut bad = sample_override("bad");
         bad.summary = "x".repeat(MAX_USER_OVERRIDE_TEXT_LEN + 1);
-        assert!(save_user_catalog_override(&connection, &bad).is_err());
-        assert!(remove_user_catalog_override(&connection, "nope").is_err());
+        assert!(save_user_catalog_override(&mut connection, &bad).is_err());
+        assert!(remove_user_catalog_override(&mut connection, "nope").is_err());
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -734,15 +1000,352 @@ mod tests {
         let root = unique_test_dir("localmotive-catalog-db-remove");
         let verified = sample_catalog();
         seed_mirror(&root, &verified);
-        let connection = open_catalog_db(&root).unwrap();
+        let mut connection = open_catalog_db(&root).unwrap();
         migrate_catalog_db(&connection).unwrap();
-        let error = remove_user_catalog_override(&connection, "a").unwrap_err();
+        let error = remove_user_catalog_override(&mut connection, "a").unwrap_err();
         assert!(error.contains("curated"), "{error}");
         let rows = read_catalog_db_models(&connection).unwrap();
         assert_eq!(rows.len(), 2);
-        save_user_catalog_override(&connection, &sample_override("mine")).unwrap();
-        remove_user_catalog_override(&connection, "mine").unwrap();
+        save_user_catalog_override(&mut connection, &sample_override("mine")).unwrap();
+        remove_user_catalog_override(&mut connection, "mine").unwrap();
         assert_eq!(read_catalog_db_models(&connection).unwrap().len(), 2);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn override_with_files(id: &str, files: &[&str]) -> CatalogModel {
+        let mut model = sample_override(id);
+        model.files = files
+            .iter()
+            .map(|filename| CatalogFile {
+                quant: "Q4_K_M".into(),
+                filename: (*filename).into(),
+                size_bytes: 10,
+                sha256: "d".repeat(64),
+                revision: "main".into(),
+                last_modified: String::new(),
+                created_at: String::new(),
+                user_sourced: false,
+            })
+            .collect();
+        model
+    }
+
+    #[test]
+    fn dc05_curator_id_collision_is_rejected_and_curated_rows_survive() {
+        // A user row carrying a curator id must not replace the model's repo
+        // or provenance, and must not leave the curated row half-owned
+        // (audit DC-05).
+        let root = unique_test_dir("localmotive-dc05-id");
+        let verified = sample_catalog();
+        let mut connection = open_catalog_db(&root).unwrap();
+        migrate_catalog_db(&connection).unwrap();
+        mirror_verified_catalog(&mut connection, &verified.models).unwrap();
+
+        let error = save_user_catalog_override(&mut connection, &sample_override("a")).unwrap_err();
+        assert!(error.contains("curated"), "{error}");
+
+        let rows = read_catalog_db_models(&connection).unwrap();
+        let curated = rows.iter().find(|model| model.id == "a").unwrap();
+        assert!(!curated.user_sourced);
+        assert_eq!(curated.repo, "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF");
+        assert_eq!(curated.files.len(), 1);
+        assert!(!curated.files[0].user_sourced);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dc05_filename_collisions_with_curated_or_other_user_rows_are_rejected() {
+        // The mirror keys files by lowercase name across the whole catalog: a
+        // collision must be rejected with the owner named, never silently
+        // move the file row (audit DC-05).
+        let root = unique_test_dir("localmotive-dc05-files");
+        let verified = sample_catalog();
+        let mut connection = open_catalog_db(&root).unwrap();
+        migrate_catalog_db(&connection).unwrap();
+        mirror_verified_catalog(&mut connection, &verified.models).unwrap();
+
+        let error = save_user_catalog_override(
+            &mut connection,
+            &override_with_files("mine", &["a-Q4_K_M.gguf"]),
+        )
+        .unwrap_err();
+        assert!(error.contains("curated catalog"), "{error}");
+        // The curated model still owns its file.
+        let rows = read_catalog_db_models(&connection).unwrap();
+        let curated = rows.iter().find(|model| model.id == "a").unwrap();
+        assert_eq!(curated.files.len(), 1);
+        assert!(!curated.files[0].user_sourced);
+
+        save_user_catalog_override(&mut connection, &override_with_files("one", &["F.gguf"]))
+            .unwrap();
+        let error =
+            save_user_catalog_override(&mut connection, &override_with_files("two", &["f.gguf"]))
+                .unwrap_err();
+        assert!(error.contains("already belongs"), "{error}");
+        // Entry one keeps its file; entry two was never created.
+        let rows = read_catalog_db_models(&connection).unwrap();
+        assert!(rows.iter().any(|model| model.id == "one"));
+        assert!(!rows.iter().any(|model| model.id == "two"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dc05_refresh_never_relabels_or_steals_user_owned_files() {
+        // A verified refresh that contains the same lowercase filename must
+        // skip the user-owned row: the user file stays user-sourced and the
+        // curated model is mirrored without it (audit DC-05).
+        let root = unique_test_dir("localmotive-dc05-refresh");
+        let verified = sample_catalog();
+        let mut connection = open_catalog_db(&root).unwrap();
+        migrate_catalog_db(&connection).unwrap();
+        mirror_verified_catalog(&mut connection, &verified.models).unwrap();
+        save_user_catalog_override(
+            &mut connection,
+            &override_with_files("mine", &["mine.gguf"]),
+        )
+        .unwrap();
+
+        let colliding = catalog::parse_catalog(
+            r#"{
+              "schemaVersion": 2,
+              "updated": "2026-09-02",
+              "models": [
+                {"id":"z","repo":"org/Z-GGUF","family":"Z","publisher":"org","parameters":"1B",
+                 "tags":[],"downloads":1,"likes":1,
+                 "files":[{"quant":"Q4_K_M","filename":"mine.gguf","sizeBytes":10,
+                           "sha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}]}
+              ]
+            }"#,
+        )
+        .unwrap();
+        mirror_verified_catalog(&mut connection, &colliding.models).unwrap();
+
+        let rows = read_catalog_db_models(&connection).unwrap();
+        let mine = rows.iter().find(|model| model.id == "mine").unwrap();
+        assert!(mine.user_sourced);
+        assert_eq!(mine.files.len(), 1);
+        assert!(mine.files[0].user_sourced);
+        assert_eq!(mine.files[0].filename, "mine.gguf");
+        let curated = rows.iter().find(|model| model.id == "z").unwrap();
+        assert!(!curated.user_sourced);
+        assert!(
+            curated.files.is_empty(),
+            "the guard must skip the user-owned filename"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dc06_edit_replaces_the_complete_file_set() {
+        // Editing to a smaller file set must remove the omitted filenames,
+        // not return both versions (audit DC-06).
+        let root = unique_test_dir("localmotive-dc06-replace");
+        let mut connection = open_catalog_db(&root).unwrap();
+        migrate_catalog_db(&connection).unwrap();
+        save_user_catalog_override(
+            &mut connection,
+            &override_with_files("mine", &["a0.gguf", "a1.gguf"]),
+        )
+        .unwrap();
+        save_user_catalog_override(&mut connection, &override_with_files("mine", &["b9.gguf"]))
+            .unwrap();
+
+        let rows = read_catalog_db_models(&connection).unwrap();
+        let mine = rows.iter().find(|model| model.id == "mine").unwrap();
+        assert_eq!(mine.files.len(), 1);
+        assert_eq!(mine.files[0].filename, "b9.gguf");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dc06_failed_save_preserves_the_previous_complete_version() {
+        // Validation failures and a locked database must leave the previous
+        // record exactly as it was: no partial replacement (audit DC-06).
+        let root = unique_test_dir("localmotive-dc06-rollback");
+        let mut connection = open_catalog_db(&root).unwrap();
+        migrate_catalog_db(&connection).unwrap();
+        save_user_catalog_override(
+            &mut connection,
+            &override_with_files("mine", &["a0.gguf", "a1.gguf"]),
+        )
+        .unwrap();
+
+        // (a) Invalid second file: rejected before any mutation.
+        let mut bad = override_with_files("mine", &["a0.gguf", "a1.gguf"]);
+        bad.files[1].sha256 = "zz".into();
+        assert!(save_user_catalog_override(&mut connection, &bad).is_err());
+
+        // (b) A held write lock fails the transaction itself.
+        let holder = open_catalog_db(&root).unwrap();
+        holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let locked =
+            save_user_catalog_override(&mut connection, &override_with_files("mine", &["b9.gguf"]));
+        assert!(locked.is_err(), "a locked database must fail the save");
+        drop(holder);
+
+        let rows = read_catalog_db_models(&connection).unwrap();
+        let mine = rows.iter().find(|model| model.id == "mine").unwrap();
+        let mut names: Vec<&str> = mine
+            .files
+            .iter()
+            .map(|file| file.filename.as_str())
+            .collect();
+        names.sort_unstable();
+        assert_eq!(names, vec!["a0.gguf", "a1.gguf"]);
+
+        // The lock released: the same save now succeeds.
+        save_user_catalog_override(&mut connection, &override_with_files("mine", &["b9.gguf"]))
+            .unwrap();
+        let rows = read_catalog_db_models(&connection).unwrap();
+        assert_eq!(
+            rows.iter()
+                .find(|model| model.id == "mine")
+                .unwrap()
+                .files
+                .len(),
+            1
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dc06_validation_rejects_long_and_duplicate_metadata_before_mutation() {
+        let root = unique_test_dir("localmotive-dc06-bounds");
+        let mut connection = open_catalog_db(&root).unwrap();
+        migrate_catalog_db(&connection).unwrap();
+
+        let mut bad = sample_override("bad");
+        bad.tags = vec!["t".into(); MAX_USER_OVERRIDE_TAGS + 1];
+        assert!(save_user_catalog_override(&mut connection, &bad).is_err());
+        let mut bad = sample_override("bad");
+        bad.tags = vec!["t".repeat(MAX_USER_OVERRIDE_TAG_TEXT_LEN + 1)];
+        assert!(save_user_catalog_override(&mut connection, &bad).is_err());
+        let mut bad = sample_override("bad");
+        bad.last_modified = "2".repeat(MAX_USER_OVERRIDE_DATE_LEN + 1);
+        assert!(save_user_catalog_override(&mut connection, &bad).is_err());
+        let mut bad = sample_override("bad");
+        bad.files[0].last_modified = "2".repeat(MAX_USER_OVERRIDE_DATE_LEN + 1);
+        assert!(save_user_catalog_override(&mut connection, &bad).is_err());
+        let mut bad = sample_override("bad");
+        bad.files[0].quant = "Q".repeat(MAX_USER_OVERRIDE_QUANT_LEN + 1);
+        assert!(save_user_catalog_override(&mut connection, &bad).is_err());
+        let mut bad = sample_override("bad");
+        bad.files[0].revision = "r".repeat(MAX_USER_OVERRIDE_REVISION_LEN + 1);
+        assert!(save_user_catalog_override(&mut connection, &bad).is_err());
+        let mut bad = override_with_files("bad", &["F.gguf", "f.gguf"]);
+        bad.files[1].quant = "Q8_0".into();
+        assert!(save_user_catalog_override(&mut connection, &bad).is_err());
+        let mut bad = sample_override("bad");
+        bad.downloads = u64::MAX;
+        assert!(save_user_catalog_override(&mut connection, &bad).is_err());
+        let mut bad = sample_override("bad");
+        bad.likes = u64::MAX;
+        assert!(save_user_catalog_override(&mut connection, &bad).is_err());
+        let mut bad = sample_override("bad");
+        bad.summary = "x".repeat(MAX_USER_OVERRIDE_SERIALIZED_BYTES);
+        assert!(save_user_catalog_override(&mut connection, &bad).is_err());
+
+        // Nothing above mutated the mirror.
+        assert!(read_catalog_db_models(&connection).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dc06_user_cap_is_origin_aware_and_holds_for_concurrent_new_entries() {
+        let root = unique_test_dir("localmotive-dc06-cap");
+        let mut connection = open_catalog_db(&root).unwrap();
+        migrate_catalog_db(&connection).unwrap();
+        // Fill the cap directly; the cap counts user rows only, and editing an
+        // existing entry stays allowed at the cap.
+        for index in 0..MAX_USER_OVERRIDE_MODELS {
+            connection
+                .execute(
+                    "INSERT INTO catalog_model (id, repo, user_sourced) VALUES (?1, 'local/fill', 1)",
+                    [format!("fill-{index}")],
+                )
+                .unwrap();
+        }
+        let error =
+            save_user_catalog_override(&mut connection, &sample_override("overflow")).unwrap_err();
+        assert!(error.contains("Too many local overrides"), "{error}");
+        save_user_catalog_override(&mut connection, &sample_override("fill-0")).unwrap();
+        drop(connection);
+
+        // Near the cap, two concurrent new entries cannot both win.
+        let root2 = unique_test_dir("localmotive-dc06-race");
+        let seed = open_catalog_db(&root2).unwrap();
+        migrate_catalog_db(&seed).unwrap();
+        for index in 0..MAX_USER_OVERRIDE_MODELS - 1 {
+            seed.execute(
+                "INSERT INTO catalog_model (id, repo, user_sourced) VALUES (?1, 'local/fill', 1)",
+                [format!("fill-{index}")],
+            )
+            .unwrap();
+        }
+        drop(seed);
+        let path = catalog_db_path(&root2);
+        let handles: Vec<_> = ["race-a", "race-b"]
+            .into_iter()
+            .map(|id| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    let model = CatalogModel {
+                        id: id.into(),
+                        repo: "local/Handmade-GGUF".into(),
+                        family: "Handmade".into(),
+                        parameters: "1B".into(),
+                        publisher: "local".into(),
+                        author: "local".into(),
+                        summary: String::new(),
+                        tags: vec![],
+                        gated: false,
+                        downloads: 0,
+                        likes: 0,
+                        license: String::new(),
+                        pipeline_tag: String::new(),
+                        library_name: String::new(),
+                        architecture: String::new(),
+                        last_modified: String::new(),
+                        created_at: String::new(),
+                        files: vec![CatalogFile {
+                            quant: "Q4_K_M".into(),
+                            filename: format!("{id}.gguf"),
+                            size_bytes: 10,
+                            sha256: "d".repeat(64),
+                            revision: "main".into(),
+                            last_modified: String::new(),
+                            created_at: String::new(),
+                            user_sourced: false,
+                        }],
+                        user_sourced: false,
+                    };
+                    let mut connection = Connection::open(&path).unwrap();
+                    let result = save_user_catalog_override(&mut connection, &model);
+                    drop(connection);
+                    result.is_ok()
+                })
+            })
+            .collect();
+        let successes = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .filter(|joined| *joined)
+            .count();
+        assert_eq!(
+            successes, 1,
+            "exactly one concurrent new entry may win the last slot"
+        );
+        let connection = open_catalog_db(&root2).unwrap();
+        migrate_catalog_db(&connection).unwrap();
+        let count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM catalog_model WHERE user_sourced = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count as usize, MAX_USER_OVERRIDE_MODELS);
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(root2);
     }
 }
