@@ -464,7 +464,25 @@ function App() {
     const sequence = ++catalogLoadSeq.current;
     setCatalogBusy(true);
     try {
-      const snapshot = await invoke<CatalogSnapshot>("fetch_model_catalog");
+      // Local load first: the signature-verified cache or the bundled
+      // snapshot, without a network request and without the refresh cooldown.
+      // Rows must appear when the app restarts inside the cooldown or offline
+      // (audit DC-01). Only an explicit refresh can be throttled.
+      const local = await invoke<CatalogSnapshot>("load_model_catalog");
+      if (!keepLatestRequest(sequence, catalogLoadSeq.current)) return;
+      setCatalogSnapshot(local);
+
+      // Then attempt the network refresh. When it is throttled or fails, the
+      // loaded rows stay and the notice explains the refresh state.
+      let snapshot = local;
+      let refreshNote = "";
+      try {
+        snapshot = await invoke<CatalogSnapshot>("fetch_model_catalog");
+        if (!keepLatestRequest(sequence, catalogLoadSeq.current)) return;
+        setCatalogSnapshot(snapshot);
+      } catch (error) {
+        refreshNote = ` Refresh pending: ${String(error)}`;
+      }
       // Local mirror: verified rows plus marked user rows. Falls back to the
       // snapshot when the mirror is unavailable, so the tab never goes empty
       // because of a local database problem.
@@ -492,7 +510,12 @@ function App() {
       setHfToken(token);
       const userCount = localModels.filter((model) => model.userSourced).length;
       const userNote = userCount > 0 ? ` (includes ${userCount} USER ADDED local row${userCount === 1 ? "" : "s"})` : "";
-      setNotice(`${localModels.length} curated Hugging Face models loaded from ${snapshot.origin}${userNote}.`);
+      const warningNote = [snapshot.refreshError, snapshot.persistenceNotice]
+        .filter(Boolean)
+        .join(" ");
+      setNotice(
+        `${localModels.length} curated Hugging Face models loaded from ${snapshot.origin}${userNote}.${refreshNote}${warningNote ? ` ${warningNote}` : ""}`,
+      );
     } catch (error) {
       if (keepLatestRequest(sequence, catalogLoadSeq.current)) setNotice(String(error));
     } finally {

@@ -1639,8 +1639,13 @@ export type CatalogSnapshot = {
   url: string;
   /** Wall-clock second of the last successful network fill. Absent when never. */
   lastSuccessSecs?: string;
-  /** Remaining cooldown in minutes. Present only when a refresh hit cooldown. */
+  /** Remaining cooldown in minutes: present when a refresh is throttled, and
+   * on a local load that happened inside the window. */
   cooldownRemainingMinutes?: number;
+  /** Set when a network refresh failed and local data was served instead. */
+  refreshError?: string;
+  /** Set when the verified catalog could not be persisted locally. */
+  persistenceNotice?: string;
 };
 
 export type TokenStatus = {

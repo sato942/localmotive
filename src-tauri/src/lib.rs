@@ -2711,6 +2711,35 @@ fn catalog_cache_root(app: &tauri::AppHandle) -> std::path::PathBuf {
         .unwrap_or_else(|_| std::env::temp_dir().join("localmotive"))
 }
 
+/// Load the local catalog without any network request: the signature-verified
+/// cache, else the bundled snapshot. Populates the authoritative in-memory
+/// catalog so browsing, filtering, and download authorization survive a
+/// restart inside the refresh cooldown and offline use (audit DC-01).
+#[tauri::command]
+async fn load_model_catalog(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<catalog::CatalogSnapshot, String> {
+    let root = catalog_cache_root(&app);
+    let snapshot = tauri::async_runtime::spawn_blocking(move || {
+        catalog::load_catalog_snapshot(&root, catalog::DEFAULT_CATALOG_URL)
+    })
+    .await
+    .map_err(|error| format!("Catalog load failed: {error}"))??;
+    publish_loaded_catalog(&state.catalog, &snapshot);
+    Ok(snapshot)
+}
+
+/// Publish a resolved local snapshot as the authoritative catalog state, so
+/// browsing, facets, and download authorization work inside the refresh
+/// cooldown and offline (audit DC-01).
+fn publish_loaded_catalog(
+    slot: &std::sync::Mutex<Option<catalog::Catalog>>,
+    snapshot: &catalog::CatalogSnapshot,
+) {
+    *slot.lock().unwrap() = Some(snapshot.catalog.clone());
+}
+
 /// Fetch the catalog for the HF Catalog tab. Holds the in-flight guard for
 /// the whole refresh so two Refresh clicks cannot start two network fetches.
 /// Returns the remaining cooldown in minutes instead of hitting the network
@@ -2759,17 +2788,26 @@ async fn fetch_model_catalog(
         tauri::async_runtime::spawn_blocking(move || catalog::fetch_catalog(&url, &fetch_root))
             .await
             .map_err(|error| format!("Catalog fetch failed: {error}"))??;
+    let mut snapshot = snapshot;
     // Mirror verified rows locally for fast browse/filter/sort. The mirror
     // never authorizes anything: downloads still resolve against the signed
-    // snapshot in state. A corrupt mirror rebuilds from these verified bytes.
+    // snapshot in state. A healthy database is updated transactionally,
+    // preserving user rows; a confirmed migration or corruption failure goes
+    // through controlled recovery that quarantines the old file and salvages
+    // readable user rows, and every persistence failure stays visible
+    // (audit DC-03).
     let mirror_models = snapshot.catalog.models.clone();
-    let _ = tauri::async_runtime::spawn_blocking(move || {
-        if let Ok(connection) = catalog_db::open_catalog_db(&root) {
-            if catalog_db::migrate_catalog_db(&connection).is_ok() {
-                // Rebuild recovers from corruption; mirror preserves user
-                // rows, so a failed write keeps the previous mirror.
-                let _ = catalog_db::rebuild_catalog_db_from_verified(
-                    &root,
+    let mirror_root = root.clone();
+    let persistence = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        let mut connection = catalog_db::open_catalog_db(&mirror_root)?;
+        match catalog_db::migrate_catalog_db(&connection) {
+            Ok(()) => catalog_db::mirror_verified_catalog(&mut connection, &mirror_models)
+                .map(|()| String::new()),
+            Err(migration_error) => {
+                // Close the connection before the file is quarantined.
+                drop(connection);
+                catalog_db::recover_catalog_db_from_verified(
+                    &mirror_root,
                     &catalog::Catalog {
                         schema_version: catalog::SUPPORTED_SCHEMA,
                         updated: String::new(),
@@ -2777,11 +2815,24 @@ async fn fetch_model_catalog(
                         note: String::new(),
                         models: mirror_models,
                     },
-                );
+                    &migration_error,
+                )
             }
         }
     })
-    .await;
+    .await
+    .unwrap_or_else(|error| Err(format!("Catalog persistence task failed: {error}")));
+    match persistence {
+        Ok(message) if !message.is_empty() => {
+            snapshot.persistence_notice = Some(message);
+        }
+        Ok(_) => {}
+        Err(error) => {
+            snapshot.persistence_notice = Some(format!(
+                "The verified catalog is available in memory, but local persistence failed: {error}"
+            ));
+        }
+    }
     *state.catalog.lock().unwrap() = Some(snapshot.catalog.clone());
     Ok(snapshot)
 }
@@ -2795,21 +2846,36 @@ fn catalog_local_models(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<catalog::CatalogModel>, String> {
     let root = catalog_cache_root(&app);
-    let connection = catalog_db::open_catalog_db(&root)?;
+    let authoritative = state.catalog.lock().unwrap().clone();
+    read_local_catalog_rows(&root, authoritative.as_ref())
+}
+
+/// Read the local SQLite mirror: verified rows plus marked user rows. Any
+/// database-open, migration, or read failure selects the verified in-memory
+/// or bundled rows instead, so the tab never goes empty because of a local
+/// database problem (audit DC-07).
+fn read_local_catalog_rows(
+    root: &std::path::Path,
+    authoritative: Option<&catalog::Catalog>,
+) -> Result<Vec<catalog::CatalogModel>, String> {
+    let connection = match catalog_db::open_catalog_db(root) {
+        Ok(connection) => connection,
+        Err(_) => return fallback_rows(authoritative),
+    };
     if catalog_db::migrate_catalog_db(&connection).is_err() {
-        return fallback_local_models(&state);
+        return fallback_rows(authoritative);
     }
     match catalog_db::read_catalog_db_models(&connection) {
         Ok(models) if !models.is_empty() => Ok(models),
-        _ => fallback_local_models(&state),
+        _ => fallback_rows(authoritative),
     }
 }
 
-fn fallback_local_models(
-    state: &tauri::State<'_, AppState>,
+fn fallback_rows(
+    authoritative: Option<&catalog::Catalog>,
 ) -> Result<Vec<catalog::CatalogModel>, String> {
-    match state.catalog.lock().unwrap().clone() {
-        Some(catalog) => Ok(catalog.models),
+    match authoritative {
+        Some(catalog) => Ok(catalog.models.clone()),
         None => Ok(catalog::bundled_catalog()?.models),
     }
 }
@@ -2962,6 +3028,31 @@ fn download_target(
     Ok((target, key))
 }
 
+/// Resolve the signed authorization for one download. Only rows that came
+/// from a signature-verified snapshot authorize a transfer: the loaded
+/// in-memory catalog or the bundled copy, never a mutable UI or mirror row
+/// (audit DC-07).
+fn authorized_catalog_file(
+    active: Option<&catalog::Catalog>,
+    repo: &str,
+    filename: &str,
+    revision: &str,
+) -> Result<catalog::CatalogFile, String> {
+    let bundled;
+    let catalog = match active {
+        Some(catalog) => catalog,
+        None => {
+            bundled = catalog::bundled_catalog()?;
+            &bundled
+        }
+    };
+    catalog::catalog_file(catalog, repo, filename, revision)
+        .cloned()
+        .ok_or_else(|| {
+            "That repository, file, or revision is not in the validated catalog.".to_string()
+        })
+}
+
 /// Start a download. Progress is emitted as `download:progress` events so a
 /// multi-gigabyte transfer never blocks the interface.
 #[tauri::command]
@@ -2980,16 +3071,7 @@ async fn download_catalog_file(
     let revision = revision.unwrap_or_else(|| "main".into());
     let authorized = {
         let active = state.catalog.lock().unwrap();
-        match active.as_ref() {
-            Some(catalog) => catalog::catalog_file(catalog, &repo, &filename, &revision).cloned(),
-            None => {
-                catalog::catalog_file(&catalog::bundled_catalog()?, &repo, &filename, &revision)
-                    .cloned()
-            }
-        }
-        .ok_or_else(|| {
-            "That repository, file, or revision is not in the validated catalog.".to_string()
-        })?
+        authorized_catalog_file(active.as_ref(), &repo, &filename, &revision)?
     };
     let expected_size = authorized.size_bytes;
     let expected_sha256 = authorized.sha256;
@@ -3212,6 +3294,7 @@ pub fn run() {
             cancel_tuning,
             suggest_port,
             about_info,
+            load_model_catalog,
             fetch_model_catalog,
             catalog_local_models,
             save_user_catalog_override,
@@ -4275,5 +4358,151 @@ mod release_security_tests {
         assert!(error.contains("reparse-point"), "unexpected error: {error}");
         std::fs::remove_dir(junction).unwrap();
         std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod catalog_command_tests {
+    use super::*;
+
+    fn unique_dir(prefix: &str) -> std::path::PathBuf {
+        for _ in 0..16 {
+            let candidate = std::env::temp_dir().join(format!(
+                "{prefix}-{}-{:016x}",
+                std::process::id(),
+                rand::random::<u64>()
+            ));
+            if std::fs::create_dir_all(&candidate).is_ok() {
+                return candidate;
+            }
+        }
+        panic!("could not create a unique test directory");
+    }
+
+    fn shipped_signed_pair() -> (String, String) {
+        let catalog_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("catalog");
+        (
+            std::fs::read_to_string(catalog_dir.join("catalog.json")).unwrap(),
+            std::fs::read_to_string(catalog_dir.join("catalog.json.sig")).unwrap(),
+        )
+    }
+
+    #[test]
+    fn dc01_local_load_publishes_state_inside_the_cooldown_and_authorizes_downloads() {
+        // A restart with a new app state, a signed cache, and a fresh stamp
+        // must browse and authorize downloads without any network request
+        // (audit DC-01 I2/V1/V2). This path contains no HTTP client, so no
+        // network request is structurally possible.
+        let root = unique_dir("localmotive-lib-load");
+        let (body, signature) = shipped_signed_pair();
+        catalog::save_cache_record(&root, &body, Some("etag"), &signature).unwrap();
+        catalog::write_refresh_stamp(&root);
+
+        let slot = std::sync::Mutex::new(None);
+        let snapshot = catalog::load_catalog_snapshot(&root, catalog::DEFAULT_CATALOG_URL).unwrap();
+        publish_loaded_catalog(&slot, &snapshot);
+
+        assert_eq!(snapshot.origin, "cache");
+        assert!(!snapshot.catalog.models.is_empty());
+        assert!(
+            snapshot.cooldown_remaining_minutes.is_some(),
+            "a fresh stamp must report the remaining cooldown"
+        );
+        assert!(snapshot.refresh_error.is_none());
+
+        // The published state authorizes a download of one of its own rows...
+        let active = slot.lock().unwrap();
+        let state_catalog = active.as_ref().expect("local load must publish state");
+        let (model, file) = state_catalog
+            .models
+            .iter()
+            .find_map(|model| model.files.first().map(|file| (model, file)))
+            .expect("the shipped catalog must carry at least one file");
+        let authorized =
+            authorized_catalog_file(active.as_ref(), &model.repo, &file.filename, &file.revision)
+                .expect("a published row must authorize its own file");
+        assert_eq!(authorized.sha256, file.sha256);
+        // ...and nothing else: an unlisted file stays unauthorized.
+        assert!(
+            authorized_catalog_file(active.as_ref(), &model.repo, "not-listed.gguf", "main")
+                .is_err()
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dc01_local_load_without_a_cache_publishes_the_bundled_catalog() {
+        // First start with no cache: the bundled snapshot is authoritative
+        // immediately, so facets and authorization work before any refresh.
+        let root = unique_dir("localmotive-lib-bundled");
+        let slot = std::sync::Mutex::new(None);
+        let snapshot = catalog::load_catalog_snapshot(&root, catalog::DEFAULT_CATALOG_URL).unwrap();
+        publish_loaded_catalog(&slot, &snapshot);
+
+        assert_eq!(snapshot.origin, "bundled");
+        let active = slot.lock().unwrap();
+        assert!(active
+            .as_ref()
+            .is_some_and(|catalog| !catalog.models.is_empty()));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dc07_database_open_and_migration_failures_select_verified_rows() {
+        // A mirror that cannot be opened or migrated must not empty the tab
+        // or fail the command: verified memory wins, else the bundled rows
+        // (audit DC-07 I4/V3).
+        let root = unique_dir("localmotive-lib-db");
+
+        // (a) The database path is a directory: open fails.
+        std::fs::create_dir_all(catalog_db::catalog_db_path(&root)).unwrap();
+        let rows = read_local_catalog_rows(&root, None).expect("open failure must fall back");
+        assert!(!rows.is_empty());
+        std::fs::remove_dir_all(catalog_db::catalog_db_path(&root)).unwrap();
+
+        // (b) Garbage bytes: open succeeds, migration fails.
+        std::fs::write(catalog_db::catalog_db_path(&root), "not a database").unwrap();
+        let authorized = crate::catalog::bundled_catalog().unwrap();
+        let rows = read_local_catalog_rows(&root, Some(&authorized))
+            .expect("migration failure must fall back");
+        assert_eq!(rows.len(), authorized.models.len());
+        let _ = std::fs::remove_dir_all(root);
+    }
+}
+
+#[cfg(test)]
+mod catalog_persistence_source_tests {
+    #[test]
+    fn dc03_fetch_mirrors_healthy_databases_and_only_recovers_after_migration_failure() {
+        // Source guard for the audited inverted branch: a healthy database
+        // must be updated transactionally through mirror_verified_catalog,
+        // and only a confirmed migration failure may enter quarantine-based
+        // recovery (audit DC-03). Swapping these branches must fail here.
+        let source = include_str!("lib.rs");
+        let block = source
+            .split("let persistence = tauri::async_runtime::spawn_blocking")
+            .nth(1)
+            .expect("fetch_model_catalog must run its persistence work in the shared block")
+            .split("match persistence {")
+            .next()
+            .unwrap();
+        let healthy = block.split("Err(migration_error) =>").next().unwrap();
+        assert!(
+            healthy.contains("Ok(()) =>")
+                && healthy.contains("catalog_db::mirror_verified_catalog"),
+            "the healthy migration branch must mirror transactionally: {healthy}"
+        );
+        assert!(
+            !healthy.contains("recover_catalog_db_from_verified"),
+            "the healthy branch must not rebuild or quarantine: {healthy}"
+        );
+        let failure = block.split("Err(migration_error) =>").nth(1).unwrap();
+        assert!(
+            failure.contains("recover_catalog_db_from_verified"),
+            "a failed migration must enter controlled recovery: {failure}"
+        );
     }
 }

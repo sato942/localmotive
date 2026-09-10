@@ -35,7 +35,7 @@ pub fn catalog_db_path(root: &Path) -> PathBuf {
 
 /// Open the mirror, creating parent directories. Callers run
 /// [`migrate_catalog_db`] next; a database that cannot migrate rebuilds from
-/// verified bytes via [`rebuild_catalog_db_from_verified`].
+/// verified bytes via [`recover_catalog_db_from_verified`].
 pub fn open_catalog_db(root: &Path) -> Result<Connection, String> {
     std::fs::create_dir_all(root)
         .map_err(|error| format!("Could not create {}: {error}", root.display()))?;
@@ -316,19 +316,72 @@ pub fn read_catalog_db_models(connection: &Connection) -> Result<Vec<CatalogMode
     Ok(models)
 }
 
-/// Delete the mirror file when it is corrupt or from a newer build, then
-/// rebuild it from already-verified bytes. Returns the mirrored models so the
-/// caller can serve first start without another parse.
-pub fn rebuild_catalog_db_from_verified(
+/// Read only the locally added rows, for salvage before a recovery rebuild.
+pub fn read_user_catalog_overrides(connection: &Connection) -> Result<Vec<CatalogModel>, String> {
+    let mut models = read_catalog_db_models(connection)?;
+    models.retain(|model| model.user_sourced);
+    Ok(models)
+}
+
+/// Quarantine an unreadable or unsupported mirror and rebuild it from
+/// verified bytes, preserving every salvageable local override.
+///
+/// The previous database is renamed, never deleted, so corruption or a
+/// downgrade cannot silently destroy user data (audit DC-03). Returns a
+/// human-readable outcome for the persistence notice; an `Err` means no
+/// change happened and the previous state remains on disk.
+pub fn recover_catalog_db_from_verified(
     root: &Path,
     verified: &Catalog,
-) -> Result<Vec<CatalogModel>, String> {
-    let path = catalog_db_path(root);
-    let _ = std::fs::remove_file(&path);
+    reason: &str,
+) -> Result<String, String> {
+    // Salvage readable user rows while the old file is still in place; a
+    // damaged database often still answers this query. Failure to read is
+    // reported in the outcome instead of being hidden.
+    let salvage = match open_catalog_db(root) {
+        Ok(connection) => read_user_catalog_overrides(&connection).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    };
+    let quarantine = quarantine_catalog_db(root)?;
     let mut connection = open_catalog_db(root)?;
     migrate_catalog_db(&connection)?;
     mirror_verified_catalog(&mut connection, &verified.models)?;
-    read_catalog_db_models(&connection)
+    let mut preserved = 0_usize;
+    for model in &salvage {
+        if save_user_catalog_override(&connection, model).is_ok() {
+            preserved += 1;
+        }
+    }
+    let dropped = salvage.len().saturating_sub(preserved);
+    let quarantine_note = quarantine
+        .map(|previous| format!(" The previous database was kept at {}.", previous.display()))
+        .unwrap_or_default();
+    let loss_note = if dropped > 0 {
+        format!("; {dropped} unreadable or invalid override row(s) could not be preserved")
+    } else {
+        String::new()
+    };
+    Ok(format!(
+        "The local catalog database was rebuilt because {reason}.{quarantine_note} {preserved} local override(s) preserved{loss_note}."
+    ))
+}
+
+fn quarantine_catalog_db(root: &Path) -> Result<Option<PathBuf>, String> {
+    let path = catalog_db_path(root);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    let destination = root.join(format!("catalog-mirror.sqlite.quarantine-{seconds}"));
+    std::fs::rename(&path, &destination).map_err(|error| {
+        format!(
+            "The local catalog database needs a rebuild, but the previous file could not be quarantined: {error}"
+        )
+    })?;
+    Ok(Some(destination))
 }
 
 /// Validate one user-supplied override before it touches the mirror. The same
@@ -525,7 +578,7 @@ mod tests {
         // and sort read the same rows back.
         let root = unique_test_dir("localmotive-catalog-db");
         let verified = sample_catalog();
-        let mirrored = rebuild_catalog_db_from_verified(&root, &verified).unwrap();
+        let mirrored = seed_mirror(&root, &verified);
         assert_eq!(mirrored.len(), 2);
         let reread = read_catalog_db_models(&open_catalog_db(&root).unwrap()).unwrap();
         assert_eq!(reread.len(), 2);
@@ -558,15 +611,73 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    /// Populate the mirror through the production functions, as a refresh
+    /// does, and return the rows a browse would read.
+    fn seed_mirror(root: &Path, verified: &Catalog) -> Vec<CatalogModel> {
+        let mut connection = open_catalog_db(root).unwrap();
+        migrate_catalog_db(&connection).unwrap();
+        mirror_verified_catalog(&mut connection, &verified.models).unwrap();
+        read_catalog_db_models(&connection).unwrap()
+    }
+
     #[test]
-    fn corrupt_database_rebuilds_from_verified_bytes() {
+    fn corrupt_database_recovery_rebuilds_quarantines_and_reports() {
         // Disk corruption or an interrupted write must not leave the catalog
-        // tab empty: garbage bytes rebuild from verified data.
+        // tab empty: garbage bytes go through the production recovery path,
+        // the old file is quarantined (never deleted), and the outcome is
+        // reported for the persistence notice (audit DC-03).
         let root = unique_test_dir("localmotive-catalog-db-corrupt");
         std::fs::write(catalog_db_path(&root), "not a database").unwrap();
         let verified = sample_catalog();
-        let rebuilt = rebuild_catalog_db_from_verified(&root, &verified).unwrap();
-        assert_eq!(rebuilt.len(), 2);
+        let outcome =
+            recover_catalog_db_from_verified(&root, &verified, "the local file was corrupt")
+                .unwrap();
+        assert!(outcome.contains("was rebuilt because"), "{outcome}");
+        assert!(
+            outcome.contains("0 local override(s) preserved"),
+            "{outcome}"
+        );
+        let quarantined = std::fs::read_dir(&root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("catalog-mirror.sqlite.quarantine-")
+            });
+        assert!(quarantined, "the previous database must be quarantined");
+        let rows = read_catalog_db_models(&open_catalog_db(&root).unwrap()).unwrap();
+        assert_eq!(rows.len(), 2);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn recovery_salvages_user_rows_from_an_unsupported_newer_schema() {
+        // A downgrade against a newer database must not silently destroy
+        // user rows: readable overrides are exported before the rebuild and
+        // re-saved afterwards (audit DC-03).
+        let root = unique_test_dir("localmotive-catalog-db-newer");
+        let verified = sample_catalog();
+        seed_mirror(&root, &verified);
+        {
+            let connection = open_catalog_db(&root).unwrap();
+            save_user_catalog_override(&connection, &sample_override("mine")).unwrap();
+            connection
+                .execute_batch("PRAGMA user_version = 99")
+                .unwrap();
+        }
+        let outcome =
+            recover_catalog_db_from_verified(&root, &verified, "its schema is newer").unwrap();
+        assert!(
+            outcome.contains("1 local override(s) preserved"),
+            "{outcome}"
+        );
+        let rows = read_catalog_db_models(&open_catalog_db(&root).unwrap()).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert!(rows
+            .iter()
+            .any(|model| model.id == "mine" && model.user_sourced));
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -576,7 +687,7 @@ mod tests {
         // fresh verified catalog preserves them instead of wiping local work.
         let root = unique_test_dir("localmotive-catalog-db-user");
         let verified = sample_catalog();
-        rebuild_catalog_db_from_verified(&root, &verified).unwrap();
+        seed_mirror(&root, &verified);
         let connection = open_catalog_db(&root).unwrap();
         migrate_catalog_db(&connection).unwrap();
         let mut owned = connection;
@@ -622,7 +733,7 @@ mod tests {
         // the network row stays in the mirror.
         let root = unique_test_dir("localmotive-catalog-db-remove");
         let verified = sample_catalog();
-        rebuild_catalog_db_from_verified(&root, &verified).unwrap();
+        seed_mirror(&root, &verified);
         let connection = open_catalog_db(&root).unwrap();
         migrate_catalog_db(&connection).unwrap();
         let error = remove_user_catalog_override(&connection, "a").unwrap_err();

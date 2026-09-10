@@ -633,8 +633,11 @@ pub fn rich_facets(models: &[CatalogModel]) -> CatalogFacets {
 /// A catalog plus how it was obtained, so the interface can be honest about
 /// whether it is showing live or cached data. `last_success_secs` is the
 /// wall-clock second of the last successful network fill (None when never):
-/// the UI renders it as last success. `cooldown_remaining_minutes` is Some
-/// only when the caller just hit the cooldown instead of the network.
+/// the UI renders it as last success. `cooldown_remaining_minutes` is set when
+/// a load or a denied refresh happened inside the refresh cooldown.
+/// `refresh_error` is present only when a network refresh failed and local
+/// data was served instead; `persistence_notice` reports a local mirror
+/// problem the user should see (audit DC-01, DC-03, DC-07).
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CatalogSnapshot {
@@ -647,6 +650,10 @@ pub struct CatalogSnapshot {
     pub last_success_secs: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cooldown_remaining_minutes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persistence_notice: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -728,7 +735,7 @@ pub fn read_refresh_stamp(root: &Path) -> Option<String> {
         .filter(|text| !text.is_empty())
 }
 
-fn write_refresh_stamp(root: &Path) {
+pub(crate) fn write_refresh_stamp(root: &Path) {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs().to_string())
@@ -757,7 +764,7 @@ fn load_cache_record(root: &Path) -> Option<CacheRecord> {
     serde_json::from_str(&text).ok()
 }
 
-fn save_cache_record(
+pub(crate) fn save_cache_record(
     root: &Path,
     body: &str,
     etag: Option<&str>,
@@ -819,8 +826,20 @@ fn save_cache_record(
 /// conditional request and no body. Falls back to the cached copy when the
 /// network is unavailable, because an offline user should still see the list.
 pub fn fetch_catalog(url: &str, cache_root: &Path) -> Result<CatalogSnapshot, String> {
+    fetch_catalog_verified(url, cache_root, verify_catalog_signature)
+}
+
+/// [`fetch_catalog`] with an injectable signature check, so tests can serve a
+/// validly signed candidate whose schema this build does not support and
+/// prove it never replaces the supported cache (audit DC-07 V2). Production
+/// always passes [`verify_catalog_signature`].
+fn fetch_catalog_verified(
+    url: &str,
+    cache_root: &Path,
+    verify_signature: fn(&[u8], &str) -> bool,
+) -> Result<CatalogSnapshot, String> {
     let cached = load_cache_record(cache_root)
-        .filter(|record| verify_catalog_signature(record.body.as_bytes(), &record.signature));
+        .filter(|record| verify_signature(record.body.as_bytes(), &record.signature));
     let cached_etag = cached.as_ref().and_then(|record| record.etag.as_ref());
     let cached_body = cached.as_ref().map(|record| record.body.as_str());
 
@@ -852,14 +871,27 @@ pub fn fetch_catalog(url: &str, cache_root: &Path) -> Result<CatalogSnapshot, St
             if status == 304 {
                 let body = cached_body
                     .ok_or_else(|| "Catalog unchanged but no cached copy exists".to_string())?;
+                let catalog = match parse_catalog(body) {
+                    Ok(catalog) => catalog,
+                    Err(error) => {
+                        return fallback(
+                            Some(body.to_string()),
+                            url,
+                            format!("the cached catalog document is not supported: {error}"),
+                            cache_root,
+                        )
+                    }
+                };
                 write_refresh_stamp(cache_root);
                 return Ok(CatalogSnapshot {
-                    catalog: parse_catalog(body)?,
+                    catalog,
                     origin: "not-modified".into(),
                     fetched_at: now(),
                     url: url.to_string(),
                     last_success_secs: read_refresh_stamp(cache_root),
                     cooldown_remaining_minutes: None,
+                    refresh_error: None,
+                    persistence_notice: None,
                 });
             }
             if response
@@ -873,9 +905,31 @@ pub fn fetch_catalog(url: &str, cache_root: &Path) -> Result<CatalogSnapshot, St
                     cache_root,
                 );
             }
-            let body =
-                String::from_utf8(read_bounded_catalog_body(response, MAX_CATALOG_BODY_BYTES)?)
-                    .map_err(|_| "The catalog response is not UTF-8".to_string())?;
+            // Every candidate-side read or parse failure routes through the
+            // same fallback as a network failure: a chunked or interrupted
+            // response must not suppress a usable last-good catalog
+            // (audit DC-07).
+            let body = match read_bounded_catalog_body(response, MAX_CATALOG_BODY_BYTES) {
+                Ok(bytes) => match String::from_utf8(bytes) {
+                    Ok(body) => body,
+                    Err(_) => {
+                        return fallback(
+                            cached_body.map(str::to_string),
+                            url,
+                            "the catalog response is not UTF-8".into(),
+                            cache_root,
+                        )
+                    }
+                },
+                Err(error) => {
+                    return fallback(
+                        cached_body.map(str::to_string),
+                        url,
+                        format!("the catalog response could not be read: {error}"),
+                        cache_root,
+                    )
+                }
+            };
             let signature_url = format!("{url}.sig");
             let signature = match client.get(&signature_url).send() {
                 Ok(signature_response) if signature_response.status().is_success() => {
@@ -890,11 +944,28 @@ pub fn fetch_catalog(url: &str, cache_root: &Path) -> Result<CatalogSnapshot, St
                             cache_root,
                         );
                     }
-                    String::from_utf8(read_bounded_catalog_body(
-                        signature_response,
-                        MAX_CATALOG_SIGNATURE_BYTES,
-                    )?)
-                    .map_err(|_| "The catalog signature is not UTF-8".to_string())?
+                    match read_bounded_catalog_body(signature_response, MAX_CATALOG_SIGNATURE_BYTES)
+                    {
+                        Ok(bytes) => match String::from_utf8(bytes) {
+                            Ok(signature) => signature,
+                            Err(_) => {
+                                return fallback(
+                                    cached_body.map(str::to_string),
+                                    url,
+                                    "the catalog signature is not UTF-8".into(),
+                                    cache_root,
+                                )
+                            }
+                        },
+                        Err(error) => {
+                            return fallback(
+                                cached_body.map(str::to_string),
+                                url,
+                                format!("the catalog signature could not be read: {error}"),
+                                cache_root,
+                            )
+                        }
+                    }
                 }
                 Ok(signature_response) => {
                     return fallback(
@@ -916,7 +987,7 @@ pub fn fetch_catalog(url: &str, cache_root: &Path) -> Result<CatalogSnapshot, St
                     )
                 }
             };
-            if !verify_catalog_signature(body.as_bytes(), &signature) {
+            if !verify_signature(body.as_bytes(), &signature) {
                 return fallback(
                     cached_body.map(str::to_string),
                     url,
@@ -924,7 +995,21 @@ pub fn fetch_catalog(url: &str, cache_root: &Path) -> Result<CatalogSnapshot, St
                     cache_root,
                 );
             }
-            let catalog = parse_catalog(&body)?;
+            // A signature-valid but unsupported or malformed document also
+            // falls back: the last supported cache must survive it, and no
+            // cache write happens for a document that cannot be parsed
+            // (audit DC-07).
+            let catalog = match parse_catalog(&body) {
+                Ok(catalog) => catalog,
+                Err(error) => {
+                    return fallback(
+                        cached_body.map(str::to_string),
+                        url,
+                        format!("the catalog document is not supported: {error}"),
+                        cache_root,
+                    )
+                }
+            };
             // Only cache a signed document that parsed successfully.
             let _ = save_cache_record(cache_root, &body, etag.as_deref(), &signature);
             write_refresh_stamp(cache_root);
@@ -935,6 +1020,8 @@ pub fn fetch_catalog(url: &str, cache_root: &Path) -> Result<CatalogSnapshot, St
                 url: url.to_string(),
                 last_success_secs: read_refresh_stamp(cache_root),
                 cooldown_remaining_minutes: None,
+                refresh_error: None,
+                persistence_notice: None,
             })
         }
         Err(error) => fallback(
@@ -956,7 +1043,9 @@ fn http_client() -> Result<reqwest::blocking::Client, String> {
 }
 
 /// An unreachable catalog is not fatal if a previous copy is on disk: an
-/// offline user should still be able to browse what they saw last time.
+/// offline user should still be able to browse what they saw last time. The
+/// error is preserved in `refresh_error` so the interface can distinguish a
+/// successful local load from a successful network refresh (audit DC-07).
 fn fallback(
     cached_body: Option<String>,
     url: &str,
@@ -972,22 +1061,75 @@ fn fallback(
                 url: url.to_string(),
                 last_success_secs: read_refresh_stamp(cache_root),
                 cooldown_remaining_minutes: None,
+                refresh_error: Some(error),
+                persistence_notice: None,
             });
         }
     }
 
+    let bundled = parse_catalog(BUNDLED_CATALOG).map_err(|bundled_error| {
+        format!("Could not reach the catalog ({error}), and the built-in catalog is invalid: {bundled_error}")
+    })?;
     Ok(CatalogSnapshot {
-        catalog: parse_catalog(BUNDLED_CATALOG).map_err(|bundled_error| {
-            format!(
-                "Could not reach the catalog ({error}), and the built-in catalog is invalid: {bundled_error}"
-            )
-        })?,
+        catalog: bundled,
         origin: "bundled".into(),
         fetched_at: now(),
         url: url.to_string(),
         last_success_secs: read_refresh_stamp(cache_root),
         cooldown_remaining_minutes: None,
+        refresh_error: Some(error),
+        persistence_notice: None,
     })
+}
+
+/// Load the best supported local catalog without any network request.
+///
+/// Order: signature-verified cache, then the bundled snapshot. A restart
+/// inside the refresh cooldown must still browse and authorize against the
+/// same data as before the restart, so this never applies the cooldown and
+/// never returns a refresh error (audit DC-01). The cooldown and the last
+/// success are reported so the interface can present them beside the refresh
+/// control.
+pub fn load_catalog_snapshot(cache_root: &Path, url: &str) -> Result<CatalogSnapshot, String> {
+    let stamp = read_refresh_stamp(cache_root);
+    let cooldown = refresh_cooldown_remaining_minutes(
+        stamp.as_deref(),
+        current_secs(),
+        CATALOG_REFRESH_COOLDOWN_MINUTES,
+    );
+    let cached = load_cache_record(cache_root)
+        .filter(|record| verify_catalog_signature(record.body.as_bytes(), &record.signature));
+    let (catalog, origin) = match cached.as_ref().and_then(|record| {
+        parse_catalog(&record.body)
+            .ok()
+            .map(|catalog| (catalog, "cache"))
+    }) {
+        Some((catalog, origin)) => (catalog, origin),
+        None => {
+            let bundled = parse_catalog(BUNDLED_CATALOG).map_err(|error| {
+                format!("No supported local catalog is available and the built-in catalog is invalid: {error}")
+            })?;
+            (bundled, "bundled")
+        }
+    };
+    Ok(CatalogSnapshot {
+        catalog,
+        origin: origin.into(),
+        fetched_at: now(),
+        url: url.to_string(),
+        last_success_secs: stamp,
+        cooldown_remaining_minutes: cooldown,
+        refresh_error: None,
+        persistence_notice: None,
+    })
+}
+
+fn current_secs() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
 }
 
 fn now() -> String {
@@ -1161,6 +1303,8 @@ pub fn clear_hf_token() -> Result<TokenStatus, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
 
     /// Give each test its own temp directory: parallel `cargo test` threads
     /// share one process id, so a pid-keyed name lets two tests wipe each
@@ -1978,6 +2122,8 @@ mod tests {
         let snapshot = fetch_catalog("http://127.0.0.1:9/catalog.json", &root).unwrap();
         assert_eq!(snapshot.origin, "cache");
         assert!(!snapshot.catalog.models.is_empty());
+        // The interface can still tell the user the refresh failed (DC-07).
+        assert!(snapshot.refresh_error.is_some());
 
         // With no cache at all, first run falls back to the catalog embedded in
         // this exact app build rather than presenting an empty tab offline.
@@ -1999,6 +2145,364 @@ mod tests {
         let snapshot = fetch_catalog("http://127.0.0.1:9/catalog.json", &root).unwrap();
         assert_eq!(snapshot.origin, "bundled");
         assert!(!snapshot.catalog.models.is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+    fn shipped_signed_pair() -> (String, String) {
+        let catalog_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("catalog");
+        (
+            std::fs::read_to_string(catalog_dir.join("catalog.json")).unwrap(),
+            std::fs::read_to_string(catalog_dir.join("catalog.json.sig")).unwrap(),
+        )
+    }
+
+    enum BodyFraming {
+        /// Advertise and send the exact body length.
+        DeclaredLength,
+        /// Advertise `length` but send the body as-is; a larger advertisement
+        /// models a truncated or interrupted response.
+        Declared(usize),
+        /// No Content-Length header: the connection close delimits the body.
+        CloseDelimited,
+    }
+
+    struct CatalogHttpFixture {
+        base_url: String,
+        stop: Arc<AtomicBool>,
+        handle: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl Drop for CatalogHttpFixture {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Relaxed);
+            if let Some(handle) = self.handle.take() {
+                let _ = handle.join();
+            }
+        }
+    }
+
+    /// A one-connection-at-a-time HTTP server for `catalog.json` and its
+    /// signature, so candidate-side failures are exercised through the real
+    /// reqwest client and the real fetch_catalog routing (audit DC-07).
+    fn serve_catalog_http(
+        body: Vec<u8>,
+        signature: Vec<u8>,
+        framing: BodyFraming,
+    ) -> CatalogHttpFixture {
+        use std::io::{BufRead as _, BufReader, Write as _};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let server_stop = Arc::clone(&stop);
+        let handle = std::thread::spawn(move || {
+            while !server_stop.load(Ordering::Relaxed) {
+                let (mut stream, _) = match listener.accept() {
+                    Ok(accepted) => accepted,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(5));
+                        continue;
+                    }
+                    Err(error) => panic!("server accept failed: {error}"),
+                };
+                // Accepted streams inherit the listener's non-blocking mode on
+                // Windows; switch this dedicated connection back to blocking
+                // reads so a WouldBlock can never abandon a request mid-way.
+                stream.set_nonblocking(false).unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut request_line = String::new();
+                if reader.read_line(&mut request_line).is_err() {
+                    continue;
+                }
+                loop {
+                    let mut line = String::new();
+                    match reader.read_line(&mut line) {
+                        Ok(0) => break,
+                        Ok(_) if line == "\r\n" => break,
+                        Ok(_) => {}
+                        Err(_) => break,
+                    }
+                }
+                let is_signature = request_line.contains(".sig");
+                let payload: &[u8] = if is_signature { &signature } else { &body };
+                let header = if is_signature {
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        payload.len()
+                    )
+                } else {
+                    match framing {
+                        BodyFraming::DeclaredLength => format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            payload.len()
+                        ),
+                        BodyFraming::Declared(length) => format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n"
+                        ),
+                        BodyFraming::CloseDelimited => {
+                            "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n".to_string()
+                        }
+                    }
+                };
+                let _ = stream.write_all(header.as_bytes());
+                let _ = stream.write_all(payload);
+                let _ = stream.flush();
+            }
+        });
+        CatalogHttpFixture {
+            base_url: format!("http://{address}"),
+            stop,
+            handle: Some(handle),
+        }
+    }
+
+    #[test]
+    fn dc01_local_load_serves_the_signed_cache_with_the_cooldown_and_no_refresh_error() {
+        // A restart inside the refresh cooldown must still browse the same
+        // verified data: loading applies no throttle and reports it instead
+        // (audit DC-01). This function contains no client, so no network
+        // request is structurally possible.
+        let root = unique_test_dir("localmotive-load-cache");
+        let (body, signature) = shipped_signed_pair();
+        save_cache_record(&root, &body, Some("etag"), &signature).unwrap();
+        std::fs::write(refresh_stamp_path(&root), current_secs().to_string()).unwrap();
+
+        let snapshot =
+            load_catalog_snapshot(&root, "https://example.invalid/catalog.json").unwrap();
+
+        assert_eq!(snapshot.origin, "cache");
+        assert!(!snapshot.catalog.models.is_empty());
+        assert!(snapshot.refresh_error.is_none());
+        let remaining = snapshot
+            .cooldown_remaining_minutes
+            .expect("a fresh stamp must report the remaining cooldown");
+        assert!(
+            remaining > 0 && remaining <= CATALOG_REFRESH_COOLDOWN_MINUTES,
+            "unexpected cooldown {remaining}"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dc01_local_load_uses_bundled_data_for_missing_corrupt_or_untrusted_caches() {
+        let root = unique_test_dir("localmotive-load-local");
+        let url = "https://example.invalid/catalog.json";
+
+        // No cache at all: first start still gets the bundled catalog.
+        let snapshot = load_catalog_snapshot(&root, url).unwrap();
+        assert_eq!(snapshot.origin, "bundled");
+        assert!(!snapshot.catalog.models.is_empty());
+        assert!(snapshot.refresh_error.is_none());
+
+        // An unreadable cache record falls through to the bundled snapshot.
+        std::fs::write(cache_path(&root), "{not json").unwrap();
+        let snapshot = load_catalog_snapshot(&root, url).unwrap();
+        assert_eq!(snapshot.origin, "bundled");
+
+        // A cache whose signature does not verify is never trusted.
+        let (body, _) = shipped_signed_pair();
+        save_cache_record(&root, &body, None, "not a signature").unwrap();
+        let snapshot = load_catalog_snapshot(&root, url).unwrap();
+        assert_eq!(snapshot.origin, "bundled");
+
+        // An oversized cache record is rejected by the reader's bound.
+        std::fs::write(
+            cache_path(&root),
+            "x".repeat(MAX_CATALOG_CACHE_BYTES as usize + 1),
+        )
+        .unwrap();
+        let snapshot = load_catalog_snapshot(&root, url).unwrap();
+        assert_eq!(snapshot.origin, "bundled");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dc01_local_load_reports_the_full_cooldown_after_a_clock_rollback() {
+        // A clock rollback must not disable the throttle or lose local data:
+        // the cache still loads and the full window is reported (audit DC-01).
+        let root = unique_test_dir("localmotive-load-clock");
+        let (body, signature) = shipped_signed_pair();
+        save_cache_record(&root, &body, None, &signature).unwrap();
+        std::fs::write(refresh_stamp_path(&root), "4102444800").unwrap();
+
+        let snapshot =
+            load_catalog_snapshot(&root, "https://example.invalid/catalog.json").unwrap();
+
+        assert_eq!(snapshot.origin, "cache");
+        assert_eq!(
+            snapshot.cooldown_remaining_minutes,
+            Some(CATALOG_REFRESH_COOLDOWN_MINUTES)
+        );
+        assert!(snapshot.refresh_error.is_none());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn fetch_catalog_succeeds_end_to_end_against_a_served_signed_pair() {
+        // Positive control for the local fixture and the routing change: a
+        // served valid body and signature still produce a network snapshot.
+        let root = unique_test_dir("localmotive-net-ok");
+        let (body, signature) = shipped_signed_pair();
+        let fixture = serve_catalog_http(
+            body.clone().into_bytes(),
+            signature.into_bytes(),
+            BodyFraming::DeclaredLength,
+        );
+
+        let snapshot = fetch_catalog(&format!("{}/catalog.json", fixture.base_url), &root).unwrap();
+
+        assert_eq!(snapshot.origin, "network");
+        assert_eq!(
+            snapshot.catalog.models.len(),
+            parse_catalog(&body).unwrap().models.len()
+        );
+        assert!(snapshot.refresh_error.is_none());
+        assert!(
+            read_refresh_stamp(&root).is_some(),
+            "a success writes the stamp"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dc07_truncated_invalid_utf8_and_malformed_signature_candidates_keep_the_cache() {
+        // Every candidate-side failure must route through the same fallback as
+        // a network failure; the last supported catalog stays available with
+        // an explicit refresh error (audit DC-07).
+        let root = unique_test_dir("localmotive-net-bad");
+        let (body, signature) = shipped_signed_pair();
+        save_cache_record(&root, &body, Some("etag"), &signature).unwrap();
+
+        // (a) Truncated body: headers promise more bytes than arrive.
+        let fixture = serve_catalog_http(
+            body.as_bytes().to_vec(),
+            signature.as_bytes().to_vec(),
+            BodyFraming::Declared(body.len() + 64),
+        );
+        let snapshot = fetch_catalog(&format!("{}/catalog.json", fixture.base_url), &root).unwrap();
+        assert_eq!(snapshot.origin, "cache");
+        assert!(!snapshot.catalog.models.is_empty());
+        assert!(
+            snapshot
+                .refresh_error
+                .as_deref()
+                .is_some_and(|error| error.contains("could not be read")),
+            "unexpected refresh_error: {:?}",
+            snapshot.refresh_error
+        );
+        drop(fixture);
+
+        // (b) Invalid UTF-8 body.
+        let fixture = serve_catalog_http(
+            vec![0xff, 0xfe, 0xfd, 0xfc],
+            signature.as_bytes().to_vec(),
+            BodyFraming::DeclaredLength,
+        );
+        let snapshot = fetch_catalog(&format!("{}/catalog.json", fixture.base_url), &root).unwrap();
+        assert_eq!(snapshot.origin, "cache");
+        assert!(
+            snapshot
+                .refresh_error
+                .as_deref()
+                .is_some_and(|error| error.contains("not UTF-8")),
+            "unexpected refresh_error: {:?}",
+            snapshot.refresh_error
+        );
+        drop(fixture);
+
+        // (c) Malformed signature body.
+        let fixture = serve_catalog_http(
+            body.as_bytes().to_vec(),
+            vec![0xff, 0xfe],
+            BodyFraming::DeclaredLength,
+        );
+        let snapshot = fetch_catalog(&format!("{}/catalog.json", fixture.base_url), &root).unwrap();
+        assert_eq!(snapshot.origin, "cache");
+        assert!(
+            snapshot
+                .refresh_error
+                .as_deref()
+                .is_some_and(|error| error.contains("signature")),
+            "unexpected refresh_error: {:?}",
+            snapshot.refresh_error
+        );
+        drop(fixture);
+
+        // The failed candidates never replace the supported cache on disk.
+        let cached = load_cache_record(&root).unwrap();
+        assert_eq!(cached.body, body);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dc07_oversized_close_delimited_stream_keeps_the_cache_with_a_bounded_read() {
+        // Without a Content-Length header the reader must still stop at its
+        // byte limit instead of buffering an unbounded stream (audit DC-07).
+        let root = unique_test_dir("localmotive-net-big");
+        let (body, signature) = shipped_signed_pair();
+        save_cache_record(&root, &body, Some("etag"), &signature).unwrap();
+        let oversized = vec![b'x'; MAX_CATALOG_BODY_BYTES + 1];
+        let fixture = serve_catalog_http(
+            oversized,
+            signature.into_bytes(),
+            BodyFraming::CloseDelimited,
+        );
+
+        let snapshot = fetch_catalog(&format!("{}/catalog.json", fixture.base_url), &root).unwrap();
+
+        assert_eq!(snapshot.origin, "cache");
+        assert!(
+            snapshot
+                .refresh_error
+                .as_deref()
+                .is_some_and(|error| error.contains("could not be read")),
+            "unexpected refresh_error: {:?}",
+            snapshot.refresh_error
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dc07_a_validly_signed_future_schema_never_replaces_the_supported_cache() {
+        // A newer builder can publish a schema this build does not support.
+        // Even with a valid signature, the candidate must not replace the
+        // supported cache or become the authoritative catalog (audit DC-07).
+        let root = unique_test_dir("localmotive-future-schema");
+        let (body, signature) = shipped_signed_pair();
+        save_cache_record(&root, &body, Some("etag"), &signature).unwrap();
+        let future = r#"{"schemaVersion": 99, "updated": "2026-01-01T00:00:00Z", "source": "test", "models": []}"#;
+        let fixture = serve_catalog_http(
+            future.as_bytes().to_vec(),
+            b"signature accepted by the injected verifier".to_vec(),
+            BodyFraming::DeclaredLength,
+        );
+
+        let snapshot = fetch_catalog_verified(
+            &format!("{}/catalog.json", fixture.base_url),
+            &root,
+            |_body, _signature| true,
+        )
+        .unwrap();
+
+        assert_eq!(snapshot.origin, "cache");
+        assert!(!snapshot.catalog.models.is_empty());
+        assert!(
+            snapshot
+                .refresh_error
+                .as_deref()
+                .is_some_and(|error| error.contains("not supported")),
+            "unexpected refresh_error: {:?}",
+            snapshot.refresh_error
+        );
+        // The supported body stays on disk and the stamp is not advanced, so
+        // a downgraded build still browses what it last understood.
+        let cached = load_cache_record(&root).unwrap();
+        assert_eq!(cached.body, body);
+        assert!(read_refresh_stamp(&root).is_none());
         let _ = std::fs::remove_dir_all(root);
     }
 }
