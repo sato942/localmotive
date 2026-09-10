@@ -989,7 +989,6 @@ fn response_validators_match(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 fn fetch_chunk(
     url: &str,
     index: usize,
