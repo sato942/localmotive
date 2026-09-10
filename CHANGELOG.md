@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.5.0
+
+### Curated HF catalog v2 with local SQLite mirror
+
+- Ships catalog schema 2 with 158 models and 1417 files (630182 bytes, gzip 105130 bytes), built from the 24-author allowlist in `catalog/providers.json` with a 90-day `lastModified` filter.
+- Signs the published catalog with a detached Ed25519 signature (`catalog/catalog.json.sig`); the app verifies every network byte before caching or display and falls back to the last signed cache, then the embedded catalog.
+- Mirrors verified rows into a local-only SQLite database (`catalog-mirror.sqlite`) for first-start fill, refresh with a 1560-minute cooldown, and fast browse, filter, and sort. SQLite never leaves the PC and never replaces signature checks.
+- Marks local user-added rows `USER ADDED - LOCAL ONLY`; user rows never touch the signed artifact and cannot authorize a network file. Removing a curated id is refused.
+- Adds rich adjustable filters (author, licence, pipeline, architecture, size, quant, params, gated, downloads, likes, recency, tags) with hardware auto-fit defaults from detected VRAM or system memory. The user can disable or widen the fit rule.
+- Enforces every user-facing input bound in Rust at the Tauri boundary: oversize text, filter values, model lists, profile strings, and tensor splits are rejected with clear errors.
+- Rewrote `README.md` for the current product and the 0.5 catalog story; the stale 0.3.0 download section is gone.
+
+### Unsigned honesty and ship visibility
+
+- Ships honestly unsigned under the standing deferred-signing exception: Authenticode is DEFERRED_BY_OWNER, no signature is claimed, and Windows SmartScreen may warn. Verify the published SHA-256 checksums before use.
+- Publishes as a full release with `prerelease: false` under the name `Localmotive 0.5.0 (unsigned)` so the ship tip stays GitHub Latest.
+
+### Qualification limitations
+
+Localmotive 0.5.0 targets Windows 10 and Windows 11 x64.
+
+Do not interpret the target scope as a tested compatibility claim.
+
+The 0.4.1 qualification limits carry forward unchanged: P0 hardware rows still lack complete L4 product evidence, and Windows 10 use requires an applicable supported servicing or ESU policy. See the 0.4.1 section below.
+
+`cargo audit` status is reported by CI at ship time; no new advisory is claimed here.
+
 ## 0.4.1
 
 ### Evidence-bound managed runtimes

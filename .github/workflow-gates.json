@@ -20,7 +20,7 @@
     "ci.yml": {
       "gates": {
         "check": [
-          "node scripts/verify_versions.mjs 0.4.1",
+          "node scripts/verify_versions.mjs 0.5.0",
           "node scripts/verify_workflow_pins.mjs",
           "node scripts/verify_workflow_gates.mjs",
           "node --test scripts/tests/release-gates.test.mjs",
@@ -44,7 +44,7 @@
     "release.yml": {
       "gates": {
         "quality": [
-          "node scripts/verify_versions.mjs 0.4.1",
+          "node scripts/verify_versions.mjs 0.5.0",
           "node scripts/verify_workflow_pins.mjs",
           "node scripts/verify_workflow_gates.mjs",
           "node --test scripts/tests/release-gates.test.mjs",

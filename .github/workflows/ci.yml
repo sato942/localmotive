@@ -44,7 +44,7 @@ jobs:
       - run: npm ci
 
       - name: Verify manifest and lockfile versions
-        run: node scripts/verify_versions.mjs 0.4.1
+        run: node scripts/verify_versions.mjs 0.5.0
 
       - name: Verify immutable workflow action references
         run: node scripts/verify_workflow_pins.mjs

@@ -76,8 +76,8 @@ jobs:
           RAW_TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           raw="$RAW_TAG"
-          test "$raw" = "v0.4.1" \
-            || { echo "::error::This workflow builds only v0.4.1"; exit 1; }
+          test "$raw" = "v0.5.0" \
+            || { echo "::error::This workflow builds only v0.5.0"; exit 1; }
           version="${raw#v}"
           echo "tag=v${version}" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
@@ -106,7 +106,7 @@ jobs:
       - run: npm ci
 
       - name: Verify manifest and lockfile versions
-        run: node scripts/verify_versions.mjs 0.4.1
+        run: node scripts/verify_versions.mjs 0.5.0
 
       - name: Verify immutable workflow action references
         run: node scripts/verify_workflow_pins.mjs
@@ -272,8 +272,8 @@ jobs:
     # PASS in the same run, so no second parallel package ever shares the
     # runner CDP. Dispatch + publish=true stays for republish only.
     if: >-
-      needs.quality.outputs.tag == 'v0.4.1' &&
-      (github.ref == 'refs/tags/v0.4.1' ||
+      needs.quality.outputs.tag == 'v0.5.0' &&
+      (github.ref == 'refs/tags/v0.5.0' ||
         (github.event_name == 'workflow_dispatch' && inputs.publish))
     needs: [rust-audit, quality, package]
     runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]

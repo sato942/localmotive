@@ -1053,7 +1053,7 @@ test("tag-push publish runs the same gates as the dispatch path", async () => {
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
   // Preferred ship path: pushing the version tag publishes after package
   // PASS, so no second parallel package run ever shares the runner CDP.
-  assert.match(release, /github\.ref == 'refs\/tags\/v0\.4\.1'/);
+  assert.match(release, /github\.ref == 'refs\/tags\/v0\.5\.0'/);
 });
 
 test("branding history set covers the archived docs layout", async () => {

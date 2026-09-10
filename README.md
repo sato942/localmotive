@@ -24,9 +24,9 @@ Each release provides these Windows x64 files:
 - `packaged-verification-<version>.json` is the packaged behavior evidence.
 - `candidate-inventory-<version>.json` is the candidate size and digest evidence.
 
-For example, release 0.4.1 ships `Localmotive_0.4.1_x64-setup.exe`,
-`Localmotive_0.4.1_x64.msi`, `Localmotive_0.4.1_x64-portable.exe`,
-and `SHA256SUMS-0.4.1.txt`.
+For example, release 0.5.0 ships `Localmotive_0.5.0_x64-setup.exe`,
+`Localmotive_0.5.0_x64.msi`, `Localmotive_0.5.0_x64-portable.exe`,
+and `SHA256SUMS-0.5.0.txt`.
 
 The application files do not have Authenticode signatures.
 Signing is deferred by owner order, so every ship is honestly unsigned:
@@ -38,8 +38,8 @@ Windows SmartScreen can show a warning when you start an unsigned file.
 Verify a downloaded file before use:
 
 ```powershell
-Get-FileHash .\Localmotive_0.4.1_x64-setup.exe -Algorithm SHA256
-Get-Content .\SHA256SUMS-0.4.1.txt
+Get-FileHash .\Localmotive_0.5.0_x64-setup.exe -Algorithm SHA256
+Get-Content .\SHA256SUMS-0.5.0.txt
 ```
 
 Compare the two SHA-256 values.
@@ -117,7 +117,7 @@ The approved release contains x64 CPU, CUDA, ROCm, SYCL, OpenVINO, and Vulkan as
 
 Localmotive shows only assets that match the running application architecture.
 
-The 0.4.1 ARM64 assets remain dormant and do not create install options.
+The 0.5.0 ARM64 assets remain dormant and do not create install options.
 
 ### Model inventory and profiles
 
@@ -325,14 +325,14 @@ Windows installers remain honestly unsigned with disclosure. Windows SmartScreen
 - Catalog downloads support single-file GGUF entries only.
 - Inventory scanning supports split GGUF files already on disk.
 - Application updates require a newer manual installation or executable.
-- Localmotive 0.4.1 ships unsigned under the deferred-signing exception: no Authenticode signatures exist, so no signature match can be claimed. Verify the published SHA-256 checksums before use. SmartScreen can warn on unsigned files.
+- Localmotive 0.5.0 ships unsigned under the deferred-signing exception: no Authenticode signatures exist, so no signature match can be claimed. Verify the published SHA-256 checksums before use. SmartScreen can warn on unsigned files.
 - Signing boxes are deferred, not green, and block no gate.
 
 ## Troubleshooting
 
 ### SmartScreen shows a warning
 
-Localmotive 0.4.1 ships unsigned under the deferred-signing exception: there is no Authenticode signer to verify. Verify the published SHA-256 checksums before use.
+Localmotive 0.5.0 ships unsigned under the deferred-signing exception: there is no Authenticode signer to verify. Verify the published SHA-256 checksums before use.
 
 SmartScreen can warn on unsigned files.
 
