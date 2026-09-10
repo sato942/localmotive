@@ -102,6 +102,119 @@ struct AppState {
     runtime_catalog: AtomicBool,
     /// One managed-runtime seven-stage health run may execute at a time.
     runtime_health: Mutex<Option<Arc<AtomicBool>>>,
+    /// One managed-inference operation at a time, with process generations
+    /// (audit MT-05).
+    operations: Mutex<OperationCoordinator>,
+}
+
+/// Which managed-inference operation currently owns the machine. Every
+/// subsystem that launches or drives a llama-server — ordinary startup, warm
+/// benchmarks, cold attempts, tuning sessions, and quality suites — reserves
+/// here first, so two owners can never run concurrently and every finalizer
+/// can detect that its server identity was replaced (audit MT-05).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OperationOwner {
+    Server,
+    Benchmark,
+    ColdBenchmark,
+    Tuning,
+    Quality,
+}
+
+impl OperationOwner {
+    fn label(self) -> &'static str {
+        match self {
+            OperationOwner::Server => "a running server",
+            OperationOwner::Benchmark => "a warm-cache benchmark",
+            OperationOwner::ColdBenchmark => "a cold-cache benchmark",
+            OperationOwner::Tuning => "a tuning session",
+            OperationOwner::Quality => "a quality suite",
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct OperationCoordinator {
+    /// The current (owner, generation) pair. Only one at a time.
+    active: Option<(OperationOwner, u64)>,
+    /// Increments on every successful reservation, so stale work can notice
+    /// that the machine state it was measured against is gone.
+    generation: u64,
+}
+
+/// RAII reservation: released on drop, and only when this exact generation
+/// is still the active one, so one operation's completion cannot release a
+/// replacement's ownership (audit MT-05 I2).
+#[derive(Debug)]
+struct OperationReservation<'a> {
+    coordinator: &'a Mutex<OperationCoordinator>,
+    owner: OperationOwner,
+    generation: u64,
+}
+
+impl OperationReservation<'_> {
+    /// True while this reservation still owns the machine generation. A
+    /// false value means results must not be finalized under the original
+    /// server identity (audit MT-05 I3).
+    fn is_current(&self) -> bool {
+        self.coordinator
+            .lock()
+            .map(|coordinator| coordinator.active == Some((self.owner, self.generation)))
+            .unwrap_or(false)
+    }
+}
+
+impl Drop for OperationReservation<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut coordinator) = self.coordinator.lock() {
+            if coordinator.active == Some((self.owner, self.generation)) {
+                coordinator.active = None;
+            }
+        }
+    }
+}
+
+fn reserve_operation(
+    coordinator: &Mutex<OperationCoordinator>,
+    owner: OperationOwner,
+) -> Result<OperationReservation<'_>, String> {
+    let mut state = coordinator
+        .lock()
+        .map_err(|_| "Operation state is unavailable".to_string())?;
+    if let Some((current, _)) = state.active {
+        return Err(format!(
+            "{} is already active; finish or cancel it first.",
+            current.label()
+        ));
+    }
+    state.generation = state.generation.wrapping_add(1);
+    let generation = state.generation;
+    state.active = Some((owner, generation));
+    Ok(OperationReservation {
+        coordinator,
+        owner,
+        generation,
+    })
+}
+
+fn active_operation_owner(coordinator: &Mutex<OperationCoordinator>) -> Option<OperationOwner> {
+    coordinator
+        .lock()
+        .ok()
+        .and_then(|state| state.active.map(|(owner, _)| owner))
+}
+
+/// A Stop request may only act on the ordinary server owner: anything else
+/// owns the machine right now, and its own cancel control must run first
+/// (audit MT-05 I3).
+fn stop_owner_conflict(active: Option<OperationOwner>) -> Option<String> {
+    match active {
+        Some(OperationOwner::Server) | None => None,
+        Some(owner) => Some(format!(
+            "{} currently owns the managed server; cancel it before stopping.",
+            owner.label()
+        )),
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1438,6 +1551,9 @@ fn start_server(
     profile: LaunchProfile,
     state: tauri::State<AppState>,
 ) -> Result<ServerStatus, String> {
+    // One owner at a time: a running server, benchmark, tuning session, or
+    // quality suite all hold the reservation (audit MT-05).
+    let _reservation = reserve_operation(&state.operations, OperationOwner::Server)?;
     let mut slot = state
         .server
         .lock()
@@ -1496,6 +1612,9 @@ fn start_server(
 
 #[tauri::command]
 fn stop_server(state: tauri::State<AppState>) -> Result<ServerStatus, String> {
+    if let Some(conflict) = stop_owner_conflict(active_operation_owner(&state.operations)) {
+        return Err(conflict);
+    }
     let mut slot = state
         .server
         .lock()
@@ -1873,6 +1992,15 @@ async fn benchmark_v2(
     app: tauri::AppHandle,
 ) -> Result<BenchmarkRunResult, String> {
     workload.validate().map_err(|error| error.to_string())?;
+    // One machine owner: a benchmark cannot start while a server, tuning
+    // session, or quality suite owns the operations slot, and a cold attempt
+    // is its own owner kind (audit MT-05).
+    let owner = if workload.cache_mode == evidence::CacheMode::Cold {
+        OperationOwner::ColdBenchmark
+    } else {
+        OperationOwner::Benchmark
+    };
+    let reservation = reserve_operation(&state.operations, owner)?;
     let directory = app
         .path()
         .app_data_dir()
@@ -1962,7 +2090,17 @@ async fn benchmark_v2(
         .lock()
         .map_err(|_| "Benchmark state is unavailable")?;
     *active = None;
-    benchmark_result
+    let result = benchmark_result?;
+    // A replaced or stopped server invalidates the whole record: results must
+    // never be finalized under an identity that no longer exists
+    // (audit MT-05 I3).
+    if !reservation.is_current() {
+        return Err(
+            "The managed server was stopped or replaced during the benchmark; the record was discarded."
+                .into(),
+        );
+    }
+    Ok(result)
 }
 
 #[tauri::command]
@@ -2027,6 +2165,10 @@ fn replay_benchmark_manifest(
 async fn run_quality_suite(
     state: tauri::State<'_, AppState>,
 ) -> Result<recommend::QualitySuiteResult, String> {
+    // Quality checks drive the running server: they take the single
+    // operations reservation and must not finalize against a replacement
+    // (audit MT-05).
+    let reservation = reserve_operation(&state.operations, OperationOwner::Quality)?;
     let (host, port, runtime_path, model_logical_id) = {
         let mut slot = state
             .server
@@ -2046,24 +2188,34 @@ async fn run_quality_suite(
             model_logical_id,
         )
     };
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut result = recommend::run_quality_suite_with(|_, prompt| {
-            measurement::quality_completion_request(&host, port, prompt)
-        });
-        result.observed_at_ms = Some(
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|error| error.to_string())?
-                .as_millis()
-                .try_into()
-                .map_err(|_| "System time is outside the supported range")?,
-        );
-        result.model_logical_id = Some(model_logical_id);
-        result.runtime_sha256 = Some(artifact::sha256_path(Path::new(&runtime_path))?);
-        Ok(result)
-    })
+    let joined = tauri::async_runtime::spawn_blocking(
+        move || -> Result<recommend::QualitySuiteResult, String> {
+            let mut result = recommend::run_quality_suite_with(|_, prompt| {
+                measurement::quality_completion_request(&host, port, prompt)
+            });
+            result.observed_at_ms = Some(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|error| error.to_string())?
+                    .as_millis()
+                    .try_into()
+                    .map_err(|_| "System time is outside the supported range")?,
+            );
+            result.model_logical_id = Some(model_logical_id);
+            result.runtime_sha256 = Some(artifact::sha256_path(Path::new(&runtime_path))?);
+            Ok(result)
+        },
+    )
     .await
-    .map_err(|error| format!("Quality task failed: {error}"))?
+    .map_err(|error| format!("Quality task failed: {error}"))?;
+    let result = joined?;
+    if !reservation.is_current() {
+        return Err(
+            "The managed server was stopped or replaced during the quality suite; the results were discarded."
+                .into(),
+        );
+    }
+    Ok(result)
 }
 
 #[tauri::command]
@@ -2604,6 +2756,9 @@ async fn start_tuning(
             return Err("Stop the running server before tuning; the tuner launches its own".into());
         }
     }
+    // One machine owner: a benchmark, quality suite, or another server may
+    // not be replaced silently by a tuning session (audit MT-05).
+    let _reservation = reserve_operation(&state.operations, OperationOwner::Tuning)?;
     let cancel = Arc::new(AtomicBool::new(false));
     {
         let mut tuning = state
@@ -4778,5 +4933,163 @@ mod tuning_lifecycle_source_tests {
             tail.contains("could not be stopped cleanly"),
             "a failed cleanup must be surfaced to the caller"
         );
+    }
+}
+
+#[cfg(test)]
+mod operation_coordinator_tests {
+    use super::*;
+
+    fn coordinator() -> Mutex<OperationCoordinator> {
+        Mutex::new(OperationCoordinator::default())
+    }
+
+    #[test]
+    fn mt05_one_operation_owns_the_machine_and_generations_advance() {
+        // The audited interleavings all relied on two subsystems passing
+        // their own "nothing running" checks; the reservation closes that
+        // window with one atomic slot (audit MT-05 V1).
+        let coordinator = coordinator();
+        let server = reserve_operation(&coordinator, OperationOwner::Server).unwrap();
+        assert_eq!(
+            active_operation_owner(&coordinator),
+            Some(OperationOwner::Server)
+        );
+        let error = reserve_operation(&coordinator, OperationOwner::Tuning).unwrap_err();
+        assert!(
+            error.contains("a running server is already active"),
+            "{error}"
+        );
+        let error = reserve_operation(&coordinator, OperationOwner::Benchmark).unwrap_err();
+        assert!(error.contains("already active"), "{error}");
+        let server_generation = server.generation;
+        drop(server);
+        let tuning = reserve_operation(&coordinator, OperationOwner::Tuning).unwrap();
+        assert!(
+            tuning.generation > server_generation,
+            "every successful reservation must advance the generation"
+        );
+        assert_eq!(
+            active_operation_owner(&coordinator),
+            Some(OperationOwner::Tuning)
+        );
+        drop(tuning);
+        assert_eq!(active_operation_owner(&coordinator), None);
+    }
+
+    #[test]
+    fn mt05_a_stale_reservation_cannot_release_or_finalize_a_replacement() {
+        // A stopped server's work must not (a) look current after a
+        // replacement acquired the slot or (b) release the replacement when
+        // its own cleanup finally runs (audit MT-05 V2).
+        let coordinator = coordinator();
+        let first = reserve_operation(&coordinator, OperationOwner::Server).unwrap();
+        let stale = OperationReservation {
+            coordinator: &coordinator,
+            owner: OperationOwner::Server,
+            generation: first.generation,
+        };
+        drop(first); // the server was stopped
+        let replacement = reserve_operation(&coordinator, OperationOwner::Quality).unwrap();
+        assert!(
+            !stale.is_current(),
+            "a stale reservation must not look current"
+        );
+        drop(stale);
+        assert!(
+            replacement.is_current(),
+            "dropping a stale reservation must not release the current owner"
+        );
+        assert_eq!(
+            active_operation_owner(&coordinator),
+            Some(OperationOwner::Quality)
+        );
+    }
+
+    #[test]
+    fn mt05_stop_rejects_while_another_owner_holds_the_machine() {
+        assert!(stop_owner_conflict(None).is_none());
+        assert!(stop_owner_conflict(Some(OperationOwner::Server)).is_none());
+        for owner in [
+            OperationOwner::Benchmark,
+            OperationOwner::ColdBenchmark,
+            OperationOwner::Tuning,
+            OperationOwner::Quality,
+        ] {
+            let message = stop_owner_conflict(Some(owner)).expect("foreign owners must block Stop");
+            assert!(message.contains(owner.label()), "{message}");
+            assert!(message.contains("cancel it before stopping"), "{message}");
+        }
+    }
+
+    #[test]
+    fn mt05_every_launching_command_reserves_the_operation_slot() {
+        // Source guard: each managed-inference entry point reserves its owner
+        // kind, Stop consults the ownership gate, and both benchmark paths
+        // discard results whose server identity was replaced (audit MT-05).
+        let source = include_str!("lib.rs");
+        for (start, end, expected) in [
+            (
+                "fn start_server(",
+                "fn stop_server(",
+                "reserve_operation(&state.operations, OperationOwner::Server)",
+            ),
+            (
+                "async fn benchmark_v2(",
+                "fn cancel_benchmark(",
+                "OperationOwner::ColdBenchmark",
+            ),
+            (
+                "async fn run_quality_suite(",
+                "fn rank_candidates(",
+                "reserve_operation(&state.operations, OperationOwner::Quality)",
+            ),
+            (
+                "async fn start_tuning(",
+                "fn cancel_tuning(",
+                "reserve_operation(&state.operations, OperationOwner::Tuning)",
+            ),
+        ] {
+            let body = source
+                .split(start)
+                .nth(1)
+                .and_then(|rest| rest.split(end).next())
+                .unwrap_or_else(|| panic!("{start} must exist before {end}"));
+            assert!(
+                body.contains("reserve_operation(&state.operations"),
+                "{start} must reserve an operation slot"
+            );
+            assert!(
+                body.contains(expected),
+                "{start} must reserve its expected owner: {expected}"
+            );
+        }
+        let stop = source
+            .split("fn stop_server(")
+            .nth(1)
+            .unwrap()
+            .split("#[tauri::command]")
+            .next()
+            .unwrap();
+        assert!(
+            stop.contains("stop_owner_conflict(active_operation_owner(&state.operations))"),
+            "Stop must consult the ownership gate"
+        );
+        for (start, end) in [
+            ("async fn benchmark_v2(", "fn cancel_benchmark("),
+            ("async fn run_quality_suite(", "fn rank_candidates("),
+        ] {
+            let body = source
+                .split(start)
+                .nth(1)
+                .unwrap()
+                .split(end)
+                .next()
+                .unwrap();
+            assert!(
+                body.contains("reservation.is_current()"),
+                "{start} must discard results when its server identity was replaced"
+            );
+        }
     }
 }
