@@ -146,13 +146,12 @@ test("catalog v2 schema, builder, and signed publish wiring stay consistent", as
   const validator = await readFile(join(process.cwd(), "scripts", "validate_catalog.mjs"), "utf8");
   const workflow = await readFile(join(process.cwd(), ".github", "workflows", "catalog.yml"), "utf8");
   const gates = JSON.parse(await readFile(join(process.cwd(), ".github", "workflow-gates.json"), "utf8"));
-  // The checked-in catalog is still schema 1 until the signed publish lands.
-  // The v2 contract lives in the builder, validator, backend, and gates, and
-  // this test pins all of them so no half-migrated publish can ship.
+  // The checked-in catalog is schema 2 after the signed v2 publish lands.
+  // This test pins the full contract so no half-migrated publish can ship.
   // Seen live: a v2 preview with slash filenames and 61 cross-publisher
   // collisions failed the client filename guard, so the builder now excludes
   // subdirectories and dedupes by filename before signing.
-  assert.equal(catalog.schemaVersion, 1);
+  assert.equal(catalog.schemaVersion, 2);
   assert.match(backend, /pub const SUPPORTED_SCHEMA: u32 = 2;/);
   assert.match(backend, /MIN_SUPPORTED_SCHEMA/);
   assert.match(validator, /schemaVersion must be 2/);

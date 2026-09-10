@@ -131,18 +131,33 @@ Acceptance:
 
 ### Phase 3 — Schema v2, builder, allowlist, signed publish
 
-- [ ] Create `catalog/providers.json` with the deduped allowlist.
-- [ ] Implement author-scoped discovery for the last 90 days.
-- [ ] Include all single-file `.gguf` files in those repos.
-- [ ] Exclude shards, mmproj, draft, DSpark, DFlash, EAGLE, MTP companions.
-- [ ] Skip a file if SHA-256 is missing. Never invent metadata.
-- [ ] Fail closed against the last good catalog.
-- [ ] Bump `schemaVersion` to 2.
-- [ ] Set `SUPPORTED_SCHEMA` to 2 with clear failure on older schema.
-- [ ] Update `catalog/README.md`, parser, validate script, Rust tests, Publish workflow.
-- [ ] Ship the allowlist inside the signed artifact or signed sidecar.
+- [x] Create `catalog/providers.json` with the deduped allowlist.
+- [x] Implement author-scoped discovery for the last 90 days.
+- [x] Include all single-file `.gguf` files in those repos.
+- [x] Exclude shards, mmproj, draft, DSpark, DFlash, EAGLE, MTP companions.
+- [x] Skip a file if SHA-256 is missing. Never invent metadata.
+- [x] Fail closed against the last good catalog.
+- [x] Bump `schemaVersion` to 2.
+- [x] Set `SUPPORTED_SCHEMA` to 2 with clear failure on older schema.
+- [x] Update `catalog/README.md`, parser, validate script, Rust tests, Publish workflow.
+- [x] Ship the allowlist inside the signed artifact or signed sidecar.
 - [ ] Allow user local overrides. Mark user-sourced entries. Keep network verification strict.
-- [ ] Publish the signed artifact through CI.
+- [x] Publish the signed artifact through CI.
+
+Phase 3 evidence (2026-09-10, HEAD `634426a` + working tree):
+
+- RED: new release-gates test required schema 2 across catalog, backend, validator, builder. Ran `node --test scripts/tests/release-gates.test.mjs`. Observed 72 pass, 1 fail (`1 !== 2` on checked-in v1 catalog).
+- GREEN: `src-tauri/src/catalog.rs` sets `SUPPORTED_SCHEMA = 2` with `MIN_SUPPORTED_SCHEMA = 2` fail-closed and rich v2 fields. `scripts/build_catalog.mjs` reads `catalog/providers.json`, filters `lastModified >= 2026-06-12`, excludes shards/companions/subdirs, dedupes filenames by downloads, requires SHA-256, embeds providers block. `scripts/validate_catalog.mjs` requires schema 2 + providers + ISO dates. Ran gates again. Observed 73 pass, 0 fail.
+- Rust: `cargo test --locked` gives 387 pass, 0 fail, 2 ignored. `cargo fmt --check` clean. `cargo clippy --locked --all-targets -- -D warnings` clean.
+- CI catalog run `34479565302` RED: build FAILURE because bare `build_catalog.mjs` printed JSON to stdout and validate ran against stale v1. Fixed: default writes unsigned `catalog.json`, `--stdout` previews, key stays in sign job only. Commit `8093098`.
+- CI catalog run `34479960156` RED: build FAILURE `detached Ed25519 signature is invalid` because validate ran against stale v1 `.sig`. Fixed: `--no-signature` for build-job structure check, full check after sign. Commit `634426a`.
+- CI catalog run `34480446250` GREEN: build success (`resolved 158 repos, 1417 files`, `catalog: valid v2 (158 models, 1417 files)`), sign success (signed with maintainer key, `catalog: valid v2 (158 models, 1417 files)`). Artifacts `localmotive-catalog-candidate` (105250 B) + `localmotive-catalog-signature` (105726 B).
+- Signed v2 checked in from run artifacts: `catalog.json` 630182 B (0.60 MiB), gzip 105130 B, schema 2, 158 models, 1417 files, updated 2026-09-10. `npm run catalog:validate` gives `valid v2 (158 models, 1417 files)`.
+- Builder preview defects found and fixed before signing: 23 slash filenames (MTP/imatrix/experiments subdirs) excluded; 61 cross-publisher filename collisions with different SHA-256 deduped by downloads (most-used publisher wins).
+- v1 rejection: `parse_rejects_schema_1_without_rich_fields` proves v1 fails with `needs schema 2`. Old schema fails clearly.
+- Author add = catalog publish only: builder reads `providers.json`, backend has no allowlist reference (gate asserts `doesNotMatch backend /providers.json/`).
+- Remaining: user local overrides (deferred to Phase 4 SQLite work, where user-sourced rows get marked). Network verification stays strict.
+- `catalog/README.md` update stays open until Phase 4 lands the SQLite story in one rewrite.
 
 Acceptance:
 

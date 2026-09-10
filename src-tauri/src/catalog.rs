@@ -1248,9 +1248,6 @@ mod tests {
     fn shipped_catalog_file_is_valid() {
         // The catalog that ships with the repository must always parse and keep
         // every entry, so a bad edit fails CI instead of reaching users.
-        // During the 0.5 migration the checked-in file is still schema 1 while
-        // the v2 signed publish is pending, so this test pins the transition:
-        // v1 must fail closed with the upgrade message, never silently parse.
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
@@ -1260,12 +1257,20 @@ mod tests {
             .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
         let raw: serde_json::Value = serde_json::from_str(&text).unwrap();
         let declared = raw["models"].as_array().map(|a| a.len()).unwrap_or(0);
-        assert!(declared > 0, "shipped catalog must not be empty");
-        let error = parse_catalog(&text).unwrap_err();
-        assert!(
-            error.contains("needs schema 2"),
-            "shipped v1 catalog must fail closed during migration: {error}"
+        let catalog = parse_catalog(&text).expect("shipped catalog must parse");
+        assert_eq!(
+            catalog.models.len(),
+            declared,
+            "no shipped entry may be dropped by validation"
         );
+        assert!(!catalog.models.is_empty());
+        for model in &catalog.models {
+            assert!(is_valid_repo(&model.repo), "{}", model.repo);
+            for file in &model.files {
+                assert!(is_safe_filename(&file.filename), "{}", file.filename);
+                assert!(file.size_bytes > 0, "{} has no size", file.filename);
+            }
+        }
         let signature = std::fs::read_to_string(path.with_extension("json.sig")).unwrap();
         assert!(
             verify_catalog_signature(text.as_bytes(), &signature),
@@ -1366,32 +1371,27 @@ mod tests {
 
     #[test]
     fn cached_catalog_is_used_when_the_network_fails() {
-        // Offline fallback uses a synthetic v2 body signed by a throwaway test
-        // key, not the checked-in file: during the 0.5 migration the bundled
-        // catalog is still schema 1 and fails closed by design.
-        use base64::Engine;
-        use ed25519_dalek::{Signer, SigningKey};
         let root = unique_test_dir("localmotive-cat");
-        let body = r#"{"schemaVersion":2,"providers":{"source":"test","cutoffDays":90,"allowlist":["tester"]},"models":[{"id":"offline","repo":"tester/offline","files":[{"quant":"Q4_K_M","filename":"offline-Q4_K_M.gguf","sizeBytes":1000,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}]}"#;
-        let parsed = parse_catalog(body).expect("synthetic v2 body must parse");
-        assert_eq!(parsed.models.len(), 1);
-        let signing = SigningKey::from_bytes(&[9u8; 32]);
-        let encoded = base64::engine::general_purpose::STANDARD
-            .encode(signing.sign(body.as_bytes()).to_bytes());
-        assert!(verify_catalog_signature_with_key(
-            body.as_bytes(),
-            &encoded,
-            signing.verifying_key().as_bytes(),
-        ));
-        save_cache_record(&root, body, Some("cache-etag"), &encoded).unwrap();
-        // verify_catalog_signature pins the maintainer key, so prove the cache
-        // plumbing with the real key path instead: the record above round-trips
-        // byte-identical through save/load even though the app would reject a
-        // non-maintainer signature on fetch. That rejection is covered by
-        // network_catalogs_require_a_valid_maintainer_signature.
-        let record = load_cache_record(&root).expect("cache record should reload");
-        assert_eq!(record.body, body);
-        assert_eq!(record.signature, encoded);
+        let catalog_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("catalog");
+        let body = std::fs::read_to_string(catalog_dir.join("catalog.json")).unwrap();
+        let signature = std::fs::read_to_string(catalog_dir.join("catalog.json.sig")).unwrap();
+        save_cache_record(&root, &body, Some("cache-etag"), &signature).unwrap();
+
+        // Port 9 (discard) refuses HTTP, standing in for an offline machine.
+        let snapshot = fetch_catalog("http://127.0.0.1:9/catalog.json", &root).unwrap();
+        assert_eq!(snapshot.origin, "cache");
+        assert!(!snapshot.catalog.models.is_empty());
+
+        // With no cache at all, first run falls back to the catalog embedded in
+        // this exact app build rather than presenting an empty tab offline.
+        let empty = root.join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        let bundled = fetch_catalog("http://127.0.0.1:9/catalog.json", &empty).unwrap();
+        assert_eq!(bundled.origin, "bundled");
+        assert!(!bundled.catalog.models.is_empty());
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1399,18 +1399,12 @@ mod tests {
     fn corrupt_cache_falls_back_to_the_bundled_catalog() {
         // An interrupted external cache edit or disk corruption must not leave
         // the catalog tab empty while the network is also unavailable.
-        // During the 0.5 migration the bundled catalog is schema 1 and fails
-        // closed by design, so this pins the failure instead of the fallback:
-        // a corrupt cache plus unreachable network plus v1 bundle is an error,
-        // never an empty list.
         let root = unique_test_dir("localmotive-corrupt-cat");
         std::fs::write(cache_path(&root), "not json").unwrap();
 
-        let error = fetch_catalog("http://127.0.0.1:9/catalog.json", &root).unwrap_err();
-        assert!(
-            error.contains("needs schema 2") || error.contains("built-in catalog is invalid"),
-            "{error}"
-        );
+        let snapshot = fetch_catalog("http://127.0.0.1:9/catalog.json", &root).unwrap();
+        assert_eq!(snapshot.origin, "bundled");
+        assert!(!snapshot.catalog.models.is_empty());
         let _ = std::fs::remove_dir_all(root);
     }
 }
