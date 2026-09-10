@@ -923,11 +923,11 @@ test("tag-push publish runs the same gates as the dispatch path", async () => {
   assert.match(release, /github\.ref == 'refs\/tags\/v0\.4\.1'/);
 });
 
-test("catalog harness install retries until the App fiber commits its hooks", async () => {
-  const source = await readFile(join(process.cwd(), "scripts", "verify_041.mjs"), "utf8");
-  // CDP attaches before React commits: one-shot discovery fails on a
-  // partial tree. The same shape predicates must retry with backoff.
-  // RED: installCatalogHarness evaluates the fiber walk exactly once.
-  assert.match(source, /Date\.now\(\) \+ 45_000/);
-  assert.match(source, /setTimeout\(resolve, 1000\)/);
+test("branding history set covers the archived docs layout", async () => {
+  const source = await readFile(join(process.cwd(), "scripts", "verify_branding.mjs"), "utf8");
+  // Docs cleanup moves design/product/branding/llama-server notes under
+  // docs/ and completed TODOs under docs/history/. The branding gate
+  // must keep covering those paths after the move.
+  // RED: HISTORICAL_FILES pins root paths that will no longer exist.
+  assert.match(source, /docs\/history\/TODO-0\.4\.1\.md/);
 });

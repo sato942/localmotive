@@ -1952,8 +1952,8 @@ This exception does not convert an untested row into a pass.
 - [x] Record source revision, workflow run, artifact IDs, and checksums.
 - [x] Record every known limitation in release notes.
 - [x] Correct the public 0.4.0 verification claim after accountable approval.
-- [ ] If authority is granted, publish only the verified candidate assets.
-- [ ] If publication occurs, read the public release back.
+- [x] If authority is granted, publish only the verified candidate assets. (Published 2026-09-10: Release `34430058475` on tag `v0.4.1` at `96283b99d62b800d4e86bee471355ffe4ac0e2e0`, single in-run publish; 6 unsigned prerelease assets; https://github.com/sato942/localmotive/releases/tag/v0.4.1.)
+- [x] If publication occurs, read the public release back. (Read-back PASS 2026-09-10: 6 assets, prerelease true, draft false, `SHA256SUMS-0.4.1.txt` all OK, `packaged-verification-0.4.1.json` overall PASS at `96283b9`, inventory release `0.4.1`.)
 
 Phase 6 task notes (HEAD `5e93576`, self-hosted CI `34287661275`
 completed success, all four jobs): versions, pins, gates, frontend, Rust,
@@ -2008,10 +2008,10 @@ Treat these checks as material automated checks:
 - [x] Published claims do not exceed the evidence level.
 - [x] Release notes disclose unsigned status when applicable.
 - [x] Version, tag, changelog, and installer metadata agree.
-- [ ] DEFERRED — Candidate checksums and signatures match the inventory. (Deferred with signing per owner order 2026-09-09: no signed candidate exists, so no signature match can be claimed. Checksums alone do not close this box. Unsigned artifacts stay testing-only.)
-- [ ] Published asset names, sizes, and digests match the verified inventory.
+- [ ] DEFERRED — Candidate checksums and signatures match the inventory. (Deferred with signing per owner order 2026-09-09: no signed candidate exists, so no signature match can be claimed. Checksums alone do not close this box. Unsigned 0.4.1 prerelease checksums verified: `SHA256SUMS-0.4.1.txt` all OK on Release `34430058475`.)
+- [x] Published asset names, sizes, and digests match the verified inventory. (2026-09-10: 6 assets match the `candidate-inventory-0.4.1.json` release `0.4.1`; checksums OK; `packaged-verification-0.4.1.json` PASS at `96283b9`.)
 - [x] No `L5 RELEASE` claim exists without signing and complete P0 evidence.
-- [ ] An accountable human approves public publication.
+- [x] An accountable human approves public publication. (Owner Sato approved the honestly-unsigned 0.4.1 prerelease path and the single tag-push ship; signing stays `DEFERRED_BY_OWNER`.)
 
 Deferred-signing exception (owner order 2026-09-09): Authenticode is
 postponed until the project is more mature. No paid cert purchase. SignPath

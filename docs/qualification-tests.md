@@ -194,7 +194,7 @@ Stop before signing or publication without explicit authority.
 - Research ledger: `release-evidence/0.4.1/research-verification.json`
 - Research anchor: `release-evidence/0.4.1/research-freeze-anchor.json`
 - Catalog signing evidence: `release-evidence/0.4.1/catalog-signing.json`
-- Plan and acceptance criteria: `TODO-0.4.1.md`
+- Plan and acceptance criteria: `history/TODO-0.4.1.md`
 - Attempt review: `REPORT-0.4.1.md`
 - Changelog limitations: `CHANGELOG.md`
 - Supported platform claims: `README.md` section `Supported platforms`

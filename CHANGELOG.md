@@ -89,7 +89,7 @@ Known limitations: no `test-backend-ops` in any pinned `b10796` archive (no `L3 
 - Extraction refuses traversal, symlink bits, duplicate paths (canonicalized), entry-count, per-entry, total-byte, and path-length violations. Install paths sanitize spaces, Unicode, drive-root, UNC, and `..` forms to `Normal`-only relative paths; manifest runtimes with non-normal components fail.
 - The managed runtime screen shows one `SUPPORTED` / `NOT VALIDATED` tag plus a scope line per option (`OS arch · device · driver · backend · revision`), hardware evidence per adapter with source, artifact digest/size before actions, and `MISMATCH · REINSTALL` before launch on identity mismatch. New decision functions `supportStatusForOption` and `runtimeIdentityMismatch` carry Vitest coverage (46 tests).
 - Verification on the release candidate: `cargo fmt --check` passes; `cargo clippy --locked --all-targets -- -D warnings` passes; `cargo test --locked` passes (296 passed, 1 ignored); `npx tsc --noEmit -p tsconfig.json` passes; `npm test` passes (46); `npm run build` passes; `python3 research/0.4/scripts/run_local_smoke.py` passes 10/10 on CPU/CUDA 13.3/Vulkan; `scripts/verify_040.mjs` (`node --check` passes) asserts packaged values but is not run here — it needs `npm run tauri build` plus a human-gated release tag, signing, and publication.
-- Tracker: `TODO-0.4.md` holds pins, frozen P0 list, phase gates, and the verification ledger. Architecture: `docs/RUNTIME_MANAGER.md` gains the product support contract and identity/completeness sections.
+- Tracker: `docs/history/TODO-0.4.md` holds pins, frozen P0 list, phase gates, and the verification ledger. Architecture: `docs/RUNTIME_MANAGER.md` gains the product support contract and identity/completeness sections.
 
 ## 0.3.0
 
@@ -187,7 +187,7 @@ Known limitations: no `test-backend-ops` in any pinned `b10796` archive (no `L3 
 
 ### Design language solidified
 
-- `DESIGN.md` rewritten in the DESIGN.md spec format: YAML token frontmatter (20 colors, 20 typography roles, radius, spacing, 24 component entries) followed by the eight canonical sections in order — Overview, Colors, Typography, Layout, Elevation & Depth, Shapes, Components, Do's and Don'ts.
+- `docs/DESIGN.md` rewritten in the DESIGN.md spec format: YAML token frontmatter (20 colors, 20 typography roles, radius, spacing, 24 component entries) followed by the eight canonical sections in order — Overview, Colors, Typography, Layout, Elevation & Depth, Shapes, Components, Do's and Don'ts.
 - Creative North Star recorded as **"The Machine-Room Control Cabinet"**, with 13 named rules (The One Meaning Rule, The Flat-Cabinet Rule, The Zero-Radius Rule, The Evidence-Is-Mono Rule, and others) and explicit anti-references.
 - `.impeccable/design.json` sidecar added: tonal ramps built from the palette actually in use, the two shadow tokens, motion and focus tokens, breakpoints, layout metrics, and 12 self-contained component HTML/CSS snippets.
 - `docs/theme.css` (Tailwind v4 `@theme` block) and `docs/tokens.json` (W3C DTCG) exported from the spec.

@@ -427,9 +427,9 @@ See these project records for more detail:
 
 - [CHANGELOG.md](CHANGELOG.md) contains the release history.
 - [catalog/README.md](catalog/README.md) contains catalog rules.
-- [DESIGN.md](DESIGN.md) contains the interface specification.
+- [docs/DESIGN.md](docs/DESIGN.md) contains the interface specification.
 - [docs/OPTION_MAP.md](docs/OPTION_MAP.md) explains profile grouping.
-- [LLAMA-SERVER-README.md](LLAMA-SERVER-README.md) is imported reference.
+- [docs/LLAMA-SERVER-README.md](docs/LLAMA-SERVER-README.md) is imported reference.
 
 ## License and affiliation
 
