@@ -1098,6 +1098,31 @@ test("override saves reject mixed-origin collisions inside an immediate transact
   assert.match(mirror, /transaction_with_behavior\(rusqlite::TransactionBehavior::Immediate\)/);
 });
 
+test("FE-07 cancellation state is separate from the run lifecycle", async () => {
+  const panel = await readFile(join(process.cwd(), "src", "V03EvidencePanel.tsx"), "utf8");
+  // Cancellation progress is its own state and never routed through the
+  // generic busy wrapper; the run keeps ownership until it settles
+  // (audit FE-07).
+  assert.match(panel, /const \[cancelPending, setCancelPending\] = useState\(false\)/);
+  assert.doesNotMatch(panel, /runAction\("cancel"/);
+  assert.match(panel, /await invoke<void>\("cancel_benchmark"\)/);
+  assert.match(panel, /busy !== "benchmark" \|\| cancelPending/);
+});
+
+test("FE-16 status polling is single-flight with sequence guards", async () => {
+  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  // Slow native polls cannot pile up, and a poll that started before a
+  // start/stop transition can never overwrite the newer snapshot; the
+  // running strategy renders from that snapshot, not the editable draft
+  // (audit FE-16).
+  assert.match(app, /if \(inFlight\) return; \/\/ single-flight/);
+  assert.match(app, /requested !== statusPollSeq\.current/);
+  assert.match(app, /const requested = \+\+statusPollSeq\.current;/);
+  const bumps = (app.match(/statusPollSeq\.current \+= 1;/g) ?? []).length;
+  assert.ok(bumps >= 2, `expected start and stop bumps, saw ${bumps}`);
+  assert.match(app, /status\.running \? status\.specType : profile\?\.specType/);
+});
+
 test("FE-05 evidence history and active runs survive navigation", async () => {
   const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
   const panel = await readFile(join(process.cwd(), "src", "V03EvidencePanel.tsx"), "utf8");

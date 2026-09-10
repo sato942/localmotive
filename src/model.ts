@@ -1074,6 +1074,9 @@ export type ServerStatus = {
   logPath: string | null;
   startedAt: number | null;
   exitCode: number | null;
+  /** Strategy of the launched configuration, from the server snapshot. */
+  specType?: string | null;
+  companionLinked?: boolean | null;
   resultClass: FitClass;
   validation: LaunchValidation | null;
   failure: LaunchFailureEvidence | null;

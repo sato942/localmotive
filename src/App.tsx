@@ -178,6 +178,9 @@ function App() {
   const [providerId, setProviderId] = useState(CLOUD_PROVIDER);
   // Live mirrors for stale-response checks (audit FE-03): refs track the
   // committed values without re-rendering on assignment.
+  // FE-16: single-flight status polling with a sequence so a delayed poll
+  // can never overwrite a newer start/stop snapshot.
+  const statusPollSeq = useRef(0);
   const providerIdRef = useRef(providerId);
   providerIdRef.current = providerId;
   const profileRef = useRef<LaunchProfile | null>(profile);
@@ -907,6 +910,7 @@ function App() {
 
   async function start() {
     if (!profile) return;
+    statusPollSeq.current += 1;
     setBusy("start");
     try {
       const next = await invoke<ServerStatus>("start_server", { profile });
@@ -921,6 +925,7 @@ function App() {
   }
 
   async function stop() {
+    statusPollSeq.current += 1;
     setBusy("stop");
     try {
       setStatus(await invoke<ServerStatus>("stop_server"));
@@ -1079,16 +1084,31 @@ function App() {
   }, [tuneLive.length, tuneProgress?.message]);
 
   useEffect(() => {
+    if (!inTauri()) return;
+    let disposed = false;
+    let inFlight = false;
     const timer = window.setInterval(async () => {
+      if (inFlight) return; // single-flight: slow native calls cannot pile up
+      inFlight = true;
+      const requested = ++statusPollSeq.current;
       try {
         const next = await invoke<ServerStatus>("server_status");
+        if (disposed || requested !== statusPollSeq.current) return; // obsolete
         setStatus(next);
-        if (next.running) setLog(await invoke<string>("read_server_log"));
+        if (next.running) {
+          const logText = await invoke<string>("read_server_log");
+          if (!disposed && requested === statusPollSeq.current) setLog(logText);
+        }
       } catch {
         // Browser preview has no Tauri bridge.
+      } finally {
+        inFlight = false;
       }
     }, 2000);
-    return () => window.clearInterval(timer);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
   }, []);
 
   const nav: Array<{ id: View; label: string; icon: typeof Gauge }> = [
@@ -1191,7 +1211,7 @@ function App() {
                     </button>
                   </>
                 ) : (
-                  <button className="button primary" onClick={start} disabled={!profile || !profile.runtime || busy === "start" || !selected?.complete}>
+                  <button className="button primary" onClick={start} disabled={!profile || !profile.runtime || busy === "start" || !selected?.complete || evidenceRun !== null || tuning}>
                     <Play size={16} fill="currentColor" /> Start profile
                   </button>
                 )}
@@ -1211,8 +1231,11 @@ function App() {
               </div>
               <div className="instrument">
                 <span className="instrument-label">STRATEGY</span>
-                <strong>{profile?.specType.replace("draft-", "").toUpperCase() ?? "NONE"}</strong>
-                <small>{profile?.draftModel ? "Companion linked" : "Target only"}</small>
+                {/* Running identity comes from the server snapshot; the
+                    editable draft only describes a not-yet-started profile
+                    (audit FE-16). */}
+                <strong>{(status.running ? status.specType : profile?.specType)?.replace("draft-", "").toUpperCase() ?? "NONE"}</strong>
+                <small>{status.running ? (status.companionLinked ? "Companion linked" : "Target only") : profile?.draftModel ? "Companion linked" : "Target only"}</small>
               </div>
               <div className="instrument">
                 <span className="instrument-label">LAST TEST</span>
@@ -1766,7 +1789,7 @@ function App() {
               </div>
               <div className="actions">
                 <button className="button secondary" onClick={saveProfile}><Save size={16} /> Save</button>
-                <button className="button primary" onClick={start} disabled={!selected?.complete || !profile.runtime || busy === "start"}><Play size={16} fill="currentColor" /> Start</button>
+                <button className="button primary" onClick={start} disabled={!selected?.complete || !profile.runtime || busy === "start" || evidenceRun !== null || tuning}><Play size={16} fill="currentColor" /> Start</button>
               </div>
             </div>
 
@@ -2202,7 +2225,7 @@ function App() {
                 <h1>Generation benchmark</h1>
                 <p>One warmup, fixed deterministic workload, repeated server-reported throughput.</p>
               </div>
-              <button className="button primary" onClick={runBenchmark} disabled={!status.running || busy === "benchmark"}>
+              <button className="button primary" onClick={runBenchmark} disabled={!status.running || busy === "benchmark" || evidenceRun !== null}>
                 <Activity size={16} /> {busy === "benchmark" ? "Measuring…" : "Run benchmark"}
               </button>
             </div>

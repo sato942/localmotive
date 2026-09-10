@@ -229,6 +229,10 @@ struct ServerStatus {
     log_path: Option<String>,
     started_at: Option<u64>,
     exit_code: Option<i32>,
+    /// Speculative strategy of the LAUNCHED configuration (snapshot), so the
+    /// running identity never follows the editable draft (audit FE-16).
+    spec_type: Option<String>,
+    companion_linked: Option<bool>,
     result_class: evidence::FitClass,
     validation: Option<LaunchValidation>,
     failure: Option<LaunchFailureEvidence>,
@@ -246,6 +250,8 @@ impl Default for ServerStatus {
             log_path: None,
             started_at: None,
             exit_code: None,
+            spec_type: None,
+            companion_linked: None,
             result_class: evidence::FitClass::Unknown,
             validation: None,
             failure: None,
@@ -268,6 +274,8 @@ fn status_from(slot: &mut Option<ManagedServer>) -> ServerStatus {
                     log_path: Some(server.log_path.clone()),
                     started_at: Some(server.started_at),
                     exit_code,
+                    spec_type: Some(server.profile.spec_type.clone()),
+                    companion_linked: Some(server.profile.draft_model.is_some()),
                     result_class: evidence::FitClass::Failed,
                     validation: None,
                     failure: Some(launch_failure_evidence(
@@ -296,6 +304,8 @@ fn status_from(slot: &mut Option<ManagedServer>) -> ServerStatus {
                 log_path: Some(server.log_path.clone()),
                 started_at: Some(server.started_at),
                 exit_code: None,
+                spec_type: Some(server.profile.spec_type.clone()),
+                companion_linked: Some(server.profile.draft_model.is_some()),
                 result_class: evidence::FitClass::LaunchValidated,
                 validation: Some(server.validation.clone()),
                 failure: None,
@@ -310,6 +320,8 @@ fn status_from(slot: &mut Option<ManagedServer>) -> ServerStatus {
                 log_path: Some(server.log_path.clone()),
                 started_at: Some(server.started_at),
                 exit_code: None,
+                spec_type: Some(server.profile.spec_type.clone()),
+                companion_linked: Some(server.profile.draft_model.is_some()),
                 result_class: evidence::FitClass::Failed,
                 validation: None,
                 failure: Some(launch_failure_evidence(

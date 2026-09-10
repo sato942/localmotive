@@ -166,6 +166,8 @@ export function V03EvidencePanel({
   const [externalEvidence, setExternalEvidence] = useState<ExternalEvidenceBundle | null>(null);
   const [shareConfirmed, setShareConfirmed] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  // FE-07: a cancellation request in flight is distinct from the run itself.
+  const [cancelPending, setCancelPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const profileFingerprint = useMemo(
@@ -361,9 +363,20 @@ export function V03EvidencePanel({
   }
 
   async function cancelBenchmark() {
-    const cancelled = await runAction("cancel", () => invoke<void>("cancel_benchmark"));
-    if (cancelled !== null) {
-      setMessage("Benchmark cancellation requested.");
+    // FE-07: cancellation request progress is its own state, separate from
+    // the run's lifecycle (`busy` stays "benchmark" until the original
+    // promise settles, so ownership is never cleared by the acknowledgement).
+    // A void success is acknowledged truthfully; a failure keeps the run
+    // record and the remaining affordance visible.
+    if (cancelPending) return;
+    setCancelPending(true);
+    try {
+      await invoke<void>("cancel_benchmark");
+      setMessage("Benchmark cancellation requested; the run ends after the current attempt.");
+    } catch (error) {
+      setMessage(errorText(error));
+    } finally {
+      setCancelPending(false);
     }
   }
 
@@ -735,7 +748,7 @@ export function V03EvidencePanel({
               >
                 {busy === "benchmark" ? "Benchmarking…" : "Run v2 benchmark"}
               </Button>
-              <Button variant="ghost" onClick={() => void cancelBenchmark()} disabled={busy !== "benchmark"}>
+              <Button variant="ghost" onClick={() => void cancelBenchmark()} disabled={busy !== "benchmark" || cancelPending}>
                 Cancel
               </Button>
               <Button variant="ghost" onClick={() => void replayBenchmark()} disabled={!benchmark || busy !== null}>
@@ -842,7 +855,7 @@ export function V03EvidencePanel({
           <div className="grid cols-3 evidence-controls">
             <Field label="Uncalibrated estimate (tok/s)"><Input type="number" min={0} value={estimatedTps} onChange={(event) => setEstimatedTps(event.target.value)} /></Field>
             <div className="actions compact-actions evidence-action-cell">
-              <Button variant="ghost" onClick={addCalibrationAnchor} disabled={!benchmark?.summary}>Add anchor</Button>
+              <Button variant="ghost" onClick={addCalibrationAnchor} disabled={!benchmark?.summary || busy !== null}>Add anchor</Button>
               <Button variant="ghost" onClick={() => void buildCalibration()} disabled={anchors.length < 3 || !benchmark || busy !== null}>Build calibration</Button>
               <Button variant="ghost" onClick={() => void applyCalibration()} disabled={!calibration || latestCalibrationState !== "compatible" || busy !== null}>Apply</Button>
             </div>
