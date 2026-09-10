@@ -844,6 +844,7 @@ pub fn download_file(
                 let repo = repo.to_string();
                 let remote_etag = remote.etag.clone();
                 let remote_last_modified = remote.last_modified.clone();
+                let supports_ranges = remote.supports_ranges;
                 scope.spawn(move || {
                     if let Err(error) = fetch_chunk(
                         &url,
@@ -856,6 +857,7 @@ pub fn download_file(
                         &repo,
                         remote_etag.as_deref(),
                         remote_last_modified.as_deref(),
+                        supports_ranges,
                     ) {
                         let mut slot = failure.lock().unwrap();
                         if slot.is_none() {
@@ -987,6 +989,7 @@ fn response_validators_match(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn fetch_chunk(
     url: &str,
     index: usize,
@@ -998,19 +1001,44 @@ fn fetch_chunk(
     repo: &str,
     remote_etag: Option<&str>,
     remote_last_modified: Option<&str>,
+    supports_ranges: bool,
 ) -> Result<(), String> {
     let client = client(token, TRANSFER_REQUEST_TIMEOUT)?;
     // Permit two retries after the initial request for each bounded range.
     let mut attempt = 0_usize;
     loop {
-        let chunk = chunks.lock().unwrap()[index];
-        if chunk.is_complete() || cancel.load(Ordering::Relaxed) {
+        if cancel.load(Ordering::Relaxed) {
             return Ok(());
         }
+        if chunks.lock().unwrap()[index].is_complete() {
+            return Ok(());
+        }
+        if !supports_ranges {
+            // A retry against a range-ignoring server restarts from zero
+            // BEFORE the cursor is read: an interrupted 200 stream cannot be
+            // resumed at a byte offset, and a misleading Accept-Ranges header
+            // must never cause unsafe reuse of partial bytes (audit DC-02 I3).
+            let mut guard = chunks.lock().unwrap();
+            let entry = &mut guard[index];
+            if entry.done > 0 {
+                let lost = entry.done;
+                entry.done = 0;
+                drop(guard);
+                downloaded.fetch_sub(lost, Ordering::Relaxed);
+            }
+        }
+        // A server proven to ignore Range is transferred as one sequential
+        // whole-response stream sized by the complete expected length, not by
+        // the 8 MiB ranged-request span (audit DC-02 I1).
+        let chunk = chunks.lock().unwrap()[index];
         let request_start = chunk.cursor();
-        let request_end = chunk
-            .end
-            .min(request_start.saturating_add(MAX_REQUEST_BYTES - 1));
+        let request_end = if supports_ranges {
+            chunk
+                .end
+                .min(request_start.saturating_add(MAX_REQUEST_BYTES - 1))
+        } else {
+            chunk.end
+        };
         let range = format!("bytes={request_start}-{request_end}");
         let result = (|| -> Result<(), String> {
             let mut request = client.get(url).header(reqwest::header::RANGE, &range);
@@ -2379,5 +2407,171 @@ mod tests {
             "a changed file must not be spliced onto the old bytes"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Serve one scripted plain-HTTP response per entry: (payload,
+    /// declare_length, truncate_at). Answers every request with 200 and the
+    /// full body, modelling a server that ignores Range (audit DC-02).
+    fn serve_plain_responses(
+        plan: Vec<(Vec<u8>, bool, Option<usize>)>,
+    ) -> (u16, std::thread::JoinHandle<Vec<String>>) {
+        use std::io::{BufRead as _, BufReader, Write as _};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            for (payload, declare_length, truncate_at) in plan {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut request = String::new();
+                loop {
+                    let mut line = String::new();
+                    match reader.read_line(&mut line) {
+                        Ok(0) => break,
+                        Ok(_) if line == "\r\n" => break,
+                        Ok(_) => request.push_str(&line),
+                        Err(_) => break,
+                    }
+                }
+                requests.push(request);
+                let header = if declare_length {
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        payload.len()
+                    )
+                } else {
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+                        .to_string()
+                };
+                let _ = stream.write_all(header.as_bytes());
+                let body_len = truncate_at.unwrap_or(payload.len());
+                if declare_length {
+                    let _ = stream.write_all(&payload[..body_len]);
+                } else {
+                    let mut offset = 0;
+                    while offset < body_len {
+                        let step = (64 * 1024).min(body_len - offset);
+                        let _ = write!(stream, "{step:x}\r\n");
+                        let _ = stream.write_all(&payload[offset..offset + step]);
+                        let _ = stream.write_all(b"\r\n");
+                        offset += step;
+                    }
+                    let _ = stream.write_all(b"0\r\n\r\n");
+                }
+                let _ = stream.flush();
+            }
+            requests
+        });
+        (port, handle)
+    }
+
+    fn dc02_payload() -> (Vec<u8>, String) {
+        // 8 MiB + 1: one byte past the ranged-request span that used to be
+        // mistaken for the expected response length.
+        let payload: Vec<u8> = (0..(8 * 1024 * 1024 + 1))
+            .map(|index| (index % 251) as u8)
+            .collect();
+        let digest = {
+            let mut hasher = Sha256::new();
+            hasher.update(&payload);
+            format!("{:x}", hasher.finalize())
+        };
+        (payload, digest)
+    }
+
+    fn run_dc02_download(
+        port: u16,
+        payload: &[u8],
+        digest: &str,
+        root: &Path,
+    ) -> Result<PathBuf, String> {
+        let target = root.join("big.bin");
+        let cancel = Arc::new(AtomicBool::new(false));
+        let downloaded = Arc::new(AtomicU64::new(0));
+        download_file(
+            &format!("http://127.0.0.1:{port}/big.bin"),
+            &target,
+            "unsloth/DC02-GGUF",
+            payload.len() as u64,
+            digest,
+            None,
+            4,
+            cancel,
+            downloaded,
+            |_, _| {},
+        )
+    }
+
+    #[test]
+    fn dc02_a_range_ignoring_server_completes_files_larger_than_the_request_span() {
+        // The audited defect: HTTP 200 to every Range request for a file
+        // larger than 8 MiB was rejected because the response length was
+        // compared against the 8 MiB request span. The sequential
+        // whole-response path must complete it with the exact bytes and
+        // digest (audit DC-02 V1).
+        let (payload, digest) = dc02_payload();
+        let (port, server) = serve_plain_responses(vec![
+            (payload.clone(), true, None), // probe: 200, full Content-Length
+            (payload.clone(), true, None), // transfer: 200 with Content-Length
+        ]);
+        let root = unique_test_dir("localmotive-dc02-large");
+        let path = run_dc02_download(port, &payload, &digest, &root).unwrap();
+        let written = std::fs::read(&path).unwrap();
+        assert_eq!(written.len(), payload.len());
+        assert_eq!(written, payload, "the published bytes must be exact");
+        server.join().unwrap();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dc02_a_chunked_range_ignoring_response_also_completes() {
+        // Same path with a chunked transfer (no Content-Length): the read
+        // loop must be bounded by the expected object size, not by a header
+        // it never receives (audit DC-02 V1).
+        let (payload, digest) = dc02_payload();
+        let (port, server) = serve_plain_responses(vec![
+            (payload.clone(), true, None),  // probe
+            (payload.clone(), false, None), // transfer: chunked 200
+        ]);
+        let root = unique_test_dir("localmotive-dc02-chunked");
+        let path = run_dc02_download(port, &payload, &digest, &root).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), payload);
+        server.join().unwrap();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dc02_an_interrupted_no_range_transfer_retries_from_zero() {
+        // An interrupted 200 stream cannot be resumed at an offset: the retry
+        // must restart from zero and still publish exactly once, with the
+        // digest checked (audit DC-02 V2/V3).
+        let (payload, digest) = dc02_payload();
+        let truncated = payload.len() / 2;
+        let (port, server) = serve_plain_responses(vec![
+            (payload.clone(), true, None),            // probe
+            (payload.clone(), true, Some(truncated)), // transfer: truncated body
+            (payload.clone(), true, None),            // retry: complete body
+        ]);
+        let root = unique_test_dir("localmotive-dc02-retry");
+        let result = run_dc02_download(port, &payload, &digest, &root);
+        let requests = server.join().unwrap();
+        let path = result
+            .unwrap_or_else(|error| panic!("download failed: {error}; requests: {requests:#?}"));
+        let written = std::fs::read(&path).unwrap();
+        assert_eq!(written, payload);
+        assert_eq!(
+            requests.len(),
+            3,
+            "probe plus one failed and one successful transfer"
+        );
+        // The successful retry restarted from zero, not from the interrupted
+        // offset: only then does a range-ignoring server's 200 answer match.
+        assert!(
+            requests[2].to_ascii_lowercase().contains("range: bytes=0-"),
+            "unexpected retry request: {}",
+            requests[2]
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 }
