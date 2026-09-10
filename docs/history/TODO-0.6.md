@@ -1,7 +1,7 @@
 # Localmotive 0.6 — audit remediation TODO
 
 **Target:** `0.6.0` stabilization release  
-**Status:** Planning complete; implementation in progress — Package 4 (bounded and cancellable tuning)  
+**Status:** Planning complete; implementation in progress — Package 5 (benchmark protocol, export privacy and failure records)  
 **Source:** [localmotive-comprehensive-audit.md](./localmotive-comprehensive-audit.md)
 **Audited source SHA:** `e530371b056cd8e049c2246dbb151aa407bf359f`  
 **Release baseline reviewed by the audit:** `v0.5.0`, source `a4b7127f739f7420232d9b6f63da693d39128d0b`  
@@ -33,7 +33,7 @@ Owner: `sato942` (accountable maintainer). Implementation and evidence productio
 | 1 | Managed runtime trust and legacy recovery (RT-01, RT-02, RT-04, RT-07) | Implementation complete; unit-verified; packaged items open in G-05 |
 | 2 | Catalog restart, offline loading and recovery (DC-01, DC-03, DC-07) | Implementation complete; unit-verified (commit `e6c7f59`); packaged items open in G-04/G-05 |
 | 3 | Override identity and atomic persistence (DC-04, DC-05, DC-06) | Implementation complete; unit-verified (commit `6be56e5`); packaged items open in G-04/G-05 |
-| 4 | Bounded and cancellable tuning (MT-03, MT-04, RT-03) | Not started |
+| 4 | Bounded and cancellable tuning (MT-03, MT-04, RT-03) | Implementation complete; unit-verified (commit `1eaa476`); packaged Windows cancellation evidence open in G-04/G-05 |
 | 5 | Benchmark protocol, export privacy and failure records (MT-01, MT-02, MT-12) | Not started |
 | 6 | Model, runtime and operation ownership (FE-01, FE-02, FE-03, FE-05, FE-07, FE-16, MT-05) | Not started |
 | 7 | Responsive operations, parser and transfer bounds (IPC-01, FE-04, RT-05, RT-06, DC-02, DC-08, DC-12) | Not started |
@@ -222,22 +222,22 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Cancel active health completion requests and prevent cancelled runs from passing**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (commit `1eaa476`); packaged cancelled-request evidence open in G-04/G-05 · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit RT-03](./localmotive-comprehensive-audit.md#rt-03)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src-tauri/src/health.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/health.rs), [src-tauri/src/lib.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/lib.rs)
 
 **Implementation**
 
-- [ ] **V06-RT-03.I1** — Carry the health cancellation signal into completion request execution and response-body reading instead of checking it only immediately before a blocking request. **Trace:** [Audit RT-03](./localmotive-comprehensive-audit.md#rt-03).
-- [ ] **V06-RT-03.I2** — Use an asynchronous cancellation selection or a supervised request worker that can terminate the contained server and interrupt pending completion work within a documented cancellation deadline. **Trace:** [Audit RT-03](./localmotive-comprehensive-audit.md#rt-03).
-- [ ] **V06-RT-03.I3** — Propagate Cancelled consistently when cancellation arrives during response waiting, body reading, or response completion; resolve response-versus-cancel races before recording a successful deterministic completion or overall pass. **Trace:** [Audit RT-03](./localmotive-comprehensive-audit.md#rt-03).
-- [ ] **V06-RT-03.I4** — Keep request/body limits, proxy-free loopback transport, process ownership checks, exact pinned completion comparison, and process/listener cleanup intact; distinguish the existing idle-server shutdown stage from verification of active-request cancellation. **Trace:** [Audit RT-03](./localmotive-comprehensive-audit.md#rt-03).
+- [x] **V06-RT-03.I1** — Carry the health cancellation signal into completion request execution and response-body reading instead of checking it only immediately before a blocking request. **Trace:** [Audit RT-03](./localmotive-comprehensive-audit.md#rt-03).
+- [x] **V06-RT-03.I2** — Use an asynchronous cancellation selection or a supervised request worker that can terminate the contained server and interrupt pending completion work within a documented cancellation deadline. **Trace:** [Audit RT-03](./localmotive-comprehensive-audit.md#rt-03).
+- [x] **V06-RT-03.I3** — Propagate Cancelled consistently when cancellation arrives during response waiting, body reading, or response completion; resolve response-versus-cancel races before recording a successful deterministic completion or overall pass. **Trace:** [Audit RT-03](./localmotive-comprehensive-audit.md#rt-03).
+- [x] **V06-RT-03.I4** — Keep request/body limits, proxy-free loopback transport, process ownership checks, exact pinned completion comparison, and process/listener cleanup intact; distinguish the existing idle-server shutdown stage from verification of active-request cancellation. **Trace:** [Audit RT-03](./localmotive-comprehensive-audit.md#rt-03).
 
 **Verification**
 
-- [ ] **V06-RT-03.V1** — Run an owned loopback fixture that accepts the completion request and withholds its response, then cancel after acceptance; assert bounded return with a Cancelled result and no passing completion stage. **Trace:** [Audit RT-03](./localmotive-comprehensive-audit.md#rt-03).
-- [ ] **V06-RT-03.V2** — Cancel during response-body reading and at the response-completion boundary; require deterministic terminal status and verify that a user-cancelled run cannot become an overall pass. **Trace:** [Audit RT-03](./localmotive-comprehensive-audit.md#rt-03).
+- [x] **V06-RT-03.V1** — Run an owned loopback fixture that accepts the completion request and withholds its response, then cancel after acceptance; assert bounded return with a Cancelled result and no passing completion stage. **Trace:** [Audit RT-03](./localmotive-comprehensive-audit.md#rt-03).
+- [x] **V06-RT-03.V2** — Cancel during response-body reading and at the response-completion boundary; require deterministic terminal status and verify that a user-cancelled run cannot become an overall pass. **Trace:** [Audit RT-03](./localmotive-comprehensive-audit.md#rt-03).
 - [ ] **V06-RT-03.V3** — Confirm that the contained child and loopback listener are stopped and temporary files are cleaned after cancellation, and verify that the ordinary successful health sequence still passes. **Trace:** [Audit RT-03](./localmotive-comprehensive-audit.md#rt-03).
 
 **Complete when:** Cancellation interrupts in-flight completion work within the documented bound instead of waiting for the full 120-second request timeout. Cancelled health runs never report a successful deterministic completion or overall pass and leave no active owned server.
@@ -772,23 +772,23 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Bound advisor calls and terminate repeated no-op tuning proposals**
 
-**Status:** Not started · **Priority:** High · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (commit `1eaa476`); no packaged-specific evidence required beyond the loop tests · **Priority:** High · **Owner:** sato942  
 **Audit trace:** [Audit MT-03](./localmotive-comprehensive-audit.md#mt-03)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src-tauri/src/tune.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/tune.rs)
 
 **Implementation**
 
-- [ ] **V06-MT-03.I1** — Introduce independent total advisor-call, elapsed-time, and measured-trial budgets so successful parsing and skipped measurements cannot leave a session unbounded. **Trace:** [Audit MT-03](./localmotive-comprehensive-audit.md#mt-03).
-- [ ] **V06-MT-03.I2** — Canonicalize proposals after coercion and companion resolution, comparing effective configurations or normalized changes instead of raw JSON maps. **Trace:** [Audit MT-03](./localmotive-comprehensive-audit.md#mt-03).
-- [ ] **V06-MT-03.I3** — Count no-op and duplicate proposals as bounded rejections, preserve their reasons in the session history, and return a specific terminal stopped reason when limits are reached. **Trace:** [Audit MT-03](./localmotive-comprehensive-audit.md#mt-03).
-- [ ] **V06-MT-03.I4** — Decide whether the advertised three-fields-per-trial rule is a hard policy; if retained, enforce it in Rust and align advisor instructions with backend limits. **Trace:** [Audit MT-03](./localmotive-comprehensive-audit.md#mt-03).
+- [x] **V06-MT-03.I1** — Introduce independent total advisor-call, elapsed-time, and measured-trial budgets so successful parsing and skipped measurements cannot leave a session unbounded. **Trace:** [Audit MT-03](./localmotive-comprehensive-audit.md#mt-03).
+- [x] **V06-MT-03.I2** — Canonicalize proposals after coercion and companion resolution, comparing effective configurations or normalized changes instead of raw JSON maps. **Trace:** [Audit MT-03](./localmotive-comprehensive-audit.md#mt-03).
+- [x] **V06-MT-03.I3** — Count no-op and duplicate proposals as bounded rejections, preserve their reasons in the session history, and return a specific terminal stopped reason when limits are reached. **Trace:** [Audit MT-03](./localmotive-comprehensive-audit.md#mt-03).
+- [x] **V06-MT-03.I4** — Decide whether the advertised three-fields-per-trial rule is a hard policy; if retained, enforce it in Rust and align advisor instructions with backend limits. **Trace:** [Audit MT-03](./localmotive-comprehensive-audit.md#mt-03).
 
 **Verification**
 
-- [ ] **V06-MT-03.V1** — Use a deterministic advisor repeatedly proposing baseline threads=-1 and a benchmark succeeding only for baseline; assert termination within the configured advisor-call limit. **Trace:** [Audit MT-03](./localmotive-comprehensive-audit.md#mt-03).
-- [ ] **V06-MT-03.V2** — Repeat with numeric-string coercion, draftModel echoes, alternating no-op maps, and fields that leave emitted arguments unchanged. **Trace:** [Audit MT-03](./localmotive-comprehensive-audit.md#mt-03).
-- [ ] **V06-MT-03.V3** — Test exact call/time/trial budget boundaries and verify cancellation during a no-op sequence prevents another cloud request when combined with the lifecycle cancellation fix. **Trace:** [Audit MT-03](./localmotive-comprehensive-audit.md#mt-03).
+- [x] **V06-MT-03.V1** — Use a deterministic advisor repeatedly proposing baseline threads=-1 and a benchmark succeeding only for baseline; assert termination within the configured advisor-call limit. **Trace:** [Audit MT-03](./localmotive-comprehensive-audit.md#mt-03).
+- [x] **V06-MT-03.V2** — Repeat with numeric-string coercion, draftModel echoes, alternating no-op maps, and fields that leave emitted arguments unchanged. **Trace:** [Audit MT-03](./localmotive-comprehensive-audit.md#mt-03).
+- [x] **V06-MT-03.V3** — Test exact call/time/trial budget boundaries and verify cancellation during a no-op sequence prevents another cloud request when combined with the lifecycle cancellation fix. **Trace:** [Audit MT-03](./localmotive-comprehensive-audit.md#mt-03).
 
 **Complete when:** Every proposal-loop path consumes or respects a finite budget, including valid no-ops and retries, and no session remains active solely because trials were not recorded. The report exposes the exhausted budget or rejection reason without claiming an unmeasured configuration improved performance.
 
@@ -798,21 +798,21 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Propagate tuning cancellation through advisor, request, and process lifecycles**
 
-**Status:** Not started · **Priority:** High · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (commit `1eaa476`); packaged Windows cancellation scenarios open in G-04/G-05 · **Priority:** High · **Owner:** sato942  
 **Audit trace:** [Audit MT-04](./localmotive-comprehensive-audit.md#mt-04)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src-tauri/src/lib.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/lib.rs), [src-tauri/src/core.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/core.rs), [src-tauri/src/tune.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/tune.rs)
 
 **Implementation**
 
-- [ ] **V06-MT-04.I1** — Make cancellation a terminal orchestrator outcome with checks before and after advisor calls and before every attempt; stop proposing instead of recording cancellation as an ordinary candidate failure. **Trace:** [Audit MT-04](./localmotive-comprehensive-audit.md#mt-04).
-- [ ] **V06-MT-04.I2** — Pass the cancellation signal into preparation, cancellable health startup, and completion requests, replacing the live tuner's uncancellable legacy benchmark path. **Trace:** [Audit MT-04](./localmotive-comprehensive-audit.md#mt-04).
-- [ ] **V06-MT-04.I3** — Apply a documented overall deadline and bounded stop latency rather than relying on a 600-second health wait or separate per-read timeouts. **Trace:** [Audit MT-04](./localmotive-comprehensive-audit.md#mt-04).
-- [ ] **V06-MT-04.I4** — Check process-tree termination results, surface cleanup failures, and release active tuning state only after lifecycle ownership has been resolved. **Trace:** [Audit MT-04](./localmotive-comprehensive-audit.md#mt-04).
+- [x] **V06-MT-04.I1** — Make cancellation a terminal orchestrator outcome with checks before and after advisor calls and before every attempt; stop proposing instead of recording cancellation as an ordinary candidate failure. **Trace:** [Audit MT-04](./localmotive-comprehensive-audit.md#mt-04).
+- [x] **V06-MT-04.I2** — Pass the cancellation signal into preparation, cancellable health startup, and completion requests, replacing the live tuner's uncancellable legacy benchmark path. **Trace:** [Audit MT-04](./localmotive-comprehensive-audit.md#mt-04).
+- [x] **V06-MT-04.I3** — Apply a documented overall deadline and bounded stop latency rather than relying on a 600-second health wait or separate per-read timeouts. **Trace:** [Audit MT-04](./localmotive-comprehensive-audit.md#mt-04).
+- [x] **V06-MT-04.I4** — Check process-tree termination results, surface cleanup failures, and release active tuning state only after lifecycle ownership has been resolved. **Trace:** [Audit MT-04](./localmotive-comprehensive-audit.md#mt-04).
 
 **Verification**
 
-- [ ] **V06-MT-04.V1** — Cancel during preparation, health wait, response wait, between repetitions, between advisor calls, and while the advisor emits only no-ops; assert the final cancellation reason and no subsequent advisor call. **Trace:** [Audit MT-04](./localmotive-comprehensive-audit.md#mt-04).
+- [x] **V06-MT-04.V1** — Cancel during preparation, health wait, response wait, between repetitions, between advisor calls, and while the advisor emits only no-ops; assert the final cancellation reason and no subsequent advisor call. **Trace:** [Audit MT-04](./localmotive-comprehensive-audit.md#mt-04).
 - [ ] **V06-MT-04.V2** — Inject process cleanup failure and confirm it is preserved rather than silently returning a successful tuning result. **Trace:** [Audit MT-04](./localmotive-comprehensive-audit.md#mt-04).
 - [ ] **V06-MT-04.V3** — Run packaged Windows cancellation scenarios and record stop latency, surviving child processes, listener ownership, port release, and ability to start the next operation. **Trace:** [Audit MT-04](./localmotive-comprehensive-audit.md#mt-04).
 
@@ -3021,6 +3021,28 @@ This document was mechanically checked for complete mapping of the 72 audit IDs 
 ## Verification ledger (v0.6 implementation)
 
 Closure records implement [V06-G-02](#v06-g-02). One record per finding package; each record names the pre-fix reproduction, the fix commit, the post-fix command, and the residual limits. Checkbox states in the finding packages are updated together with these records.
+
+### V06-RT-03 — cancellable managed-health completion (commit `1eaa476`)
+
+- Status: Implemented; unit-verified; packaged cancelled-request evidence open (V06-G-04/G-05).
+- Regression before fix (mutation proof): mutation Q removed the server termination from the supervisor's cancel branch; `rt03_cancel_terminates_a_pending_completion_within_the_bound` then FAILED.
+- Verification after fix: `cargo test rt03` — an owned loopback fixture accepts `/completion` and withholds the response; cancelling after acceptance returns `Cancelled` in under five seconds with the terminate callback fired. A complete valid response arriving while the flag is set is still reported `Cancelled` (response-versus-cancel resolution), and the positive control proves an uncancelled request returns the exact body without terminating the server.
+- Limits: the packaged Windows stalled-request scenario and child/listener/temp cleanup confirmation (V06-RT-03.V3) belong to V06-G-04/G-05; the worker thread stays blocked until the terminated server closes its socket, which is why terminate-before-report is the mechanism.
+
+### V06-MT-03 — bounded proposal loop (commit `1eaa476`)
+
+- Status: Implemented; unit-verified; the loop tests are deterministic and need no packaged evidence.
+- Regression before fix (mutation proof): mutation N stopped counting no-op rejections; `mt03_noop_rejections_are_also_bounded_by_the_consecutive_rejection_limit` then FAILED. Mutation O disabled the three-field policy; `mt03_coercions_echoes_and_oversize_proposals_are_bounded_rejections` then FAILED.
+- Verification after fix: `cargo test mt03` — an advisor that always proposes the existing `threads=-1` terminates exactly at the advisor-call budget (5 calls, six recorded rows, nothing measured beyond baseline), with every rejection reason preserved. Numeric-string coercion, `draftModel` echoes, and four-field proposals are recorded rejections; a different raw map that normalizes to an already-measured configuration is rejected as a duplicate; the overall deadline stops before the first paid call; cancellation during a no-op sequence forbids a further advisor call.
+- Decision: the advertised three-fields-per-trial rule is retained as a hard policy and enforced in Rust (`MAX_CHANGED_FIELDS_PER_PROPOSAL`); the system prompt already states it.
+- Limits: budget values (advisor calls = 2 × trials + 6; deadline 45 minutes; three consecutive rejections) are product defaults chosen this release; they are single constants and easy to tune later.
+
+### V06-MT-04 — cancellable tuning lifecycle (commit `1eaa476`)
+
+- Status: Implemented; unit-verified; packaged Windows cancellation scenarios open (V06-G-04/G-05).
+- Regression before fix (mutation proof): mutation P restored the non-cancellable health wait in the live bench; `tuning_lifecycle_uses_cancellable_paths_and_reports_cleanup_failures` then FAILED.
+- Verification after fix: `cargo test mt04` — a bench that flips the cancel flag during a candidate measurement returns an ordinary would-be failure; the loop ends terminal with "Cancelled by the user during a measurement" and records no candidate failure. The source guard pins the cancellable health wait, `benchmark_server_cancellable`, and the captured cleanup result with its surfaced failure message.
+- Limits: V06-MT-04.V2 (injected process-cleanup failure) has no injection seam on `terminate_and_wait` and stays unchecked; the packaged stop-latency, surviving-child, port-release and next-operation checks (V06-MT-04.V3) are V06-G-04/G-05 evidence. `core::benchmark_server_cancellable` returns on a 250 ms boundary after Stop.
 
 ### V06-DC-04 — override browsing and download authority (commit `6be56e5`)
 
