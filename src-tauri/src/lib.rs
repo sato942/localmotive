@@ -100,6 +100,8 @@ struct AppState {
     runtime_install: Mutex<Option<Arc<AtomicBool>>>,
     /// One approved runtime catalog request may run at a time.
     runtime_catalog: AtomicBool,
+    /// One cancellable GGUF metadata read may run at a time.
+    gguf_read: Mutex<Option<Arc<AtomicBool>>>,
     /// One managed-runtime seven-stage health run may execute at a time.
     runtime_health: Mutex<Option<Arc<AtomicBool>>>,
     /// One managed-inference operation at a time, with process generations
@@ -1320,8 +1322,42 @@ fn list_managed_runtimes() -> Result<Vec<runtime::ManagedRuntimeRecord>, String>
 }
 
 #[tauri::command]
-fn read_gguf_summary(path: String) -> Result<gguf::GgufSummary, String> {
-    gguf::read_summary(Path::new(&path))
+async fn read_gguf_summary(
+    path: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<gguf::GgufSummary, String> {
+    // Parsing runs in bounded background work: the flag lets a large or
+    // malformed header be cancelled without holding the UI (audit DC-08 I4).
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut slot = state
+            .gguf_read
+            .lock()
+            .map_err(|_| "GGUF read state is unavailable".to_string())?;
+        *slot = Some(cancel.clone());
+    }
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        gguf::read_summary_cancellable(Path::new(&path), Some(&cancel))
+    })
+    .await
+    .map_err(|error| format!("GGUF read task failed: {error}"))?;
+    if let Ok(mut slot) = state.gguf_read.lock() {
+        *slot = None;
+    }
+    result
+}
+
+#[tauri::command]
+fn cancel_gguf_read(state: tauri::State<'_, AppState>) -> bool {
+    state
+        .gguf_read
+        .lock()
+        .ok()
+        .and_then(|slot| {
+            slot.as_ref()
+                .map(|flag| flag.store(true, std::sync::atomic::Ordering::Relaxed))
+        })
+        .is_some()
 }
 
 #[tauri::command]
@@ -3492,6 +3528,7 @@ pub fn run() {
             describe_runtime,
             list_managed_runtimes,
             read_gguf_summary,
+            cancel_gguf_read,
             inspect_model_artifact,
             preflight_model,
             preview_command,

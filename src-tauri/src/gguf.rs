@@ -7,7 +7,7 @@
 
 use serde::Serialize;
 use std::fs::File;
-use std::io::{self, Read, Seek, SeekFrom};
+use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
 const GGUF_MAGIC: &[u8; 4] = b"GGUF";
@@ -20,6 +20,44 @@ const MAX_ARRAY_DEPTH: u8 = 4;
 const MAX_TENSOR_COUNT: u64 = 1_000_000;
 const MAX_RECORDED_TENSORS: usize = 4_096;
 const MAX_TENSOR_DIMENSIONS: u32 = 8;
+/// Metadata key/value pairs are counted; a file claiming more fails before
+/// any per-pair work starts (audit DC-08).
+const MAX_KV_COUNT: u64 = 1_000_000;
+/// One metadata key (audit DC-08).
+const MAX_KEY_BYTES: u64 = 16 * 1024;
+/// One retained string value (audit DC-08).
+const MAX_RETAINED_STRING_BYTES: u64 = 64 * 1024;
+/// Aggregate bytes retained across the whole parsed summary (audit DC-08).
+const MAX_RETAINED_METADATA_BYTES: u64 = 2 * 1024 * 1024;
+/// Aggregate parser work units (one per scalar or array element touched),
+/// bounding total CPU spent on adversarially arranged metadata (audit DC-08).
+const MAX_PARSER_WORK_UNITS: u64 = 64 * 1024 * 1024;
+
+/// The documented allocation/work limits of one parse. Production always
+/// uses `Default`; tests can pass tiny limits to assert exact boundary
+/// behavior deterministically (audit DC-08 V1).
+#[derive(Clone, Copy, Debug)]
+pub struct ParseLimits {
+    pub max_kv_count: u64,
+    pub max_key_bytes: u64,
+    pub max_string_bytes: u64,
+    pub max_retained_bytes: u64,
+    pub max_work_units: u64,
+    pub max_array_elements: u64,
+}
+
+impl Default for ParseLimits {
+    fn default() -> Self {
+        Self {
+            max_kv_count: MAX_KV_COUNT,
+            max_key_bytes: MAX_KEY_BYTES,
+            max_string_bytes: MAX_RETAINED_STRING_BYTES,
+            max_retained_bytes: MAX_RETAINED_METADATA_BYTES,
+            max_work_units: MAX_PARSER_WORK_UNITS,
+            max_array_elements: MAX_ARRAY_ELEMENTS,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(tag = "kind", content = "value", rename_all = "camelCase")]
@@ -163,9 +201,13 @@ impl Value {
     }
 }
 
-struct Reader<R: Read> {
+struct Reader<'a, R: Read> {
     inner: R,
     consumed: u64,
+    work: u64,
+    retained: u64,
+    cancel: Option<&'a std::sync::atomic::AtomicBool>,
+    limits: ParseLimits,
 }
 
 fn checked_header_length(consumed: u64, requested: u64) -> io::Result<usize> {
@@ -184,7 +226,72 @@ fn checked_header_length(consumed: u64, requested: u64) -> io::Result<usize> {
     })
 }
 
-impl<R: Read> Reader<R> {
+/// One reader with explicit accounting: consumed bytes bound the input
+/// range, `work` bounds parser effort, and `retained` bounds the bytes that
+/// survive into the returned summary (audit DC-08).
+fn budget_error(what: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("GGUF metadata exceeds the supported {what} budget"),
+    )
+}
+
+fn cancelled_error() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::Interrupted,
+        "GGUF metadata reading was cancelled",
+    )
+}
+
+impl<R: Read> Reader<'_, R> {
+    fn spend_work(&mut self, units: u64) -> io::Result<()> {
+        self.work = self.work.saturating_add(units);
+        if self.work > self.limits.max_work_units {
+            return Err(budget_error("parser work"));
+        }
+        Ok(())
+    }
+
+    fn retain(&mut self, bytes: u64) -> io::Result<()> {
+        self.retained = self.retained.saturating_add(bytes);
+        if self.retained > self.limits.max_retained_bytes {
+            return Err(budget_error("retained metadata"));
+        }
+        Ok(())
+    }
+
+    fn check_cancelled(&self) -> io::Result<()> {
+        if self
+            .cancel
+            .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed))
+        {
+            return Err(cancelled_error());
+        }
+        Ok(())
+    }
+
+    fn read_array<const N: usize>(&mut self) -> io::Result<[u8; N]> {
+        checked_header_length(self.consumed, N as u64)?;
+        let mut buf = [0_u8; N];
+        self.inner.read_exact(&mut buf)?;
+        self.consumed += N as u64;
+        Ok(buf)
+    }
+
+    /// Read `len` declared bytes, discarding them in bounded chunks instead
+    /// of allocating the whole declared length (audit DC-08).
+    fn discard_bytes(&mut self, len: u64) -> io::Result<()> {
+        let mut remaining = checked_header_length(self.consumed, len)?;
+        let mut buffer = [0_u8; 16 * 1024];
+        while remaining > 0 {
+            let step = remaining.min(buffer.len());
+            self.inner.read_exact(&mut buffer[..step])?;
+            remaining -= step;
+        }
+        self.consumed += len;
+        Ok(())
+    }
+
     fn bytes(&mut self, n: usize) -> io::Result<Vec<u8>> {
         checked_header_length(
             self.consumed,
@@ -201,33 +308,49 @@ impl<R: Read> Reader<R> {
         Ok(buf)
     }
     fn u8(&mut self) -> io::Result<u8> {
-        Ok(self.bytes(1)?[0])
+        Ok(self.read_array::<1>()?[0])
+    }
+    fn u16(&mut self) -> io::Result<u16> {
+        Ok(u16::from_le_bytes(self.read_array::<2>()?))
     }
     fn u32(&mut self) -> io::Result<u32> {
-        Ok(u32::from_le_bytes(self.bytes(4)?.try_into().unwrap()))
+        Ok(u32::from_le_bytes(self.read_array::<4>()?))
     }
     fn u64(&mut self) -> io::Result<u64> {
-        Ok(u64::from_le_bytes(self.bytes(8)?.try_into().unwrap()))
+        Ok(u64::from_le_bytes(self.read_array::<8>()?))
     }
-    fn string(&mut self) -> io::Result<String> {
+    /// A string with an explicit retained-byte cap: the declared length is
+    /// validated before any allocation (audit DC-08).
+    fn string(&mut self, max_bytes: u64, retain: bool) -> io::Result<String> {
         let requested = self.u64()?;
         let len = checked_header_length(self.consumed, requested)?;
+        if len as u64 > max_bytes {
+            return Err(budget_error("string length"));
+        }
+        self.spend_work(1)?;
+        if !retain {
+            self.discard_bytes(len as u64)?;
+            return Ok(String::new());
+        }
+        self.retain(len as u64)?;
         Ok(String::from_utf8_lossy(&self.bytes(len)?).into_owned())
     }
-    fn scalar(&mut self, kind: u32) -> io::Result<Value> {
+    fn scalar(&mut self, kind: u32, capture: bool) -> io::Result<Value> {
+        self.check_cancelled()?;
+        self.spend_work(1)?;
         Ok(match kind {
             0 => Value::U(self.u8()? as u64),
             1 => Value::I(self.u8()? as i8 as i64),
-            2 => Value::U(u16::from_le_bytes(self.bytes(2)?.try_into().unwrap()) as u64),
-            3 => Value::I(i16::from_le_bytes(self.bytes(2)?.try_into().unwrap()) as i64),
+            2 => Value::U(self.u16()? as u64),
+            3 => Value::I(self.u16()? as i16 as i64),
             4 => Value::U(self.u32()? as u64),
             5 => Value::I(self.u32()? as i32 as i64),
-            6 => Value::F(f32::from_le_bytes(self.bytes(4)?.try_into().unwrap()) as f64),
+            6 => Value::F(f32::from_le_bytes(self.read_array::<4>()?) as f64),
             7 => Value::Bool(self.u8()? != 0),
-            8 => Value::Str(self.string()?),
+            8 => Value::Str(self.string(self.limits.max_string_bytes, capture)?),
             10 => Value::U(self.u64()?),
             11 => Value::I(self.u64()? as i64),
-            12 => Value::F(f64::from_le_bytes(self.bytes(8)?.try_into().unwrap())),
+            12 => Value::F(f64::from_le_bytes(self.read_array::<8>()?)),
             other => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -236,10 +359,23 @@ impl<R: Read> Reader<R> {
             }
         })
     }
+
+    /// Fixed byte width of a scalar element type, when one exists.
+    fn fixed_scalar_width(kind: u32) -> Option<u64> {
+        match kind {
+            0..=1 | 7 => Some(1),
+            2 | 3 => Some(2),
+            4..=6 => Some(4),
+            10..=12 => Some(8),
+            _ => None,
+        }
+    }
+
     fn value(&mut self, kind: u32, capture: bool, depth: u8) -> io::Result<Value> {
         if kind != 9 {
-            return self.scalar(kind);
+            return self.scalar(kind, capture);
         }
+        self.check_cancelled()?;
         if depth >= MAX_ARRAY_DEPTH {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -248,19 +384,58 @@ impl<R: Read> Reader<R> {
         }
         let element = self.u32()?;
         let count = self.u64()?;
-        if count > MAX_ARRAY_ELEMENTS {
+        if count > self.limits.max_array_elements {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "GGUF metadata array exceeds the supported element count",
             ));
         }
+        if !capture {
+            // An irrelevant array of fixed-width scalars is skipped in one
+            // checked byte count; only its work units are charged (audit
+            // DC-08). Variable-width elements are still discarded through
+            // the bounded readers above.
+            if let Some(width) = Self::fixed_scalar_width(element) {
+                self.spend_work(count)?;
+                let total = count.checked_mul(width).ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "GGUF metadata array length overflows",
+                    )
+                })?;
+                self.discard_bytes(total)?;
+                return Ok(Value::Array {
+                    element_type: element,
+                    count,
+                    values: Vec::new(),
+                    truncated: false,
+                });
+            }
+            self.spend_work(count)?;
+            for index in 0..count {
+                if index % 4096 == 0 {
+                    self.check_cancelled()?;
+                }
+                // capture=false below keeps strings discarded and nested
+                // arrays skipped rather than retained.
+                self.value(element, false, depth + 1)?;
+            }
+            return Ok(Value::Array {
+                element_type: element,
+                count,
+                values: Vec::new(),
+                truncated: false,
+            });
+        }
+        let retained_cap = MAX_CAPTURED_ARRAY_VALUES as u64;
         let mut values = Vec::with_capacity(
-            usize::try_from(count)
-                .unwrap_or(usize::MAX)
-                .min(MAX_CAPTURED_ARRAY_VALUES),
+            usize::try_from(count.min(retained_cap)).unwrap_or(MAX_CAPTURED_ARRAY_VALUES),
         );
         for index in 0..count {
-            let keep = capture && index < MAX_CAPTURED_ARRAY_VALUES as u64;
+            if index % 4096 == 0 {
+                self.check_cancelled()?;
+            }
+            let keep = index < retained_cap;
             let value = self.value(element, keep, depth + 1)?;
             if keep {
                 values.push(value);
@@ -270,7 +445,7 @@ impl<R: Read> Reader<R> {
             element_type: element,
             count,
             values,
-            truncated: capture && count > MAX_CAPTURED_ARRAY_VALUES as u64,
+            truncated: count > retained_cap,
         })
     }
 }
@@ -296,8 +471,40 @@ fn relevant_metadata_key(key: &str) -> bool {
         .any(|part| key.contains(part))
 }
 
+#[cfg(test)]
 fn parse<R: Read>(inner: R) -> io::Result<GgufSummary> {
-    let mut reader = Reader { inner, consumed: 0 };
+    parse_with(inner, None)
+}
+
+#[cfg(test)]
+fn parse_with_limits<R: Read>(
+    inner: R,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+    limits: ParseLimits,
+) -> io::Result<GgufSummary> {
+    parse_inner(inner, cancel, limits)
+}
+
+fn parse_with<R: Read>(
+    inner: R,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+) -> io::Result<GgufSummary> {
+    parse_inner(inner, cancel, ParseLimits::default())
+}
+
+fn parse_inner<R: Read>(
+    inner: R,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+    limits: ParseLimits,
+) -> io::Result<GgufSummary> {
+    let mut reader = Reader {
+        inner,
+        consumed: 0,
+        work: 0,
+        retained: 0,
+        cancel,
+        limits,
+    };
     if reader.bytes(4)?.as_slice() != GGUF_MAGIC {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -319,10 +526,20 @@ fn parse<R: Read>(inner: R) -> io::Result<GgufSummary> {
         kv_count,
         ..Default::default()
     };
+    if kv_count > reader.limits.max_kv_count {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "GGUF metadata key/value count exceeds the supported limit",
+        ));
+    }
     let mut arch = String::new();
     let mut pairs = Vec::with_capacity(kv_count.min(4096) as usize);
-    for _ in 0..kv_count {
-        let key = reader.string()?;
+    for index in 0..kv_count {
+        if index % 1024 == 0 {
+            reader.check_cancelled()?;
+        }
+        reader.spend_work(1)?;
+        let key = reader.string(reader.limits.max_key_bytes, true)?;
         let kind = reader.u32()?;
         let value = reader.value(kind, relevant_metadata_key(&key), 0)?;
         if key == "general.architecture" {
@@ -383,7 +600,7 @@ fn parse<R: Read>(inner: R) -> io::Result<GgufSummary> {
         ));
     }
     for index in 0..tensor_count {
-        let name = reader.string()?;
+        let name = reader.string(reader.limits.max_key_bytes, true)?;
         let dimension_count = reader.u32()?;
         if dimension_count > MAX_TENSOR_DIMENSIONS {
             return Err(io::Error::new(
@@ -412,10 +629,20 @@ fn parse<R: Read>(inner: R) -> io::Result<GgufSummary> {
 }
 
 pub fn read_summary(path: &Path) -> Result<GgufSummary, String> {
+    read_summary_cancellable(path, None)
+}
+
+/// `read_summary` with an optional cancellation flag, checked between parse
+/// steps so a large or malformed header cannot hold the worker hostage
+/// (audit DC-08 I4).
+pub fn read_summary_cancellable(
+    path: &Path,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+) -> Result<GgufSummary, String> {
     let mut file = File::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
     file.seek(SeekFrom::Start(0))
         .map_err(|error| error.to_string())?;
-    parse(file).map_err(|error| format!("{}: {error}", path.display()))
+    parse_with(BufReader::new(file), cancel).map_err(|error| format!("{}: {error}", path.display()))
 }
 
 #[cfg(test)]
@@ -497,6 +724,171 @@ mod tests {
         }
         out.extend(b"TENSOR DATA THAT MUST NEVER BE READ");
         out
+    }
+
+    fn gguf_header(tensor_count: u64, kv_count: u64) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend(GGUF_MAGIC);
+        out.extend(3_u32.to_le_bytes());
+        out.extend(tensor_count.to_le_bytes());
+        out.extend(kv_count.to_le_bytes());
+        out
+    }
+
+    fn tiny_limits() -> ParseLimits {
+        ParseLimits {
+            max_kv_count: 4,
+            max_key_bytes: 64,
+            max_string_bytes: 16,
+            max_retained_bytes: 64,
+            max_work_units: 16,
+            max_array_elements: 4,
+        }
+    }
+
+    #[test]
+    fn dc08_a_short_file_declaring_a_giant_string_fails_before_allocating() {
+        // A tiny file claims a 100 MiB string: the declared length must fail
+        // the string budget while the real input is a few dozen bytes, so no
+        // parser can allocate the claimed size first (audit DC-08 V1).
+        let mut bytes = gguf_header(0, 1);
+        put_str(&mut bytes, "general.name");
+        bytes.extend(8_u32.to_le_bytes());
+        bytes.extend((100 * 1024 * 1024_u64).to_le_bytes());
+        bytes.extend(b"only-ten!!");
+        assert!(bytes.len() < 512, "fixture must stay tiny");
+        let error = parse(bytes.as_slice()).unwrap_err();
+        assert!(error.to_string().contains("string length"), "{error}");
+    }
+
+    #[test]
+    fn dc08_kv_key_and_count_budget_failures_are_deterministic() {
+        // Oversized key: beyond its own budget (audit DC-08 V1).
+        let mut bytes = gguf_header(0, 1);
+        put_str(&mut bytes, &"k".repeat(20 * 1024));
+        bytes.extend(4_u32.to_le_bytes());
+        bytes.extend(0_u32.to_le_bytes());
+        let error = parse_with_limits(bytes.as_slice(), None, tiny_limits()).unwrap_err();
+        assert!(error.to_string().contains("string length"), "{error}");
+        // One kv beyond the declared budget fails before any pair work starts.
+        let bytes = gguf_header(0, 5);
+        let error = parse_with_limits(bytes.as_slice(), None, tiny_limits()).unwrap_err();
+        assert!(error.to_string().contains("key/value count"), "{error}");
+        // Exactly at the budget still parses.
+        let mut bytes = gguf_header(0, 4);
+        kv_u32(&mut bytes, "a", 1);
+        kv_u32(&mut bytes, "b", 2);
+        kv_u32(&mut bytes, "c", 3);
+        kv_u32(&mut bytes, "d", 4);
+        let summary = parse_with_limits(bytes.as_slice(), None, tiny_limits()).unwrap();
+        assert_eq!(summary.kv_count, 4);
+        assert_eq!(summary.metadata_facts.len(), 0);
+    }
+
+    #[test]
+    fn dc08_arrays_are_skipped_by_shape_and_bounded_by_element_and_depth_budgets() {
+        // A fixed-width irrelevant array is skipped with one checked byte
+        // count and stays out of the retained facts (audit DC-08 V1).
+        let mut bytes = gguf_header(0, 1);
+        put_str(&mut bytes, "unrelated.arr");
+        bytes.extend(9_u32.to_le_bytes());
+        bytes.extend(7_u32.to_le_bytes());
+        bytes.extend(4_u64.to_le_bytes());
+        bytes.extend([1_u8, 0, 1, 0]);
+        let summary = parse_with_limits(bytes.as_slice(), None, tiny_limits()).unwrap();
+        assert!(summary.metadata_facts.is_empty());
+        // One element beyond the limit fails with the explicit reason.
+        let mut bytes = gguf_header(0, 1);
+        put_str(&mut bytes, "unrelated.arr");
+        bytes.extend(9_u32.to_le_bytes());
+        bytes.extend(7_u32.to_le_bytes());
+        bytes.extend(5_u64.to_le_bytes());
+        bytes.extend([1_u8, 0, 1, 0, 1]);
+        let error = parse_with_limits(bytes.as_slice(), None, tiny_limits()).unwrap_err();
+        assert!(error.to_string().contains("element count"), "{error}");
+        // A non-captured tokenizer vocabulary is stream-discarded rather
+        // than retained (audit DC-08 I2).
+        let mut bytes = gguf_header(0, 1);
+        put_str(&mut bytes, "tokenizer.ggml.tokens");
+        bytes.extend(9_u32.to_le_bytes());
+        bytes.extend(8_u32.to_le_bytes());
+        bytes.extend(4_u64.to_le_bytes());
+        for value in ["a", "bb", "ccc", "dddd"] {
+            put_str(&mut bytes, value);
+        }
+        let summary = parse_with_limits(bytes.as_slice(), None, tiny_limits()).unwrap();
+        assert!(summary.metadata_facts.is_empty());
+        // Nested arrays beyond the supported depth fail cleanly.
+        let mut bytes = gguf_header(0, 1);
+        put_str(&mut bytes, "lfm2.attention.nested");
+        bytes.extend(9_u32.to_le_bytes()); // value kind: array
+        for _ in 0..5 {
+            bytes.extend(9_u32.to_le_bytes()); // element type: array
+            bytes.extend(1_u64.to_le_bytes()); // count: 1
+        }
+        let error = parse_with_limits(bytes.as_slice(), None, tiny_limits()).unwrap_err();
+        assert!(error.to_string().contains("nesting"), "{error}");
+    }
+
+    #[test]
+    fn dc08_cancellation_and_truncation_produce_prompt_errors() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        // A reader that flips the cancel flag once it has supplied 8 bytes:
+        // the kv loop's cancellation check must stop the parse promptly
+        // (audit DC-08 V2).
+        struct FlipOnRead<R: Read> {
+            inner: R,
+            flag: Arc<AtomicBool>,
+            seen: usize,
+        }
+        impl<R: Read> Read for FlipOnRead<R> {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                let n = self.inner.read(buf)?;
+                self.seen += n;
+                if self.seen >= 8 {
+                    self.flag.store(true, Ordering::Relaxed);
+                }
+                Ok(n)
+            }
+        }
+        let mut bytes = gguf_header(0, 2);
+        kv_u32(&mut bytes, "a", 1);
+        kv_u32(&mut bytes, "b", 2);
+        let flag = Arc::new(AtomicBool::new(false));
+        let reader = FlipOnRead {
+            inner: bytes.as_slice(),
+            flag: flag.clone(),
+            seen: 0,
+        };
+        let error = parse_with(reader, Some(&flag)).unwrap_err();
+        assert!(error.to_string().contains("cancelled"), "{error}");
+        // A file shortened during parsing surfaces as a read error.
+        let mut truncated = gguf_header(0, 1);
+        kv_u32(&mut truncated, "a", 1);
+        truncated.truncate(truncated.len() - 2);
+        assert!(parse(truncated.as_slice()).is_err());
+    }
+
+    #[test]
+    fn dc08_truncated_prefixes_fail_cleanly_and_valid_headers_stay_useful() {
+        // Fuzz every short prefix of a valid header: no panics, explicit
+        // errors, and the intact fixture keeps its measured facts
+        // (audit DC-08 V3).
+        let valid = fixture();
+        for cut in 0..64 {
+            let outcome = std::panic::catch_unwind(|| parse(&valid[..cut]));
+            assert!(outcome.is_ok(), "truncated prefix {cut} panicked");
+            assert!(
+                outcome.unwrap().is_err(),
+                "truncated prefix {cut} unexpectedly parsed"
+            );
+        }
+        let summary = parse(valid.as_slice()).unwrap();
+        assert_eq!(summary.architecture, "lfm2");
+        assert_eq!(summary.block_count, Some(30));
+        assert_eq!(summary.context_length, Some(131072));
+        assert!(summary.header_bytes < MAX_HEADER_BYTES);
     }
 
     #[test]
