@@ -1,7 +1,7 @@
 # Localmotive 0.6 — audit remediation TODO
 
 **Target:** `0.6.0` stabilization release  
-**Status:** Planning complete; implementation in progress — Package 6 (model, runtime and operation ownership)  
+**Status:** Planning complete; implementation in progress — Package 7 (responsive operations, parser and transfer bounds)  
 **Source:** [localmotive-comprehensive-audit.md](./localmotive-comprehensive-audit.md)
 **Audited source SHA:** `e530371b056cd8e049c2246dbb151aa407bf359f`  
 **Release baseline reviewed by the audit:** `v0.5.0`, source `a4b7127f739f7420232d9b6f63da693d39128d0b`  
@@ -35,7 +35,7 @@ Owner: `sato942` (accountable maintainer). Implementation and evidence productio
 | 3 | Override identity and atomic persistence (DC-04, DC-05, DC-06) | Implementation complete; unit-verified (commit `6be56e5`); packaged items open in G-04/G-05 |
 | 4 | Bounded and cancellable tuning (MT-03, MT-04, RT-03) | Implementation complete; unit-verified (commit `1eaa476`); packaged Windows cancellation evidence open in G-04/G-05 |
 | 5 | Benchmark protocol, export privacy and failure records (MT-01, MT-02, MT-12) | Implementation complete; unit-verified (commit `9d4c36c`); packaged b10816 acceptance open in G-04/G-05 |
-| 6 | Model, runtime and operation ownership (FE-01, FE-02, FE-03, FE-05, FE-07, FE-16, MT-05) | Not started |
+| 6 | Model, runtime and operation ownership (FE-01, FE-02, FE-03, FE-05, FE-07, FE-16, MT-05) | Implementation complete; unit-verified (commits `bb9a5ab`, `411c32c`, `0045cb6`, `6da40d8`, `7d4a514`); packaged UI scenarios open in G-04 |
 | 7 | Responsive operations, parser and transfer bounds (IPC-01, FE-04, RT-05, RT-06, DC-02, DC-08, DC-12) | Not started |
 | 8 | Delivery sequencing and truthful verifiers (GH-01..GH-06, GH-10, QD-02, QD-03) | Not started |
 | 9 | Secured local transport (MT-06) | Not started |
@@ -824,22 +824,22 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Reserve one backend operation owner and preserve server identity throughout measurement**
 
-**Status:** Not started · **Priority:** High · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (commit `bb9a5ab`); packaged cancellation/restart flows open (V06-G-04/G-05) · **Priority:** High · **Owner:** sato942  
 **Audit trace:** [Audit MT-05](./localmotive-comprehensive-audit.md#mt-05)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src-tauri/src/lib.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/lib.rs)
 
 **Implementation**
 
-- [ ] **V06-MT-05.I1** — Introduce a single Rust operation coordinator with atomic reservations for ordinary startup, warm benchmarks, cold attempts, tuning, and quality suites. **Trace:** [Audit MT-05](./localmotive-comprehensive-audit.md#mt-05).
-- [ ] **V06-MT-05.I2** — Retain a process-generation lease for each operation, including privately launched cold runtimes, and make Start reject or wait while another owner remains active. **Trace:** [Audit MT-05](./localmotive-comprehensive-audit.md#mt-05).
-- [ ] **V06-MT-05.I3** — Make Stop cancel the actual operation owner and verify the expected process/listener generation for each request; reject attribution if replacement or ownership loss occurs. **Trace:** [Audit MT-05](./localmotive-comprehensive-audit.md#mt-05).
-- [ ] **V06-MT-05.I4** — Capture model/runtime identity before quality requests and associate process-memory samples with the serving process; keep long I/O outside the existing server mutex. **Trace:** [Audit MT-05](./localmotive-comprehensive-audit.md#mt-05).
+- [x] **V06-MT-05.I1** — Introduce a single Rust operation coordinator with atomic reservations for ordinary startup, warm benchmarks, cold attempts, tuning, and quality suites. **Trace:** [Audit MT-05](./localmotive-comprehensive-audit.md#mt-05).
+- [x] **V06-MT-05.I2** — Retain a process-generation lease for each operation, including privately launched cold runtimes, and make Start reject or wait while another owner remains active. **Trace:** [Audit MT-05](./localmotive-comprehensive-audit.md#mt-05).
+- [x] **V06-MT-05.I3** — Make Stop cancel the actual operation owner and verify the expected process/listener generation for each request; reject attribution if replacement or ownership loss occurs. **Trace:** [Audit MT-05](./localmotive-comprehensive-audit.md#mt-05).
+- [x] **V06-MT-05.I4** — Capture model/runtime identity before quality requests and associate process-memory samples with the serving process; keep long I/O outside the existing server mutex. **Trace:** [Audit MT-05](./localmotive-comprehensive-audit.md#mt-05).
 
 **Verification**
 
-- [ ] **V06-MT-05.V1** — Use deterministic barriers to reproduce warm-benchmark/stop/restart, cold-benchmark/start/tune, quality/restart, and simultaneous start_server/start_tuning interleavings. **Trace:** [Audit MT-05](./localmotive-comprehensive-audit.md#mt-05).
-- [ ] **V06-MT-05.V2** — Assert no second owner is granted, no old-PID memory evidence is joined to replacement responses, and replaced-server results cannot be finalized under the original identity. **Trace:** [Audit MT-05](./localmotive-comprehensive-audit.md#mt-05).
+- [x] **V06-MT-05.V1** — Use deterministic barriers to reproduce warm-benchmark/stop/restart, cold-benchmark/start/tune, quality/restart, and simultaneous start_server/start_tuning interleavings. **Trace:** [Audit MT-05](./localmotive-comprehensive-audit.md#mt-05).
+- [x] **V06-MT-05.V2** — Assert no second owner is granted, no old-PID memory evidence is joined to replacement responses, and replaced-server results cannot be finalized under the original identity. **Trace:** [Audit MT-05](./localmotive-comprehensive-audit.md#mt-05).
 - [ ] **V06-MT-05.V3** — Exercise packaged Windows cancellation and restart flows, preserving records of process generations, listener ownership, and eventual reservation release. **Trace:** [Audit MT-05](./localmotive-comprehensive-audit.md#mt-05).
 
 **Complete when:** All managed inference operations participate in the same ownership rules, including cold attempts that are absent from the ordinary managed-server slot. Concurrent stop/start requests cannot silently switch the model serving a recorded trial or quality case, and lifecycle protection does not block UI responsiveness through a long-held mutex.
@@ -1112,23 +1112,23 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Unify selected model and runtime with the profile submitted for launch**
 
-**Status:** Not started · **Priority:** High · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (commit `7d4a514`); packaged select/rescan/inspect/save/start scenario open (V06-G-04) · **Priority:** High · **Owner:** sato942  
 **Audit trace:** [Audit FE-01](./localmotive-comprehensive-audit.md#fe-01)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx), [src/model.ts](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/model.ts), [src/model.test.ts](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/model.test.ts)
 
 **Implementation**
 
-- [ ] **V06-FE-01.I1** — Represent committed model selection and its editable launch profile as one coordinated state transition; keep uncommitted runtime-path input separate from the active runtime identity. **Trace:** [Audit FE-01](./localmotive-comprehensive-audit.md#fe-01).
-- [ ] **V06-FE-01.I2** — Preserve the selected model during rescan when it still exists; otherwise load and normalize the replacement model's saved profile or clear selection/profile together, including failed scans. **Trace:** [Audit FE-01](./localmotive-comprehensive-audit.md#fe-01).
-- [ ] **V06-FE-01.I3** — Route typed runtime inspection, native file selection, managed-build activation and installation completion through the same committed-runtime update so profile.runtime and inspected capabilities agree. **Trace:** [Audit FE-01](./localmotive-comprehensive-audit.md#fe-01).
-- [ ] **V06-FE-01.I4** — Derive displayed model identity, readiness, completeness checks and persistence keys from the actual pending launch profile and its validated model ownership rather than unrelated selectedId state. **Trace:** [Audit FE-01](./localmotive-comprehensive-audit.md#fe-01).
-- [ ] **V06-FE-01.I5** — Preserve the existing normalization rule that a deliberately selected current runtime supersedes an older runtime saved with a profile. **Trace:** [Audit FE-01](./localmotive-comprehensive-audit.md#fe-01).
+- [x] **V06-FE-01.I1** — Represent committed model selection and its editable launch profile as one coordinated state transition; keep uncommitted runtime-path input separate from the active runtime identity. **Trace:** [Audit FE-01](./localmotive-comprehensive-audit.md#fe-01).
+- [x] **V06-FE-01.I2** — Preserve the selected model during rescan when it still exists; otherwise load and normalize the replacement model's saved profile or clear selection/profile together, including failed scans. **Trace:** [Audit FE-01](./localmotive-comprehensive-audit.md#fe-01).
+- [x] **V06-FE-01.I3** — Route typed runtime inspection, native file selection, managed-build activation and installation completion through the same committed-runtime update so profile.runtime and inspected capabilities agree. **Trace:** [Audit FE-01](./localmotive-comprehensive-audit.md#fe-01).
+- [x] **V06-FE-01.I4** — Derive displayed model identity, readiness, completeness checks and persistence keys from the actual pending launch profile and its validated model ownership rather than unrelated selectedId state. **Trace:** [Audit FE-01](./localmotive-comprehensive-audit.md#fe-01).
+- [x] **V06-FE-01.I5** — Preserve the existing normalization rule that a deliberately selected current runtime supersedes an older runtime saved with a profile. **Trace:** [Audit FE-01](./localmotive-comprehensive-audit.md#fe-01).
 
 **Verification**
 
-- [ ] **V06-FE-01.V1** — Add component/IPC-boundary regressions selecting model B, rescanning inventory ordered A/B, deleting B, and failing the scan; assert visible identity and exact submitted/saved profile values. **Trace:** [Audit FE-01](./localmotive-comprehensive-audit.md#fe-01).
-- [ ] **V06-FE-01.V2** — Exercise typed runtime B plus Inspect, file-picker B and managed activation B after configuring A; assert runtimePath, inspected runtime identity and profile.runtime converge. **Trace:** [Audit FE-01](./localmotive-comprehensive-audit.md#fe-01).
+- [x] **V06-FE-01.V1** — Add component/IPC-boundary regressions selecting model B, rescanning inventory ordered A/B, deleting B, and failing the scan; assert visible identity and exact submitted/saved profile values. **Trace:** [Audit FE-01](./localmotive-comprehensive-audit.md#fe-01).
+- [x] **V06-FE-01.V2** — Exercise typed runtime B plus Inspect, file-picker B and managed activation B after configuring A; assert runtimePath, inspected runtime identity and profile.runtime converge. **Trace:** [Audit FE-01](./localmotive-comprehensive-audit.md#fe-01).
 - [ ] **V06-FE-01.V3** — Run the packaged select, rescan, inspect, save and start scenario and capture the resulting server snapshot and command arguments. **Trace:** [Audit FE-01](./localmotive-comprehensive-audit.md#fe-01).
 
 **Complete when:** No supported rescan or runtime-selection route displays one model/runtime while saving or launching another. Saved profiles remain under their originating model's key, and missing or failed selections have an explicit recoverable state.
@@ -1139,24 +1139,24 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Bind tuning progress, reports and adoption to immutable run identity**
 
-**Status:** Not started · **Priority:** High · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (commit `7d4a514`); packaged navigation scenario open (V06-G-04) · **Priority:** High · **Owner:** sato942  
 **Audit trace:** [Audit FE-02](./localmotive-comprehensive-audit.md#fe-02)  
 **Prerequisites:** [V06-FE-01](#v06-fe-01)
 **Source touchpoints:** [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx), [src/model.ts](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/model.ts)
 
 **Implementation**
 
-- [ ] **V06-FE-02.I1** — Create a tuning-run record capturing the originating model ID, runtime identity, provider, advisor model and target context at dispatch, independent of the currently edited selection. **Trace:** [Audit FE-02](./localmotive-comprehensive-audit.md#fe-02).
-- [ ] **V06-FE-02.I2** — Route progress, completion and stored reports through that run identity; retain the original run's provenance when navigation selects another model or a separate draft provider. **Trace:** [Audit FE-02](./localmotive-comprehensive-audit.md#fe-02).
-- [ ] **V06-FE-02.I3** — Make Adopt best operate on the report's originating model instead of the current selectedId/name/context, and explicitly reconcile runtime selection through the established profile normalization policy. **Trace:** [Audit FE-02](./localmotive-comprehensive-audit.md#fe-02).
-- [ ] **V06-FE-02.I4** — Prevent delayed progress from a finished run from updating a subsequent run; choose whether incompatible edits are disabled during tuning or clearly represented as separate drafts. **Trace:** [Audit FE-02](./localmotive-comprehensive-audit.md#fe-02).
-- [ ] **V06-FE-02.I5** — Display the actual running advisor/model/context and completion state from the immutable record so changing provider tabs cannot relabel work already dispatched. **Trace:** [Audit FE-02](./localmotive-comprehensive-audit.md#fe-02).
+- [x] **V06-FE-02.I1** — Create a tuning-run record capturing the originating model ID, runtime identity, provider, advisor model and target context at dispatch, independent of the currently edited selection. **Trace:** [Audit FE-02](./localmotive-comprehensive-audit.md#fe-02).
+- [x] **V06-FE-02.I2** — Route progress, completion and stored reports through that run identity; retain the original run's provenance when navigation selects another model or a separate draft provider. **Trace:** [Audit FE-02](./localmotive-comprehensive-audit.md#fe-02).
+- [x] **V06-FE-02.I3** — Make Adopt best operate on the report's originating model instead of the current selectedId/name/context, and explicitly reconcile runtime selection through the established profile normalization policy. **Trace:** [Audit FE-02](./localmotive-comprehensive-audit.md#fe-02).
+- [x] **V06-FE-02.I4** — Prevent delayed progress from a finished run from updating a subsequent run; choose whether incompatible edits are disabled during tuning or clearly represented as separate drafts. **Trace:** [Audit FE-02](./localmotive-comprehensive-audit.md#fe-02).
+- [x] **V06-FE-02.I5** — Display the actual running advisor/model/context and completion state from the immutable record so changing provider tabs cannot relabel work already dispatched. **Trace:** [Audit FE-02](./localmotive-comprehensive-audit.md#fe-02).
 
 **Verification**
 
-- [ ] **V06-FE-02.V1** — Start tuning A, select B before deferred progress/completion arrives, then adopt; assert B's report, profile and storage key are not overwritten by A. **Trace:** [Audit FE-02](./localmotive-comprehensive-audit.md#fe-02).
+- [x] **V06-FE-02.V1** — Start tuning A, select B before deferred progress/completion arrives, then adopt; assert B's report, profile and storage key are not overwritten by A. **Trace:** [Audit FE-02](./localmotive-comprehensive-audit.md#fe-02).
 - [ ] **V06-FE-02.V2** — Activate runtime B after measuring on runtime A and verify adoption follows the documented current-runtime policy without silently restoring A. **Trace:** [Audit FE-02](./localmotive-comprehensive-audit.md#fe-02).
-- [ ] **V06-FE-02.V3** — Complete a run, start another and deliver late events from the first; verify the second run's trials and status remain unchanged. **Trace:** [Audit FE-02](./localmotive-comprehensive-audit.md#fe-02).
+- [x] **V06-FE-02.V3** — Complete a run, start another and deliver late events from the first; verify the second run's trials and status remain unchanged. **Trace:** [Audit FE-02](./localmotive-comprehensive-audit.md#fe-02).
 
 **Complete when:** Every visible trial/report identifies its originating run and can be adopted only into the corresponding model's profile. Navigation and provider/model draft changes preserve active tuning provenance, and late events cannot contaminate another run.
 
@@ -1166,23 +1166,23 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Reject stale cloud, GGUF, port-suggestion and command-preview responses**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (commit `411c32c`); deferred-promise component scenarios open (V06-G-04) · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit FE-03](./localmotive-comprehensive-audit.md#fe-03)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx), [src/model.ts](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/model.ts), [src/model.test.ts](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/model.test.ts)
 
 **Implementation**
 
-- [ ] **V06-FE-03.I1** — Extend the existing request-sequence approach to cloud credential/model loads, connection probes, OAuth completion, key save/forget, GGUF reads, port suggestions and command preview. **Trace:** [Audit FE-03](./localmotive-comprehensive-audit.md#fe-03).
-- [ ] **V06-FE-03.I2** — Capture the resource identity and form revision for each request and check them before committing success, failure or loading completion; obsolete responses must not replace current state. **Trace:** [Audit FE-03](./localmotive-comprehensive-audit.md#fe-03).
-- [ ] **V06-FE-03.I3** — Clear provider-specific credential/model/probe presentation at provider-switch start, and clear GGUF metadata when selection changes or becomes absent rather than retaining another model's facts. **Trace:** [Audit FE-03](./localmotive-comprehensive-audit.md#fe-03).
-- [ ] **V06-FE-03.I4** — Apply a suggested port only when both profile identity and the originally requested port remain unchanged; never overwrite a later manual edit or newly selected profile. **Trace:** [Audit FE-03](./localmotive-comprehensive-audit.md#fe-03).
-- [ ] **V06-FE-03.I5** — Keep independent loading/error state for these resources and bind tuning readiness to the active provider's own credential and model result. **Trace:** [Audit FE-03](./localmotive-comprehensive-audit.md#fe-03).
+- [x] **V06-FE-03.I1** — Extend the existing request-sequence approach to cloud credential/model loads, connection probes, OAuth completion, key save/forget, GGUF reads, port suggestions and command preview. **Trace:** [Audit FE-03](./localmotive-comprehensive-audit.md#fe-03).
+- [x] **V06-FE-03.I2** — Capture the resource identity and form revision for each request and check them before committing success, failure or loading completion; obsolete responses must not replace current state. **Trace:** [Audit FE-03](./localmotive-comprehensive-audit.md#fe-03).
+- [x] **V06-FE-03.I3** — Clear provider-specific credential/model/probe presentation at provider-switch start, and clear GGUF metadata when selection changes or becomes absent rather than retaining another model's facts. **Trace:** [Audit FE-03](./localmotive-comprehensive-audit.md#fe-03).
+- [x] **V06-FE-03.I4** — Apply a suggested port only when both profile identity and the originally requested port remain unchanged; never overwrite a later manual edit or newly selected profile. **Trace:** [Audit FE-03](./localmotive-comprehensive-audit.md#fe-03).
+- [x] **V06-FE-03.I5** — Keep independent loading/error state for these resources and bind tuning readiness to the active provider's own credential and model result. **Trace:** [Audit FE-03](./localmotive-comprehensive-audit.md#fe-03).
 
 **Verification**
 
 - [ ] **V06-FE-03.V1** — Use deferred IPC-boundary promises to resolve provider A after B across credential/model/probe and credential-mutation operations; assert B's tab and actual readiness retain B's data. **Trace:** [Audit FE-03](./localmotive-comprehensive-audit.md#fe-03).
-- [ ] **V06-FE-03.V2** — Resolve model A metadata after selecting B or clearing selection; verify architecture and native-context choices are not overwritten or incorrectly clamped. **Trace:** [Audit FE-03](./localmotive-comprehensive-audit.md#fe-03).
+- [x] **V06-FE-03.V2** — Resolve model A metadata after selecting B or clearing selection; verify architecture and native-context choices are not overwritten or incorrectly clamped. **Trace:** [Audit FE-03](./localmotive-comprehensive-audit.md#fe-03).
 - [ ] **V06-FE-03.V3** — Return an old port suggestion after a manual edit and an old command after a newer preview; assert both are discarded through actual component callers. **Trace:** [Audit FE-03](./localmotive-comprehensive-audit.md#fe-03).
 
 **Complete when:** Out-of-order completion cannot replace the active provider, model metadata, chosen port or current command preview. Tests exercise production callers and not only the equality helper.
@@ -1220,18 +1220,18 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Preserve evidence history and active measurement controls across navigation**
 
-**Status:** Not started · **Priority:** High · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (commit `0045cb6`); packaged navigation/cancel/completion scenario open (V06-G-04) · **Priority:** High · **Owner:** sato942  
 **Audit trace:** [Audit FE-05](./localmotive-comprehensive-audit.md#fe-05)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx), [src/V03EvidencePanel.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/V03EvidencePanel.tsx)
 
 **Implementation**
 
-- [ ] **V06-FE-05.I1** — Move benchmark, quality, preflight, ranking, imported-evidence and active-operation records out of the conditionally mounted Benchmark view into persistent application-level state or a dedicated store. **Trace:** [Audit FE-05](./localmotive-comprehensive-audit.md#fe-05).
-- [ ] **V06-FE-05.I2** — Keep an application-wide run status and cancellation handle available while the user visits Control, Profile, Inventory or another screen; navigation must not orphan a dispatched measurement. **Trace:** [Audit FE-05](./localmotive-comprehensive-audit.md#fe-05).
-- [ ] **V06-FE-05.I3** — Retain historical evidence with immutable model/runtime/workload/run identities instead of clearing the entire history when a profile fingerprint changes. **Trace:** [Audit FE-05](./localmotive-comprehensive-audit.md#fe-05).
-- [ ] **V06-FE-05.I4** — Provide a saved-manifest recovery/loading route keyed by evidence identity and reconnect the view to completion received while it was unmounted. **Trace:** [Audit FE-05](./localmotive-comprehensive-audit.md#fe-05).
-- [ ] **V06-FE-05.I5** — Separate invalidation of the current preflight or editable preview from retention of completed runs, and reset any export approval when its reviewed export content changes. **Trace:** [Audit FE-05](./localmotive-comprehensive-audit.md#fe-05).
+- [x] **V06-FE-05.I1** — Move benchmark, quality, preflight, ranking, imported-evidence and active-operation records out of the conditionally mounted Benchmark view into persistent application-level state or a dedicated store. **Trace:** [Audit FE-05](./localmotive-comprehensive-audit.md#fe-05).
+- [x] **V06-FE-05.I2** — Keep an application-wide run status and cancellation handle available while the user visits Control, Profile, Inventory or another screen; navigation must not orphan a dispatched measurement. **Trace:** [Audit FE-05](./localmotive-comprehensive-audit.md#fe-05).
+- [x] **V06-FE-05.I3** — Retain historical evidence with immutable model/runtime/workload/run identities instead of clearing the entire history when a profile fingerprint changes. **Trace:** [Audit FE-05](./localmotive-comprehensive-audit.md#fe-05).
+- [x] **V06-FE-05.I4** — Provide a saved-manifest recovery/loading route keyed by evidence identity and reconnect the view to completion received while it was unmounted. **Trace:** [Audit FE-05](./localmotive-comprehensive-audit.md#fe-05).
+- [x] **V06-FE-05.I5** — Separate invalidation of the current preflight or editable preview from retention of completed runs, and reset any export approval when its reviewed export content changes. **Trace:** [Audit FE-05](./localmotive-comprehensive-audit.md#fe-05).
 
 **Verification**
 
@@ -1274,18 +1274,18 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Keep cancellation requested state separate from the running benchmark lifecycle**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (commit `6da40d8`); component acknowledgement scenarios open (V06-G-04) · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit FE-07](./localmotive-comprehensive-audit.md#fe-07)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src/V03EvidencePanel.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/V03EvidencePanel.tsx), [src-tauri/src/lib.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/lib.rs)
 
 **Implementation**
 
-- [ ] **V06-FE-07.I1** — Represent benchmark lifecycle and cancellation-request progress separately instead of calling the generic busy-state wrapper with a replacement cancel operation name. **Trace:** [Audit FE-07](./localmotive-comprehensive-audit.md#fe-07).
-- [ ] **V06-FE-07.I2** — Retain running or cancelling status until the original benchmark promise reaches its terminal outcome, rather than clearing active ownership when the cancel command acknowledges receipt. **Trace:** [Audit FE-07](./localmotive-comprehensive-audit.md#fe-07).
-- [ ] **V06-FE-07.I3** — Replace null-as-failure action results with an explicit tagged success/error result so a successful Rust unit response can produce truthful cancellation acknowledgement. **Trace:** [Audit FE-07](./localmotive-comprehensive-audit.md#fe-07).
-- [ ] **V06-FE-07.I4** — Prevent conflicting evidence actions from becoming enabled while the original run remains active, and give Add anchor the same compatible-operation guard used by other evidence actions. **Trace:** [Audit FE-07](./localmotive-comprehensive-audit.md#fe-07).
-- [ ] **V06-FE-07.I5** — Handle failed or unavailable cancellation by retaining the run record and showing actionable feedback rather than implying termination or losing the remaining cancel/status affordance. **Trace:** [Audit FE-07](./localmotive-comprehensive-audit.md#fe-07).
+- [x] **V06-FE-07.I1** — Represent benchmark lifecycle and cancellation-request progress separately instead of calling the generic busy-state wrapper with a replacement cancel operation name. **Trace:** [Audit FE-07](./localmotive-comprehensive-audit.md#fe-07).
+- [x] **V06-FE-07.I2** — Retain running or cancelling status until the original benchmark promise reaches its terminal outcome, rather than clearing active ownership when the cancel command acknowledges receipt. **Trace:** [Audit FE-07](./localmotive-comprehensive-audit.md#fe-07).
+- [x] **V06-FE-07.I3** — Replace null-as-failure action results with an explicit tagged success/error result so a successful Rust unit response can produce truthful cancellation acknowledgement. **Trace:** [Audit FE-07](./localmotive-comprehensive-audit.md#fe-07).
+- [x] **V06-FE-07.I4** — Prevent conflicting evidence actions from becoming enabled while the original run remains active, and give Add anchor the same compatible-operation guard used by other evidence actions. **Trace:** [Audit FE-07](./localmotive-comprehensive-audit.md#fe-07).
+- [x] **V06-FE-07.I5** — Handle failed or unavailable cancellation by retaining the run record and showing actionable feedback rather than implying termination or losing the remaining cancel/status affordance. **Trace:** [Audit FE-07](./localmotive-comprehensive-audit.md#fe-07).
 
 **Verification**
 
@@ -1490,23 +1490,23 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Coordinate UI operation state and separate running-server evidence from editable drafts**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented; unit-verified (commit `6da40d8`); packaged overlap/exit scenarios open (V06-G-04) · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx), [src/V03EvidencePanel.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/V03EvidencePanel.tsx)
 
 **Implementation**
 
-- [ ] **V06-FE-16.I1** — Replace the shared busy string and disconnected operation flags with explicit UI operation records and compatibility rules so one completion cannot clear another active operation. **Trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16).
-- [ ] **V06-FE-16.I2** — Coordinate legacy and v2 measurement controls, profile Start and other conflicting actions with the real active lifecycle, while preserving independent nonconflicting work where supported. **Trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16).
-- [ ] **V06-FE-16.I3** — Make server-status retrieval single-flight or event-driven, reject obsolete poll results after start/stop transitions, and avoid expected failing native polling in browser preview. **Trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16).
-- [ ] **V06-FE-16.I4** — Render running strategy/identity from the server snapshot rather than the current editable profile, and label legacy benchmark results with their actual model, runtime, workload and observation time. **Trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16).
-- [ ] **V06-FE-16.I5** — Preserve the last bounded server log and exit/failure evidence after a process stops; provide explicit semantics for legacy vs v2 measurement rather than unrelated results on one screen. **Trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16).
+- [x] **V06-FE-16.I1** — Replace the shared busy string and disconnected operation flags with explicit UI operation records and compatibility rules so one completion cannot clear another active operation. **Trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16).
+- [x] **V06-FE-16.I2** — Coordinate legacy and v2 measurement controls, profile Start and other conflicting actions with the real active lifecycle, while preserving independent nonconflicting work where supported. **Trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16).
+- [x] **V06-FE-16.I3** — Make server-status retrieval single-flight or event-driven, reject obsolete poll results after start/stop transitions, and avoid expected failing native polling in browser preview. **Trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16).
+- [x] **V06-FE-16.I4** — Render running strategy/identity from the server snapshot rather than the current editable profile, and label legacy benchmark results with their actual model, runtime, workload and observation time. **Trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16).
+- [x] **V06-FE-16.I5** — Preserve the last bounded server log and exit/failure evidence after a process stops; provide explicit semantics for legacy vs v2 measurement rather than unrelated results on one screen. **Trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16).
 
 **Verification**
 
 - [ ] **V06-FE-16.V1** — Complete overlapping scan/cloud/start requests in different orders and verify active state persists; exercise legacy/v2 measurement and Start guards through actual UI interactions. **Trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16).
-- [ ] **V06-FE-16.V2** — Resolve a delayed status poll after stop/start and assert it cannot replace the newer server snapshot; verify polling remains single-flight under slow native responses. **Trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16).
+- [x] **V06-FE-16.V2** — Resolve a delayed status poll after stop/start and assert it cannot replace the newer server snapshot; verify polling remains single-flight under slow native responses. **Trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16).
 - [ ] **V06-FE-16.V3** — Edit a draft while the server runs, then simulate unexpected exit; assert running identity was unchanged by edits and final logs/failure evidence remain visible. **Trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16).
 
 **Complete when:** Each UI action reflects its own real lifecycle and conflicting controls cannot be reenabled by unrelated completion. Displayed running-server and benchmark identity is independent of drafts, with diagnostics retained after exit.
@@ -3021,6 +3021,55 @@ This document was mechanically checked for complete mapping of the 72 audit IDs 
 ## Verification ledger (v0.6 implementation)
 
 Closure records implement [V06-G-02](#v06-g-02). One record per finding package; each record names the pre-fix reproduction, the fix commit, the post-fix command, and the residual limits. Checkbox states in the finding packages are updated together with these records.
+
+### V06-MT-05 — single managed-inference owner (commit `bb9a5ab`)
+
+- Status: Implemented; unit-verified; packaged flows open (V06-G-04/G-05).
+- Regression before fix (mutation proof): mutation U removed the benchmark's identity-loss finalize check; the entry-point source guard then FAILED. Mutation V made reservation Drop unconditional; `mt05_a_stale_reservation_cannot_release_or_finalize_a_replacement` then FAILED.
+- Verification after fix: `cargo test mt05` — one owner at a time across ordinary startup, warm/cold benchmarks, tuning, and quality (concurrent reservation fails with the owner named); generations advance per acquisition; a stale reservation neither looks current nor releases a replacement; Stop is refused while a foreign owner holds the machine; a source guard proves every launching command reserves and both benchmark paths discard replaced-identity results.
+- Limits: MT-05.V3 (packaged cancellation/restart with recorded generations) is V06-G-04/G-05 evidence. Long-I/O-outside-the-server-mutex (I4) held for benchmark/quality snapshots before this change and is preserved.
+
+### V06-FE-01 — coordinated selection/runtime commit (commit `7d4a514`)
+
+- Status: Implemented; unit-verified; packaged scenario open (V06-G-04).
+- Regression before fix (mutation proof): mutation AG restored the silent `?? models[0]` fallback; mutation AI restored the runtime pre-commit before inspection; both failed the FE-01 release gate.
+- Verification after fix: `npm test` — `selectionAfterRescan` keeps a surviving selection, replaces a missing one, and returns null for empty inventories and failed scans; `displayedSelection` is an explicit empty state for a missing selection. Release gates pin: no `?? models[0]`, the rescan call, `clearCommittedSelection` on failure/empty, the single `commitRuntime` transition, and the absence of the pre-commit spread.
+- Limits: FE-01.V3 (packaged select/rescan/inspect/save/start capture) is V06-G-04 evidence.
+
+### V06-FE-02 — tuning run identity and origin-bound adoption (commit `7d4a514`)
+
+- Status: Implemented; unit-verified; packaged navigation scenario open (V06-G-04).
+- Regression before fix (mutation proof): mutation AH made adoption write the selected model's key; the FE-02 release gate failed.
+- Verification after fix: `tuningRunSummary` unit-tested; release gates pin the dispatch record (model id/name, provider, advisor, context), the request built from it, `setTuneReportOrigin(run)` at completion, the origin-keyed persistence, and the `selectedId === origin.modelId` adoption split. The result panel labels running/stored work from `(tuning ? tuneRun : tuneReportOrigin)`.
+- Limits: FE-02.V2/V3 (packaged late-event and runtime-activation scenarios) are V06-G-04 evidence; late progress between runs is bounded because a new run resets the live lists at dispatch and the backend serializes runs (MT-05).
+
+### V06-FE-03 — stale-response guards (commit `411c32c`)
+
+- Status: Implemented; unit-verified; deferred-promise component scenarios open (V06-G-04).
+- Regression before fix (mutation proof): mutation W removed the port precondition; `applySuggestedPort` unit tests failed. Mutation X removed GGUF clear-on-absent; the FE-03 gate failed.
+- Verification after fix: `npm test` — `responseIsCurrent`/`profileIdentity`/`applySuggestedPort` cover identity+sequence gating with manual-edit and new-selection preservation and same-reference no-ops; `App.tsx` routes cloud credential/model/probe/OAuth/key actions through `(sequence, providerId)` checks, clears provider presentation at switch start, guards GGUF by selection sequence with clear-on-absent, and discards superseded previews with profile-load invalidation. Release gates pin the production callers.
+- Limits: FE-03.V1/V3 (deferred promise ordering across component callers) are V06-G-04 scenarios; the unit level proves the commit predicates, not React ordering.
+
+### V06-FE-05 — evidence survives navigation (commit `0045cb6`)
+
+- Status: Implemented; unit-verified; packaged navigation scenarios open (V06-G-04).
+- Regression before fix (mutation proof): mutation Y re-gated the panel on the benchmark view; mutation Z cleared history on profile changes; both failed the FE-05 gate.
+- Verification after fix: the evidence panel is always mounted (hidden by style), publishes the active run to the app-level status band with the same cancel handle, the profile/model reset effect retains completed runs while invalidating editable evidence, and export approval resets when the reviewed payload changes. Release gates pin each behavior; `evidenceRunLabel` is unit-tested.
+- Limits: FE-05 V1-V3 (navigate-away/back, completion-while-away, A/B distinct provenance) execute in the packaged app under V06-G-04.
+
+### V06-FE-07 — cancellation state separation (commit `6da40d8`)
+
+- Status: Implemented; unit-verified; component acknowledgement scenarios open (V06-G-04).
+- Regression before fix (mutation proof): mutation AA routed cancel back through the generic busy wrapper; the FE-07 gate failed.
+- Verification after fix: `cancelPending` is distinct from the run's `busy`; the void acknowledgement yields a truthful message; failures keep the record and affordance; the cancel button disables on `busy !== "benchmark" || cancelPending`; Add anchor shares the `busy !== null` guard. Release gates pin all of it.
+- Limits: FE-07 V1-V3 (in-flight acknowledgement timing through real components) are V06-G-04 scenarios.
+
+### V06-FE-16 — operation coordination and snapshot identity (commit `6da40d8`)
+
+- Status: Implemented; unit-verified; packaged overlap/exit scenarios open (V06-G-04).
+- Regression before fix (mutation proof): mutation AB removed the obsolete-poll filter; mutation AC rendered the draft strategy; both failed the FE-16 gate.
+- Verification after fix: `cargo test` — ServerStatus carries `specType`/`companionLinked` from the stored profile (status_from, all three branches + Default). Release gates pin single-flight polling, the pre-transition sequence filter, start/stop bumps, the snapshot strategy render, and the evidence-run/tuning guards on legacy benchmark and both Start buttons.
+- Limits: FE-16.V1/V3 (overlapping native requests, draft-during-run exit) are V06-G-04 scenarios; `busy` remains a single App-level string for non-evidence actions (each action owns its set/clear scope), which the packaged overlap scenario will confirm.
 
 ### V06-MT-01 — b10816 cache accounting (commit `9d4c36c`)
 

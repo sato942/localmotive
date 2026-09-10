@@ -901,7 +901,6 @@ describe("FE-03 stale response guards", () => {
 });
 
 describe("FE-01 and FE-02 selection and run identity", () => {
-  type MinimalModel = { id: string; name: string };
   const modelOf = (id: string): never => ({ id, name: id }) as never;
 
   it("keeps a surviving selection, replaces a missing one, clears on failure", () => {
