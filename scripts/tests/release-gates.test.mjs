@@ -1098,6 +1098,40 @@ test("override saves reject mixed-origin collisions inside an immediate transact
   assert.match(mirror, /transaction_with_behavior\(rusqlite::TransactionBehavior::Immediate\)/);
 });
 
+test("FE-01 selection and runtime commit as coordinated transitions", async () => {
+  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  // No silent fallback to another model, rescan preserves the committed
+  // selection (or loads the replacement), failures clear together, and one
+  // committed-runtime transition keeps profile.runtime in sync only after a
+  // successful inspection (audit FE-01).
+  assert.doesNotMatch(app, /\?\? models\[0\]/);
+  assert.match(app, /selectionAfterRescan\(result, selectedId\)/);
+  assert.match(app, /clearCommittedSelection\(\)/);
+  assert.match(
+    app,
+    /function commitRuntime\(path: string, caps: RuntimeCapabilities, identity: RuntimeIdentity\)/,
+  );
+  assert.doesNotMatch(app, /if \(profile\) setProfile\(\{ \.\.\.profile, runtime: path \}\);/);
+  assert.match(app, /commitRuntime\(path, caps, identity\);/);
+});
+
+test("FE-02 tuning adoption binds to the originating run", async () => {
+  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  // The dispatch record captures provider/advisor/context; the report keeps
+  // its origin; adoption writes the origin's profile key and only updates
+  // the editable profile when the origin is the selected model (audit
+  // FE-02).
+  assert.match(app, /const run = \{\n      modelId: selected\.id,/);
+  assert.match(app, /provider: run\.provider,/);
+  assert.match(app, /setTuneReportOrigin\(run\);/);
+  const adopt = app
+    .split("function adoptTunedProfile()")[1]
+    .split("function loadProfile(")[0];
+  assert.match(adopt, /localStorage\.setItem\(`localmotive:profile:\$\{origin\.modelId\}`/);
+  assert.match(adopt, /if \(selectedId === origin\.modelId\)/);
+  assert.doesNotMatch(adopt, /selected\.id/);
+});
+
 test("FE-07 cancellation state is separate from the run lifecycle", async () => {
   const panel = await readFile(join(process.cwd(), "src", "V03EvidencePanel.tsx"), "utf8");
   // Cancellation progress is its own state and never routed through the

@@ -15,6 +15,9 @@ import {
   hardwareFitBudget,
   keepLatestRequest,
   evidenceRunLabel,
+  selectionAfterRescan,
+  displayedSelection,
+  tuningRunSummary,
   applySuggestedPort,
   profileIdentity,
   responseIsCurrent,
@@ -894,5 +897,35 @@ describe("FE-03 stale response guards", () => {
     expect(profileIdentity(base)).not.toBe(
       profileIdentity(profile({ runtime: "C:/runtime/other.exe" })),
     );
+  });
+});
+
+describe("FE-01 and FE-02 selection and run identity", () => {
+  type MinimalModel = { id: string; name: string };
+  const modelOf = (id: string): never => ({ id, name: id }) as never;
+
+  it("keeps a surviving selection, replaces a missing one, clears on failure", () => {
+    const inventory = [modelOf("a"), modelOf("b")];
+    // Same model still present: the selection is preserved, never reset to
+    // the first entry (audit FE-01).
+    expect(selectionAfterRescan(inventory, "b")).toBe("b");
+    // Missing model: the replacement is the first remaining entry.
+    expect(selectionAfterRescan(inventory, "gone")).toBe("a");
+    // Empty inventory: explicit null clears selection and profile together.
+    expect(selectionAfterRescan([], "a")).toBeNull();
+    // Failed scan: null models also clears together.
+    expect(selectionAfterRescan(null, "a")).toBeNull();
+  });
+
+  it("never silently substitutes another model for a missing selection", () => {
+    const inventory = [modelOf("a")];
+    expect(displayedSelection(inventory as never, "a")).toBe(inventory[0]);
+    expect(displayedSelection(inventory as never, "missing")).toBeUndefined();
+  });
+
+  it("labels a tuning run or report from its immutable record", () => {
+    expect(
+      tuningRunSummary({ modelName: "Llama 3", provider: "openrouter", advisor: "claude", context: 8192 }),
+    ).toBe("Llama 3 · openrouter · claude · 8,192 ctx");
   });
 });

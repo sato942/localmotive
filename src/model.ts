@@ -1518,6 +1518,28 @@ export function keepLatestRequest(sequence: number, current: number): boolean {
 }
 
 /** Stable identity of a launch profile for deferred-response checks (FE-03). */
+/** The selection a rescan keeps: the same model when it still exists,
+ * otherwise the first remaining entry. `null` models means the scan failed
+ * and the selection/profile must clear together (audit FE-01). */
+export function selectionAfterRescan(
+  models: LogicalModel[] | null,
+  previousId: string,
+): string | null {
+  if (models === null) return null;
+  if (models.some((model) => model.id === previousId)) return previousId;
+  return models[0]?.id ?? null;
+}
+
+/** The model whose profile is on the profile screen: the committed selection
+ * only. A missing selection is an explicit empty state, never a silent
+ * fallback to another model (audit FE-01). */
+export function displayedSelection(
+  models: LogicalModel[],
+  selectedId: string,
+): LogicalModel | undefined {
+  return models.find((model) => model.id === selectedId);
+}
+
 export function profileIdentity(profile: Pick<LaunchProfile, "name" | "model" | "runtime">): string {
   return `${profile.name}\u0000${profile.model}\u0000${profile.runtime}`;
 }
@@ -1538,6 +1560,17 @@ export function responseIsCurrent(
  * suggestion was requested for and its port is unchanged: a later manual edit
  * or a newly selected profile is never overwritten (audit FE-03). */
 /** App-wide label for the active evidence run shown outside Benchmark (FE-05). */
+/** FE-02: one-line provenance of a tuning run or report, from its immutable
+ * record rather than the editable selection. */
+export function tuningRunSummary(run: {
+  modelName: string;
+  provider: string;
+  advisor: string;
+  context: number;
+}): string {
+  return `${run.modelName} · ${run.provider} · ${run.advisor} · ${run.context.toLocaleString()} ctx`;
+}
+
 export function evidenceRunLabel(kind: "benchmark" | "quality"): string {
   return kind === "benchmark" ? "Benchmark running" : "Quality suite running";
 }

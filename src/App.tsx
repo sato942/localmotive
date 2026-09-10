@@ -50,6 +50,9 @@ import {
   hardwareFitBudget,
   keepLatestRequest,
   evidenceRunLabel,
+  tuningRunSummary,
+  selectionAfterRescan,
+  displayedSelection,
   profileIdentity,
   applySuggestedPort,
   responseIsCurrent,
@@ -236,9 +239,25 @@ function App() {
   const [tuneProgress, setTuneProgress] = useState<TuningProgress | null>(null);
   const [tuneLive, setTuneLive] = useState<TuningTrial[]>([]);
   const [tuneReport, setTuneReport] = useState<TuningReport | null>(null);
+  // FE-02: immutable identity of the run in flight and of the displayed
+  // report, so navigation or draft edits can never relabel work.
+  const [tuneRun, setTuneRun] = useState<{
+    modelId: string;
+    modelName: string;
+    provider: string;
+    advisor: string;
+    context: number;
+  } | null>(null);
+  const [tuneReportOrigin, setTuneReportOrigin] = useState<{
+    modelId: string;
+    modelName: string;
+    provider: string;
+    advisor: string;
+    context: number;
+  } | null>(null);
   const tuneLogRef = useRef<HTMLDivElement | null>(null);
 
-  const selected = models.find((model) => model.id === selectedId) ?? models[0];
+  const selected = displayedSelection(models, selectedId);
   const totalBytes = useMemo(() => models.reduce((sum, model) => sum + model.sizeBytes, 0), [models]);
   const invalidCount = models.filter((model) => !model.complete).length;
   const provider = providers.find((entry) => entry.id === providerId) ?? null;
@@ -253,17 +272,38 @@ function App() {
     setBusy("scan");
     try {
       const result = await invoke<LogicalModel[]>("scan_models", { root: modelRoot });
+      // FE-01: a rescan preserves the committed selection while the model
+      // still exists; otherwise the replacement is loaded together with its
+      // profile. An empty inventory clears both together.
+      const nextId = selectionAfterRescan(result, selectedId);
       setModels(result);
-      setSelectedId(result[0]?.id ?? "");
+      if (nextId === null) {
+        clearCommittedSelection();
+      } else if (nextId !== selectedId || selectedId === "") {
+        const replacement = result.find((model) => model.id === nextId);
+        if (replacement) loadProfile(replacement);
+      }
       localStorage.setItem("localmotive:model-root", modelRoot);
       setNotice(`${result.length} logical targets indexed from ${modelRoot}`);
     } catch (error) {
+      // A failed scan clears the selection and its editable profile as one
+      // transition, so a stale draft can never masquerade as current.
       setModels([]);
-      setSelectedId("");
+      clearCommittedSelection();
       setNotice(inTauri() ? String(error) : "Browser preview cannot scan local model files. Use the packaged app.");
     } finally {
       setBusy("");
     }
+  }
+
+  /// FE-01: clearing the committed selection also clears everything derived
+  /// from it (profile draft, GGUF metadata, pending previews).
+  function clearCommittedSelection() {
+    previewSeq.current += 1;
+    ggufSeq.current += 1;
+    setSelectedId("");
+    setProfile(null);
+    setGguf(null);
   }
 
   async function inspect(pathOverride?: string) {
@@ -281,10 +321,8 @@ function App() {
         invoke<ManagedRuntimeRecord[]>("list_managed_runtimes"),
       ]);
       if (!keepLatestRequest(sequence, runtimeInspectSeq.current)) return;
-      setRuntime(caps);
-      setRuntimeIdentity(identity);
+      commitRuntime(path, caps, identity);
       setManagedRuntimes(managed);
-      localStorage.setItem("localmotive:runtime", path);
       setNotice(`Runtime build ${caps.build} inspected; ${caps.specTypes.length} speculation modes exposed.`);
     } catch (error) {
       if (!keepLatestRequest(sequence, runtimeInspectSeq.current)) return;
@@ -297,10 +335,19 @@ function App() {
   }
 
   /** Point the app at a different executable and inspect it in one step. */
-  async function activateRuntime(path: string) {
+  /// FE-01: one committed-runtime transition. The editable profile follows
+  /// the runtime only after its inspection succeeded; a failed inspection
+  /// leaves the previous committed identity and the draft untouched, and the
+  /// typed path stays uncommitted input.
+  function commitRuntime(path: string, caps: RuntimeCapabilities, identity: RuntimeIdentity) {
     setRuntimePath(path);
+    setRuntime(caps);
+    setRuntimeIdentity(identity);
     localStorage.setItem("localmotive:runtime", path);
-    if (profile) setProfile({ ...profile, runtime: path });
+    setProfile((current) => (current ? { ...current, runtime: path } : current));
+  }
+
+  async function activateRuntime(path: string) {
     await inspect(path);
   }
 
@@ -801,18 +848,29 @@ function App() {
 
   async function startTuning() {
     if (!profile || !selected) return;
+    // FE-02: capture the originating identity at dispatch; nothing later can
+    // change whose run this is.
+    const run = {
+      modelId: selected.id,
+      modelName: selected.name,
+      provider: providerId,
+      advisor: cloudModel,
+      context: tuneContext,
+    };
     setTuning(true);
+    setTuneRun(run);
     setTuneReport(null);
+    setTuneReportOrigin(null);
     setTuneLive([]);
     setTuneProgress({ phase: "prepare", message: "Preparing…", trial: null });
-    setNotice(`AI tuning started: ${tuneTrials} trials at ${tuneContext.toLocaleString()} context via ${provider?.label ?? providerId}.`);
+    setNotice(`AI tuning started: ${tuneTrials} trials at ${run.context.toLocaleString()} context via ${providers.find((entry) => entry.id === run.provider)?.label ?? run.provider} (${run.advisor}).`);
     try {
       const report = await invoke<TuningReport>("start_tuning", {
         request: {
           profile,
-          provider: providerId,
-          model: cloudModel,
-          targetContext: tuneContext,
+          provider: run.provider,
+          model: run.advisor,
+          targetContext: run.context,
           maxTrials: tuneTrials,
           tokens: tuneTokens,
           repeats: tuneRepeats,
@@ -820,7 +878,8 @@ function App() {
         },
       });
       setTuneReport(report);
-      localStorage.setItem(`localmotive:tuning:${selected.id}`, JSON.stringify(report));
+      setTuneReportOrigin(run);
+      localStorage.setItem(`localmotive:tuning:${run.modelId}`, JSON.stringify(report));
       const gain = report.baselineTps && report.bestTps ? ((report.bestTps / report.baselineTps - 1) * 100).toFixed(1) : null;
       setNotice(gain ? `Tuning finished: best ${report.bestTps?.toFixed(2)} tok/s (${Number(gain) >= 0 ? "+" : ""}${gain}% vs baseline). ${report.stoppedReason}.` : `Tuning finished. ${report.stoppedReason}.`);
     } catch (error) {
@@ -828,6 +887,7 @@ function App() {
       setTuneProgress({ phase: "error", message: String(error), trial: null });
     } finally {
       setTuning(false);
+      setTuneRun(null);
     }
   }
 
@@ -841,12 +901,21 @@ function App() {
   }
 
   function adoptTunedProfile() {
-    if (!tuneReport || !selected) return;
-    const adopted = { ...tuneReport.bestProfile, name: `${selected.name} / AI-tuned @${tuneContext.toLocaleString()}` };
-    setProfile(adopted);
-    localStorage.setItem(`localmotive:profile:${selected.id}`, JSON.stringify(adopted));
-    setNotice(`Adopted the best configuration as the saved profile for ${selected.name}.`);
-    setView("profile");
+    // FE-02: adoption binds to the report's originating model, never to the
+    // currently selected one; the runtime in the adopted profile follows the
+    // established normalization policy implicitly (it is the measured
+    // runtime, applied through the same editable draft the loader uses).
+    if (!tuneReport || !tuneReportOrigin) return;
+    const origin = tuneReportOrigin;
+    const adopted = { ...tuneReport.bestProfile, name: `${origin.modelName} / AI-tuned @${origin.context.toLocaleString()}` };
+    localStorage.setItem(`localmotive:profile:${origin.modelId}`, JSON.stringify(adopted));
+    if (selectedId === origin.modelId) {
+      setProfile(adopted);
+      setNotice(`Adopted the best configuration as the saved profile for ${origin.modelName}.`);
+      setView("profile");
+    } else {
+      setNotice(`Saved the tuned profile for ${origin.modelName}; it applies when that model is selected.`);
+    }
   }
 
   function loadProfile(model: LogicalModel) {
@@ -2106,7 +2175,7 @@ function App() {
 
               <aside className="tune-results">
                 <article className="machine-panel">
-                  <div className="panel-title"><Trophy size={17} /><h2>Result</h2>{tuneReport && <span className="state-tag good">FINISHED</span>}{tuning && <span className="state-tag warning">RUNNING</span>}</div>
+                  <div className="panel-title"><Trophy size={17} /><h2>Result</h2>{tuneReport && <span className="state-tag good">FINISHED</span>}{tuning && <span className="state-tag warning">RUNNING</span>}{(tuning ? tuneRun : tuneReportOrigin) && <small>{tuningRunSummary((tuning ? tuneRun : tuneReportOrigin)!)}</small>}</div>
                   {bestLive ? (
                     <>
                       <div className="result-main"><strong>{bestLive.meanTps?.toFixed(2)}</strong><span>best generation tok/s{trialsForDisplay[0]?.meanTps && bestLive.index !== 0 ? ` · ${(bestLive.meanTps ?? 0) >= (trialsForDisplay[0].meanTps ?? 0) ? "+" : ""}${(((bestLive.meanTps ?? 0) / (trialsForDisplay[0].meanTps ?? 1) - 1) * 100).toFixed(1)}% vs baseline` : " · baseline holds"}</span></div>
