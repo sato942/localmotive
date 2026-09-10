@@ -2194,15 +2194,32 @@ pub fn managed_runtime_relative_path(tag: &str, backend: &str) -> PathBuf {
     PathBuf::from(sanitize_component(tag)).join(sanitize_component(backend))
 }
 
-pub fn managed_runtime_root() -> Result<PathBuf, String> {
-    managed_runtime_root_in(
-        &runtime_data_dir("Localmotive"),
-        &runtime_data_dir("GGUF Pilot"),
+/// Destination policy for NEW managed runtime installations.
+///
+/// New approved installs always publish into the primary `Localmotive` root,
+/// even when only the legacy `GGUF Pilot` directory exists. The audited defect
+/// (RT-01) published installs into the legacy root while launch validation
+/// rejected every legacy path, producing an unrecoverable install/launch loop.
+/// Discovery of existing installs is a separate policy: see
+/// `list_managed_runtimes_in` and `runtime_install_roots_in`.
+pub fn managed_runtime_install_root() -> PathBuf {
+    runtime_data_dir("Localmotive")
+}
+
+/// One install attempt resolves to (publish root, reuse search order).
+///
+/// The publish root never falls back to the legacy directory. The reuse order
+/// still sees a legacy install so an upgrade does not re-download content that
+/// passes compiled-content verification in place.
+fn runtime_install_roots_in(primary: &Path, legacy: &Path) -> (PathBuf, Vec<PathBuf>) {
+    (
+        primary.to_path_buf(),
+        vec![primary.to_path_buf(), legacy.to_path_buf()],
     )
 }
 
-/// Previous product directory. Upgrades fall back to it when the new
-/// directory has no records, so existing installs keep working.
+/// Previous product directory. Kept for explicit discovery of installs that
+/// older releases placed there; new installs no longer publish here.
 fn runtime_data_dir(product: &str) -> PathBuf {
     if let Some(base) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
         return base.join(product).join("runtimes");
@@ -2213,17 +2230,6 @@ fn runtime_data_dir(product: &str) -> PathBuf {
         }
     }
     PathBuf::from(product).join("runtimes")
-}
-
-fn managed_runtime_root_in(primary: &Path, legacy: &Path) -> Result<PathBuf, String> {
-    if list_managed_runtimes_in(primary).is_empty() && !list_managed_runtimes_in(legacy).is_empty()
-    {
-        return Ok(legacy.to_path_buf());
-    }
-    if primary.exists() || !legacy.exists() {
-        return Ok(primary.to_path_buf());
-    }
-    Ok(legacy.to_path_buf())
 }
 
 const RUNTIME_CATALOG_CACHE_SCHEMA: u32 = 2;
@@ -3561,13 +3567,41 @@ fn verify_installed_runtime(
     Ok(root.join(relative_runtime))
 }
 
-fn managed_runtime_verified_in(runtime_path: &Path, root: &Path) -> Result<bool, String> {
-    let lexical_managed = runtime_path.starts_with(root);
-    let canonical_managed = match (fs::canonicalize(runtime_path), fs::canonicalize(root)) {
-        (Ok(runtime), Ok(root)) => runtime.starts_with(root),
-        _ => false,
-    };
-    if !lexical_managed && !canonical_managed {
+/// Approval lookups used by managed content verification.
+///
+/// Production always uses [`ManagedApprovalSource::compiled`], which resolves
+/// installs and content manifests from the compiled-in approval tables. Tests
+/// inject inert fixtures because the compiled manifests pin real release bytes.
+#[derive(Clone, Copy)]
+struct ManagedApprovalSource<'a> {
+    resolve_install: &'a dyn Fn(&str) -> Result<ResolvedRuntimeInstall, String>,
+    content_manifest: &'a dyn Fn(&str) -> Result<&'static [u8], String>,
+}
+
+impl ManagedApprovalSource<'static> {
+    fn compiled() -> Self {
+        Self {
+            resolve_install: &|install_key| resolve_approved_install(install_key),
+            content_manifest: &|install_key| approved_content_manifest_bytes(install_key),
+        }
+    }
+}
+
+/// True when `candidate` is lexically or canonically inside `root`.
+fn path_is_under(candidate: &Path, root: &Path) -> bool {
+    candidate.starts_with(root)
+        || fs::canonicalize(candidate)
+            .ok()
+            .zip(fs::canonicalize(root).ok())
+            .is_some_and(|(candidate, root)| candidate.starts_with(root))
+}
+
+fn managed_runtime_verified_in_with(
+    runtime_path: &Path,
+    root: &Path,
+    approval: ManagedApprovalSource<'_>,
+) -> Result<bool, String> {
+    if !path_is_under(runtime_path, root) {
         return Ok(false);
     }
     if !safe_directory(root) {
@@ -3585,7 +3619,7 @@ fn managed_runtime_verified_in(runtime_path: &Path, root: &Path) -> Result<bool,
             }
             let record: RuntimeInstallRecord = serde_json::from_slice(&record_bytes)
                 .map_err(|error| format!("Managed runtime record is invalid: {error}"))?;
-            let install = resolve_approved_install(&record.install_key)?;
+            let install = (approval.resolve_install)(&record.install_key)?;
             let expected_directory = root.join(managed_runtime_relative_path(
                 &install.tag,
                 &install.install_key,
@@ -3593,7 +3627,7 @@ fn managed_runtime_verified_in(runtime_path: &Path, root: &Path) -> Result<bool,
             if directory != expected_directory {
                 return Err("Managed runtime directory does not match compiled approval".into());
             }
-            let content = approved_content_manifest_bytes(&install.install_key)?;
+            let content = (approval.content_manifest)(&install.install_key)?;
             let verified = verify_installed_runtime(
                 directory,
                 &install,
@@ -3616,28 +3650,99 @@ fn managed_runtime_verified_in(runtime_path: &Path, root: &Path) -> Result<bool,
     Err("Managed runtime has no trusted installation record".into())
 }
 
+fn managed_runtime_verified_in(runtime_path: &Path, root: &Path) -> Result<bool, String> {
+    managed_runtime_verified_in_with(runtime_path, root, ManagedApprovalSource::compiled())
+}
+
 pub fn managed_runtime_verified(runtime_path: &Path) -> Result<bool, String> {
     managed_runtime_verified_in(runtime_path, &runtime_data_dir("Localmotive"))
 }
 
-pub fn verify_managed_runtime_for_launch(runtime_path: &Path) -> Result<(), String> {
-    let primary = runtime_data_dir("Localmotive");
-    if managed_runtime_verified_in(runtime_path, &primary)? {
+fn verify_managed_runtime_for_launch_with(
+    runtime_path: &Path,
+    primary: &Path,
+    legacy: &Path,
+    approval: ManagedApprovalSource<'_>,
+) -> Result<(), String> {
+    if managed_runtime_verified_in_with(runtime_path, primary, approval)? {
         return Ok(());
     }
-    let legacy = runtime_data_dir("GGUF Pilot");
-    if runtime_path.starts_with(&legacy)
-        || fs::canonicalize(runtime_path)
-            .ok()
-            .zip(fs::canonicalize(&legacy).ok())
-            .is_some_and(|(runtime, root)| runtime.starts_with(root))
-    {
+    if path_is_under(runtime_path, legacy) {
+        // A legacy location is accepted only when the content itself passes
+        // compiled-content verification. The audited defect (RT-01) rejected
+        // by location, which made an installation result returned by this same
+        // application categorically unusable. Every failure mode keeps the
+        // same repair instruction.
+        if managed_runtime_verified_in_with(runtime_path, legacy, approval) == Ok(true) {
+            return Ok(());
+        }
         return Err(
-            "Legacy managed runtimes lack compiled content approval. Install a current runtime."
+            "Legacy managed runtimes need compiled content approval. Install a current runtime to replace this one."
                 .into(),
         );
     }
     Ok(())
+}
+
+pub fn verify_managed_runtime_for_launch(runtime_path: &Path) -> Result<(), String> {
+    verify_managed_runtime_for_launch_with(
+        runtime_path,
+        &runtime_data_dir("Localmotive"),
+        &runtime_data_dir("GGUF Pilot"),
+        ManagedApprovalSource::compiled(),
+    )
+}
+
+/// Locate the verified installation directory for an approved install across
+/// candidate roots, in order, and return `(install directory, server path)`.
+///
+/// Reuse and managed health share this so an approved install stays usable
+/// wherever an older release published it, while unapproved content in the
+/// same location remains rejected.
+fn verified_install_paths(
+    install: &ResolvedRuntimeInstall,
+    roots: &[PathBuf],
+    approval: ManagedApprovalSource<'_>,
+) -> Result<(PathBuf, PathBuf), String> {
+    let content = (approval.content_manifest)(&install.install_key)?;
+    for root in roots {
+        let directory = root.join(managed_runtime_relative_path(
+            &install.tag,
+            &install.install_key,
+        ));
+        if !safe_directory(&directory) {
+            continue;
+        }
+        if let Ok(runtime) = verify_installed_runtime(
+            &directory,
+            install,
+            content,
+            &install.content_manifest_sha256,
+        ) {
+            return Ok((directory, runtime));
+        }
+    }
+    Err(format!(
+        "Managed runtime {} is not installed or fails content verification. Install it from the Runtime screen.",
+        install.install_key
+    ))
+}
+
+/// An existing verified installation of `install` that a new install request
+/// can reuse instead of downloading again.
+fn existing_verified_install(
+    install: &ResolvedRuntimeInstall,
+    roots: &[PathBuf],
+    approval: ManagedApprovalSource<'_>,
+) -> Option<InstalledRuntime> {
+    let (directory, runtime) = verified_install_paths(install, roots, approval).ok()?;
+    Some(InstalledRuntime {
+        tag: install.tag.clone(),
+        backend: install.backend.clone(),
+        runtime_path: runtime.to_string_lossy().to_string(),
+        install_root: directory.to_string_lossy().to_string(),
+        reused: true,
+    })
 }
 
 fn create_runtime_staging(root: &Path, tag: &str, install_key: &str) -> Result<PathBuf, String> {
@@ -3763,7 +3868,18 @@ pub fn install_runtime(
     let tag = &option.tag;
     let trusted_content = approved_content_manifest_bytes(&option.install_key)?;
     validate_content_manifest_authority(&option, trusted_content)?;
-    let root = managed_runtime_root()?;
+    // New installs publish only into the primary root; reuse may still return a
+    // compiled-content-verified install that an older release left in the
+    // legacy directory (audit RT-01).
+    let (root, reuse_roots) = runtime_install_roots_in(
+        &managed_runtime_install_root(),
+        &runtime_data_dir("GGUF Pilot"),
+    );
+    if let Some(reused) =
+        existing_verified_install(&option, &reuse_roots, ManagedApprovalSource::compiled())
+    {
+        return Ok(reused);
+    }
     fs::create_dir_all(&root).map_err(|error| error.to_string())?;
     validate_no_reparse_ancestors("Managed runtime root", &root)?;
     let root_metadata = fs::symlink_metadata(&root)
@@ -3776,22 +3892,6 @@ pub fn install_runtime(
     }
     let final_dir = root.join(managed_runtime_relative_path(tag, &option.install_key));
     validate_no_reparse_ancestors("Managed runtime destination", &final_dir)?;
-    if final_dir.exists() {
-        if let Ok(runtime) = verify_installed_runtime(
-            &final_dir,
-            &option,
-            trusted_content,
-            &option.content_manifest_sha256,
-        ) {
-            return Ok(InstalledRuntime {
-                tag: tag.clone(),
-                backend: option.backend.clone(),
-                runtime_path: runtime.to_string_lossy().to_string(),
-                install_root: final_dir.to_string_lossy().to_string(),
-                reused: true,
-            });
-        }
-    }
 
     let staging = create_runtime_staging(&root, tag, &option.install_key)?;
     let install = (|| {
@@ -3954,18 +4054,13 @@ pub(crate) fn managed_health_context(
             .find(|adapter| &adapter.adapter_id == adapter_id)
             .map(|adapter| adapter.name.clone())
     });
-    let root = managed_runtime_root()?;
-    let install_root = root.join(managed_runtime_relative_path(
-        &install.tag,
-        &install.install_key,
-    ));
-    let content = approved_content_manifest_bytes(&install.install_key)?;
-    validate_content_manifest_authority(&install, content)?;
-    let server_path = verify_installed_runtime(
-        &install_root,
+    let (install_root, server_path) = verified_install_paths(
         &install,
-        content,
-        &install.content_manifest_sha256,
+        &[
+            managed_runtime_install_root(),
+            runtime_data_dir("GGUF Pilot"),
+        ],
+        ManagedApprovalSource::compiled(),
     )
     .map_err(|error| format!("Managed runtime health trust verification failed: {error}"))?;
     let model_path = pinned_health_model_path()?;
@@ -6114,40 +6209,220 @@ Connection: close
         assert_eq!(cuda_major_from_smi("CUDA Version: 12.4"), Some(12));
     }
 
+    // Inert compiled-approval fixture for RT-01 policy tests. The compiled
+    // manifests pin real release bytes, so the approval lookups are injected.
+    fn rt01_fixture_install() -> ResolvedRuntimeInstall {
+        let content = rt01_fixture_content();
+        let digest = hex::encode(Sha256::digest(content.as_bytes()));
+        ResolvedRuntimeInstall {
+            tag: "b77777".into(),
+            release_commit: "rt01fixture".into(),
+            architecture: "x64".into(),
+            backend: "rt-fixture".into(),
+            install_key: "rt-fixture".into(),
+            asset: GithubAsset {
+                name: "rt-fixture.zip".into(),
+                browser_download_url: "https://example.invalid/rt-fixture.zip".into(),
+                size: 1,
+                digest: Some(format!("sha256:{}", "a".repeat(64))),
+            },
+            companion_asset: None,
+            content_manifest_sha256: digest,
+        }
+    }
+
+    fn rt01_fixture_content() -> String {
+        format!(
+            concat!(
+                "{{\"schemaVersion\":1,\"releaseTag\":\"b77777\",",
+                "\"releaseCommit\":\"rt01fixture\",",
+                "\"installKey\":\"rt-fixture\",\"backend\":\"rt-fixture\",\"artifacts\":[",
+                "{{\"name\":\"rt-fixture.zip\",\"bytes\":1,\"sha256\":\"{}\"}}],\"files\":[",
+                "{{\"path\":\"bin/ggml-cpu.dll\",\"bytes\":15,\"sha256\":\"{}\"}},",
+                "{{\"path\":\"bin/llama-server.exe\",\"bytes\":18,\"sha256\":\"{}\"}}]}}"
+            ),
+            "a".repeat(64),
+            hex::encode(Sha256::digest(b"trusted backend")),
+            hex::encode(Sha256::digest(b"trusted executable"))
+        )
+    }
+
+    fn rt01_fixture_content_bytes() -> Result<&'static [u8], String> {
+        Ok(Box::leak(
+            rt01_fixture_content().into_bytes().into_boxed_slice(),
+        ))
+    }
+
+    fn rt01_fixture_source() -> ManagedApprovalSource<'static> {
+        ManagedApprovalSource {
+            resolve_install: &|install_key: &str| {
+                if install_key == "rt-fixture" {
+                    Ok(rt01_fixture_install())
+                } else {
+                    Err(format!("fixture install key {install_key} is not approved"))
+                }
+            },
+            content_manifest: &|install_key: &str| {
+                if install_key == "rt-fixture" {
+                    rt01_fixture_content_bytes()
+                } else {
+                    Err(format!(
+                        "fixture content manifest {install_key} is unavailable"
+                    ))
+                }
+            },
+        }
+    }
+
+    fn rt01_write_fixture_install(directory: &Path) {
+        let bin = directory.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(bin.join("llama-server.exe"), b"trusted executable").unwrap();
+        fs::write(bin.join("ggml-cpu.dll"), b"trusted backend").unwrap();
+        let install = rt01_fixture_install();
+        write_runtime_install_record(
+            directory,
+            &install,
+            Path::new("bin/llama-server.exe"),
+            &install.content_manifest_sha256,
+        )
+        .unwrap();
+    }
+
     #[test]
-    fn managed_runtime_root_prefers_the_new_directory_but_keeps_legacy_installs() {
+    fn rt01_new_installs_publish_into_the_primary_root_even_with_only_a_legacy_directory() {
         let base = std::env::temp_dir().join(format!(
-            "localmotive-root-select-{}-{}",
+            "localmotive-rt01-root-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
+            observed_at_ms()
         ));
         let primary = base.join("Localmotive").join("runtimes");
         let legacy = base.join("GGUF Pilot").join("runtimes");
-        // No records anywhere: callers install into the new directory.
-        assert_eq!(managed_runtime_root_in(&primary, &legacy).unwrap(), primary);
-        // Legacy-only installs keep working until a new runtime arrives.
-        let legacy_install = legacy.join("b10000").join("cpu");
-        std::fs::create_dir_all(&legacy_install).unwrap();
-        std::fs::write(
-            legacy_install.join("runtime.json"),
-            r#"{"tag":"b10000","backend":"cpu","runtime":"llama-server.exe"}"#,
+        // The audited upgrade layout: an empty legacy directory exists and the
+        // primary directory has never been created.
+        std::fs::create_dir_all(&legacy).unwrap();
+        assert!(!primary.exists());
+
+        let (publish_root, reuse_roots) = runtime_install_roots_in(&primary, &legacy);
+
+        // Audited defect RT-01: the old selector returned `legacy` here and the
+        // installation was then rejected by the launch policy. The publish root
+        // must never fall back to the directory the launcher used to reject.
+        assert_eq!(publish_root, primary);
+        assert_eq!(reuse_roots, vec![primary.clone(), legacy.clone()]);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn rt01_installation_result_passes_the_launch_trust_gate_and_reuse_in_both_roots() {
+        let base = std::env::temp_dir().join(format!(
+            "localmotive-rt01-compose-{}-{}",
+            std::process::id(),
+            observed_at_ms()
+        ));
+        let primary = base.join("Localmotive").join("runtimes");
+        let legacy = base.join("GGUF Pilot").join("runtimes");
+        std::fs::create_dir_all(&legacy).unwrap();
+        let (publish_root, reuse_roots) = runtime_install_roots_in(&primary, &legacy);
+        let (install, content) = (rt01_fixture_install(), rt01_fixture_content());
+        let source = rt01_fixture_source();
+
+        // The published installation follows the real post-extraction steps:
+        // write the install record, then verify the compiled inventory.
+        let final_dir = publish_root.join(managed_runtime_relative_path(
+            &install.tag,
+            &install.install_key,
+        ));
+        rt01_write_fixture_install(&final_dir);
+        let published = verify_installed_runtime(
+            &final_dir,
+            &install,
+            content.as_bytes(),
+            &install.content_manifest_sha256,
         )
         .unwrap();
-        std::fs::write(legacy_install.join("llama-server.exe"), b"x").unwrap();
-        assert_eq!(managed_runtime_root_in(&primary, &legacy).unwrap(), legacy);
-        // A new install wins once both directories hold records.
-        let primary_install = primary.join("b10000").join("cpu");
-        std::fs::create_dir_all(&primary_install).unwrap();
-        std::fs::write(
-            primary_install.join("runtime.json"),
-            r#"{"tag":"b10000","backend":"cpu","runtime":"llama-server.exe"}"#,
+
+        // The installation result must be accepted by the same gate the public
+        // inspect/launch commands apply.
+        verify_managed_runtime_for_launch_with(&published, &primary, &legacy, source).unwrap();
+
+        // Reuse returns the verified install without a new download.
+        let reused = existing_verified_install(&install, &reuse_roots, source).expect("reuse");
+        assert!(reused.reused);
+        assert_eq!(Path::new(&reused.runtime_path), published.as_path());
+
+        // A legacy copy that passes compiled-content verification is accepted by
+        // content instead of being rejected by location.
+        let legacy_dir = legacy.join(managed_runtime_relative_path(
+            &install.tag,
+            &install.install_key,
+        ));
+        rt01_write_fixture_install(&legacy_dir);
+        let legacy_runtime = verify_installed_runtime(
+            &legacy_dir,
+            &install,
+            content.as_bytes(),
+            &install.content_manifest_sha256,
         )
         .unwrap();
-        std::fs::write(primary_install.join("llama-server.exe"), b"x").unwrap();
-        assert_eq!(managed_runtime_root_in(&primary, &legacy).unwrap(), primary);
+        verify_managed_runtime_for_launch_with(&legacy_runtime, &primary, &legacy, source)
+            .expect("compiled-content approval is location independent");
+
+        // Tampered legacy content keeps the audited rejection and a repair path.
+        fs::write(
+            legacy_dir.join("bin").join("llama-server.exe"),
+            b"attacker executable",
+        )
+        .unwrap();
+        let rejected =
+            verify_managed_runtime_for_launch_with(&legacy_runtime, &primary, &legacy, source)
+                .unwrap_err();
+        assert!(rejected.contains("compiled content approval"), "{rejected}");
+        assert!(rejected.contains("Install a current runtime"), "{rejected}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn rt01_corrupt_legacy_records_do_not_reproduce_the_reinstall_loop() {
+        let base = std::env::temp_dir().join(format!(
+            "localmotive-rt01-repair-{}-{}",
+            std::process::id(),
+            observed_at_ms()
+        ));
+        let primary = base.join("Localmotive").join("runtimes");
+        let legacy = base.join("GGUF Pilot").join("runtimes");
+        let (publish_root, reuse_roots) = runtime_install_roots_in(&primary, &legacy);
+        let (install, _) = (rt01_fixture_install(), rt01_fixture_content());
+        let source = rt01_fixture_source();
+
+        // A legacy install left by an older release: the record exists but its
+        // content no longer verifies (unapproved old build).
+        let legacy_dir = legacy.join(managed_runtime_relative_path(
+            &install.tag,
+            &install.install_key,
+        ));
+        std::fs::create_dir_all(&legacy_dir).unwrap();
+        std::fs::write(legacy_dir.join("llama-server.exe"), b"old unapproved build").unwrap();
+        std::fs::write(
+            legacy_dir.join("runtime.json"),
+            r#"{"tag":"b77777","backend":"rt-fixture","runtime":"llama-server.exe"}"#,
+        )
+        .unwrap();
+        // A repair/reuse request ignores the corrupt legacy copy...
+        assert!(existing_verified_install(&install, &reuse_roots, source).is_none());
+        // ...and the replacement publishes into the primary root, which the
+        // launch policy accepts.
+        assert_eq!(publish_root, primary);
+
+        // A populated primary root is reused instead of reinstalled.
+        let primary_dir = primary.join(managed_runtime_relative_path(
+            &install.tag,
+            &install.install_key,
+        ));
+        rt01_write_fixture_install(&primary_dir);
+        let reused = existing_verified_install(&install, &reuse_roots, source).expect("reuse");
+        assert!(reused.reused);
+        assert!(Path::new(&reused.runtime_path).starts_with(&primary));
         let _ = std::fs::remove_dir_all(&base);
     }
 

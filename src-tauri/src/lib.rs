@@ -2186,7 +2186,7 @@ async fn load_runtime_setup(
     let (hardware, runtime_root, managed_runtimes) = tauri::async_runtime::spawn_blocking(|| {
         Ok::<_, String>((
             runtime::detect_hardware(),
-            runtime::managed_runtime_root()?
+            runtime::managed_runtime_install_root()
                 .to_string_lossy()
                 .into_owned(),
             runtime::list_managed_runtimes()?,
@@ -2278,7 +2278,7 @@ async fn fetch_runtime_catalog(
 
 #[tauri::command]
 fn managed_runtime_root() -> Result<String, String> {
-    Ok(runtime::managed_runtime_root()?
+    Ok(runtime::managed_runtime_install_root()
         .to_string_lossy()
         .to_string())
 }
@@ -3104,9 +3104,9 @@ fn about_info(app: tauri::AppHandle) -> AboutInfo {
         tauri_version: tauri::VERSION.to_string(),
         identifier: app.config().identifier.clone(),
         os: format!("{} {}", std::env::consts::OS, std::env::consts::ARCH),
-        runtime_root: runtime::managed_runtime_root()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default(),
+        runtime_root: runtime::managed_runtime_install_root()
+            .to_string_lossy()
+            .to_string(),
         log_dir: std::env::temp_dir()
             .join("localmotive")
             .to_string_lossy()
