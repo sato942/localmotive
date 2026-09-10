@@ -41,11 +41,13 @@ import {
   catalogRevision,
   conflictingCapacityMetrics,
   contextChoices,
+  DEFAULT_FIT_PER_MILLE,
   describeChanges,
   downloadKey,
   downloadPercent,
   downloadReadiness,
   etaLabel,
+  hardwareFitBudget,
   keepLatestRequest,
   managedHealthRequest,
   managedHealthOutcome,
@@ -86,7 +88,9 @@ import {
   type CatalogModel,
   type CatalogQuery,
   type CatalogSnapshot,
+  type CatalogFacets,
   type DownloadEvent,
+  type FitBudget,
   type TokenStatus,
 } from "./model";
 import { V03EvidencePanel } from "./V03EvidencePanel";
@@ -171,12 +175,23 @@ function App() {
   const [catalogRows, setCatalogRows] = useState<CatalogModel[]>([]);
   const [catalogTags, setCatalogTags] = useState<string[]>([]);
   const [catalogQuants, setCatalogQuants] = useState<string[]>([]);
+  const [catalogAuthors, setCatalogAuthors] = useState<string[]>([]);
+  const [catalogLicenses, setCatalogLicenses] = useState<string[]>([]);
+  const [catalogPipelines, setCatalogPipelines] = useState<string[]>([]);
+  const [catalogArchitectures, setCatalogArchitectures] = useState<string[]>([]);
   const [catalogSearch, setCatalogSearch] = useState("");
   const [catalogTag, setCatalogTag] = useState("");
   const [catalogQuant, setCatalogQuant] = useState("");
+  const [catalogAuthor, setCatalogAuthor] = useState("");
+  const [catalogLicense, setCatalogLicense] = useState("");
+  const [catalogPipeline, setCatalogPipeline] = useState("");
+  const [catalogArchitecture, setCatalogArchitecture] = useState("");
   const [catalogMaxGiB, setCatalogMaxGiB] = useState(0);
   const [catalogHideGated, setCatalogHideGated] = useState(false);
   const [catalogSort, setCatalogSort] = useState<CatalogQuery["sort"]>("downloads");
+  const [catalogFitEnabled, setCatalogFitEnabled] = useState(true);
+  const [catalogFitPerMille, setCatalogFitPerMille] = useState(DEFAULT_FIT_PER_MILLE);
+  const [catalogFitBudget, setCatalogFitBudget] = useState<FitBudget | null>(null);
   const [catalogBusy, setCatalogBusy] = useState(false);
   const [hfToken, setHfToken] = useState<TokenStatus>({ configured: false, masked: "" });
   const [hfTokenDraft, setHfTokenDraft] = useState("");
@@ -453,12 +468,21 @@ function App() {
       const [tags, quants] = await invoke<[string[], string[]]>("catalog_facets", {
         models: snapshot.catalog.models,
       });
+      const rich = await invoke<CatalogFacets>("catalog_rich_facets", {
+        models: snapshot.catalog.models,
+      }).catch(() => null);
       const token = await invoke<TokenStatus>("hf_token_status");
       if (!keepLatestRequest(sequence, catalogLoadSeq.current)) return;
       setCatalogSnapshot(snapshot);
       setCatalogRows(snapshot.catalog.models);
       setCatalogTags(tags);
       setCatalogQuants(quants);
+      if (rich) {
+        setCatalogAuthors(rich.authors);
+        setCatalogLicenses(rich.licenses);
+        setCatalogPipelines(rich.pipeline_tags);
+        setCatalogArchitectures(rich.architectures);
+      }
       setHfToken(token);
       setNotice(`${snapshot.catalog.models.length} curated Hugging Face models loaded from ${snapshot.origin}.`);
     } catch (error) {
@@ -829,14 +853,31 @@ function App() {
 
   useEffect(() => {
     if (!catalogSnapshot) return;
+    // Auto-fit budget follows detected hardware: dedicated VRAM wins, else
+    // shared, else system memory. Never sums budgets. Disabled by toggle.
+    const dedicated = (hardware?.adapters ?? []).map((adapter) => adapter.dedicatedBytes.value);
+    const shared = (hardware?.adapters ?? []).map((adapter) => adapter.sharedBytes.value);
+    const system = hardware?.systemMemory.availablePhysicalBytes.value
+      ?? hardware?.systemMemory.totalPhysicalBytes.value ?? null;
+    setCatalogFitBudget(hardwareFitBudget(dedicated, shared, system ?? 0));
+  }, [hardware, catalogSnapshot]);
+
+  useEffect(() => {
+    if (!catalogSnapshot) return;
     const sequence = ++catalogFilterSeq.current;
     const query: CatalogQuery = {
       text: catalogSearch,
       tag: catalogTag,
       quant: catalogQuant,
+      author: catalogAuthor,
+      license: catalogLicense,
+      pipeline_tag: catalogPipeline,
+      architecture: catalogArchitecture,
       maxBytes: catalogMaxGiB > 0 ? catalogMaxGiB * 1024 ** 3 : 0,
       hideGated: catalogHideGated,
       sort: catalogSort,
+      fit_per_mille: catalogFitEnabled ? catalogFitPerMille : 0,
+      budget_bytes: catalogFitEnabled ? (catalogFitBudget?.budgetBytes ?? 0) : 0,
     };
     invoke<CatalogModel[]>("filter_catalog", {
       models: catalogSnapshot.catalog.models,
@@ -848,7 +889,7 @@ function App() {
       .catch((error) => {
         if (keepLatestRequest(sequence, catalogFilterSeq.current)) setNotice(String(error));
       });
-  }, [catalogSnapshot, catalogSearch, catalogTag, catalogQuant, catalogMaxGiB, catalogHideGated, catalogSort]);
+  }, [catalogSnapshot, catalogSearch, catalogTag, catalogQuant, catalogAuthor, catalogLicense, catalogPipeline, catalogArchitecture, catalogMaxGiB, catalogHideGated, catalogSort, catalogFitEnabled, catalogFitPerMille, catalogFitBudget]);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -1173,9 +1214,21 @@ function App() {
               <label className="catalog-search">Search<input value={catalogSearch} onChange={(event) => setCatalogSearch(event.target.value)} placeholder="Family, publisher, tag, repository…" /></label>
               <label>Use<select value={catalogTag} onChange={(event) => setCatalogTag(event.target.value)}><option value="">Any use</option>{catalogTags.map((tag) => <option key={tag}>{tag}</option>)}</select></label>
               <label>Quant<select value={catalogQuant} onChange={(event) => setCatalogQuant(event.target.value)}><option value="">Any quant</option>{catalogQuants.map((quant) => <option key={quant}>{quant}</option>)}</select></label>
+              <label>Author<select value={catalogAuthor} onChange={(event) => setCatalogAuthor(event.target.value)}><option value="">Any author</option>{catalogAuthors.map((author) => <option key={author}>{author}</option>)}</select></label>
+              <label>Licence<select value={catalogLicense} onChange={(event) => setCatalogLicense(event.target.value)}><option value="">Any licence</option>{catalogLicenses.map((licence) => <option key={licence}>{licence}</option>)}</select></label>
+              <label>Pipeline<select value={catalogPipeline} onChange={(event) => setCatalogPipeline(event.target.value)}><option value="">Any pipeline</option>{catalogPipelines.map((pipeline) => <option key={pipeline}>{pipeline}</option>)}</select></label>
+              <label>Architecture<select value={catalogArchitecture} onChange={(event) => setCatalogArchitecture(event.target.value)}><option value="">Any architecture</option>{catalogArchitectures.map((architecture) => <option key={architecture}>{architecture}</option>)}</select></label>
               <label>Available under<select value={catalogMaxGiB} onChange={(event) => setCatalogMaxGiB(Number(event.target.value))}><option value={0}>Any size</option>{[2, 4, 8, 16, 32, 64].map((size) => <option key={size} value={size}>≤ {size} GiB</option>)}</select></label>
               <label>Order<select value={catalogSort} onChange={(event) => setCatalogSort(event.target.value as CatalogQuery["sort"])}><option value="downloads">Downloads</option><option value="likes">Likes</option><option value="name">Name</option><option value="size">Smallest file</option></select></label>
               <label className="toggle-line catalog-toggle"><input type="checkbox" checked={catalogHideGated} onChange={(event) => setCatalogHideGated(event.target.checked)} /> Hide gated</label>
+              <label className="toggle-line catalog-toggle"><input type="checkbox" checked={catalogFitEnabled} onChange={(event) => setCatalogFitEnabled(event.target.checked)} /> Hardware fit{
+                catalogFitBudget && catalogFitBudget.budgetBytes > 0
+                  ? ` · ≤ ${bytesLabel(Math.floor((catalogFitBudget.budgetBytes * catalogFitPerMille) / 1000))} on ${catalogFitBudget.source} budget`
+                  : " · budget unknown"
+              }</label>
+              {catalogFitEnabled && (
+                <label>Fit budget<select value={catalogFitPerMille} onChange={(event) => setCatalogFitPerMille(Number(event.target.value))}>{[250, 500, 750, 1000].map((perMille) => <option key={perMille} value={perMille}>{perMille / 10}% of budget</option>)}</select></label>
+              )}
             </div>
 
             <div className="catalog-layout">

@@ -230,6 +230,33 @@ test("Windows installers use the bootstrapper WebView2 mode until offline bundli
   assert.equal(config.bundle?.windows?.webviewInstallMode?.type, "downloadBootstrapper");
 });
 
+test("model catalog exposes rich filters with hardware auto-fit defaults", async () => {
+  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const model = await readFile(join(process.cwd(), "src", "model.ts"), "utf8");
+  const backend = await readFile(join(process.cwd(), "src-tauri", "src", "lib.rs"), "utf8");
+  // Rich adjustable filters come from the signed v2 artifact via backend
+  // facets. The UI must not hardcode the author list: adding an author is a
+  // catalog publish, not an app release.
+  assert.match(app, /catalog_rich_facets/);
+  assert.match(app, /Any author/);
+  assert.match(app, /Any licence/);
+  assert.match(app, /Any pipeline/);
+  assert.match(app, /Any architecture/);
+  assert.doesNotMatch(app, /lmstudio-community.*huihui-ai.*DavidAU/s);
+  // Hardware auto-fit is on by default, explains its budget source, and can
+  // be disabled or widened. Rust owns the rule; the UI only sends inputs.
+  assert.match(app, /catalogFitEnabled/);
+  assert.match(app, /Hardware fit/);
+  assert.match(app, /Fit budget/);
+  assert.match(app, /fit_per_mille/);
+  assert.match(app, /budget_bytes/);
+  assert.match(model, /hardwareFitBudget/);
+  assert.match(model, /modelHiddenByFitRule/);
+  assert.match(model, /DEFAULT_FIT_PER_MILLE/);
+  assert.match(backend, /catalog_rich_facets/);
+  assert.match(backend, /catalog_fit_budget/);
+});
+
 test("runtime catalog exposes an accessible refresh action in every terminal state", async () => {
   const source = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
   assert.match(source, /aria-label="Refresh approved runtime catalog"/);

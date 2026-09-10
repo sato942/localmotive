@@ -12,9 +12,11 @@ import {
   downloadPercent,
   downloadReadiness,
   errorText,
+  hardwareFitBudget,
   keepLatestRequest,
   managedHealthRequest,
   manualGpuOverride,
+  modelHiddenByFitRule,
   retainOrDisposeListener,
   etaLabel,
   normalizeProfile,
@@ -788,5 +790,34 @@ describe("catalog origin honesty", () => {
     for (const origin of ["network", "not-modified", "cache", "bundled"] as const) {
       expect(originLabel(origin).label.trim().length).toBeGreaterThan(3);
     }
+  });
+});
+
+describe("hardware auto-fit budget", () => {
+  it("prefers dedicated VRAM and never sums budgets", () => {
+    // Mirrors catalog::hardware_fit_budget. Rust owns truth; this pins the
+    // same answers on the frontend copy so the UI cannot drift.
+    expect(hardwareFitBudget([8_000_000_000], [32_000_000_000], 64_000_000_000)).toEqual({
+      budgetBytes: 8_000_000_000,
+      source: "dedicated",
+    });
+    expect(hardwareFitBudget([], [32_000_000_000], 64_000_000_000)).toEqual({
+      budgetBytes: 32_000_000_000,
+      source: "shared",
+    });
+    expect(hardwareFitBudget([], [], 64_000_000_000)).toEqual({
+      budgetBytes: 64_000_000_000,
+      source: "system",
+    });
+    expect(hardwareFitBudget([null, 0], [null], 0)).toEqual({ budgetBytes: 0, source: "system" });
+  });
+
+  it("hides files above half the budget by default and disables on zero", () => {
+    // A 20 GB Q8 row hides on a 32 GiB budget at 500 per mille.
+    expect(modelHiddenByFitRule(20_000_000_000, 500, 34_359_738_368)).toBe(true);
+    expect(modelHiddenByFitRule(20_000_000_000, 0, 34_359_738_368)).toBe(false);
+    expect(modelHiddenByFitRule(20_000_000_000, 500, 0)).toBe(false);
+    expect(modelHiddenByFitRule(20_000_000_000, 1000, 20_000_000_000)).toBe(false);
+    expect(modelHiddenByFitRule(20_000_000_000, undefined, 34_359_738_368)).toBe(false);
   });
 });

@@ -1500,6 +1500,8 @@ export type CatalogFile = {
   sizeBytes: number;
   sha256: string;
   revision?: string;
+  lastModified?: string;
+  createdAt?: string;
 };
 
 export function catalogRevision(file: CatalogFile): string {
@@ -1524,11 +1526,18 @@ export type CatalogModel = {
   family: string;
   parameters: string;
   publisher: string;
+  author?: string;
   summary: string;
   tags: string[];
   gated: boolean;
   downloads: number;
   likes: number;
+  license?: string;
+  pipeline_tag?: string;
+  library_name?: string;
+  architecture?: string;
+  lastModified?: string;
+  createdAt?: string;
   files: CatalogFile[];
 };
 
@@ -1537,6 +1546,11 @@ export type Catalog = {
   updated: string;
   source: string;
   note: string;
+  providers?: {
+    source: string;
+    cutoffDays: number;
+    allowlist: string[];
+  };
   models: CatalogModel[];
 };
 
@@ -1549,7 +1563,72 @@ export type CatalogQuery = {
   maxBytes: number;
   hideGated: boolean;
   sort: CatalogSort;
+  author?: string;
+  license?: string;
+  pipeline_tag?: string;
+  architecture?: string;
+  fit_per_mille?: number;
+  budget_bytes?: number;
 };
+
+export type CatalogFacets = {
+  tags: string[];
+  quants: string[];
+  authors: string[];
+  licenses: string[];
+  pipeline_tags: string[];
+  architectures: string[];
+};
+
+export type FitBudget = {
+  budgetBytes: number;
+  source: string;
+};
+
+/**
+ * Pick the single budget the fit rule uses. Dedicated VRAM wins when any
+ * adapter reports it; otherwise the largest shared figure; otherwise system
+ * memory. Budgets are never summed. Mirrors catalog::hardware_fit_budget in
+ * Rust, which owns truth; this copy lets the UI explain the auto-filter
+ * without an IPC round trip, and tests pin both to the same answers.
+ */
+export function hardwareFitBudget(
+  dedicated: (number | null)[],
+  shared: (number | null)[],
+  systemBytes: number,
+): FitBudget {
+  const best = (values: (number | null)[]): number => {
+    let top = 0;
+    for (const value of values) {
+      if (typeof value === "number" && Number.isFinite(value) && value > top) top = value;
+    }
+    return top;
+  };
+  const dedicatedBest = best(dedicated);
+  if (dedicatedBest > 0) return { budgetBytes: dedicatedBest, source: "dedicated" };
+  const sharedBest = best(shared);
+  if (sharedBest > 0) return { budgetBytes: sharedBest, source: "shared" };
+  return { budgetBytes: systemBytes > 0 ? systemBytes : 0, source: "system" };
+}
+
+/**
+ * Whether the hardware-fit rule hides a model with this smallest file.
+ * Mirrors catalog::model_hidden_by_fit_rule in Rust, which owns truth.
+ */
+export function modelHiddenByFitRule(
+  smallestBytes: number,
+  fitPerMille: number | undefined,
+  budgetBytes: number | undefined,
+): boolean {
+  const perMille = fitPerMille ?? 0;
+  const budget = budgetBytes ?? 0;
+  if (!(perMille > 0) || !(budget > 0)) return false;
+  const clamped = Math.min(1000, Math.floor(perMille));
+  return smallestBytes > Math.floor((budget * clamped) / 1000);
+}
+
+/** Default auto-filter fraction: hide files above half the detected budget. */
+export const DEFAULT_FIT_PER_MILLE = 500;
 
 export type CatalogSnapshot = {
   catalog: Catalog;
