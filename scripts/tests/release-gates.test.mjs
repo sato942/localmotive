@@ -170,7 +170,8 @@ test("catalog v2 schema, builder, and signed publish wiring stay consistent", as
   // the exact candidate and verifies the detached signature.
   assert.match(workflow, /CATALOG_SIGNING_KEY_PEM/);
   assert.match(workflow, /sign_catalog_candidate/);
-  assert.match(workflow, /validate_catalog\.mjs catalog\/catalog\.json/);
+  assert.match(workflow, /validate_catalog\.mjs catalog\/catalog\.json --no-signature/);
+  assert.match(workflow, /validate_catalog\.mjs catalog\/catalog\.json\n/);
   assert.ok(gates.workflows["catalog.yml"].gates.build);
   assert.ok(gates.workflows["catalog.yml"].gates.sign);
 });

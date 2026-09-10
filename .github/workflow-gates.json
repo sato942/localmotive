@@ -7,7 +7,7 @@
           "node scripts/verify_workflow_pins.mjs",
           "node scripts/verify_workflow_gates.mjs",
           "node scripts/build_catalog.mjs",
-          "node scripts/validate_catalog.mjs catalog/catalog.json"
+          "node scripts/validate_catalog.mjs catalog/catalog.json --no-signature"
         ],
         "sign": [
           "node scripts/sign_catalog_candidate.mjs",

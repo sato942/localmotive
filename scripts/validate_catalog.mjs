@@ -3,6 +3,12 @@ import { readFile } from "node:fs/promises";
 import { createPublicKey, verify } from "node:crypto";
 
 const path = process.argv[2] ?? "catalog/catalog.json";
+// The build job writes an unsigned candidate; the sign job signs it right
+// after. Structure checks must pass on the unsigned candidate, so signature
+// verification is opt-out via --no-signature instead of the default.
+//   node scripts/validate_catalog.mjs catalog/catalog.json
+//   node scripts/validate_catalog.mjs catalog/catalog.json --no-signature
+const skipSignature = process.argv.includes("--no-signature");
 const fail = (message) => {
   console.error(`catalog: ${message}`);
   process.exitCode = 1;
@@ -29,7 +35,7 @@ if (typeof catalog.providers?.cutoffDays !== "number" || catalog.providers.cutof
   fail("providers.cutoffDays must be a positive number");
 }
 
-try {
+if (!skipSignature) try {
   const rawKey = Buffer.from([234, 194, 139, 46, 191, 202, 36, 78, 104, 245, 230, 170, 90, 67, 238, 61, 1, 162, 242, 207, 116, 254, 217, 3, 74, 69, 78, 102, 199, 170, 8, 119]);
   const spkiPrefix = Buffer.from("302a300506032b6570032100", "hex");
   const publicKey = createPublicKey({ key: Buffer.concat([spkiPrefix, rawKey]), format: "der", type: "spki" });
