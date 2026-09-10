@@ -633,6 +633,7 @@ const managedCuda13 = (tag: string): ManagedRuntimeRecord => ({
   installKey: "cuda-13.3",
   runtimePath: `C:\\managed\\${tag}\\cuda-13.3\\llama-server.exe`,
   installRoot: `C:\\managed\\${tag}\\cuda-13.3`,
+  contentVerified: false,
 });
 const identity = (over: Partial<RuntimeIdentity>): RuntimeIdentity => ({
   path: "C:\\llama\\llama-server.exe",

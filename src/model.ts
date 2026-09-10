@@ -962,6 +962,9 @@ export type ManagedRuntimeRecord = {
   installKey: string;
   runtimePath: string;
   installRoot: string;
+  /** Discovery never asserts verified content; true only after a real
+   *  content verification (audit RT-06). */
+  contentVerified: boolean;
 };
 
 export type RuntimeSetupResponse = {

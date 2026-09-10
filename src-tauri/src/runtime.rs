@@ -754,6 +754,41 @@ pub struct ManagedRuntimeRecord {
     pub install_key: String,
     pub runtime_path: String,
     pub install_root: String,
+    /// Discovery never asserts cryptographically verified status: this stays
+    /// false until a selection, description, or launch verifies the content
+    /// (audit RT-06 I1).
+    pub content_verified: bool,
+}
+
+/// Process-wide verification instrumentation (audit RT-06 I4): jobs run,
+/// requests coalesced onto a running job, payload bytes hashed, and jobs that
+/// stopped for cancellation. Repeated verification work becomes visible here.
+#[derive(Clone, Copy, Debug, Default, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeVerificationStats {
+    pub jobs_started: u64,
+    pub jobs_coalesced: u64,
+    pub bytes_hashed: u64,
+    pub jobs_cancelled: u64,
+}
+
+static VERIFICATION_JOBS_STARTED: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+static VERIFICATION_JOBS_COALESCED: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+static VERIFICATION_BYTES_HASHED: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+static VERIFICATION_JOBS_CANCELLED: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+pub fn verification_stats() -> RuntimeVerificationStats {
+    use std::sync::atomic::Ordering::Relaxed;
+    RuntimeVerificationStats {
+        jobs_started: VERIFICATION_JOBS_STARTED.load(Relaxed),
+        jobs_coalesced: VERIFICATION_JOBS_COALESCED.load(Relaxed),
+        bytes_hashed: VERIFICATION_BYTES_HASHED.load(Relaxed),
+        jobs_cancelled: VERIFICATION_JOBS_CANCELLED.load(Relaxed),
+    }
 }
 
 #[derive(Deserialize)]
@@ -1029,6 +1064,17 @@ pub fn describe_runtime(path: &Path) -> RuntimeIdentity {
 }
 
 pub fn list_managed_runtimes_in(root: &Path) -> Vec<ManagedRuntimeRecord> {
+    list_managed_runtimes_in_with(root, ManagedApprovalSource::compiled())
+}
+
+/// Cheap installation discovery: a listing reads install records and checks
+/// them against compiled approval, but never hashes payload content.
+/// `content_verified` stays false until a selection, description, or launch
+/// runs verification (audit RT-06 I1).
+pub(crate) fn list_managed_runtimes_in_with(
+    root: &Path,
+    approval: ManagedApprovalSource<'_>,
+) -> Vec<ManagedRuntimeRecord> {
     let mut records = Vec::new();
     let Ok(tags) = fs::read_dir(root) else {
         return records;
@@ -1054,7 +1100,12 @@ pub fn list_managed_runtimes_in(root: &Path) -> Vec<ManagedRuntimeRecord> {
             let Some(runtime_path) = manifest_runtime_path(&install_dir, &manifest.runtime) else {
                 continue;
             };
-            if managed_runtime_verified_in(&runtime_path, root) != Ok(true) {
+            // The record must match compiled approval, but this check reads
+            // only metadata: no payload hashing happens during discovery.
+            let approved = locate_installation_in_with(&runtime_path, root, approval)
+                .map(|located| located.is_some())
+                .unwrap_or(false);
+            if !approved {
                 continue;
             }
             records.push(ManagedRuntimeRecord {
@@ -1063,6 +1114,7 @@ pub fn list_managed_runtimes_in(root: &Path) -> Vec<ManagedRuntimeRecord> {
                 install_key: manifest.install_key.unwrap_or(manifest.backend),
                 runtime_path: runtime_path.to_string_lossy().to_string(),
                 install_root: install_dir.to_string_lossy().to_string(),
+                content_verified: false,
             });
         }
     }
@@ -3468,6 +3520,7 @@ fn open_and_digest_managed_file(
             "Managed file {relative} changed during verification"
         ));
     }
+    VERIFICATION_BYTES_HASHED.fetch_add(read, std::sync::atomic::Ordering::Relaxed);
     Ok((file, read, hex::encode(hasher.finalize())))
 }
 
@@ -3659,11 +3712,51 @@ fn validate_record_identity(
     Ok(())
 }
 
+/// Cancellation and progress hooks for expensive managed verification
+/// (audit RT-06 I2). Production callers pass a real flag; the default keeps
+/// the pre-existing behavior for paths that do not yet carry one.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct VerificationControl<'a> {
+    pub(crate) cancel: Option<&'a std::sync::atomic::AtomicBool>,
+    pub(crate) progress: Option<&'a dyn Fn(usize, usize)>,
+}
+
+impl VerificationControl<'_> {
+    fn check_cancelled(&self, file: &str) -> Result<(), String> {
+        if self
+            .cancel
+            .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed))
+        {
+            VERIFICATION_JOBS_CANCELLED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return Err(format!(
+                "Managed verification of {file} was cancelled before completion; the installation stays unverified."
+            ));
+        }
+        Ok(())
+    }
+}
+
 fn verify_installed_runtime(
     root: &Path,
     install: &ResolvedRuntimeInstall,
     trusted_content_bytes: &[u8],
     trusted_content_sha256: &str,
+) -> Result<PathBuf, String> {
+    verify_installed_runtime_with(
+        root,
+        install,
+        trusted_content_bytes,
+        trusted_content_sha256,
+        VerificationControl::default(),
+    )
+}
+
+fn verify_installed_runtime_with(
+    root: &Path,
+    install: &ResolvedRuntimeInstall,
+    trusted_content_bytes: &[u8],
+    trusted_content_sha256: &str,
+    control: VerificationControl<'_>,
 ) -> Result<PathBuf, String> {
     if trusted_content_sha256 != install.content_manifest_sha256 {
         return Err("Runtime install record used a non-approved content-manifest anchor".into());
@@ -3680,7 +3773,9 @@ fn verify_installed_runtime(
     if actual_files != expected_files {
         return Err("Managed runtime file inventory does not match compiled approval".into());
     }
-    for file in &trusted.files {
+    let total_files = trusted.files.len();
+    for (index, file) in trusted.files.iter().enumerate() {
+        control.check_cancelled(&file.path)?;
         let relative = path_from_manifest(&file.path)?;
         let (bytes, digest) = digest_regular_file(&root.join(relative), &file.path)?;
         if bytes != file.bytes || digest != file.sha256 {
@@ -3689,12 +3784,79 @@ fn verify_installed_runtime(
                 file.path
             ));
         }
+        if let Some(progress) = control.progress {
+            progress(index + 1, total_files);
+        }
     }
     let relative_runtime = path_from_manifest(&record.runtime)?;
     if !expected_files.contains(&record.runtime) || !record.runtime.ends_with("llama-server.exe") {
         return Err("Managed runtime record names an unapproved executable".into());
     }
     Ok(root.join(relative_runtime))
+}
+
+/// Coalesce simultaneous verification for the same installation. One leader
+/// runs the job; every waiting request receives the same freshly computed
+/// outcome, so equivalent work is never repeated concurrently, while
+/// different installations never share a job (audit RT-06 I3). The entry
+/// lives only while the job runs: completed results are not cached, because
+/// a stale verified label must never outlive the bytes it describes.
+#[derive(Default)]
+struct InFlightVerification {
+    result: std::sync::Mutex<Option<Result<PathBuf, String>>>,
+    ready: std::sync::Condvar,
+}
+
+static IN_FLIGHT_VERIFICATIONS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<InFlightVerification>>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+fn coalesced_verification(
+    key: &str,
+    compute: impl FnOnce() -> Result<PathBuf, String>,
+) -> Result<PathBuf, String> {
+    use std::sync::atomic::Ordering::Relaxed;
+    let (job, is_leader) = {
+        let mut registry = IN_FLIGHT_VERIFICATIONS
+            .lock()
+            .map_err(|_| "Verification registry is unavailable".to_string())?;
+        match registry.get(key) {
+            Some(existing) => (existing.clone(), false),
+            None => {
+                let job = std::sync::Arc::new(InFlightVerification::default());
+                registry.insert(key.to_string(), job.clone());
+                (job, true)
+            }
+        }
+    };
+    if is_leader {
+        VERIFICATION_JOBS_STARTED.fetch_add(1, Relaxed);
+        let result = compute();
+        {
+            let mut slot = job
+                .result
+                .lock()
+                .map_err(|_| "Verification job state is unavailable".to_string())?;
+            *slot = Some(result.clone());
+        }
+        job.ready.notify_all();
+        if let Ok(mut registry) = IN_FLIGHT_VERIFICATIONS.lock() {
+            registry.remove(key);
+        }
+        return result;
+    }
+    VERIFICATION_JOBS_COALESCED.fetch_add(1, Relaxed);
+    let mut slot = job
+        .result
+        .lock()
+        .map_err(|_| "Verification job state is unavailable".to_string())?;
+    while slot.is_none() {
+        slot = job
+            .ready
+            .wait(slot)
+            .map_err(|_| "Verification job state is unavailable".to_string())?;
+    }
+    slot.clone().expect("slot is set before notifying")
 }
 
 /// Approval lookups used by managed content verification.
@@ -3794,12 +3956,23 @@ fn verified_installation_in_with(
         return Ok(None);
     };
     let content = (approval.content_manifest)(&located.install.install_key)?;
-    let server_path = verify_installed_runtime(
-        &located.install_dir,
-        &located.install,
-        content,
-        &located.install.content_manifest_sha256,
-    )?;
+    // Simultaneous verifications of one installation share a single job; the
+    // key separates installations and the compiled-manifest anchor, and the
+    // entry vanishes when the job finishes (audit RT-06 I3).
+    let key = format!(
+        "{}|{}|{}",
+        located.install_dir.to_string_lossy(),
+        located.install.install_key,
+        located.install.content_manifest_sha256
+    );
+    let server_path = coalesced_verification(&key, || {
+        verify_installed_runtime(
+            &located.install_dir,
+            &located.install,
+            content,
+            &located.install.content_manifest_sha256,
+        )
+    })?;
     Ok(Some(VerifiedInstallation {
         install_dir: located.install_dir,
         server_path,
@@ -6698,6 +6871,141 @@ Connection: close
     }
 
     #[test]
+    fn rt06_simultaneous_verifications_share_one_job_per_installation() {
+        // (audit RT-06 V1) Two concurrent verifications for one installation
+        // share a single job: the leader computes, the follower receives the
+        // same result and never runs the compute closure; a different key
+        // never shares work. Global counters are compared as deltas because
+        // other tests verify concurrently.
+        use std::sync::mpsc;
+        let key = format!("rt06-coalesce-{:016x}", rand::random::<u64>());
+        let before = verification_stats();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let leader = {
+            let key = key.clone();
+            std::thread::spawn(move || {
+                coalesced_verification(&key, || {
+                    let _ = release_rx.recv();
+                    Ok(PathBuf::from("fixture/llama-server.exe"))
+                })
+            })
+        };
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while verification_stats().jobs_started == before.jobs_started {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the leader job never registered"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let follower = {
+            let key = key.clone();
+            std::thread::spawn(move || {
+                coalesced_verification(&key, || {
+                    panic!("a coalesced follower must never run the compute closure")
+                })
+            })
+        };
+        while verification_stats().jobs_coalesced == before.jobs_coalesced {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the follower never joined the running job"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        release_tx.send(()).unwrap();
+        let leader_result = leader.join().unwrap().unwrap();
+        let follower_result = follower.join().unwrap().unwrap();
+        assert_eq!(leader_result, follower_result);
+        let after = verification_stats();
+        assert!(after.jobs_started > before.jobs_started);
+        assert!(after.jobs_coalesced > before.jobs_coalesced);
+
+        // A different installation runs its own job.
+        let other = coalesced_verification(&format!("{key}-other"), || {
+            Ok(PathBuf::from("other/llama-server.exe"))
+        })
+        .unwrap();
+        assert_eq!(other, PathBuf::from("other/llama-server.exe"));
+        assert_eq!(
+            verification_stats().jobs_coalesced,
+            after.jobs_coalesced,
+            "an unrelated key must not coalesce onto the finished job"
+        );
+    }
+
+    #[test]
+    fn rt06_cancellation_and_progress_report_truthfully_during_verification() {
+        // (audit RT-06 V2) Every file reports progress; a cancelled job
+        // returns a truthful unverified result and is counted; changed bytes
+        // can never inherit a verified label.
+        let root = std::env::temp_dir().join(format!(
+            "localmotive-rt06-cancel-{}-{:016x}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        let install = test_fixtures::fixture_install();
+        let directory = root.join(managed_runtime_relative_path(
+            &install.tag,
+            &install.install_key,
+        ));
+        test_fixtures::write_fixture_install(&directory);
+        let content = test_fixtures::fixture_content_bytes().unwrap();
+
+        let seen = std::sync::Mutex::new(Vec::new());
+        let progress = |done: usize, total: usize| {
+            seen.lock().unwrap().push((done, total));
+        };
+        verify_installed_runtime_with(
+            &directory,
+            &install,
+            content,
+            &install.content_manifest_sha256,
+            VerificationControl {
+                cancel: None,
+                progress: Some(&progress),
+            },
+        )
+        .unwrap();
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 3, "one progress report per approved file");
+        assert_eq!(seen.last(), Some(&(3, 3)));
+
+        let before_cancel = verification_stats();
+        let cancel = std::sync::atomic::AtomicBool::new(true);
+        let error = verify_installed_runtime_with(
+            &directory,
+            &install,
+            content,
+            &install.content_manifest_sha256,
+            VerificationControl {
+                cancel: Some(&cancel),
+                progress: None,
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("cancelled"), "{error}");
+        assert!(
+            verification_stats().jobs_cancelled > before_cancel.jobs_cancelled,
+            "the cancelled job must be counted"
+        );
+
+        std::fs::write(directory.join("bin").join("ggml-cpu.dll"), b"tampered!!!").unwrap();
+        let error = verify_installed_runtime(
+            &directory,
+            &install,
+            content,
+            &install.content_manifest_sha256,
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("failed content verification"),
+            "changed content cannot inherit a verified label: {error}"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn rt05_a_chunked_403_body_at_and_beyond_the_limit_is_bounded() {
         use std::io::{Read, Write};
 
@@ -8056,13 +8364,11 @@ Connection: close
         // Phase 1: local discovery stays independent of the remote catalog.
         // `load_runtime_setup` collects `list_managed_runtimes()` BEFORE the
         // catalog fetch (lib.rs), so existing installs stay visible during
-        // a GitHub outage. This test pins the fail-closed half of that
-        // contract with production-shaped local state only (no catalog
-        // fetch involved): bytes that cannot verify MUST stay invisible.
-        // (The positive half — a byte-verified install lists — is covered
-        // by production installs; manufacturing approval-pinned bytes in a
-        // unit test is impossible by design, since digests are anchored in
-        // the compiled manifest.)
+        // a GitHub outage. Under the RT-06 policy, discovery is cheap and
+        // explicitly unverified: the install lists when its record matches
+        // compiled approval, without hashing payloads, and selection
+        // verifies content on demand. This test pins both halves with
+        // production-shaped local state that carries wrong bytes.
         let root = std::env::temp_dir().join(format!(
             "localmotive-managed-offline-{}-{}",
             std::process::id(),
@@ -8098,10 +8404,34 @@ Connection: close
         .unwrap();
 
         // No catalog fetch happens here: listing reads only the local root.
+        // Discovery is cheap (audit RT-06 I1): the install lists because its
+        // record matches compiled approval, with explicit unverified status,
+        // and listing must not hash a single payload byte.
+        let before = verification_stats();
         let records = list_managed_runtimes_in(&root);
+        let after = verification_stats();
+        assert_eq!(
+            after.bytes_hashed, before.bytes_hashed,
+            "listing must not hash payload content"
+        );
+        assert_eq!(records.len(), 1, "approved records stay discoverable");
         assert!(
-            records.is_empty(),
-            "unverified bytes must never list as a managed runtime"
+            !records[0].content_verified,
+            "discovery must not assert a cryptographically verified status"
+        );
+        // Selection verifies on demand: the seeded wrong bytes still fail,
+        // and the failure is a content failure, with hashing accounted.
+        let error =
+            verify_installed_runtime(&dir, &install, trusted, &install.content_manifest_sha256)
+                .unwrap_err();
+        assert!(
+            error.contains("failed content verification"),
+            "wrong bytes must fail content verification: {error}"
+        );
+        let verified = verification_stats();
+        assert!(
+            verified.bytes_hashed > after.bytes_hashed,
+            "on-demand verification must account its hashed bytes"
         );
         fs::remove_dir_all(root).unwrap();
     }

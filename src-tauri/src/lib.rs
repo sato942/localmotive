@@ -2462,6 +2462,13 @@ fn detect_hardware() -> runtime::HardwareInfo {
     runtime::detect_hardware()
 }
 
+/// Verification instrumentation for the runtime setup screens: jobs run,
+/// requests coalesced, bytes hashed, jobs cancelled (audit RT-06 I4).
+#[tauri::command]
+fn runtime_verification_stats() -> runtime::RuntimeVerificationStats {
+    runtime::verification_stats()
+}
+
 #[tauri::command]
 async fn fetch_runtime_catalog(
     state: tauri::State<'_, AppState>,
@@ -3527,6 +3534,7 @@ pub fn run() {
             check_runtime_health,
             describe_runtime,
             list_managed_runtimes,
+            runtime_verification_stats,
             read_gguf_summary,
             cancel_gguf_read,
             inspect_model_artifact,
