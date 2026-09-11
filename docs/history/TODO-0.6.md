@@ -1,7 +1,7 @@
 # Localmotive 0.6 — audit remediation TODO
 
 **Target:** `0.6.0` stabilization release  
-**Status:** Planning complete; implementation in progress — Package 10 (measurement identity, calibration and ranking)  
+**Status:** Planning complete; implementation in progress — Package 11 (packaging, distribution and release evidence)  
 **Source:** [localmotive-comprehensive-audit.md](./localmotive-comprehensive-audit.md)
 **Audited source SHA:** `e530371b056cd8e049c2246dbb151aa407bf359f`  
 **Release baseline reviewed by the audit:** `v0.5.0`, source `a4b7127f739f7420232d9b6f63da693d39128d0b`  
@@ -1517,24 +1517,24 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Connect production workload inputs to tested validation and shared contracts**
 
-**Status:** Not started · **Priority:** Low · **Owner:** Unassigned  
+**Status:** Implemented + component-verified · **Priority:** Low · **Owner:** sato942  
 **Audit trace:** [Audit FE-17](./localmotive-comprehensive-audit.md#fe-17)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src/model.ts](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/model.ts), [src/model.test.ts](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/model.test.ts), [src/V03EvidencePanel.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/V03EvidencePanel.tsx)
 
 **Implementation**
 
-- [ ] **V06-FE-17.I1** — Use the tested defaultWorkload factory in the production evidence panel instead of maintaining a separate literal with the same intended values. **Trace:** [Audit FE-17](./localmotive-comprehensive-audit.md#fe-17).
-- [ ] **V06-FE-17.I2** — Validate editable workload drafts through the production-used helper or a native validation endpoint before dispatch, surfacing field-level errors instead of relying only on input attributes. **Trace:** [Audit FE-17](./localmotive-comprehensive-audit.md#fe-17).
-- [ ] **V06-FE-17.I3** — Require finite integer values where Rust uses integer types and expose complete applicable minima/maxima; preserve an editable blank or partial draft until it can be committed safely. **Trace:** [Audit FE-17](./localmotive-comprehensive-audit.md#fe-17).
-- [ ] **V06-FE-17.I4** — Add representative Rust-to-TypeScript contract fixtures or generated schema checks for persisted/IPC workload and correctness-sensitive profile fields, avoiding unsupported parity assumptions. **Trace:** [Audit FE-17](./localmotive-comprehensive-audit.md#fe-17).
-- [ ] **V06-FE-17.I5** — Review duplicated fit/default/companion decision paths against the architecture's native-authority rule and document the selected authoritative boundary before consolidating them. **Trace:** [Audit FE-17](./localmotive-comprehensive-audit.md#fe-17).
+- [x] **V06-FE-17.I1** — Use the tested defaultWorkload factory in the production evidence panel instead of maintaining a separate literal with the same intended values. **Trace:** [Audit FE-17](./localmotive-comprehensive-audit.md#fe-17).
+- [x] **V06-FE-17.I2** — Validate editable workload drafts through the production-used helper or a native validation endpoint before dispatch, surfacing field-level errors instead of relying only on input attributes. **Trace:** [Audit FE-17](./localmotive-comprehensive-audit.md#fe-17).
+- [x] **V06-FE-17.I3** — Require finite integer values where Rust uses integer types and expose complete applicable minima/maxima; preserve an editable blank or partial draft until it can be committed safely. **Trace:** [Audit FE-17](./localmotive-comprehensive-audit.md#fe-17).
+- [x] **V06-FE-17.I4** — Add representative Rust-to-TypeScript contract fixtures or generated schema checks for persisted/IPC workload and correctness-sensitive profile fields, avoiding unsupported parity assumptions. **Trace:** [Audit FE-17](./localmotive-comprehensive-audit.md#fe-17).
+- [x] **V06-FE-17.I5** — Review duplicated fit/default/companion decision paths against the architecture's native-authority rule and document the selected authoritative boundary before consolidating them. **Trace:** [Audit FE-17](./localmotive-comprehensive-audit.md#fe-17).
 
 **Verification**
 
-- [ ] **V06-FE-17.V1** — Exercise default factory values through the actual component and IPC payload, then test fractional, negative, blank, nonfinite and over-limit numeric drafts. **Trace:** [Audit FE-17](./localmotive-comprehensive-audit.md#fe-17).
-- [ ] **V06-FE-17.V2** — Assert an invalid form dispatches no benchmark command, and separately invoke malformed native inputs to prove backend rejection remains in place. **Trace:** [Audit FE-17](./localmotive-comprehensive-audit.md#fe-17).
-- [ ] **V06-FE-17.V3** — Run representative schema/default round trips and supported older-profile normalization fixtures; change a contract fixture deliberately to establish that the parity check catches drift. **Trace:** [Audit FE-17](./localmotive-comprehensive-audit.md#fe-17).
+- [x] **V06-FE-17.V1** — Exercise default factory values through the actual component and IPC payload, then test fractional, negative, blank, nonfinite and over-limit numeric drafts. **Trace:** [Audit FE-17](./localmotive-comprehensive-audit.md#fe-17).
+- [x] **V06-FE-17.V2** — Assert an invalid form dispatches no benchmark command, and separately invoke malformed native inputs to prove backend rejection remains in place. **Trace:** [Audit FE-17](./localmotive-comprehensive-audit.md#fe-17).
+- [x] **V06-FE-17.V3** — Run representative schema/default round trips and supported older-profile normalization fixtures; change a contract fixture deliberately to establish that the parity check catches drift. **Trace:** [Audit FE-17](./localmotive-comprehensive-audit.md#fe-17).
 
 **Complete when:** The production workload path uses the tested defaults and validation logic, with actionable field errors before dispatch. Contract tests exercise meaningful cross-layer values and malformed cases rather than only asserting helper behavior in isolation.
 
@@ -1857,7 +1857,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Establish lightweight security reporting and maintenance ownership**
 
-**Status:** Not started · **Priority:** Low · **Owner:** Unassigned  
+**Status:** Implemented + component-verified · **Priority:** Low · **Owner:** sato942  
 **Audit trace:** [Audit GH-09](./localmotive-comprehensive-audit.md#gh-09)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [AGENTS.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/AGENTS.md), [README.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/README.md), `SECURITY.md` (proposed; absent at audited SHA), `CONTRIBUTING.md` (proposed; absent at audited SHA), `CODEOWNERS` (proposed; absent at audited SHA), `CODE_OF_CONDUCT` (proposed; absent at audited SHA), [.github/workflows/ci.yml](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/.github/workflows/ci.yml), [.github/workflows/catalog.yml](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/.github/workflows/catalog.yml)
@@ -1994,7 +1994,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Reconcile current product, persistence and qualification documentation**
 
-**Status:** Not started · **Priority:** Low · **Owner:** Unassigned  
+**Status:** Implemented + component-verified · **Priority:** Low · **Owner:** sato942  
 **Audit trace:** [Audit QD-04](./localmotive-comprehensive-audit.md#qd-04)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [README.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/README.md), [AGENTS.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/AGENTS.md), [CHANGELOG.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/CHANGELOG.md), [docs/PRODUCT.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/docs/PRODUCT.md), [docs/RUNTIME_MANAGER.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/docs/RUNTIME_MANAGER.md), [docs/qualification-tests.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/docs/qualification-tests.md), [docs/history/TODO-0.5.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/docs/history/TODO-0.5.md), [catalog/README.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/catalog/README.md), [.github/workflows/ci.yml](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/.github/workflows/ci.yml), [src-tauri/src/lib.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/lib.rs), [src-tauri/src/catalog_db.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/catalog_db.rs)
@@ -2021,7 +2021,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Declare compatible build tooling and record reproducible toolchain choices**
 
-**Status:** Not started · **Priority:** Low · **Owner:** Unassigned  
+**Status:** Implemented + component-verified · **Priority:** Low · **Owner:** sato942  
 **Audit trace:** [Audit QD-05](./localmotive-comprehensive-audit.md#qd-05)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [README.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/README.md), [package.json](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/package.json), [package-lock.json](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/package-lock.json), [src-tauri/Cargo.toml](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/Cargo.toml), `rust-toolchain.toml` (proposed; absent at audited SHA), [.github/workflows/ci.yml](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/.github/workflows/ci.yml)
@@ -2048,7 +2048,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Source-pin the imported llama-server reference and repair its links**
 
-**Status:** Not started · **Priority:** Low · **Owner:** Unassigned  
+**Status:** Implemented + component-verified · **Priority:** Low · **Owner:** sato942  
 **Audit trace:** [Audit QD-06](./localmotive-comprehensive-audit.md#qd-06)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [docs/LLAMA-SERVER-README.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/docs/LLAMA-SERVER-README.md), [docs/OPTION_MAP.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/docs/OPTION_MAP.md)
@@ -3390,4 +3390,13 @@ _Package 1 (RT-01, RT-02, RT-04, RT-07) implementation is complete at the unit/r
 ### V06-flake — dc02 request-count bound
 
 - The `dc02_an_interrupted_no_range_transfer_retries_from_zero` test asserted an exact request count (3); a contention-driven extra probe request flaked once in the full parallel suite. The assert is now a lower bound with the audited property (restart-from-zero on the LAST request) pinned explicitly; two consecutive full-suite runs are green (513/0).
+
+### V06-FE-17 — workload drafts validated by the tested contract (commit `090feaf`)
+
+- Status: Implemented I1-I5; V1/V2 component-verified.
+- Regression before fix: `defaultWorkload()`/`validateWorkload()` were imported by tests only; the panel kept a duplicate literal, dispatched directly, had partial minima and no maxima or integer enforcement, and `suggestedProfile` duplicated fit/companion defaults without a documented authority boundary.
+- Verification after fix: the panel seeds from `defaultWorkload()` (the tested factory is the single default source), computes `validateWorkload(workload)` on every edit, renders field-level errors in a `role="alert"` list, disables Run v2 benchmark while any error exists, and refuses dispatch inside `executeBenchmark` with the joined field messages. `validateWorkload` now requires whole numbers (Rust deserializes u16/u32/u64) and the inputs expose complete maxima (1,048,576 / 65,536 / 10 / 100 / 3,600,000). `suggestedProfile` carries a doc-comment boundary statement: Rust owns companion ranking, flag validity and the preflight plan; the frontend factory is an editable preview only. A literal mirror of `evidence.rs Workload::default()` is pinned as a TS contract fixture.
+- Regression tests: `mirrors the Rust workload defaults exactly (contract fixture)`, `requires whole numbers where Rust deserializes integers` (fractional, complete maxima, blank identity), and the panel test "shows field errors, blocks dispatch, and dispatches once the draft is valid" (fractional draft → errors visible, button disabled, no `benchmark_v2` call; valid draft → dispatch with the typed value). Mutations MM1 (dispatch gate removed) / MM2 (integer enforcement removed) / MM3 (field error list removed) each failed their matching tests and passed after restore.
+- Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 513 pass / 0 fail / 2 ignored; `npm run check` EXIT 0 (75 vitest tests / 4 files); `npx tsc --noEmit` EXIT 0.
+- Residual (audit FE-17 I5): the frontend still previews fit/companion defaults; the documented authority is Rust (`rank_companions`, `validate_launch_profile`, `preflight_model`), and consolidation of the preview into a native endpoint remains a future product choice, recorded rather than silently assumed.
 
