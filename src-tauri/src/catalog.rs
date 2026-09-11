@@ -521,6 +521,19 @@ fn starts_with_iso_date(value: &str) -> bool {
         && bytes[8..10].iter().all(u8::is_ascii_digit)
 }
 
+/// Whether a received ETag may be stored and later replayed in an
+/// If-None-Match request (audit S-10). Weak validators (`W/...`) compare by
+/// a server-defined equivalence we cannot verify, so they are observed but
+/// never replayed; malformed or oversized values are dropped the same way.
+/// Anything stored is compared with strict byte equality.
+pub fn etag_is_strong(etag: &str) -> bool {
+    let etag = etag.trim();
+    !etag.is_empty()
+        && etag.len() <= 256
+        && !etag.starts_with("W/")
+        && etag.chars().all(|c| c.is_ascii_graphic())
+}
+
 pub fn bundled_catalog() -> Result<Catalog, String> {
     parse_catalog(BUNDLED_CATALOG)
 }
@@ -1241,10 +1254,25 @@ fn fetch_catalog_verified(
                 .headers()
                 .get(reqwest::header::ETAG)
                 .and_then(|v| v.to_str().ok())
-                .map(|s| s.to_string());
+                .map(|s| s.to_string())
+                .filter(|etag| etag_is_strong(etag));
             if status == 304 {
                 let body = cached_body
                     .ok_or_else(|| "Catalog unchanged but no cached copy exists".to_string())?;
+                // Strict equality on the opaque validator (audit S-10): a 304
+                // that presents a different ETag than the one we sent is not
+                // a trustworthy unchanged response. The cached body is still
+                // served, but the refresh is not recorded as successful.
+                if let (Some(presented), Some(stored)) = (etag.as_deref(), cached_etag) {
+                    if presented != stored.as_str() {
+                        return fallback(
+                            Some(body.to_string()),
+                            url,
+                            "the catalog server answered 304 with a different validator".into(),
+                            cache_root,
+                        );
+                    }
+                }
                 let catalog = match parse_catalog(body) {
                     Ok(catalog) => catalog,
                     Err(error) => {
@@ -3150,10 +3178,36 @@ mod tests {
     /// A one-connection-at-a-time HTTP server for `catalog.json` and its
     /// signature, so candidate-side failures are exercised through the real
     /// reqwest client and the real fetch_catalog routing (audit DC-07).
+    /// Optional response behavior for the catalog HTTP fixture (audit S-10):
+    /// a custom catalog status and an ETag header let tests drive the 304
+    /// validator comparison; the defaults keep the 200 behavior.
+    #[derive(Clone)]
+    struct CatalogHttpOptions {
+        catalog_status: u16,
+        etag: Option<String>,
+    }
+
     fn serve_catalog_http(
         body: Vec<u8>,
         signature: Vec<u8>,
         framing: BodyFraming,
+    ) -> CatalogHttpFixture {
+        serve_catalog_http_opts(
+            body,
+            signature,
+            framing,
+            CatalogHttpOptions {
+                catalog_status: 200,
+                etag: None,
+            },
+        )
+    }
+
+    fn serve_catalog_http_opts(
+        body: Vec<u8>,
+        signature: Vec<u8>,
+        framing: BodyFraming,
+        options: CatalogHttpOptions,
     ) -> CatalogHttpFixture {
         use std::io::{BufRead as _, BufReader, Write as _};
         use std::net::TcpListener;
@@ -3193,6 +3247,11 @@ mod tests {
                 }
                 let is_signature = request_line.contains(".sig");
                 let payload: &[u8] = if is_signature { &signature } else { &body };
+                let etag_header = options
+                    .etag
+                    .as_ref()
+                    .map(|etag| format!("ETag: {etag}\r\n"))
+                    .unwrap_or_default();
                 let header = if is_signature {
                     format!(
                         "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -3201,19 +3260,26 @@ mod tests {
                 } else {
                     match framing {
                         BodyFraming::DeclaredLength => format!(
-                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                            payload.len()
+                            "HTTP/1.1 {status} \r\nContent-Length: {}\r\n{etag_header}Connection: close\r\n\r\n",
+                            payload.len(),
+                            status = options.catalog_status
                         ),
                         BodyFraming::Declared(length) => format!(
-                            "HTTP/1.1 200 OK\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n"
+                            "HTTP/1.1 {status} \r\nContent-Length: {length}\r\n{etag_header}Connection: close\r\n\r\n",
+                            status = options.catalog_status
                         ),
                         BodyFraming::CloseDelimited => {
-                            "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n".to_string()
+                            format!(
+                                "HTTP/1.1 {status} \r\nConnection: close\r\n{etag_header}\r\n",
+                                status = options.catalog_status
+                            )
                         }
                     }
                 };
                 let _ = stream.write_all(header.as_bytes());
-                let _ = stream.write_all(payload);
+                if is_signature || options.catalog_status != 304 {
+                    let _ = stream.write_all(payload);
+                }
                 let _ = stream.flush();
             }
         });
@@ -3222,6 +3288,165 @@ mod tests {
             stop,
             handle: Some(handle),
         }
+    }
+
+    #[test]
+    fn s10_validator_semantics_are_strict_and_weak_etags_are_never_replayed() {
+        // Unit contract: only strong, sane validators may be stored.
+        assert!(etag_is_strong("\"abc\""));
+        assert!(etag_is_strong("abc"));
+        assert!(!etag_is_strong(""));
+        assert!(!etag_is_strong("W/\"abc\""));
+        assert!(!etag_is_strong("\"a b\""));
+        assert!(!etag_is_strong("\"a\r\nb\""));
+        assert!(!etag_is_strong(&"a".repeat(257)));
+
+        let body = serde_json::json!({
+            "schemaVersion": 2,
+            "updated": "2026-09-11",
+            "models": [{
+                "id": "fixture/one",
+                "repo": "fixture/one-GGUF",
+                "files": [{
+                    "quant": "Q4_K_M",
+                    "filename": "one-Q4_K_M.gguf",
+                    "sizeBytes": 100,
+                    "sha256": "a".repeat(64),
+                }],
+            }],
+        })
+        .to_string();
+
+        // A weak validator on a 200 is observed but never stored, so it can
+        // never be replayed as If-None-Match.
+        let weak = serve_catalog_http_opts(
+            body.clone().into_bytes(),
+            b"sig".to_vec(),
+            BodyFraming::DeclaredLength,
+            CatalogHttpOptions {
+                catalog_status: 200,
+                etag: Some("W/\"weak-1\"".into()),
+            },
+        );
+        let weak_root = std::env::temp_dir().join(format!(
+            "localmotive-s10-weak-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&weak_root).unwrap();
+        let snapshot = fetch_catalog_verified(
+            &format!("{}/catalog.json", weak.base_url),
+            &weak_root,
+            |_, _| true,
+        )
+        .unwrap();
+        assert_eq!(
+            snapshot.origin, "network",
+            "refresh_error: {:?}",
+            snapshot.refresh_error
+        );
+        let record = load_cache_record(&weak_root).unwrap();
+        assert_eq!(record.etag, None, "a weak validator must not be stored");
+
+        // A strong validator is stored; a 304 that presents a DIFFERENT case
+        // of it is refused as a successful refresh while the cached body is
+        // still served with an honest error.
+        let strong = serve_catalog_http_opts(
+            body.clone().into_bytes(),
+            b"sig".to_vec(),
+            BodyFraming::DeclaredLength,
+            CatalogHttpOptions {
+                catalog_status: 200,
+                etag: Some("\"Strong-1\"".into()),
+            },
+        );
+        let strong_root = std::env::temp_dir().join(format!(
+            "localmotive-s10-strong-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&strong_root).unwrap();
+        fetch_catalog_verified(
+            &format!("{}/catalog.json", strong.base_url),
+            &strong_root,
+            |_, _| true,
+        )
+        .unwrap();
+        let record = load_cache_record(&strong_root).unwrap();
+        assert_eq!(record.etag.as_deref(), Some("\"Strong-1\""));
+
+        let mismatch = serve_catalog_http_opts(
+            body.clone().into_bytes(),
+            b"sig".to_vec(),
+            BodyFraming::DeclaredLength,
+            CatalogHttpOptions {
+                catalog_status: 304,
+                etag: Some("\"strong-1\"".into()),
+            },
+        );
+        let snapshot = fetch_catalog_verified(
+            &format!("{}/catalog.json", mismatch.base_url),
+            &strong_root,
+            |_, _| true,
+        )
+        .unwrap();
+        assert_eq!(snapshot.origin, "cache");
+        assert_eq!(snapshot.catalog.models.len(), 1);
+        let error = snapshot
+            .refresh_error
+            .expect("a mismatched 304 must be visible");
+        assert!(error.contains("different validator"), "{error}");
+
+        // An identical 304 is the ordinary unchanged path.
+        let unchanged = serve_catalog_http_opts(
+            body.into_bytes(),
+            b"sig".to_vec(),
+            BodyFraming::DeclaredLength,
+            CatalogHttpOptions {
+                catalog_status: 304,
+                etag: Some("\"Strong-1\"".into()),
+            },
+        );
+        let snapshot = fetch_catalog_verified(
+            &format!("{}/catalog.json", unchanged.base_url),
+            &strong_root,
+            |_, _| true,
+        )
+        .unwrap();
+        assert_eq!(snapshot.origin, "not-modified");
+        assert!(snapshot.refresh_error.is_none());
+
+        let _ = std::fs::remove_dir_all(weak_root);
+        let _ = std::fs::remove_dir_all(strong_root);
+    }
+
+    #[test]
+    fn s10_retry_after_values_are_bounded_and_parsed_from_both_forms() {
+        use crate::download::{bounded_retry_after_secs, httpdate_secs};
+        assert_eq!(bounded_retry_after_secs(Some("5")), Some(5));
+        assert_eq!(bounded_retry_after_secs(Some("0")), Some(1));
+        assert_eq!(bounded_retry_after_secs(Some("999999")), None);
+        assert_eq!(bounded_retry_after_secs(Some("600")), Some(30));
+        assert_eq!(bounded_retry_after_secs(Some("soon")), None);
+        assert_eq!(bounded_retry_after_secs(None), None);
+        // The date form parses the canonical IMF-fixdate exactly and refuses
+        // garbage; a past date yields no retry delay.
+        assert_eq!(
+            httpdate_secs("Sun, 06 Nov 1994 08:49:37 GMT"),
+            Some(784111777)
+        );
+        assert_eq!(httpdate_secs("Sun, 06 Nov 1994 08:49:37 PST"), None);
+        assert_eq!(httpdate_secs("nonsense"), None);
+        assert_eq!(
+            bounded_retry_after_secs(Some("Sun, 06 Nov 1994 08:49:37 GMT")),
+            None
+        );
     }
 
     #[test]

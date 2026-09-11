@@ -2269,18 +2269,18 @@ These packages preserve actionable recommendations outside the 72-item findings 
 
 **Correct HTTP validator semantics and bound retry timing**
 
-**Status:** Not started · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
 **Audit trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims)  
 **Prerequisites:** [V06-DC-02](#v06-dc-02), [V06-QD-01](#v06-qd-01)
 
 **Implementation**
 
-- [ ] **V06-S-10.I1** — Compare opaque ETags with strict equality, define safe handling of weak validators and only issue conditional requests compatible with their semantics. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
-- [ ] **V06-S-10.I2** — Honor bounded Retry-After/backoff for 429 responses while respecting cancellation and an overall transfer budget; add explicit request and total deadlines to catalog-builder fetch/retry work. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
+- [x] **V06-S-10.I1** — Compare opaque ETags with strict equality, define safe handling of weak validators and only issue conditional requests compatible with their semantics. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
+- [x] **V06-S-10.I2** — Honor bounded Retry-After/backoff for 429 responses while respecting cancellation and an overall transfer budget; add explicit request and total deadlines to catalog-builder fetch/retry work. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
 
 **Verification**
 
-- [ ] **V06-S-10.V1** — Exercise case-distinct and weak ETags, changed validators, numeric/date Retry-After, malformed/extreme delays, cancellation during backoff and a stalled builder fetch. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
+- [x] **V06-S-10.V1** — Exercise case-distinct and weak ETags, changed validators, numeric/date Retry-After, malformed/extreme delays, cancellation during backoff and a stalled builder fetch. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
 
 **Complete when:** Retries and resume identity obey the documented HTTP policy without weakening the mandatory final SHA-256 check.
 
@@ -3740,3 +3740,11 @@ Revalidated at the candidate source (`065248a1` + the G-07 test addition) on Win
 - V1: `s09_cache_publication_keeps_the_handle_and_retains_last_good` (byte-exact publication, no temp leftovers, rename refusal cleans up and the previous record still reads, recovery works); `s09_persistence_failures_are_surfaced_while_fresh_data_is_served` drives the REAL local HTTP fixture with a blocked cache path (origin network + "could not be saved for offline use"), a blocked stamp path ("refresh time could not be recorded"), and both-clean (no notice) — proving the notice is not a constant. No untrusted replacement path exists: the cache is only ever renamed from a handle the writer owns; readers only accept signature-verified records.
 - Mutations: OZ1 (failed-publication cleanup removed), OZ2 (stamp failure swallowed) and OZ3 (save failure ignored in fetch) each failed their guarding test and passed after restore. The handle-retention property itself is proven by construction plus the executed rename-under-open-handle path; a deterministic adversarial interleave is not representable in-process and is stated as such.
 - Commands: `cargo fmt --check` PASS; clippy `-D warnings` 0 errors; `cargo test` 551 passed / 0 failed / 2 ignored (549 + the two S-09 tests); `npm run check` PASS.
+
+#### S-10 closure record — strict validators and bounded retries
+
+- I1: `catalog::etag_is_strong` (non-empty, <=256 graphic ASCII, no `W/` prefix) gates what is stored; weak or malformed validators are observed and dropped, so they can never be replayed as `If-None-Match`. The same filter applies to the runtime release catalog client. A 304 that presents a different validator than the one sent is refused as a successful refresh: the cached body is still served, with "the catalog server answered 304 with a different validator" visible, and no refresh stamp is written (strict byte equality, proven with a case-differing validator).
+- I2: the download retry loop honors a bounded `Retry-After` (`bounded_retry_after_secs`: numeric seconds or IMF-fixdate, clamped 1-30s, absurd/malformed/past values fall back to the linear backoff), carries the value in the error marker, and the wait stays cancellation-aware and bounded by `MAX_TRANSFER_ATTEMPTS`. The catalog builder moved to `scripts/lib/http_retry.mjs`: a 20-second per-request deadline via `AbortSignal.timeout`, at most 5 retries, Retry-After in numeric and HTTP-date form clamped to 1-30s, and a 60-second total wait budget per logical request. The mandatory final SHA-256 check is untouched.
+- V1: Rust `s10_validator_semantics_are_strict_and_weak_etags_are_never_replayed` (unit matrix + fixture: weak validator stored as none; strong validator stored; case-differing 304 refused with the cached body served; identical 304 is the ordinary not-modified path) and `s10_retry_after_values_are_bounded_and_parsed_from_both_forms` (numeric clamps, date parsing against the canonical epoch 784111777, refusal of PST/garbage/past). Node `scripts/tests/http_retry.test.mjs` 6/6 (numeric/date clamps, malformed/extreme values, retry-then-success, attempts+budget bounds, stalled fetch aborted by the deadline). A fixture defect found during this work (missing CRLF when no ETag header) was fixed and re-verified against the retained dc07 suite.
+- Mutations: PA1 (weak-etag filter removed), PA2 (304 strict compare removed), PA3 (JS clamps removed) and PA4 (JS total-budget check removed) each failed their guarding test and passed after restore.
+- Commands: `cargo fmt --check` PASS; clippy `-D warnings` 0 errors; `cargo test` 553 passed / 0 failed / 2 ignored (551 + the two S-10 tests); `npm run check` PASS (node tests 21 + 6 + release gates); docs updated in `docs/SUPPLY-CHAIN.md`.

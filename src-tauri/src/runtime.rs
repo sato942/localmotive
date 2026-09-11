@@ -2618,7 +2618,10 @@ async fn fetch_catalog_http(
         .headers()
         .get(reqwest::header::ETAG)
         .and_then(|value| value.to_str().ok())
-        .map(str::to_owned);
+        .map(str::to_owned)
+        // Weak or malformed validators are observed but never stored, so
+        // they can never be replayed as If-None-Match (audit S-10).
+        .filter(|etag| crate::catalog::etag_is_strong(etag));
     let body = read_runtime_catalog_body_bounded(response).await?;
     let body = String::from_utf8(body).map_err(|_| {
         RuntimeCatalogError::new(

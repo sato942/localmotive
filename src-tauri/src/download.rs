@@ -802,6 +802,87 @@ fn client(
 }
 
 /// Translate an HTTP status into advice the user can act on.
+/// Parse a bounded Retry-After value from a response (audit S-10). Returns
+/// whole seconds clamped into [1, 30]; a malformed, absurd or past value
+/// yields None and the caller keeps its exponential fallback.
+pub fn bounded_retry_after_secs(value: Option<&str>) -> Option<u64> {
+    let value = value?.trim();
+    let seconds = if let Ok(seconds) = value.parse::<u64>() {
+        seconds
+    } else {
+        // HTTP-date form: only a sane near-future date is honored.
+        let when = httpdate_secs(value)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_secs();
+        when.checked_sub(now)?
+    };
+    if seconds > 86_400 {
+        return None;
+    }
+    Some(seconds.clamp(1, 30))
+}
+
+/// Minimal HTTP-date (IMF-fixdate) parser: `Sun, 06 Nov 1994 08:49:37 GMT`.
+/// Anything else is None; the retry then falls back to exponential backoff.
+pub(crate) fn httpdate_secs(value: &str) -> Option<u64> {
+    let value = value.trim_end();
+    let value = value.strip_suffix(" GMT")?;
+    let (weekday, rest) = value.split_once(", ")?;
+    if weekday.len() != 3 {
+        return None;
+    }
+    let mut parts = rest.split(' ');
+    let day: u64 = parts.next()?.parse().ok()?;
+    let month = match parts.next()? {
+        "Jan" => 1,
+        "Feb" => 2,
+        "Mar" => 3,
+        "Apr" => 4,
+        "May" => 5,
+        "Jun" => 6,
+        "Jul" => 7,
+        "Aug" => 8,
+        "Sep" => 9,
+        "Oct" => 10,
+        "Nov" => 11,
+        "Dec" => 12,
+        _ => return None,
+    };
+    let year: u64 = parts.next()?.parse().ok()?;
+    let mut clock = parts.next()?.split(':');
+    let hour: u64 = clock.next()?.parse().ok()?;
+    let minute: u64 = clock.next()?.parse().ok()?;
+    let second: u64 = clock.next()?.parse().ok()?;
+    if clock.next().is_some()
+        || day == 0
+        || day > 31
+        || year < 1970
+        || hour > 23
+        || minute > 59
+        || second > 60
+    {
+        return None;
+    }
+    // Days since epoch (civil calendar), then seconds.
+    let days = days_from_civil(year as i64, month as i64, day as i64);
+    if days < 0 {
+        return None;
+    }
+    Some(days as u64 * 86_400 + hour * 3600 + minute * 60 + second)
+}
+
+/// Howard Hinnant's days-from-civil algorithm.
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let year_of_era = year - era * 400;
+    let day_of_year = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era - 719_468
+}
+
 pub fn explain_status(status: u16, repo: &str, has_token: bool) -> String {
     match status {
         401 | 403 => {
@@ -891,7 +972,18 @@ fn probe_with_cancel_and_timeout(
     }
     let status = response.status().as_u16();
     if status >= 400 {
-        return Err(explain_status(status, repo, token.is_some()));
+        let mut message = explain_status(status, repo, token.is_some());
+        if status == 429 {
+            if let Some(seconds) = bounded_retry_after_secs(
+                response
+                    .headers()
+                    .get(reqwest::header::RETRY_AFTER)
+                    .and_then(|value| value.to_str().ok()),
+            ) {
+                message.push_str(&format!(" retry-after={seconds}"));
+            }
+        }
+        return Err(message);
     }
     let mut remote = read_remote_headers(response.headers());
     // A 206 to a one-byte range is direct proof of range support, which matters
@@ -1382,7 +1474,18 @@ fn fetch_chunk(
                 .map_err(|error| format!("Connection failed: {error}"))?;
             let status = response.status().as_u16();
             if status >= 400 {
-                return Err(explain_status(status, repo, token.is_some()));
+                let mut message = explain_status(status, repo, token.is_some());
+                if status == 429 {
+                    if let Some(seconds) = bounded_retry_after_secs(
+                        response
+                            .headers()
+                            .get(reqwest::header::RETRY_AFTER)
+                            .and_then(|value| value.to_str().ok()),
+                    ) {
+                        message.push_str(&format!(" retry-after={seconds}"));
+                    }
+                }
+                return Err(message);
             }
             let whole_file = chunks.lock().unwrap().len() == 1;
             let requested_start = chunk.cursor();
@@ -1494,7 +1597,16 @@ fn fetch_chunk(
                 if attempt >= MAX_TRANSFER_ATTEMPTS {
                     return Err(error);
                 }
-                let retry_delay = Duration::from_millis(500 * attempt as u64);
+                // A server-supplied Retry-After (bounded in the error
+                // marker) wins over the linear backoff for 429s (audit
+                // S-10); the wait stays cancellable and bounded.
+                let retry_delay = match error
+                    .rsplit_once(" retry-after=")
+                    .and_then(|(_, value)| value.trim().parse::<u64>().ok())
+                {
+                    Some(seconds) => Duration::from_secs(seconds.min(30)),
+                    None => Duration::from_millis(500 * attempt as u64),
+                };
                 let mut waited = Duration::ZERO;
                 while waited < retry_delay && !cancel.load(Ordering::Relaxed) {
                     let step = Duration::from_millis(50).min(retry_delay - waited);

@@ -6,6 +6,7 @@
 //   node scripts/build_catalog.mjs --dry-run             # author/repo/file counts only, no JSON
 //   node scripts/build_catalog.mjs --stdout              # preview JSON on stdout, no write
 import { rename, readFile, writeFile } from "node:fs/promises";
+import { fetchWithRetry, RETRY_ATTEMPTS } from "./lib/http_retry.mjs";
 import { isCanonicalQuant, quantFromFilename } from "./lib/quant_label.mjs";
 import { catalogCutoff } from "./lib/catalog_window.mjs";
 
@@ -22,20 +23,18 @@ const excludePatterns = (providers.excludeFilenamePatterns ?? []).map(
   (pattern) => new RegExp(pattern, "i"),
 );
 
-const api = async (url, token, retries = 5) => {
+const api = async (url, token) => {
   const headers = { "User-Agent": "localmotive-catalog-builder" };
   if (token) headers.Authorization = `Bearer ${token}`;
-  for (let attempt = 0; ; attempt += 1) {
-    const r = await fetch(url, { headers });
-    if (r.status === 429 && attempt < retries) {
-      const wait = Math.min(30000, 2000 * 2 ** attempt);
-      console.error(`429 ${url}, retry ${attempt + 1}/${retries} after ${wait}ms`);
-      await new Promise((resolve) => setTimeout(resolve, wait));
-      continue;
-    }
-    if (!r.ok) throw new Error(`${r.status} ${url}`);
-    return r.json();
-  }
+  // Bounded retry policy (audit S-10): explicit per-request deadline, a
+  // sanely bounded Retry-After, and a total wait budget per request.
+  const r = await fetchWithRetry(url, {
+    headers,
+    onRetry: (attempt, delay) =>
+      console.error(`429 ${url}, retry ${attempt}/${RETRY_ATTEMPTS} after ${delay}ms`),
+  });
+  if (!r.ok) throw new Error(`${r.status} ${url}`);
+  return r.json();
 };
 const token = process.env.HF_TOKEN ?? process.env.HUGGING_FACE_TOKEN ?? "";
 

@@ -69,3 +69,19 @@ are backed up out of band before moving machines.
 - The frontend never supplies a transfer URL: downloads resolve through the
   verified catalog (`resolve_catalog_download`) and runtime installs through
   the pinned runtime catalog, both fixed endpoints.
+
+## HTTP validator and retry semantics (audit S-10)
+
+- Opaque ETags are compared with strict byte equality. Only strong,
+  well-formed validators are stored and replayed in `If-None-Match`; weak
+  (`W/...`), malformed or oversized validators are observed and dropped, and a
+  `304` that presents a different validator than the one sent is not accepted
+  as a successful refresh (the cached body is still served with a visible
+  error). The same filter applies to the runtime release catalog.
+- Retries are bounded: transfers retry at most `MAX_TRANSFER_ATTEMPTS` times
+  and honor a server `Retry-After` clamped into 1-30 seconds, otherwise a
+  linear backoff; every wait is cancellation-aware. The catalog builder uses
+  `scripts/lib/http_retry.mjs`: a 20-second per-request deadline
+  (`AbortSignal.timeout`), at most 5 retries, `Retry-After` honored in
+  numeric and HTTP-date form and clamped to 1-30 seconds, and a 60-second
+  total wait budget per logical request.
