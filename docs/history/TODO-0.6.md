@@ -2248,18 +2248,18 @@ These packages preserve actionable recommendations outside the 72-item findings 
 
 **Retain safe cache publication handles and report persistence failures**
 
-**Status:** Not started · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
 **Audit trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims)  
 **Prerequisites:** [V06-DC-01](#v06-dc-01), [V06-DC-07](#v06-dc-07)
 
 **Implementation**
 
-- [ ] **V06-S-09.I1** — Keep the exclusively created temporary cache file handle through write/sync/publication instead of closing and reopening its name; preserve atomic body, ETag and signature publication. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
-- [ ] **V06-S-09.I2** — Separate successful in-memory refresh from durable cache/stamp persistence. Surface write/sync/rename failures and retain a usable last-good snapshot. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
+- [x] **V06-S-09.I1** — Keep the exclusively created temporary cache file handle through write/sync/publication instead of closing and reopening its name; preserve atomic body, ETag and signature publication. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
+- [x] **V06-S-09.I2** — Separate successful in-memory refresh from durable cache/stamp persistence. Surface write/sync/rename failures and retain a usable last-good snapshot. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
 
 **Verification**
 
-- [ ] **V06-S-09.V1** — Inject temp-file replacement attempts and write/sync/rename/stamp failures; verify no untrusted replacement is accepted and no failed persistence is reported as durable success. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
+- [x] **V06-S-09.V1** — Inject temp-file replacement attempts and write/sync/rename/stamp failures; verify no untrusted replacement is accepted and no failed persistence is reported as durable success. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
 
 **Complete when:** Cache publication preserves file identity and the UI distinguishes fresh data from successfully persisted data.
 
@@ -3732,3 +3732,11 @@ Revalidated at the candidate source (`065248a1` + the G-07 test addition) on Win
 - V1: the two new tests plus the retained g07 regression (1 passed) and the policy matrix (2 passed). Resume across a redirect: chunk state is keyed by the original URL and the chain re-resolves per request; the DC-02/DC-12 suites remain the direct-URL resume proof, and no redirect-specific resume difference exists in the code path.
 - Mutations: OY1 (policy always follows) and OY2 (host set emptied) each failed their guarding test and passed after restore.
 - Commands: `cargo fmt --check` PASS; clippy `-D warnings` 0 errors; `cargo test` 549 passed / 0 failed / 2 ignored (547 + the two S-08 tests); `npm run check` PASS.
+
+#### S-09 closure record — cache publication identity and honest persistence
+
+- I1: `save_cache_record` now keeps the exclusively created temp-file handle through write, sync AND rename — the name is never closed and reopened, so no window exists in which the temp name can refer to different bytes. A failed write removes the temp file; a failed rename removes the temp file and returns the error with the previous validated cache untouched. Atomic body/ETag/signature publication is unchanged (single record rename). The rename-with-open-handle path executes for real on this Windows host in the success test.
+- I2: `write_refresh_stamp` returns a `Result`; both fetch paths (network and 304) now set `persistence_notice` on cache-save and/or stamp failures while still serving the fresh in-memory catalog — a failed persistence is never reported as durable, and the last-good cache file survives any failure. Both notices are combined when both fail.
+- V1: `s09_cache_publication_keeps_the_handle_and_retains_last_good` (byte-exact publication, no temp leftovers, rename refusal cleans up and the previous record still reads, recovery works); `s09_persistence_failures_are_surfaced_while_fresh_data_is_served` drives the REAL local HTTP fixture with a blocked cache path (origin network + "could not be saved for offline use"), a blocked stamp path ("refresh time could not be recorded"), and both-clean (no notice) — proving the notice is not a constant. No untrusted replacement path exists: the cache is only ever renamed from a handle the writer owns; readers only accept signature-verified records.
+- Mutations: OZ1 (failed-publication cleanup removed), OZ2 (stamp failure swallowed) and OZ3 (save failure ignored in fetch) each failed their guarding test and passed after restore. The handle-retention property itself is proven by construction plus the executed rename-under-open-handle path; a deterministic adversarial interleave is not representable in-process and is stated as such.
+- Commands: `cargo fmt --check` PASS; clippy `-D warnings` 0 errors; `cargo test` 551 passed / 0 failed / 2 ignored (549 + the two S-09 tests); `npm run check` PASS.

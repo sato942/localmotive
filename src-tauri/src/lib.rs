@@ -5505,7 +5505,7 @@ mod catalog_command_tests {
         let root = unique_dir("localmotive-lib-load");
         let (body, signature) = shipped_signed_pair();
         catalog::save_cache_record(&root, &body, Some("etag"), &signature).unwrap();
-        catalog::write_refresh_stamp(&root);
+        catalog::write_refresh_stamp(&root).unwrap();
 
         let slot = std::sync::Mutex::new(None);
         let snapshot = catalog::load_catalog_snapshot(&root, catalog::DEFAULT_CATALOG_URL).unwrap();

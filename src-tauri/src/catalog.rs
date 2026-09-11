@@ -1099,16 +1099,23 @@ pub fn read_refresh_stamp(root: &Path) -> Option<String> {
         .filter(|text| !text.is_empty())
 }
 
-pub(crate) fn write_refresh_stamp(root: &Path) {
+/// Record the last successful refresh second. Failures are returned, never
+/// swallowed (audit S-09): the caller reports the stamp as not durable while
+/// still serving the fresh in-memory catalog.
+pub(crate) fn write_refresh_stamp(root: &Path) -> Result<(), String> {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs().to_string())
         .unwrap_or_default();
     if secs.is_empty() {
-        return;
+        return Err(
+            "The system clock is unavailable, so the refresh time was not recorded.".into(),
+        );
     }
-    let _ = std::fs::create_dir_all(root);
-    let _ = std::fs::write(refresh_stamp_path(root), &secs);
+    std::fs::create_dir_all(root)
+        .map_err(|error| format!("Could not create {}: {error}", root.display()))?;
+    std::fs::write(refresh_stamp_path(root), &secs)
+        .map_err(|error| format!("Could not record the refresh time: {error}"))
 }
 
 static CATALOG_CACHE_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -1151,39 +1158,42 @@ pub(crate) fn save_cache_record(
     let cache = cache_path(root);
     // Parallel tests share one process id, so the temp name needs a random
     // suffix too: two threads publishing different bodies must not share one
-    // temp file, or a reader can observe a mixed record.
-    let temp = {
-        let candidate = (0..16)
-            .map(|_| {
-                root.join(format!(
-                    "catalog-cache-{}-{:016x}.tmp",
-                    std::process::id(),
-                    rand::random::<u64>()
-                ))
-            })
-            .find(|candidate| {
-                std::fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(candidate)
-                    .map(drop)
-                    .is_ok()
-            })
-            .ok_or_else(|| "Could not allocate a unique catalog cache temp file".to_string())?;
-        candidate
-    };
-    {
-        let mut file = std::fs::File::create(&temp)
-            .map_err(|error| format!("Could not create {}: {error}", temp.display()))?;
-        use std::io::Write;
-        file.write_all(&record)
-            .and_then(|_| file.sync_all())
-            .map_err(|error| format!("Could not write {}: {error}", temp.display()))?;
+    // temp file, or a reader can observe a mixed record. The exclusively
+    // created handle is kept through write, sync and rename (audit S-09):
+    // the name is never closed and reopened, so nothing can be swapped under
+    // the writer between allocation and publication.
+    let (temp, mut file) = (0..16)
+        .find_map(|_| {
+            let candidate = root.join(format!(
+                "catalog-cache-{}-{:016x}.tmp",
+                std::process::id(),
+                rand::random::<u64>()
+            ));
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&candidate)
+                .ok()
+                .map(|file| (candidate, file))
+        })
+        .ok_or_else(|| "Could not allocate a unique catalog cache temp file".to_string())?;
+    use std::io::Write;
+    let write_result = file.write_all(&record).and_then(|_| file.sync_all());
+    if let Err(error) = write_result {
+        drop(file);
+        let _ = std::fs::remove_file(&temp);
+        return Err(format!("Could not write {}: {error}", temp.display()));
     }
     // rename replaces a file atomically. Never delete the old record first: if
     // publication fails, the previous validated cache must remain available.
-    std::fs::rename(&temp, &cache)
-        .map_err(|error| format!("Could not publish {}: {error}", cache.display()))
+    // The handle stays open across the rename so no window exists in which
+    // the temp name refers to different bytes.
+    let publication = std::fs::rename(&temp, &cache);
+    drop(file);
+    publication.map_err(|error| {
+        let _ = std::fs::remove_file(&temp);
+        format!("Could not publish {}: {error}", cache.display())
+    })
 }
 
 /// Fetch the catalog, using a stored ETag so an unchanged catalog costs one
@@ -1246,7 +1256,9 @@ fn fetch_catalog_verified(
                         )
                     }
                 };
-                write_refresh_stamp(cache_root);
+                let persistence_notice = write_refresh_stamp(cache_root)
+                    .err()
+                    .map(|error| format!("The refresh time could not be recorded: {error}"));
                 return Ok(CatalogSnapshot {
                     catalog,
                     origin: "not-modified".into(),
@@ -1255,7 +1267,7 @@ fn fetch_catalog_verified(
                     last_success_secs: read_refresh_stamp(cache_root),
                     cooldown_remaining_minutes: None,
                     refresh_error: None,
-                    persistence_notice: None,
+                    persistence_notice,
                 });
             }
             if response
@@ -1405,9 +1417,22 @@ fn fetch_catalog_verified(
                     )
                 }
             }
-            // Only cache a signed document that parsed successfully.
-            let _ = save_cache_record(cache_root, &body, etag.as_deref(), &signature);
-            write_refresh_stamp(cache_root);
+            // Only cache a signed document that parsed successfully. A
+            // failed cache or stamp write never hides the fresh in-memory
+            // catalog, and it is never reported as durable (audit S-09).
+            let cache_problem = save_cache_record(cache_root, &body, etag.as_deref(), &signature)
+                .err()
+                .map(|error| {
+                    format!("The refreshed catalog could not be saved for offline use: {error}")
+                });
+            let stamp_problem = write_refresh_stamp(cache_root)
+                .err()
+                .map(|error| format!("The refresh time could not be recorded: {error}"));
+            let persistence_notice = match (cache_problem, stamp_problem) {
+                (Some(cache), Some(stamp)) => Some(format!("{cache} {stamp}")),
+                (Some(problem), None) | (None, Some(problem)) => Some(problem),
+                (None, None) => None,
+            };
             Ok(CatalogSnapshot {
                 catalog,
                 origin: "network".into(),
@@ -1416,7 +1441,7 @@ fn fetch_catalog_verified(
                 last_success_secs: read_refresh_stamp(cache_root),
                 cooldown_remaining_minutes: None,
                 refresh_error: None,
-                persistence_notice: None,
+                persistence_notice,
             })
         }
         Err(error) => fallback(
@@ -2871,7 +2896,7 @@ mod tests {
         // must survive a write/read cycle. Missing stamp means never.
         let root = unique_test_dir("localmotive-refresh-stamp");
         assert_eq!(read_refresh_stamp(&root), None);
-        write_refresh_stamp(&root);
+        write_refresh_stamp(&root).unwrap();
         let stamp = read_refresh_stamp(&root).expect("stamp must exist after write");
         assert!(stamp.trim().parse::<u64>().is_ok());
         assert_eq!(
@@ -3197,6 +3222,122 @@ mod tests {
             stop,
             handle: Some(handle),
         }
+    }
+
+    #[test]
+    fn s09_cache_publication_keeps_the_handle_and_retains_last_good() {
+        let root = std::env::temp_dir().join(format!(
+            "localmotive-s09-cache-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+
+        // A successful publication leaves exactly the cache file, byte for
+        // byte the record that was written, and no temp file behind.
+        save_cache_record(&root, "body-one", Some("etag-1"), "sig-1").unwrap();
+        let published = std::fs::read_to_string(cache_path(&root)).unwrap();
+        assert!(published.contains("body-one"), "{published}");
+        assert!(published.contains("etag-1"), "{published}");
+        let temps = || {
+            std::fs::read_dir(&root)
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+                .count()
+        };
+        assert_eq!(temps(), 0, "a successful save must not leave temp files");
+
+        // A failed publication (the cache path is occupied by a directory, so
+        // the rename cannot replace it) fails loudly, cleans its temp file,
+        // and leaves the previous validated record untouched for the reader.
+        std::fs::remove_file(cache_path(&root)).unwrap();
+        std::fs::create_dir_all(cache_path(&root)).unwrap();
+        let error = save_cache_record(&root, "body-two", None, "sig-2").unwrap_err();
+        assert!(error.contains("Could not publish"), "{error}");
+        assert_eq!(temps(), 0, "a failed save must clean its temp file");
+        std::fs::remove_dir_all(cache_path(&root)).unwrap();
+        save_cache_record(&root, "body-three", None, "sig-3").unwrap();
+        let recovered = std::fs::read_to_string(cache_path(&root)).unwrap();
+        assert!(recovered.contains("body-three"), "{recovered}");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn s09_persistence_failures_are_surfaced_while_fresh_data_is_served() {
+        let body = serde_json::json!({
+            "schemaVersion": 2,
+            "updated": "2026-09-11",
+            "models": [{
+                "id": "fixture/one",
+                "repo": "fixture/one-GGUF",
+                "files": [{
+                    "quant": "Q4_K_M",
+                    "filename": "one-Q4_K_M.gguf",
+                    "sizeBytes": 1234,
+                    "sha256": "a".repeat(64),
+                }],
+            }],
+        })
+        .to_string();
+        let fixture = serve_catalog_http(
+            body.into_bytes(),
+            b"fixture-signature".to_vec(),
+            BodyFraming::DeclaredLength,
+        );
+        let root = std::env::temp_dir().join(format!(
+            "localmotive-s09-notice-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let url = format!("{}/catalog.json", fixture.base_url);
+
+        // The cache path is blocked: fresh data is served with a notice that
+        // it could not be persisted for offline use.
+        std::fs::create_dir_all(cache_path(&root)).unwrap();
+        let snapshot = fetch_catalog_verified(&url, &root, |_, _| true).unwrap();
+        assert_eq!(snapshot.origin, "network");
+        assert_eq!(snapshot.catalog.models.len(), 1);
+        let notice = snapshot
+            .persistence_notice
+            .expect("a failed save must be visible");
+        assert!(
+            notice.contains("could not be saved for offline use"),
+            "{notice}"
+        );
+
+        // The stamp path is blocked instead: the refresh time is reported as
+        // unrecorded while the fresh catalog is still served.
+        std::fs::remove_dir_all(cache_path(&root)).unwrap();
+        let _ = std::fs::remove_file(refresh_stamp_path(&root));
+        std::fs::create_dir_all(refresh_stamp_path(&root)).unwrap();
+        let snapshot = fetch_catalog_verified(&url, &root, |_, _| true).unwrap();
+        assert_eq!(snapshot.origin, "network");
+        assert_eq!(snapshot.catalog.models.len(), 1);
+        let notice = snapshot
+            .persistence_notice
+            .expect("a failed stamp must be visible");
+        assert!(
+            notice.contains("refresh time could not be recorded"),
+            "{notice}"
+        );
+
+        // With both paths writable the same fetch reports no persistence
+        // problem, so the notice is not a constant.
+        std::fs::remove_dir_all(refresh_stamp_path(&root)).unwrap();
+        let snapshot = fetch_catalog_verified(&url, &root, |_, _| true).unwrap();
+        assert_eq!(snapshot.origin, "network");
+        assert!(snapshot.persistence_notice.is_none());
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
