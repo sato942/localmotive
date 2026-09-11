@@ -18,6 +18,7 @@ mod proc;
 mod property_tests;
 pub mod recommend;
 mod runtime;
+mod runtime_service;
 pub mod sharing;
 #[cfg(test)]
 mod test_support;
@@ -78,7 +79,7 @@ impl HealthProcess for proc::ContainedProcess {
     }
 }
 
-struct ExclusiveOperation<'a> {
+pub(crate) struct ExclusiveOperation<'a> {
     active: &'a AtomicBool,
 }
 
@@ -195,7 +196,7 @@ impl Drop for OperationReservation<'_> {
     }
 }
 
-fn reserve_operation(
+pub(crate) fn reserve_operation(
     coordinator: &Mutex<OperationCoordinator>,
     owner: OperationOwner,
 ) -> Result<OperationReservation<'_>, String> {
@@ -3044,278 +3045,13 @@ fn write_share_export(
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct RuntimeSetupResponse {
+pub(crate) struct RuntimeSetupResponse {
     hardware: runtime::HardwareInfo,
     catalog: Option<runtime::RuntimeCatalog>,
     catalog_error: Option<runtime::RuntimeCatalogError>,
     runtime_root: String,
     managed_runtimes: Vec<runtime::ManagedRuntimeRecord>,
 }
-
-#[tauri::command]
-async fn load_runtime_setup(
-    state: tauri::State<'_, AppState>,
-    adapter_id: Option<String>,
-) -> Result<RuntimeSetupResponse, String> {
-    let (hardware, runtime_root, managed_runtimes) = tauri::async_runtime::spawn_blocking(|| {
-        Ok::<_, String>((
-            runtime::detect_hardware(),
-            runtime::managed_runtime_install_root()
-                .to_string_lossy()
-                .into_owned(),
-            runtime::list_managed_runtimes()?,
-        ))
-    })
-    .await
-    .map_err(|error| error.to_string())??;
-    if let Some(adapter_id) = adapter_id.as_deref() {
-        if adapter_id.len() > 256
-            || !hardware
-                .adapters
-                .iter()
-                .any(|adapter| adapter.adapter_id == adapter_id)
-        {
-            return Err("Selected adapter is not in the current hardware snapshot".into());
-        }
-    }
-    let catalog_result =
-        match ExclusiveOperation::acquire(&state.runtime_catalog, "runtime catalog") {
-            Ok(_active) => runtime::fetch_catalog(&hardware).await.map(|mut catalog| {
-                runtime::recommend_catalog_for_adapter(
-                    &mut catalog,
-                    &hardware,
-                    adapter_id.as_deref(),
-                );
-                catalog
-            }),
-            Err(message) => Err(runtime::RuntimeCatalogError {
-                kind: runtime::RuntimeCatalogErrorKind::Busy,
-                message,
-                retry_after_seconds: None,
-            }),
-        };
-    let (catalog, catalog_error) = match catalog_result {
-        Ok(catalog) => (Some(catalog), None),
-        Err(error) => (None, Some(error)),
-    };
-    Ok(RuntimeSetupResponse {
-        hardware,
-        catalog,
-        catalog_error,
-        runtime_root,
-        managed_runtimes,
-    })
-}
-
-#[tauri::command]
-fn detect_hardware() -> runtime::HardwareInfo {
-    runtime::detect_hardware()
-}
-
-/// Verification instrumentation for the runtime setup screens: jobs run,
-/// requests coalesced, bytes hashed, jobs cancelled (audit RT-06 I4).
-#[tauri::command]
-fn runtime_verification_stats() -> runtime::RuntimeVerificationStats {
-    runtime::verification_stats()
-}
-
-#[tauri::command]
-async fn fetch_runtime_catalog(
-    state: tauri::State<'_, AppState>,
-    adapter_id: Option<String>,
-) -> Result<runtime::RuntimeCatalog, runtime::RuntimeCatalogError> {
-    let _active = ExclusiveOperation::acquire(&state.runtime_catalog, "runtime catalog").map_err(
-        |message| runtime::RuntimeCatalogError {
-            kind: runtime::RuntimeCatalogErrorKind::Busy,
-            message,
-            retry_after_seconds: None,
-        },
-    )?;
-    let hardware = tauri::async_runtime::spawn_blocking(runtime::detect_hardware)
-        .await
-        .map_err(|error| runtime::RuntimeCatalogError {
-            kind: runtime::RuntimeCatalogErrorKind::InvalidResponse,
-            message: format!("Hardware detection task failed: {error}"),
-            retry_after_seconds: None,
-        })?;
-    if let Some(adapter_id) = adapter_id.as_deref() {
-        if adapter_id.len() > 256
-            || !hardware
-                .adapters
-                .iter()
-                .any(|adapter| adapter.adapter_id == adapter_id)
-        {
-            return Err(runtime::RuntimeCatalogError {
-                kind: runtime::RuntimeCatalogErrorKind::InvalidResponse,
-                message: "Selected adapter is not in the current hardware snapshot".into(),
-                retry_after_seconds: None,
-            });
-        }
-    }
-    let mut catalog = runtime::fetch_catalog(&hardware).await?;
-    runtime::recommend_catalog_for_adapter(&mut catalog, &hardware, adapter_id.as_deref());
-    Ok(catalog)
-}
-
-#[tauri::command]
-fn managed_runtime_root() -> Result<String, String> {
-    Ok(runtime::managed_runtime_install_root()
-        .to_string_lossy()
-        .to_string())
-}
-
-#[tauri::command]
-async fn install_managed_runtime(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-    request: runtime::RuntimeInstallRequest,
-) -> Result<runtime::InstalledRuntime, String> {
-    let cancel = Arc::new(AtomicBool::new(false));
-    {
-        let mut active = state.runtime_install.lock().unwrap();
-        if active.is_some() {
-            return Err("A managed runtime installation is already active".into());
-        }
-        *active = Some(Arc::clone(&cancel));
-    }
-    let event_app = app.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        runtime::install_runtime(request, cancel, move |progress| {
-            let _ = event_app.emit("runtime-install-progress", progress);
-        })
-    })
-    .await;
-    *state.runtime_install.lock().unwrap() = None;
-    result.map_err(|error| error.to_string())?
-}
-
-#[tauri::command]
-fn cancel_managed_runtime_install(state: tauri::State<'_, AppState>) -> bool {
-    let active = state.runtime_install.lock().unwrap();
-    if let Some(cancel) = active.as_ref() {
-        cancel.store(true, Ordering::Relaxed);
-        true
-    } else {
-        false
-    }
-}
-
-#[tauri::command]
-async fn check_managed_runtime_health(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-    request: health::ManagedHealthRequest,
-) -> Result<health::HealthRunResult, String> {
-    let runtime_id = request.install_key.clone();
-    let progress_runtime_id = request.install_key.clone();
-    let adapter_id = request.adapter_id.clone();
-    let cancel = Arc::new(AtomicBool::new(false));
-    {
-        let mut active = state.runtime_health.lock().unwrap();
-        if active.is_some() {
-            return Err("A managed runtime health run is already active".into());
-        }
-        *active = Some(Arc::clone(&cancel));
-    }
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        let context = match runtime::managed_health_context(&request) {
-            Ok(context) => context,
-            Err(error) => {
-                return health::trust_failure_result(runtime_id, adapter_id, error);
-            }
-        };
-        let model_cancel = Arc::clone(&cancel);
-        if let Err(error) =
-            runtime::ensure_pinned_health_model(model_cancel, |downloaded, total| {
-                let _ = app.emit(
-                    "health-model-progress",
-                    health::HealthModelProgress {
-                        install_key: progress_runtime_id.clone(),
-                        downloaded,
-                        total,
-                    },
-                );
-            })
-        {
-            let reason = if cancel.load(Ordering::Relaxed) {
-                health::HealthFailureReason::Cancelled
-            } else {
-                health::HealthFailureReason::TrustFailure
-            };
-            return health::model_setup_failure_result(&context, reason, error);
-        }
-        health::run_managed_health(context, cancel.as_ref())
-    })
-    .await;
-    *state.runtime_health.lock().unwrap() = None;
-    result.map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-async fn repair_health_model(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-) -> Result<(), String> {
-    let cancel = {
-        let mut slot = state
-            .health_repair
-            .lock()
-            .map_err(|_| "The health model repair lock is poisoned".to_string())?;
-        if slot.is_some() {
-            return Err("A health model repair is already running.".into());
-        }
-        let cancel = Arc::new(AtomicBool::new(false));
-        *slot = Some(Arc::clone(&cancel));
-        cancel
-    };
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        runtime::repair_pinned_health_model(Arc::clone(&cancel), |downloaded, total| {
-            let _ = app.emit(
-                "health-model-progress",
-                health::HealthModelProgress {
-                    install_key: "repair".into(),
-                    downloaded,
-                    total,
-                },
-            );
-        })
-    })
-    .await
-    .map_err(|error| format!("The health model repair task failed: {error}"))?;
-    if let Ok(mut slot) = state.health_repair.lock() {
-        *slot = None;
-    }
-    result.map(|_| ())
-}
-
-#[tauri::command]
-fn cancel_health_model_repair(state: tauri::State<'_, AppState>) -> bool {
-    let Ok(slot) = state.health_repair.lock() else {
-        return false;
-    };
-    match slot.as_ref() {
-        Some(flag) => {
-            flag.store(true, Ordering::Relaxed);
-            true
-        }
-        None => false,
-    }
-}
-
-#[tauri::command]
-fn cancel_managed_runtime_health(state: tauri::State<'_, AppState>) -> bool {
-    let active = state.runtime_health.lock().unwrap();
-    if let Some(cancel) = active.as_ref() {
-        cancel.store(true, Ordering::Relaxed);
-        true
-    } else {
-        false
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Cloud credentials
-// ---------------------------------------------------------------------------
 
 #[tauri::command]
 fn cloud_providers() -> Vec<cloud::Provider> {
@@ -4023,7 +3759,7 @@ pub fn run() {
             check_runtime_health,
             describe_runtime,
             list_managed_runtimes,
-            runtime_verification_stats,
+            runtime_service::runtime_verification_stats,
             read_gguf_summary,
             cancel_gguf_read,
             inspect_model_artifact,
@@ -4054,16 +3790,16 @@ pub fn run() {
             review_external_evidence,
             build_share_export,
             write_share_export,
-            load_runtime_setup,
-            detect_hardware,
-            fetch_runtime_catalog,
-            managed_runtime_root,
-            install_managed_runtime,
-            cancel_managed_runtime_install,
-            check_managed_runtime_health,
-            cancel_managed_runtime_health,
-            repair_health_model,
-            cancel_health_model_repair,
+            runtime_service::load_runtime_setup,
+            runtime_service::detect_hardware,
+            runtime_service::fetch_runtime_catalog,
+            runtime_service::managed_runtime_root,
+            runtime_service::install_managed_runtime,
+            runtime_service::cancel_managed_runtime_install,
+            runtime_service::check_managed_runtime_health,
+            runtime_service::cancel_managed_runtime_health,
+            runtime_service::repair_health_model,
+            runtime_service::cancel_health_model_repair,
             scan_models_report,
             cancel_scan,
             cloud_providers,
@@ -5457,6 +5193,76 @@ mod fe11_download_identity_tests {
         assert!(
             !source.contains("let event_key = format!(\"{repo}/{filename}\")"),
             "the bare repo/filename key must not return"
+        );
+    }
+}
+
+#[cfg(test)]
+mod runtime_service_source_tests {
+    use super::*;
+
+    #[test]
+    fn exclusive_operation_allows_one_holder_and_releases_on_drop() {
+        // The runtime catalog lock: a second acquire fails while held and the
+        // slot frees when the holder drops (audit S-27 slice-2 boundary).
+        let active = std::sync::atomic::AtomicBool::new(false);
+        let first = ExclusiveOperation::acquire(&active, "runtime catalog").unwrap();
+        let second = ExclusiveOperation::acquire(&active, "runtime catalog");
+        assert!(second.is_err(), "a second exclusive acquire must fail");
+        drop(first);
+        assert!(
+            ExclusiveOperation::acquire(&active, "runtime catalog").is_ok(),
+            "the slot must be reusable after the holder drops"
+        );
+    }
+
+    #[test]
+    fn runtime_service_commands_hold_the_exclusive_catalog_lock() {
+        // Source guard (audit S-27 slice 2): both the fetch and the install
+        // command must take the exclusive runtime-catalog lock before doing
+        // their work — mutations QA1/QA2 initially passed without these
+        // assertions, which is why they exist.
+        let source = include_str!("runtime_service.rs");
+        let fetch = source
+            .split("fn fetch_runtime_catalog(")
+            .nth(1)
+            .expect("fetch_runtime_catalog must live in runtime_service.rs")
+            .split("fn managed_runtime_root(")
+            .next()
+            .unwrap();
+        let fetch_lock = fetch
+            .find("ExclusiveOperation::acquire")
+            .expect("fetch_runtime_catalog must take the exclusive lock");
+        let fetch_work = fetch
+            .find("runtime::fetch_catalog")
+            .expect("fetch_runtime_catalog must call the fetcher");
+        assert!(fetch_lock < fetch_work, "the lock must precede the fetch");
+
+        let install = source
+            .split("fn install_managed_runtime(")
+            .nth(1)
+            .expect("install_managed_runtime must live in runtime_service.rs")
+            .split("fn cancel_managed_runtime_install(")
+            .next()
+            .unwrap();
+        // The install command guards through the single runtime_install slot:
+        // it must refuse a second install, keep the slot for the run, and
+        // clear it afterwards.
+        let slot = install
+            .find("state.runtime_install.lock()")
+            .expect("install_managed_runtime must take the runtime_install slot");
+        let refusal = install
+            .find("already active")
+            .expect("install_managed_runtime must refuse a second install");
+        let install_work = install
+            .find("runtime::install_runtime")
+            .expect("install_managed_runtime must call the installer");
+        let cleared = install
+            .find("*state.runtime_install.lock().unwrap() = None;")
+            .expect("install_managed_runtime must clear the slot afterwards");
+        assert!(
+            slot < refusal && refusal < install_work && install_work < cleared,
+            "the slot protocol must wrap the install: take, refuse, run, clear"
         );
     }
 }

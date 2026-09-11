@@ -372,7 +372,8 @@ test("runtime inspection commits one latest atomic result", async () => {
 
 test("runtime setup refresh preserves the selected adapter recommendation", async () => {
   const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
-  const backend = await readFile(join(process.cwd(), "src-tauri", "src", "lib.rs"), "utf8");
+  // The runtime command family moved to runtime_service.rs (S-27 I1/I2).
+  const backend = await readFile(join(process.cwd(), "src-tauri", "src", "runtime_service.rs"), "utf8");
   assert.match(app, /load_runtime_setup",\s*\{\s*adapterId: selectedRuntimeAdapterId \|\| null/);
   assert.match(backend, /async fn load_runtime_setup\([\s\S]*adapter_id: Option<String>/);
 });
@@ -582,7 +583,7 @@ test("runtime install cancellation is available before progress and ignores stal
 test("managed health progress is correlated to the active install key", async () => {
   const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
   const model = await readFile(join(process.cwd(), "src", "model.ts"), "utf8");
-  const backend = await readFile(join(process.cwd(), "src-tauri", "src", "lib.rs"), "utf8");
+  const backend = await readFile(join(process.cwd(), "src-tauri", "src", "runtime_service.rs"), "utf8");
   assert.match(model, /export type HealthModelProgress = \{\s*installKey: string;/);
   assert.match(app, /event\.payload\.installKey === healthRunningRef\.current/);
   assert.match(backend, /HealthModelProgress \{\s*install_key:/);
@@ -597,7 +598,7 @@ test("runtime and health cancellation expose a pending UI state", async () => {
 });
 
 test("adapter catalog IPC preserves structured retry metadata", async () => {
-  const backend = await readFile(join(process.cwd(), "src-tauri", "src", "lib.rs"), "utf8");
+  const backend = await readFile(join(process.cwd(), "src-tauri", "src", "runtime_service.rs"), "utf8");
   assert.match(
     backend,
     /async fn fetch_runtime_catalog\([\s\S]*?\) -> Result<runtime::RuntimeCatalog, runtime::RuntimeCatalogError>/,
