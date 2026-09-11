@@ -700,6 +700,8 @@ export type GpuAdapterInfo = {
   reservationBytes: Evidence<number>;
   availableForReservationBytes: Evidence<number>;
   capacityObservations: CapacityObservation[];
+  // The stable physical identity recorded when a trustworthy join exists.
+  physicalId?: Evidence<string> | null;
 };
 
 export type HardwareOverride = {
@@ -738,6 +740,16 @@ export type HardwareInfo = {
   systemMemory: SystemMemoryInfo;
   adapters: GpuAdapterInfo[];
   manualOverrides: HardwareOverride[];
+  // NVIDIA telemetry without a trustworthy physical mapping (audit RT-09).
+  unassignedNvidia?: Array<{
+    name: string;
+    uuid: string;
+    pciBusId: string;
+    driver: string;
+    totalBytes: number | null;
+    usedBytes: number | null;
+    reason: string;
+  }>;
 };
 
 export function conflictingCapacityMetrics(adapter: GpuAdapterInfo): MemoryMetric[] {

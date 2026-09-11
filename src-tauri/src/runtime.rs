@@ -166,6 +166,10 @@ pub struct HardwareInfo {
     pub system_memory: SystemMemoryInfo,
     pub adapters: Vec<GpuAdapterInfo>,
     pub manual_overrides: Vec<HardwareOverride>,
+    /// NVIDIA telemetry that could not be joined to a specific adapter by a
+    /// trustworthy physical mapping (audit RT-09 I3).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unassigned_nvidia: Vec<UnassignedNvidiaObservation>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -365,6 +369,10 @@ pub struct GpuAdapterInfo {
     pub available_budget_bytes: Evidence<u64>,
     pub available_for_reservation_bytes: Evidence<u64>,
     pub capacity_observations: Vec<CapacityObservation>,
+    /// The device's stable physical identity (NVIDIA UUID when available),
+    /// recorded when a trustworthy join established it (audit RT-09 I1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub physical_id: Option<Evidence<String>>,
 }
 
 fn vendor_name(vendor_id: u32) -> String {
@@ -556,6 +564,7 @@ pub fn detect_dxgi_adapters() -> Result<Vec<GpuAdapterInfo>, String> {
             available_budget_bytes,
             available_for_reservation_bytes: reservation_bytes,
             capacity_observations,
+            physical_id: None,
         });
     }
     Ok(adapters)
@@ -1190,6 +1199,25 @@ struct NvidiaProbeRow {
     driver: String,
     total_bytes: Option<u64>,
     used_bytes: Option<u64>,
+    /// Stable physical identity from nvidia-smi (audit RT-09): the GPU UUID
+    /// and PCI bus location identify the device beyond its display name.
+    uuid: String,
+    pci_bus_id: String,
+}
+
+/// An NVIDIA observation that could not be joined to one DXGI adapter with
+/// confidence. Kept explicit rather than attached to an arbitrary device
+/// (audit RT-09 I3).
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UnassignedNvidiaObservation {
+    pub name: String,
+    pub uuid: String,
+    pub pci_bus_id: String,
+    pub driver: String,
+    pub total_bytes: Option<u64>,
+    pub used_bytes: Option<u64>,
+    pub reason: String,
 }
 
 fn parse_nvidia_probe_rows(output: &str) -> Vec<NvidiaProbeRow> {
@@ -1197,7 +1225,12 @@ fn parse_nvidia_probe_rows(output: &str) -> Vec<NvidiaProbeRow> {
         .lines()
         .filter_map(|line| {
             let fields = line.split(',').map(str::trim).collect::<Vec<_>>();
-            if fields.len() != 4 || fields[0].is_empty() {
+            // The current query asks for six fields; four-field output from
+            // older text stays parseable with empty physical identity.
+            if fields.len() != 6 && fields.len() != 4 {
+                return None;
+            }
+            if fields[0].is_empty() {
                 return None;
             }
             let mib = |value: &str| {
@@ -1211,6 +1244,8 @@ fn parse_nvidia_probe_rows(output: &str) -> Vec<NvidiaProbeRow> {
                 driver: fields[1].to_string(),
                 total_bytes: mib(fields[2]),
                 used_bytes: mib(fields[3]),
+                uuid: fields.get(4).copied().unwrap_or_default().to_string(),
+                pci_bus_id: fields.get(5).copied().unwrap_or_default().to_string(),
             })
         })
         .collect()
@@ -1220,21 +1255,59 @@ fn merge_nvidia_probe_observations(
     adapters: &mut [GpuAdapterInfo],
     rows: &[NvidiaProbeRow],
     observed_at_ms: u64,
-) {
+) -> Vec<UnassignedNvidiaObservation> {
+    let mut unassigned = Vec::new();
     let mut matched = vec![false; adapters.len()];
     for row in rows {
-        let Some((index, adapter)) = adapters.iter_mut().enumerate().find(|(index, adapter)| {
-            !matched[*index] && adapter.name.eq_ignore_ascii_case(&row.name)
-        }) else {
+        // A name joins only when it identifies exactly one DXGI adapter and
+        // exactly one NVIDIA row. Identical names are ambiguous, and
+        // enumeration order is not identity (audit RT-09 I2/I3): the
+        // observation stays unassigned instead of attaching to an arbitrary
+        // LUID.
+        let adapter_matches = adapters
+            .iter()
+            .enumerate()
+            .filter(|(index, adapter)| {
+                !matched[*index] && adapter.name.eq_ignore_ascii_case(&row.name)
+            })
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        let row_matches = rows
+            .iter()
+            .filter(|candidate| candidate.name.eq_ignore_ascii_case(&row.name))
+            .count();
+        if adapter_matches.len() != 1 || row_matches != 1 {
+            unassigned.push(UnassignedNvidiaObservation {
+                name: row.name.clone(),
+                uuid: row.uuid.clone(),
+                pci_bus_id: row.pci_bus_id.clone(),
+                driver: row.driver.clone(),
+                total_bytes: row.total_bytes,
+                used_bytes: row.used_bytes,
+                reason: format!(
+                    "ambiguous: {} NVIDIA row(s) and {} DXGI adapter(s) share the name; identity mapping is unavailable",
+                    row_matches,
+                    adapter_matches.len()
+                ),
+            });
             continue;
-        };
+        }
+        let index = adapter_matches[0];
         matched[index] = true;
+        let adapter = &mut adapters[index];
         let source = EvidenceSource {
             kind: EvidenceSourceKind::NvidiaSmi,
             detail: "nvidia-smi --query-gpu".into(),
         };
         if !row.driver.is_empty() {
             adapter.driver = observed_value(row.driver.clone(), source.clone(), observed_at_ms);
+        }
+        if !row.uuid.is_empty() {
+            adapter.physical_id = Some(observed_value(
+                row.uuid.clone(),
+                source.clone(),
+                observed_at_ms,
+            ));
         }
         if let Some(value) = row.total_bytes {
             adapter.capacity_observations.push(CapacityObservation {
@@ -1249,6 +1322,7 @@ fn merge_nvidia_probe_observations(
             });
         }
     }
+    unassigned
 }
 
 const HARDWARE_DETECTION_NOTICE: &str =
@@ -1271,6 +1345,7 @@ pub fn detect_hardware() -> HardwareInfo {
             system_memory: detect_system_memory(),
             adapters: Vec::new(),
             manual_overrides: Vec::new(),
+            unassigned_nvidia: Vec::new(),
         };
     }
     const HARDWARE_PROBE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -1281,7 +1356,7 @@ pub fn detect_hardware() -> HardwareInfo {
     let hardware_observed_at_ms = observed_at_ms();
     let mut nvidia_query_command = crate::proc::hidden_command("nvidia-smi.exe");
     nvidia_query_command.args([
-        "--query-gpu=name,driver_version,memory.total,memory.used",
+        "--query-gpu=name,driver_version,memory.total,memory.used,uuid,pci.bus_id",
         "--format=csv,noheader,nounits",
     ]);
     let nvidia_query = crate::proc::output_with_timeout(
@@ -1298,7 +1373,8 @@ pub fn detect_hardware() -> HardwareInfo {
                 .map(|row| row.driver.clone())
                 .unwrap_or_default();
             if !gpu_names.is_empty() {
-                merge_nvidia_probe_observations(&mut adapters, &rows, hardware_observed_at_ms);
+                let unassigned_nvidia =
+                    merge_nvidia_probe_observations(&mut adapters, &rows, hardware_observed_at_ms);
                 let mut smi_command = crate::proc::hidden_command("nvidia-smi.exe");
                 let smi = crate::proc::output_with_timeout(
                     &mut smi_command,
@@ -1320,6 +1396,7 @@ pub fn detect_hardware() -> HardwareInfo {
                     system_memory,
                     adapters,
                     manual_overrides: Vec::new(),
+                    unassigned_nvidia,
                 };
             }
         }
@@ -1389,6 +1466,7 @@ pub fn detect_hardware() -> HardwareInfo {
         system_memory,
         adapters,
         manual_overrides: Vec::new(),
+        unassigned_nvidia: Vec::new(),
     }
 }
 
@@ -4865,6 +4943,166 @@ mod tests {
         assert!(hardware.manual_overrides.is_empty());
     }
 
+    fn rt09_adapter_fixture(id: &str, name: &str, at: u64) -> GpuAdapterInfo {
+        let source = EvidenceSource {
+            kind: EvidenceSourceKind::WindowsApi,
+            detail: "DXGI adapter description".into(),
+        };
+        let value = |bytes: u64| {
+            Evidence::known(
+                bytes,
+                EvidenceLevel::Observed,
+                source.clone(),
+                at,
+                Vec::new(),
+            )
+            .unwrap()
+        };
+        GpuAdapterInfo {
+            adapter_id: id.into(),
+            compatibility_id: format!("pci:10de:2b85:{id}"),
+            name: name.into(),
+            vendor: "nvidia".into(),
+            driver: Evidence::unknown(source.clone(), at, "fixture"),
+            backend: Evidence::known(
+                "cuda".into(),
+                EvidenceLevel::Derived,
+                source.clone(),
+                at,
+                Vec::new(),
+            )
+            .unwrap(),
+            dedicated_bytes: value(100),
+            shared_bytes: value(50),
+            budget_bytes: value(90),
+            current_usage_bytes: value(10),
+            available_budget_bytes: value(80),
+            available_for_reservation_bytes: value(70),
+            capacity_observations: Vec::new(),
+            physical_id: None,
+        }
+    }
+
+    fn rt09_row(name: &str, uuid: &str, used_mib: u64) -> NvidiaProbeRow {
+        NvidiaProbeRow {
+            name: name.into(),
+            driver: "610.74".into(),
+            total_bytes: Some(24_564 * 1024 * 1024),
+            used_bytes: Some(used_mib * 1024 * 1024),
+            uuid: uuid.into(),
+            pci_bus_id: format!("00000000:0{}:00.0", used_mib % 9),
+        }
+    }
+
+    #[test]
+    fn rt09_identical_names_never_receive_another_devices_telemetry() {
+        // Two adapters share one reported name and the NVIDIA rows arrive in
+        // the opposite order with different usage values (audit RT-09 V1).
+        // No trustworthy mapping exists, so every row stays unassigned and no
+        // adapter gains a wrong physical usage observation.
+        let mut adapters = vec![
+            rt09_adapter_fixture("luid:aa", "NVIDIA GeForce RTX 5090", 1),
+            rt09_adapter_fixture("luid:bb", "NVIDIA GeForce RTX 5090", 1),
+        ];
+        let rows = vec![
+            rt09_row("NVIDIA GeForce RTX 5090", "GPU-bbbb", 900),
+            rt09_row("NVIDIA GeForce RTX 5090", "GPU-aaaa", 200),
+        ];
+        let unassigned = merge_nvidia_probe_observations(&mut adapters, &rows, 42);
+        assert_eq!(unassigned.len(), 2, "both rows stay unassigned");
+        for observation in &unassigned {
+            assert!(
+                observation.reason.contains("ambiguous"),
+                "{}",
+                observation.reason
+            );
+            assert!(observation.uuid.starts_with("GPU-"));
+        }
+        for adapter in &adapters {
+            assert!(
+                adapter
+                    .capacity_observations
+                    .iter()
+                    .all(|observation| observation.evidence.source.kind
+                        != EvidenceSourceKind::NvidiaSmi),
+                "no NVIDIA usage may attach to an ambiguously named adapter"
+            );
+            assert!(adapter.physical_id.is_none());
+        }
+    }
+
+    #[test]
+    fn rt09_one_adapter_with_duplicate_rows_stays_unassigned() {
+        // One DXGI adapter but two same-name NVIDIA rows: the row set itself
+        // is ambiguous, so no row may attach (audit RT-09 I3).
+        let mut adapters = vec![rt09_adapter_fixture("luid:aa", "NVIDIA X", 1)];
+        let rows = vec![
+            rt09_row("NVIDIA X", "GPU-aaaa", 200),
+            rt09_row("NVIDIA X", "GPU-aaaa", 300),
+        ];
+        let unassigned = merge_nvidia_probe_observations(&mut adapters, &rows, 42);
+        assert_eq!(unassigned.len(), 2);
+        assert!(adapters[0]
+            .capacity_observations
+            .iter()
+            .all(|observation| observation.evidence.source.kind != EvidenceSourceKind::NvidiaSmi));
+    }
+
+    #[test]
+    fn rt09_distinct_names_map_each_row_to_its_own_adapter() {
+        // Distinct names are unambiguous even when the enumeration orders
+        // differ: each adapter receives only its own row.
+        let mut adapters = vec![
+            rt09_adapter_fixture("luid:aa", "NVIDIA A", 1),
+            rt09_adapter_fixture("luid:bb", "NVIDIA B", 1),
+        ];
+        let rows = vec![
+            rt09_row("NVIDIA B", "GPU-bbbb", 900),
+            rt09_row("NVIDIA A", "GPU-aaaa", 200),
+        ];
+        let unassigned = merge_nvidia_probe_observations(&mut adapters, &rows, 42);
+        assert!(unassigned.is_empty());
+        let used_for = |adapter: &GpuAdapterInfo| {
+            adapter
+                .capacity_observations
+                .iter()
+                .find(|observation| observation.metric == MemoryMetric::CurrentUsage)
+                .and_then(|observation| observation.evidence.value)
+        };
+        let a = adapters
+            .iter()
+            .find(|adapter| adapter.name == "NVIDIA A")
+            .unwrap();
+        let b = adapters
+            .iter()
+            .find(|adapter| adapter.name == "NVIDIA B")
+            .unwrap();
+        assert_eq!(used_for(a), Some(200 * 1024 * 1024));
+        assert_eq!(used_for(b), Some(900 * 1024 * 1024));
+        assert_eq!(
+            a.physical_id.as_ref().and_then(|value| value.value.clone()),
+            Some("GPU-aaaa".into())
+        );
+        assert_eq!(
+            b.physical_id.as_ref().and_then(|value| value.value.clone()),
+            Some("GPU-bbbb".into())
+        );
+    }
+
+    #[test]
+    fn rt09_probe_parser_reads_uuid_and_pci_location() {
+        let rows = parse_nvidia_probe_rows(
+            "NVIDIA RTX 5090, 610.74, 24564, 1024, GPU-abc123, 00000000:01:00.0\n",
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].uuid, "GPU-abc123");
+        assert_eq!(rows[0].pci_bus_id, "00000000:01:00.0");
+        // Four-field output from an older query stays parseable.
+        let legacy = parse_nvidia_probe_rows("NVIDIA RTX 5090, 610.74, 24564, 512\n");
+        assert_eq!(legacy.len(), 1);
+        assert_eq!(legacy[0].uuid, "");
+    }
+
     #[test]
     fn nvidia_probe_parser_keeps_adapter_memory_separate() {
         let rows = parse_nvidia_probe_rows(
@@ -4889,9 +5127,12 @@ mod tests {
             driver: "fixture-driver".into(),
             total_bytes: Some(12_345),
             used_bytes: Some(678),
+            uuid: "GPU-fixture-0".into(),
+            pci_bus_id: "00000000:01:00.0".into(),
         }];
 
-        merge_nvidia_probe_observations(&mut adapters, &rows, 42);
+        let unassigned = merge_nvidia_probe_observations(&mut adapters, &rows, 42);
+        assert!(unassigned.is_empty());
 
         assert_eq!(adapters[0].dedicated_bytes, original_dedicated);
         assert_eq!(adapters[0].driver.value.as_deref(), Some("fixture-driver"));
@@ -5978,6 +6219,7 @@ Connection: close
             available_budget_bytes: bytes.clone(),
             available_for_reservation_bytes: bytes.clone(),
             capacity_observations: Vec::new(),
+            physical_id: None,
         };
         let hardware = HardwareInfo {
             architecture: "x64".into(),
@@ -5990,6 +6232,7 @@ Connection: close
             system_memory: detect_system_memory(),
             adapters: vec![adapter("luid:aa"), adapter("luid:bb")],
             manual_overrides: Vec::new(),
+            unassigned_nvidia: Vec::new(),
         };
         let (release, approved, _) = approved_release();
         let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
@@ -6239,6 +6482,7 @@ Connection: close
             system_memory: detect_system_memory(),
             adapters: Vec::new(),
             manual_overrides: Vec::new(),
+            unassigned_nvidia: Vec::new(),
         };
         let (release, approved, jobs) = approved_release();
         let catalog =
@@ -6266,6 +6510,7 @@ Connection: close
             system_memory: detect_system_memory(),
             adapters: Vec::new(),
             manual_overrides: Vec::new(),
+            unassigned_nvidia: Vec::new(),
         };
         let (release, approved, jobs) = approved_release();
         let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
@@ -6329,6 +6574,7 @@ Connection: close
             available_budget_bytes: bytes.clone(),
             available_for_reservation_bytes: bytes,
             capacity_observations: Vec::new(),
+            physical_id: None,
         };
         let (release, approved, _) = approved_release();
         let hardware = HardwareInfo {
@@ -6342,6 +6588,7 @@ Connection: close
             system_memory: detect_system_memory(),
             adapters: vec![adapter.clone()],
             manual_overrides: Vec::new(),
+            unassigned_nvidia: Vec::new(),
         };
         let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
         let option = catalog
@@ -6434,6 +6681,7 @@ Connection: close
             available_budget_bytes: bytes.clone(),
             available_for_reservation_bytes: bytes,
             capacity_observations: Vec::new(),
+            physical_id: None,
         };
         let (release, approved, _) = approved_release();
         let hardware = HardwareInfo {
@@ -6447,6 +6695,7 @@ Connection: close
             system_memory: detect_system_memory(),
             adapters: vec![adapter.clone()],
             manual_overrides: Vec::new(),
+            unassigned_nvidia: Vec::new(),
         };
         let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
         let option = catalog
@@ -6568,6 +6817,7 @@ Connection: close
             system_memory: detect_system_memory(),
             adapters: Vec::new(),
             manual_overrides: Vec::new(),
+            unassigned_nvidia: Vec::new(),
         };
         let (release, approved, _) = approved_release();
         let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
@@ -6595,6 +6845,7 @@ Connection: close
             system_memory: detect_system_memory(),
             adapters: Vec::new(),
             manual_overrides: Vec::new(),
+            unassigned_nvidia: Vec::new(),
         };
         let (release, approved, _) = approved_release();
         let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
@@ -6623,6 +6874,7 @@ Connection: close
             system_memory: detect_system_memory(),
             adapters: Vec::new(),
             manual_overrides: Vec::new(),
+            unassigned_nvidia: Vec::new(),
         };
         let (release, approved, _) = approved_release();
         let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
@@ -6657,6 +6909,7 @@ Connection: close
                 system_memory: detect_system_memory(),
                 adapters: Vec::new(),
                 manual_overrides: Vec::new(),
+                unassigned_nvidia: Vec::new(),
             };
             let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
             let mut options = catalog.options;
@@ -6677,6 +6930,7 @@ Connection: close
             system_memory: detect_system_memory(),
             adapters: Vec::new(),
             manual_overrides: Vec::new(),
+            unassigned_nvidia: Vec::new(),
         };
         let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
         let mut options = catalog.options;
@@ -6738,6 +6992,7 @@ Connection: close
             system_memory: detect_system_memory(),
             adapters: Vec::new(),
             manual_overrides: Vec::new(),
+            unassigned_nvidia: Vec::new(),
         };
         let (release, approved, _) = approved_release();
         let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
@@ -6767,6 +7022,7 @@ Connection: close
             system_memory: detect_system_memory(),
             adapters: Vec::new(),
             manual_overrides: Vec::new(),
+            unassigned_nvidia: Vec::new(),
         };
         let (release, approved, _) = approved_release();
         let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
@@ -6797,6 +7053,7 @@ Connection: close
             system_memory: detect_system_memory(),
             adapters: Vec::new(),
             manual_overrides: Vec::new(),
+            unassigned_nvidia: Vec::new(),
         };
         let (release, approved, _) = approved_release();
         let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
@@ -6826,6 +7083,7 @@ Connection: close
             system_memory: detect_system_memory(),
             adapters: Vec::new(),
             manual_overrides: Vec::new(),
+            unassigned_nvidia: Vec::new(),
         };
         let (release, approved, _) = approved_release();
         let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
@@ -6851,6 +7109,7 @@ Connection: close
             system_memory: detect_system_memory(),
             adapters: Vec::new(),
             manual_overrides: Vec::new(),
+            unassigned_nvidia: Vec::new(),
         };
         let (release, approved, _) = approved_release();
         let catalog = build_approved_catalog(&release, &hardware, &approved, &[]).unwrap();
@@ -7614,6 +7873,7 @@ Connection: close
             system_memory: detect_system_memory(),
             adapters: Vec::new(),
             manual_overrides: Vec::new(),
+            unassigned_nvidia: Vec::new(),
         };
         let (release, approved, jobs) = approved_release();
         let catalog = build_approved_catalog(&release, &hardware, &approved, &jobs).unwrap();

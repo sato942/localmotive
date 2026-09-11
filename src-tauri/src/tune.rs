@@ -983,6 +983,7 @@ mod tests {
             system_memory: crate::runtime::detect_system_memory(),
             adapters: Vec::new(),
             manual_overrides: Vec::new(),
+            unassigned_nvidia: Vec::new(),
         }
     }
 

@@ -802,6 +802,12 @@ export function V03EvidencePanel({
             <fieldset className="adapter-picker">
               <legend>Adapters included in preflight</legend>
               {hardware.adapters.length === 0 && <span className="muted">No GPU adapter evidence is available.</span>}
+              {(hardware.unassignedNvidia?.length ?? 0) > 0 && (
+                <span className="muted">
+                  Unassigned NVIDIA telemetry: {hardware.unassignedNvidia?.length} row(s) could not be
+                  mapped to one adapter by physical identity and stay unknown.
+                </span>
+              )}
               {hardware.adapters.map((adapter) => (
                 <label key={adapter.adapterId}>
                   <input
