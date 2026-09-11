@@ -51,9 +51,18 @@ export async function verifyVersions(root, expected) {
 }
 
 async function main() {
-  const expected = process.argv[2];
+  // No-argument mode (S-26 I2): the manifests must agree with each other,
+  // package.json acting as the source of truth. CI jobs that do NOT release
+  // use this mode so no workflow carries a literal version to drift; the
+  // release workflow still passes the RESOLVED tag version explicitly, which
+  // binds the tag to the manifests at the pinned revision.
+  let expected = process.argv[2];
+  if (expected === undefined) {
+    expected = (await json(resolve(process.cwd(), "package.json"))).version;
+    console.log(`(no argument; expecting every manifest to agree with package.json ${expected})`);
+  }
   if (!/^\d+\.\d+\.\d+$/.test(expected ?? "")) {
-    throw new Error("Usage: node scripts/verify_versions.mjs MAJOR.MINOR.PATCH");
+    throw new Error("Usage: node scripts/verify_versions.mjs [MAJOR.MINOR.PATCH]");
   }
   const result = await verifyVersions(process.cwd(), expected);
   console.log(JSON.stringify(result, null, 2));

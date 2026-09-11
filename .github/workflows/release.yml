@@ -45,6 +45,10 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+
       - name: Resolve the release tag to one immutable revision
         id: resolve
         shell: bash
@@ -52,11 +56,19 @@ jobs:
           RAW_TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           raw="$RAW_TAG"
-          test "$raw" = "v0.5.0" \
-            || { echo "::error::This workflow builds only v0.5.0"; exit 1; }
+          # Any vMAJOR.MINOR.PATCH tag is buildable; the safety comes from the
+          # revision pin plus the manifest binding below, so a retargeted or
+          # mismatched tag cannot publish source that identifies as another
+          # version (audit S-26 I2 replaced the literal v0.5.0 pin).
+          case "$raw" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::Release tags must be vMAJOR.MINOR.PATCH"; exit 1 ;;
+          esac
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "tag=v${raw#v}" >> "$GITHUB_OUTPUT"
           echo "version=${raw#v}" >> "$GITHUB_OUTPUT"
+          node scripts/verify_versions.mjs "${raw#v}" \
+            || { echo "::error::The manifests at $raw do not identify as ${raw#v}; refusing to publish mismatched source"; exit 1; }
 
       - name: Verify the resolved revision is on main
         shell: bash
@@ -118,8 +130,10 @@ jobs:
           RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
         run: |
           raw="$RAW_TAG"
-          test "$raw" = "v0.5.0" \
-            || { echo "::error::This workflow builds only v0.5.0"; exit 1; }
+          case "$raw" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::Release tags must be vMAJOR.MINOR.PATCH"; exit 1 ;;
+          esac
           test "$(git rev-parse HEAD)" = "$RESOLVED_SHA" \
             || { echo "::error::quality checkout does not match the resolved release revision"; exit 1; }
           version="${raw#v}"
@@ -142,7 +156,7 @@ jobs:
       - run: npm ci
 
       - name: Verify manifest and lockfile versions
-        run: node scripts/verify_versions.mjs 0.5.0
+        run: node scripts/verify_versions.mjs ${{ needs.resolve.outputs.version }}
 
       - name: Verify immutable workflow action references
         run: node scripts/verify_workflow_pins.mjs
@@ -150,7 +164,10 @@ jobs:
       - name: Verify fail-fast workflow gates
         run: node scripts/verify_workflow_gates.mjs
 
-      - name: Test deterministic release gates
+      # Fail fast (audit S-26 I2): this also runs inside `npm run check`
+      # below; the explicit first pass surfaces gate failures before the
+      # packaging chain (pinned by a release-gates.test.mjs check).
+      - name: Test deterministic release gates (fail-fast; repeated by npm run check)
         run: node --test scripts/tests/release-gates.test.mjs
 
       - name: Frontend checks

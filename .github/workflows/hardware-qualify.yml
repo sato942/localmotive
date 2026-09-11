@@ -12,8 +12,14 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to qualify (e.g. v0.4.1)"
+        description: "Tag to qualify (e.g. v0.6.0)"
         required: true
+      runtime_install_key:
+        description: "Approved runtime install key for the opt-in probe (blank skips it; e.g. cpu, cuda12)"
+        required: false
+      adapter_id:
+        description: "Adapter id for the opt-in probe (blank auto-selects by vendor)"
+        required: false
 
 permissions:
   contents: read
@@ -106,4 +112,41 @@ jobs:
         with:
           name: hardware-attestation-${{ steps.meta.outputs.version }}
           path: release-evidence/${{ steps.meta.outputs.version }}/attestations/
+          if-no-files-found: error
+
+  # Explicit qualification job for the ignored approved-runtime/hardware probe
+  # (audit S-26 I3). It runs ONLY when a runtime install key is supplied,
+  # because the probe downloads the approved runtime, installs the pinned
+  # health model and executes real inference on this host. The probe asserts a
+  # passing health report; its JSON result is kept as an artifact, and a
+  # skipped run must never be counted as a pass.
+  runtime-probe:
+    name: Approved-runtime hardware probe (opt-in)
+    needs: hardware-qualify
+    if: ${{ inputs.runtime_install_key != '' }}
+    runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.sha }}
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable reviewed 2026-09-05
+      - uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2 peeled commit
+        with:
+          workspaces: src-tauri
+      - name: Run the approved-runtime hardware probe
+        shell: pwsh
+        working-directory: src-tauri
+        env:
+          LOCALMOTIVE_INSTALL_KEY: ${{ inputs.runtime_install_key }}
+          LOCALMOTIVE_ADAPTER_ID: ${{ inputs.adapter_id }}
+        run: |
+          cargo test --locked --lib -- --ignored --nocapture qualify_managed_runtime_on_current_host 2>&1 |
+            Tee-Object -FilePath ..\release-evidence\runtime-probe-${{ github.sha }}.log
+          if ($LASTEXITCODE -ne 0) { throw "The approved-runtime hardware probe failed" }
+      - name: Upload probe evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: runtime-probe-${{ github.sha }}
+          path: release-evidence/runtime-probe-${{ github.sha }}.log
           if-no-files-found: error

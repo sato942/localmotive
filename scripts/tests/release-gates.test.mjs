@@ -1714,3 +1714,82 @@ test("S-17 imported evidence cannot leak into ranking or calibration writers", a
     assert.doesNotMatch(source, /ExternalEvidence/, `${module} must not consume imported evidence`);
   }
 });
+
+test("S-26: no workflow carries a literal release version and gates stay fail-fast", async () => {
+  const ci = await readFile(join(process.cwd(), ".github", "workflows", "ci.yml"), "utf8");
+  const release = await readFile(
+    join(process.cwd(), ".github", "workflows", "release.yml"),
+    "utf8",
+  );
+  // No workflow may pin a literal version number: the non-release jobs use
+  // the no-argument manifest-consistency mode, and the release job binds the
+  // RESOLVED tag version.
+  for (const [name, body] of [["ci.yml", ci], ["release.yml", release]]) {
+    assert.doesNotMatch(
+      body,
+      /verify_versions\.mjs\s+["']?\d+\.\d+\.\d+/,
+      `${name} must not pass a literal version to verify_versions.mjs`,
+    );
+    assert.doesNotMatch(
+      body,
+      /only v\d/,
+      `${name} must not pin a single tag literal`,
+    );
+  }
+  assert.match(
+    ci,
+    /node scripts\/verify_versions\.mjs\n/,
+    "ci.yml uses the no-argument manifest-consistency mode",
+  );
+  assert.match(
+    release,
+    /node scripts\/verify_versions\.mjs \$\{\{ needs\.resolve\.outputs\.version \}\}/,
+    "release.yml binds the resolved tag version to the manifests",
+  );
+  // The tag shape is validated by pattern, and the resolved revision must
+  // identify as the same version before anything is published.
+  assert.match(release, /case "\$raw" in\n\s*v\[0-9\]\*\.\[0-9\]\*\.\[0-9\]\*\)/, "release.yml validates the tag pattern");
+  assert.match(
+    release,
+    /node scripts\/verify_versions\.mjs "\$\{raw#v\}" \\/,
+    "the resolve job refuses source whose manifests identify as another version",
+  );
+  // The fail-fast pairing is documented in every job that repeats the gates.
+  const failFast = (ci.match(/fail-fast; repeated by npm run check/g) ?? []).length;
+  assert.equal(failFast, 2, "both ci.yml jobs document the fail-fast pairing");
+  assert.match(
+    release,
+    /fail-fast; repeated by npm run check/,
+    "the release quality job documents the fail-fast pairing",
+  );
+});
+
+test("S-26: the hardware probe runs only in its explicit qualification job", async () => {
+  const hw = await readFile(
+    join(process.cwd(), ".github", "workflows", "hardware-qualify.yml"),
+    "utf8",
+  );
+  assert.match(
+    hw,
+    /inputs\.runtime_install_key != ''/,
+    "the probe job is gated on an explicit runtime install key",
+  );
+  assert.match(
+    hw,
+    /qualify_managed_runtime_on_current_host/,
+    "the probe job runs the ignored hardware probe explicitly",
+  );
+  assert.match(
+    hw,
+    /--ignored --nocapture/,
+    "the probe is invoked with --ignored from the qualification job only",
+  );
+  // The diagnostic probe in core.rs carries no acceptance assertions and says so.
+  const core = await readFile(join(process.cwd(), "src-tauri", "src", "core.rs"), "utf8");
+  assert.match(core, /DIAGNOSTIC, not an acceptance test/, "the local-tree probe is labelled as a diagnostic");
+  // No CI or release job silently runs the ignored probes.
+  for (const file of ["ci.yml", "release.yml"]) {
+    const body = await readFile(join(process.cwd(), ".github", "workflows", file), "utf8");
+    assert.doesNotMatch(body, /--ignored/, `${file} must not run ignored probes`);
+  }
+});

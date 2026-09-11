@@ -3136,8 +3136,12 @@ fn main() {
         assert_eq!(quant_weight("no-quant-here.gguf"), None);
     }
 
-    /// Opt-in probe against the operator's real model tree. Ignored by default
-    /// because it depends on local files:
+    /// DIAGNOSTIC, not an acceptance test (audit S-26 I3): it prints the
+    /// companion order of the operator's real model tree and returns early
+    /// when `C:\models` is absent. There are deliberately NO assertions here —
+    /// a run of this test, skipped or not, must never be counted as a passing
+    /// behavioral check. Assertion-based coverage of the same ranking rules
+    /// lives in the regular (non-ignored) tests of this module.
     /// `cargo test real_model_tree -- --ignored --nocapture`
     #[test]
     #[ignore]
