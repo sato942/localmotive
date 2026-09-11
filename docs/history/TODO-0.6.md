@@ -1572,21 +1572,21 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Enable a narrowly scoped production Content Security Policy**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented + packaged-verified · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit IPC-02](./localmotive-comprehensive-audit.md#ipc-02)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src-tauri/tauri.conf.json](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/tauri.conf.json), [src-tauri/capabilities/default.json](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/capabilities/default.json), [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx)
 
 **Implementation**
 
-- [ ] **V06-IPC-02.I1** — Inventory resources and IPC origins used by a packaged build and derive an explicit production CSP for bundled scripts, styles, fonts and images. Keep development-only exceptions out of production. **Trace:** [Audit IPC-02](./localmotive-comprehensive-audit.md#ipc-02).
-- [ ] **V06-IPC-02.I2** — Review opener permission and custom-command reachability alongside the policy; retain only origins and operations required by actual application flows. **Trace:** [Audit IPC-02](./localmotive-comprehensive-audit.md#ipc-02).
-- [ ] **V06-IPC-02.I3** — Document the purpose of each necessary policy exception and keep catalog, model, log and provider text rendered as text rather than HTML. **Trace:** [Audit IPC-02](./localmotive-comprehensive-audit.md#ipc-02).
+- [x] **V06-IPC-02.I1** — Inventory resources and IPC origins used by a packaged build and derive an explicit production CSP for bundled scripts, styles, fonts and images. Keep development-only exceptions out of production. **Trace:** [Audit IPC-02](./localmotive-comprehensive-audit.md#ipc-02).
+- [x] **V06-IPC-02.I2** — Review opener permission and custom-command reachability alongside the policy; retain only origins and operations required by actual application flows. **Trace:** [Audit IPC-02](./localmotive-comprehensive-audit.md#ipc-02).
+- [x] **V06-IPC-02.I3** — Document the purpose of each necessary policy exception and keep catalog, model, log and provider text rendered as text rather than HTML. **Trace:** [Audit IPC-02](./localmotive-comprehensive-audit.md#ipc-02).
 
 **Verification**
 
-- [ ] **V06-IPC-02.V1** — Exercise every screen, dialog, icon, external URL action and inference WebUI navigation in the packaged application with CSP enabled. **Trace:** [Audit IPC-02](./localmotive-comprehensive-audit.md#ipc-02).
-- [ ] **V06-IPC-02.V2** — Inject harmless hostile-text fixtures and deliberately disallowed inline/remote script requests; verify text remains inert and scripts are blocked without adding a broad unsafe-eval workaround. **Trace:** [Audit IPC-02](./localmotive-comprehensive-audit.md#ipc-02).
+- [x] **V06-IPC-02.V1** — Exercise every screen, dialog, icon, external URL action and inference WebUI navigation in the packaged application with CSP enabled. **Trace:** [Audit IPC-02](./localmotive-comprehensive-audit.md#ipc-02).
+- [x] **V06-IPC-02.V2** — Inject harmless hostile-text fixtures and deliberately disallowed inline/remote script requests; verify text remains inert and scripts are blocked without adding a broad unsafe-eval workaround. **Trace:** [Audit IPC-02](./localmotive-comprehensive-audit.md#ipc-02).
 
 **Complete when:** Production CSP is configured and the packaged acceptance record distinguishes allowed resources from blocked negative controls.
 
@@ -3399,4 +3399,12 @@ _Package 1 (RT-01, RT-02, RT-04, RT-07) implementation is complete at the unit/r
 - Regression tests: `mirrors the Rust workload defaults exactly (contract fixture)`, `requires whole numbers where Rust deserializes integers` (fractional, complete maxima, blank identity), and the panel test "shows field errors, blocks dispatch, and dispatches once the draft is valid" (fractional draft → errors visible, button disabled, no `benchmark_v2` call; valid draft → dispatch with the typed value). Mutations MM1 (dispatch gate removed) / MM2 (integer enforcement removed) / MM3 (field error list removed) each failed their matching tests and passed after restore.
 - Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 513 pass / 0 fail / 2 ignored; `npm run check` EXIT 0 (75 vitest tests / 4 files); `npx tsc --noEmit` EXIT 0.
 - Residual (audit FE-17 I5): the frontend still previews fit/companion defaults; the documented authority is Rust (`rank_companions`, `validate_launch_profile`, `preflight_model`), and consolidation of the preview into a native endpoint remains a future product choice, recorded rather than silently assumed.
+
+### V06-IPC-02 — narrow production CSP and scoped opener (commit `4973936`)
+
+- Status: Implemented I1-I3; V1/V2 verified on the packaged binary.
+- Regression before fix: `app.security.csp` was `null`, so the main WebView had no content policy at all, and the capability granted the unscoped `opener:default` permission set.
+- Verification after fix: production policy `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'` — the only inline exception is `style-src` (React style attributes; no user-controlled style strings), and there is no `unsafe-eval` anywhere. `devCsp` carries the Vite dev-server exception separately. The capability now grants `opener:allow-open-url` with an explicit origin scope (huggingface.co, github.com, the six provider consoles, tauri.app, react.dev, and `http://127.0.0.1/*` for the running server WebUI); all HTTP traffic stays in Rust (reqwest), so the WebView needs no network origins. Source scan positive control: zero `dangerouslySetInnerHTML`/`new Function`/`document.write`/`eval(` sinks in production sources.
+- Packaged evidence: `npm run tauri build -- --no-bundle` BUILD_EXIT 0; `node scripts/verify_csp.mjs src-tauri/target/release/localmotive.exe` → `{"pass": true, "navigationTargets": 14, "openerAction": "clicked", "cspViolationsDuringNavigation": 0, "inlineScriptBlocked": true, "remoteFetchBlocked": true, "hostileTextInert": true}` — every nav screen exercised, the scoped opener still opens the repository link, an injected inline script and a remote fetch are both blocked (with the CSP violation reported), and hostile `<img onerror>`/`<script>` text stays inert. Release-gates contract test `IPC-02 production CSP and opener scope are narrow and audited` pins the config + capability + sink scan (101/101 gates pass).
+- Residual: `scripts/verify_csp.mjs` runs from the release checklist; wiring it into `release.yml` as a required matrix step is a deferred hardening item (trigger: before the next tagged release).
 
