@@ -172,15 +172,40 @@ fn take_stderr(child: &mut ContainedChild) -> Option<ChildStderr> {
     child.stderr.take()
 }
 
+/// How long cleanup waits for an exit confirmation before reporting the
+/// outcome as unresolved (audit S-01). A blocking `wait()` would hide an
+/// unkillable process forever and make every caller's deadline a lie.
+pub const TERMINATION_DEADLINE: Duration = Duration::from_secs(10);
+const TERMINATION_POLL: Duration = Duration::from_millis(50);
+
+/// Terminate the child and confirm the exit within a monotonic deadline.
+/// Returns `true` only when the exit was observed; `false` means the caller
+/// must report an unresolved cleanup outcome instead of assuming success.
 fn terminate_and_wait(child: &mut ContainedChild) -> bool {
+    terminate_and_wait_with_deadline(child, TERMINATION_DEADLINE)
+}
+
+fn terminate_and_wait_with_deadline(child: &mut ContainedChild, deadline: Duration) -> bool {
     #[cfg(windows)]
     {
-        child.start_kill().is_ok() && child.wait().is_ok()
+        let _ = child.start_kill();
     }
     #[cfg(not(windows))]
     {
         let _ = child.kill();
-        child.wait().is_ok()
+    }
+    let limit = Instant::now() + deadline;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return true,
+            Ok(None) => {
+                if Instant::now() >= limit {
+                    return false;
+                }
+                std::thread::sleep(TERMINATION_POLL);
+            }
+            Err(_) => return false,
+        }
     }
 }
 
@@ -323,25 +348,48 @@ mod tests {
     /// single direct `Command::new` reintroduces the console flash.
     #[test]
     fn no_module_constructs_a_raw_command() {
-        let sources = [
-            "core.rs",
-            "runtime.rs",
-            "lib.rs",
-            "main.rs",
-            "gguf.rs",
-            "tune.rs",
-            "cloud.rs",
-        ];
+        // Discover every production module instead of trusting a fixed list
+        // (audit S-01.I3): a new module cannot silently bypass the invariant.
+        // proc.rs itself is the one module allowed to build commands, and only
+        // inside `hidden_command`; assert that exception stays small.
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        for name in sources {
-            let path = dir.join(name);
+        let mut checked = 0_usize;
+        for entry in std::fs::read_dir(&dir).expect("src directory") {
+            let path = entry.expect("src entry").path();
+            if path.extension().and_then(|extension| extension.to_str()) != Some("rs") {
+                continue;
+            }
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
             let text = std::fs::read_to_string(&path)
                 .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
+            if name == "proc.rs" {
+                // Production code may construct commands only inside
+                // `hidden_command`; test fixtures below `mod tests` spawn real
+                // child processes on purpose.
+                let production = text.split("mod tests").next().unwrap_or(&text);
+                // Two production occurrences are allowed and both are known:
+                // `hidden_command` builds the real command, and
+                // `spawn_contained` swaps in an empty placeholder (which
+                // constructs no process).
+                assert_eq!(
+                    production.matches("Command::new(").count(),
+                    2,
+                    "proc.rs may construct commands only inside hidden_command"
+                );
+                assert!(production.contains("let mut command = Command::new(program);"));
+                assert!(production.contains("Command::new(\"\")"));
+                continue;
+            }
             assert!(
                 !text.contains("Command::new("),
                 "{name} constructs a raw Command; use proc::hidden_command instead"
             );
+            checked += 1;
         }
+        assert!(
+            checked >= 15,
+            "expected the production module set, saw {checked}"
+        );
     }
 
     #[cfg(windows)]

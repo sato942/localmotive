@@ -1,5 +1,11 @@
 //! Bounded per-run launch logs with explicit retention (audit OPS-01).
 //!
+//! Output-overflow policy (audit S-01.I2): crossing the quota truncates the
+//! **retained** output only. The child is never terminated for emitting too
+//! much, and the drain keeps reading (and discarding) so the child can never
+//! block on a full pipe. The truncation marker is written once when the
+//! quota is first crossed.
+//!
 //! Each launch creates a uniquely named log under the Localmotive temp
 //! directory. A drain thread copies the child's output into the file up to a
 //! fixed quota and keeps reading (and discarding) afterwards, so a chatty

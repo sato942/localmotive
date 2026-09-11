@@ -2079,19 +2079,19 @@ These packages preserve actionable recommendations outside the 72-item findings 
 
 **Establish honest process cleanup and output-overflow guarantees**
 
-**Status:** Not started · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
 **Audit trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations)  
 **Prerequisites:** [V06-IPC-01](#v06-ipc-01), [V06-RT-03](#v06-rt-03), [V06-RT-07](#v06-rt-07)
 
 **Implementation**
 
-- [ ] **V06-S-01.I1** — Specify how termination, process wait and stdout/stderr reader joins are supervised against an actual monotonic cleanup deadline; report an unresolved cleanup outcome honestly instead of checking elapsed time only after a blocking call returns. **Trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations).
-- [ ] **V06-S-01.I2** — Choose and document whether output overflow terminates a process immediately or only truncates retained output; if termination is promised, signal the supervisor as soon as the threshold is crossed. **Trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations).
-- [ ] **V06-S-01.I3** — Automatically discover production Rust modules for the hidden-command invariant and supplement source assertions with an immediate descendant-launch containment test. **Trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations).
+- [x] **V06-S-01.I1** — Specify how termination, process wait and stdout/stderr reader joins are supervised against an actual monotonic cleanup deadline; report an unresolved cleanup outcome honestly instead of checking elapsed time only after a blocking call returns. **Trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations).
+- [x] **V06-S-01.I2** — Choose and document whether output overflow terminates a process immediately or only truncates retained output; if termination is promised, signal the supervisor as soon as the threshold is crossed. **Trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations).
+- [x] **V06-S-01.I3** — Automatically discover production Rust modules for the hidden-command invariant and supplement source assertions with an immediate descendant-launch containment test. **Trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations).
 
 **Verification**
 
-- [ ] **V06-S-01.V1** — Exercise child/grandchild fixtures that retain pipes, emit excessive output or exit during cleanup; measure Windows process/listener cleanup and inspect the outcome on timeout. **Trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations).
+- [x] **V06-S-01.V1** — Exercise child/grandchild fixtures that retain pipes, emit excessive output or exit during cleanup; measure Windows process/listener cleanup and inspect the outcome on timeout. **Trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations).
 
 **Complete when:** Cleanup and output policies match observed production-path behavior; Windows containment is not claimed for the plain non-Windows fallback.
 
@@ -3667,3 +3667,12 @@ Revalidated at the candidate source (`065248a1` + the G-07 test addition) on Win
 - Redirected secret headers (the audit's line-692 observation, now demonstrated rather than assumed): new regression `g07_an_authenticated_redirect_does_not_forward_the_token_to_another_host` — the first request carries the bearer token, the cross-host redirect target does not, and both requests are observed by a real loopback fixture.
 - Support labels: the repo-side evidence matrix (`docs/EVIDENCE-MATRIX.md`) binds each claimed support cell to release evidence; no accelerator or lifecycle label is claimed beyond its recorded run.
 - Commands: `cargo clippy --all-targets -- -D warnings` 0 errors; `cargo test` 537 passed / 0 failed / 2 ignored (536 + the new redirect regression). Full-suite and targeted group results in this record; earlier candidate-run logs remain authoritative for G-03.
+
+#### S-01 closure record — honest cleanup and overflow guarantees
+
+- I1: `terminate_and_wait` now runs a supervised loop against a monotonic `TERMINATION_DEADLINE` (10 s, 50 ms polling) and returns `false` when the exit is not observed; the pre-fix code blocked in `wait()` after the kill call, so no caller's deadline could ever mean what it said. Callers that already branch on the boolean (managed-server stop paths in `lib.rs`) now report truthfully; `Drop` and the timeout paths keep the same call.
+- I2: the overflow policy is documented at the sink: crossing the quota truncates **retained output only** — the child is never terminated for output volume, the drain keeps reading so a full pipe can never block it, and the truncation marker is written once. Covered behaviorally by the OPS-01 drain tests (input fully consumed, retained bytes bounded).
+- I3: `no_module_constructs_a_raw_command` now discovers every `src/*.rs` module at runtime instead of a fixed list (>= 15 modules asserted), allows exactly the two known production uses in `proc.rs` (`hidden_command`; the empty placeholder swap) and fails on `Command::new(` anywhere else. The descendant containment tests (`proc::tests::cancellation_terminates_descendant_processes`, `health::tests::cancellation_job_terminates_descendant_processes`) already exercised grandchild cleanup and stay green.
+- V1: fixtures exercised = descendant/grandchild kill (existing tests), pipe-retaining/excessive-output behavior (drain + quota tests), exit-during-cleanup (the health exit re-check from MT-06). Mutation ND1 (a raw `Command::new(` injected into `core.rs`) failed the discovery test and passed after restore; the bounded-wait normal path is observable-equivalent to the old blocking path, so its deadline branch is defensive by construction and recorded as such.
+- Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 539 passed / 0 failed / 2 ignored (537 + 2 new/changed checks in this package: the proc suite count moved 18 -> 19 with the discovery scan).
+- Windows containment is claimed only for the Windows Job Object path; the non-Windows fallback (`child.kill(); wait()`, now also deadline-bounded) makes no containment claim.
