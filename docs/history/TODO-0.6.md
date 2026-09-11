@@ -2818,7 +2818,7 @@ These gates collect cross-cutting evidence from the audit. They do not replace t
 
 **Verification**
 
-- [ ] **V06-G-05.V1** — Bind every target result to source/candidate digest, OS build, driver/runtime/model identity and exact scenario. Distinguish CPU inference, accelerator inference, fixture presentation and external-service smoke checks. **Trace:** [Remaining target verification](./localmotive-comprehensive-audit.md#remaining-verification-requiring-the-target-environment).
+- [x] **V06-G-05.V1** — Bind every target result to source/candidate digest, OS build, driver/runtime/model identity and exact scenario. Distinguish CPU inference, accelerator inference, fixture presentation and external-service smoke checks. **Trace:** [Remaining target verification](./localmotive-comprehensive-audit.md#remaining-verification-requiring-the-target-environment).
 
 **Complete when:** Every advertised target behavior has the corresponding measured evidence; unavailable environments remain visible limitations.
 
@@ -2898,7 +2898,15 @@ Built from the post-batch-7 fixed lineage at source `a0ed247` (the docs commits 
 - NSIS `Localmotive_0.6.0_x64-setup.exe` sha256 `a4d14496d14a4f98ffcd1e9c9ae5d78f36dab74d309d86ed6e2dfdb38eb2b7de`
 - Build log: `.hermes-0.6/final-build-a0ed247.log`; staged copies `.hermes-0.6/final-candidates/`.
 
-Re-bind in progress: the lifecycle harness re-runs against these staged installers for both baselines, then the critical packaged probes (health, default v2 run, tamper refusal, kill supervision) re-run against the portable binary. This candidate supersedes `1a9ab98` as the binding source for G-05/G-06 evidence.
+Re-bind COMPLETE (2026-09-11, source HEAD `6384df0`, code state `a0ed247`):
+
+- **Lifecycle**: v0.4.1 -> 0.6.0 and v0.5.0 -> 0.6.0 both PASS again against the new staged installers (`a4d14496…` setup, `2dd036c6…` msi), preservation PASS, bound in `sandbox-preservation-v0.4.1.json` / `-v0.5.0.json` (evidence files replaced, so the repository now binds the final candidate).
+- **Critical packaged probes** on the portable binary `075daa54…` (CDP 10070):
+  1. Start/stop supervision: live, child gone in 1 s, none after stop, app idle (`g05_stop_supervision.mjs`).
+  2. Seven-stage health: PASSED all seven stages; "No health process tree, loopback listener, or isolated temporary file remained" (`g05_health.mjs`).
+  3. Default v2 workload: decode mean 984.76 tok/s, p50 985.08, p95 993.99, n=5, 5/5 sampled, 1 warmup (`g05_mt01d.mjs`).
+  4. Tamper negative: DLL replaced -> "Managed file llama-server-impl.dll failed content verification" with 0 llama-server processes; exact bytes restored (`87c4e9d0…`); clean start -> LIVE (`g05_tamper_dll.mjs`, new driver).
+- This candidate supersedes `1a9ab98` as the binding source for G-05/G-06 evidence; G-05.V1 is satisfied at this candidate.
 
 #### G-05 packaged Windows wave — seventh batch: three chained evidence-flow defects found and fixed (candidate sha256 `0cebbba8e68922e9a1bea35cc1ef9833ffb5ff8470a74e9f706bed9b089fbe0f`)
 
@@ -2971,7 +2979,7 @@ Exercising the DEFAULT v2 evidence flow on the packaged binary (approved CUDA b1
 
 **Implementation**
 
-- [ ] **V06-G-08.I1** — Apply this plan's default release policy: all 19 High findings block the stabilization release until fixed and verified. Review every Medium/Low and supplemental item for completion or an explicit deferral with owner, reason, residual risk, workaround, follow-up milestone and evidence gap. **Trace:** [Stabilization release exit criteria](./localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release); [Audit priorities](./localmotive-comprehensive-audit.md#priority-scale).
+- [x] **V06-G-08.I1** — Apply this plan's default release policy: all 19 High findings block the stabilization release until fixed and verified. Review every Medium/Low and supplemental item for completion or an explicit deferral with owner, reason, residual risk, workaround, follow-up milestone and evidence gap. **Trace:** [Stabilization release exit criteria](./localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release); [Audit priorities](./localmotive-comprehensive-audit.md#priority-scale).
 - [x] **V06-G-08.I2** — Publish an accurate support matrix and known-limitations list. Keep unavailable GPU/OS/provider tests untested; distinguish reviewed imports, UI fixtures and actual inference. **Trace:** [Stabilization release exit criteria](./localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release); [Audit priorities](./localmotive-comprehensive-audit.md#priority-scale).
 - [x] **V06-G-08.I3** — Retain the disclosed unsigned distribution policy if it continues; signing is not newly mandated by this tracker. Prepare user-facing changelog/version/support documentation from observed candidate behavior. **Trace:** [Stabilization release exit criteria](./localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release); [Audit priorities](./localmotive-comprehensive-audit.md#priority-scale).
 
