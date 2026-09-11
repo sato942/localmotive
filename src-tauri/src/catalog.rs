@@ -3810,4 +3810,93 @@ mod tests {
         assert!(read_refresh_stamp(&root).is_none());
         let _ = std::fs::remove_dir_all(root);
     }
+    /// S-25 I2 measurement (run with `--release --ignored --nocapture`): the
+    /// catalog pipeline against the REAL committed catalog. Prints one JSON
+    /// line so the ledger can cite exact numbers and the workload identity.
+    #[test]
+    #[ignore = "measurement harness: run explicitly with --release --ignored --nocapture"]
+    fn s25_catalog_pipeline_measurement() {
+        use std::time::Instant;
+        let raw = include_str!("../../catalog/catalog.json");
+        let parse_started = Instant::now();
+        let catalog = parse_catalog(raw).expect("the committed catalog parses");
+        let parse_ms = parse_started.elapsed().as_secs_f64() * 1000.0;
+        let models = catalog.models.clone();
+        let files: usize = models.iter().map(|model| model.files.len()).sum();
+
+        let snapshot_json = serde_json::to_string(&models).unwrap();
+        let queries = [
+            ("empty", String::new()),
+            ("q4", "q4".to_string()),
+            ("llama", "llama".to_string()),
+            ("mistral", "mistral".to_string()),
+            ("x", "x".to_string()),
+        ];
+        let mut filter_ms: Vec<(String, f64, usize)> = Vec::new();
+        for (label, text) in &queries {
+            let query = CatalogQuery {
+                text: text.clone(),
+                tag: String::new(),
+                quant: String::new(),
+                max_bytes: 0,
+                hide_gated: false,
+                ..CatalogQuery::default()
+            };
+            let started = Instant::now();
+            let mut last_len = 0;
+            for _ in 0..200 {
+                last_len = filter_models(&models, &query).len();
+            }
+            let per_call = started.elapsed().as_secs_f64() * 1000.0 / 200.0;
+            filter_ms.push((label.to_string(), per_call, last_len));
+        }
+
+        let started = Instant::now();
+        for _ in 0..200 {
+            let _ = rich_facets(&models);
+        }
+        let facets_ms = started.elapsed().as_secs_f64() * 1000.0 / 200.0;
+        let facets_json = serde_json::to_string(&rich_facets(&models)).unwrap();
+
+        let filtered = filter_models(
+            &models,
+            &CatalogQuery {
+                text: "q4".into(),
+                ..CatalogQuery::default()
+            },
+        );
+        let filtered_json = serde_json::to_string(&filtered).unwrap();
+
+        // The per-call cost of the command boundary itself: the FE sends the
+        // full snapshot with every keystroke, and Tauri deserializes it.
+        let started = Instant::now();
+        for _ in 0..100 {
+            let parsed: Vec<CatalogModel> = serde_json::from_str(&snapshot_json).unwrap();
+            std::hint::black_box(&parsed);
+        }
+        let deserialize_ms = started.elapsed().as_secs_f64() * 1000.0 / 100.0;
+        let started = Instant::now();
+        for _ in 0..100 {
+            let serialized = serde_json::to_string(&models).unwrap();
+            std::hint::black_box(&serialized);
+        }
+        let serialize_ms = started.elapsed().as_secs_f64() * 1000.0 / 100.0;
+
+        println!(
+            "S25_CATALOG {}",
+            serde_json::json!({
+                "catalogBytes": raw.len(),
+                "models": models.len(),
+                "files": files,
+                "parseMs": parse_ms,
+                "filterMsPerCall": filter_ms,
+                "richFacetsMsPerCall": facets_ms,
+                "snapshotIpcBytes": snapshot_json.len(),
+                "filteredIpcBytes": filtered_json.len(),
+                "richFacetsIpcBytes": facets_json.len(),
+                "deserializeMsPerCall": deserialize_ms,
+                "serializeMsPerCall": serialize_ms,
+            })
+        );
+    }
 }

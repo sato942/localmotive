@@ -1431,4 +1431,41 @@ describe("Bounded discovery diagnostics (audit S-15)", () => {
       expect(button.className).toContain("secondary");
     }
   });
+
+  it("typing bursts collapse into one filter request after the pause (S-25)", async () => {
+    useRows([model("m1", "alpha")]);
+    handlers.set("load_model_catalog", () => snapshot([model("m1", "alpha")]));
+    handlers.set("fetch_model_catalog", () => snapshot([model("m1", "alpha")]));
+    handlers.set("filter_catalog", () => [model("m1", "alpha")]);
+    await mount();
+    await openCatalogTab();
+    await settle();
+    const search = container.querySelector(
+      '.catalog-search input, input[placeholder*="earch"]',
+    ) as HTMLInputElement;
+    expect(search, "the catalog search input must render").toBeTruthy();
+    const filterCalls = () =>
+      invokeCalls.filter((call) => call.command === "filter_catalog").length;
+    const before = filterCalls();
+    const proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!;
+    // Seven keystrokes inside the debounce window.
+    for (const value of ["m", "mi", "mis", "mist", "mistr", "mistra", "mistral"]) {
+      await act(async () => {
+        proto.set!.call(search, value);
+        search.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 12));
+      });
+    }
+    // Let the debounce fire.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    });
+    const after = filterCalls();
+    expect(
+      after - before,
+      "a typing burst must produce exactly one filter request, not one per keystroke",
+    ).toBe(1);
+  });
 });

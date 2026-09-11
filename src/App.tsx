@@ -166,6 +166,20 @@ const idleStatus: ServerStatus = {
   failure: null,
 };
 
+/// S-25 I2: the catalog filter IPC carries the full snapshot (~510 KB
+/// measured at the current 158-model size) and the Rust round trip plus
+/// re-render costs ~22-113 ms per keystroke. A short pause after typing
+/// collapses a burst into one request without delaying a single keystroke's
+/// own feedback (the input value stays immediate).
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const handle = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(handle);
+  }, [value, delayMs]);
+  return debounced;
+}
+
 /// S-24 I1: a path that is truncated for layout keeps its FULL value
 /// retrievable — the title carries it, the control is keyboard reachable, and
 /// one click copies it. Identity is never hidden by ellipsis alone.
@@ -318,6 +332,7 @@ function App() {
   const [catalogPipelines, setCatalogPipelines] = useState<string[]>([]);
   const [catalogArchitectures, setCatalogArchitectures] = useState<string[]>([]);
   const [catalogSearch, setCatalogSearch] = useState("");
+  const catalogSearchDebounced = useDebouncedValue(catalogSearch, 120);
   const [catalogTag, setCatalogTag] = useState("");
   const [catalogQuant, setCatalogQuant] = useState("");
   const [catalogAuthor, setCatalogAuthor] = useState("");
@@ -1288,7 +1303,7 @@ function App() {
     if (!catalogSnapshot) return;
     const sequence = ++catalogFilterSeq.current;
     const query: CatalogQuery = {
-      text: catalogSearch,
+      text: catalogSearchDebounced,
       tag: catalogTag,
       quant: catalogQuant,
       author: catalogAuthor,
@@ -1311,7 +1326,7 @@ function App() {
       .catch((error) => {
         if (keepLatestRequest(sequence, catalogFilterSeq.current)) setNotice(errorText(error));
       });
-  }, [catalogSnapshot, catalogAllRows, catalogSearch, catalogTag, catalogQuant, catalogAuthor, catalogLicense, catalogPipeline, catalogArchitecture, catalogMaxGiB, catalogHideGated, catalogSort, catalogFitEnabled, catalogFitPerMille, catalogFitBudget]);
+  }, [catalogSnapshot, catalogAllRows, catalogSearchDebounced, catalogTag, catalogQuant, catalogAuthor, catalogLicense, catalogPipeline, catalogArchitecture, catalogMaxGiB, catalogHideGated, catalogSort, catalogFitEnabled, catalogFitPerMille, catalogFitBudget]);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
