@@ -586,7 +586,7 @@ label input:disabled { color: #8d9491; }
   display: grid;
   gap: 4px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 12px;
 }
 
 /* S-22: secondary-action diagnostics — a copy affordance plus an explicit

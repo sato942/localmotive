@@ -268,7 +268,9 @@ test("launch profiles reject oversize input at the Rust boundary", async () => {
 
 test("catalog commands reject oversize input at the Rust boundary", async () => {
   const backend = await readFile(join(process.cwd(), "src-tauri", "src", "catalog.rs"), "utf8");
-  const lib = await readFile(join(process.cwd(), "src-tauri", "src", "lib.rs"), "utf8");
+  // The catalog command family lives in catalog_service.rs after the S-27 I1
+  // extraction; the boundary checks moved with it.
+  const lib = await readFile(join(process.cwd(), "src-tauri", "src", "catalog_service.rs"), "utf8");
   // A compromised webview can send any JSON. UI limits are hints only; the
   // Rust boundary owns truth. Seen live: filter_catalog took Vec + query with
   // no length checks, so a hostile frontend could submit megabytes of text.
@@ -285,7 +287,9 @@ test("catalog commands reject oversize input at the Rust boundary", async () => 
 
 test("catalog refresh honors cooldown, lock, and last-success display", async () => {
   const backend = await readFile(join(process.cwd(), "src-tauri", "src", "catalog.rs"), "utf8");
-  const lib = await readFile(join(process.cwd(), "src-tauri", "src", "lib.rs"), "utf8");
+  // The fetch command moved to catalog_service.rs (S-27 I1); catalog.rs still
+  // owns the cooldown/guard machinery it delegates to.
+  const lib = await readFile(join(process.cwd(), "src-tauri", "src", "catalog_service.rs"), "utf8");
   const model = await readFile(join(process.cwd(), "src", "model.ts"), "utf8");
   const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
   // Seen live: fetch_catalog had no cooldown, so every Refresh click hit the

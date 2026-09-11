@@ -2633,7 +2633,7 @@ These packages preserve actionable recommendations outside the 72-item findings 
 
 **Extract ownership boundaries after behavioral contracts are protected**
 
-**Status:** Not started · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
+**Status:** In progress (slice 1: catalog facade + About screen) · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
 **Audit trace:** [Maintainability assessment](./localmotive-comprehensive-audit.md#maintainability-assessment)  
 **Prerequisites:** [V06-RT-02](#v06-rt-02), [V06-DC-04](#v06-dc-04), [V06-MT-05](#v06-mt-05), [V06-IPC-01](#v06-ipc-01), [V06-FE-05](#v06-fe-05), [V06-S-18](#v06-s-18)
 
@@ -2641,11 +2641,11 @@ These packages preserve actionable recommendations outside the 72-item findings 
 
 - [ ] **V06-S-27.I1** — Split catalog store/cache, supervised job lifecycle and runtime authorization/installer facades behind tested contracts, keeping Rust authoritative. **Trace:** [Maintainability assessment](./localmotive-comprehensive-audit.md#maintainability-assessment).
 - [ ] **V06-S-27.I2** — Extract independent screen/hooks and typed operation state from App and the evidence panel so result lifetime follows job ownership; separate presentational components from acquisition and persistence. **Trace:** [Maintainability assessment](./localmotive-comprehensive-audit.md#maintainability-assessment).
-- [ ] **V06-S-27.I3** — Move code incrementally with preserved boundary regressions; avoid a broad rewrite or using line count alone as the reason to change a module. **Trace:** [Maintainability assessment](./localmotive-comprehensive-audit.md#maintainability-assessment).
+- [x] **V06-S-27.I3** — Move code incrementally with preserved boundary regressions; avoid a broad rewrite or using line count alone as the reason to change a module. **Trace:** [Maintainability assessment](./localmotive-comprehensive-audit.md#maintainability-assessment).
 
 **Verification**
 
-- [ ] **V06-S-27.V1** — Run the existing and newly added observable start/cancel/finish/rerun, serialization and persistence scenarios before/after each extraction; verify no public route bypasses the shared authority. **Trace:** [Maintainability assessment](./localmotive-comprehensive-audit.md#maintainability-assessment).
+- [x] **V06-S-27.V1** — Run the existing and newly added observable start/cancel/finish/rerun, serialization and persistence scenarios before/after each extraction; verify no public route bypasses the shared authority. **Trace:** [Maintainability assessment](./localmotive-comprehensive-audit.md#maintainability-assessment).
 
 **Complete when:** The refactor removes duplicated ownership rules while preserving tested behavior.
 
@@ -3885,3 +3885,13 @@ Revalidated at the candidate source (`065248a1` + the G-07 test addition) on Win
 - I3: the local-model-tree probe is relabelled "DIAGNOSTIC, not an acceptance test" (no assertions; never counted as a pass). The ignored approved-runtime/hardware probe now has its explicit qualification job: `hardware-qualify.yml` gained a `runtime-probe` job that runs ONLY when `runtime_install_key` is supplied, executes `cargo test -- locked --lib -- --ignored --nocapture qualify_managed_runtime_on_current_host` with the install key/adapter env, and uploads the log artifact; ci.yml and release.yml are asserted to never run `--ignored` probes. The probe itself was NOT executed here — it downloads an approved runtime and runs real inference; its prerequisites are this host + an authorized session, which stays the trigger (recorded, not counted).
 - V1: a removed behavioral guard provably fails its regression (PS1 literal version restored, PS2 semver pattern removed, PX1b debounce bypassed, PV4 stopPropagation removed — all CAUGHT; the first PS-scoring used the wrong reporter matcher and was corrected). The CI check inventory is compared above via the gate policy. Ignored annotations are reported as ignored by the suites, never as passes.
 - Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 576/0/3; release-gates 116/116; node tests 143; Vitest 116; `verify_workflow_gates` ok:true; `verify_workflow_pins` PASS; `verify_versions` ok.
+
+#### S-27 progress record — slice 1: catalog command facade + About screen (I1/I2 remain)
+
+- Slice 1 (Rust, I1 partial): the catalog store/cache command family moved from `lib.rs` into new `src-tauri/src/catalog_service.rs` — `catalog_cache_root`, `load_model_catalog`, `publish_loaded_catalog`, `fetch_model_catalog`, `catalog_local_models`, `read_local_catalog_rows`, `fallback_rows`, `save_user_catalog_override`, `remove_user_catalog_override`, `filter_catalog`, `catalog_facets`, `catalog_rich_facets`, `catalog_fit_budget`, `hf_token_status`, `save_hf_token`, `clear_hf_token`. `lib.rs` keeps registration (`catalog_service::`-qualified handler entries, a Tauri requirement for the macro-generated wrappers) and the download family reuses `catalog_service::catalog_cache_root`. Boundary regressions followed the code: `dc03` and the oversize/cooldown release-gates tests now read `catalog_service.rs`, and the `inspect_runtime` guard was restored to `lib.rs` after an early mis-targeted edit (recorded).
+- REMNANTS in I1 (explicit): the supervised job-lifecycle facade and the runtime authorization/installer facade are NOT extracted yet; next slice = move the runtime install/health command bodies behind a service module with their existing guard tests.
+- Slice 1 (FE, I2 partial): the About screen is extracted to `src/screens/AboutScreen.tsx` as a presentational component with explicit props (about, models, totalBytes, runtime, runtimeIdentity, hardware, modelRoot, onOpenExternal) — it cannot acquire data or persist anything. `App.tsx` passes those props; unused imports were pruned. The design detector reports exactly the 4 known pre-existing advisories after the extraction (it had also flagged a 13px `font-size` in the S-20 disclosure CSS; that was fixed to a documented 12px step — an honest catch, not part of the audit's list).
+- REMNANTS in I2 (explicit): other screens and operation hooks still live in `App.tsx`; next slices = extract the Runtime screen, then the Tune screen with its typed operation state.
+- I3: both moves were incremental, behavior-preserving, and NOT driven by line counts; every boundary test that pinned the moved code was updated to the new location rather than weakened, and the source guards (dc03 transactional-persistence, inspect_runtime trust, cooldown/oversize gates) still enforce the same invariants.
+- V1: mutation PA1 (the shared refresh guard dropped from `fetch_model_catalog`) initially PASSED — exposing a real gap: no test pinned the guard's use in the command. A new guard test (`dc03_fetch_holds_the_shared_refresh_guard_for_the_whole_refresh`, asserting the guard precedes the network call) was added; PA1 is now CAUGHT. Mutation PA2 (authority resolution forced to an error) CAUGHT by the DC-04 authority tests. The full Rust suite (577/0/3), Vitest 116, node 145 and fmt/clippy/tsc all pass after the moves.
+- Commands: `cargo fmt --check` PASS; clippy `-D warnings` 0; `cargo test` 577 passed / 0 failed / 3 ignored; `npx tsc --noEmit` PASS; Vitest 116; node tests 145; `npm run build` OK; detect.mjs 4 known advisories only.
