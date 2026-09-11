@@ -1,7 +1,8 @@
 name: Hardware qualify (self-hosted)
 
-# Runs only on version tags. The owner's Windows runner is online 01:00-06:00
-# Asia/Dubai; jobs queue until then. The clean-account lifecycle now lives in
+# Runs only on version tags. The owner's Windows runner hosts CI, release and
+# hardware jobs; the historical 01:00-06:00 Asia/Dubai night window applies to
+# night-only queuing, not to CI or release. The clean-account lifecycle now lives in
 # release.yml as a dependent job that consumes freshly built candidates
 # (audit GH-03): this workflow owns the host attestation only.
 on:
@@ -95,7 +96,7 @@ jobs:
           - Tag: ``$($env:TAG)``
           - CPU: $($env:CPU)
           - GPU: $($env:GPU)
-          - Runner online window: **01:00-06:00 Asia/Dubai** (jobs queue until then)
+          - Runner: self-hosted `DESKTOP-HPTF57N-zen5-blackwell`; the historical night-only window (01:00-06:00 Asia/Dubai) no longer gates CI or release jobs
           - Main Release build/publish stays on GitHub-hosted windows-latest
           - This job records host match for Zen 5 + Blackwell; full packaged L4 PASS still needs the packaged verifier once artifacts exist
           "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8

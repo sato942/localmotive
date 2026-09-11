@@ -316,13 +316,23 @@ Review the generated command before launch.
 
 ## Supported platforms
 
-Windows x64 has been qualification-tested on AMD Zen 5 and NVIDIA Blackwell (RTX 50-series class), including clean-account NSIS/MSI install, launch, uninstall, and update-from-0.4.0 checks in Windows Sandbox when release evidence is present for that version.
+Read the support matrix by evidence type, not by inference (audit GH-07):
 
-The validated host uses Ryzen 9 9950X3D and GeForce RTX 5090.
+- **CPU packaged checks** on this Windows x64 host (Ryzen 9 9950X3D) cover the
+  packaged lifecycle: build, MSI/NSIS install, launch, uninstall, and
+  update-from-0.4.0 checks in Windows Sandbox when release evidence is present
+  for that version.
+- **Accelerator paths** (CUDA on the RTX 5090, Vulkan, and others) are not
+  covered by that lifecycle evidence unless a version's evidence matrix says
+  so explicitly. The v0.5.0 health evidence is CPU only, and its
+  clean-account Sandbox run failed before installation.
+- A support claim applies to one version only when release evidence is present
+  for that version. See `docs/EVIDENCE-MATRIX.md`.
 
-A support claim applies to one version only when release evidence is present for that version.
-
-Night jobs run on self-hosted runner `DESKTOP-HPTF57N-zen5-blackwell` during 01:00-06:00 Asia/Dubai.
+Night jobs run on the self-hosted runner `DESKTOP-HPTF57N-zen5-blackwell`.
+The 01:00–06:00 Asia/Dubai window describes the historical night-only
+schedule; current CI, release, and hardware jobs all run on this same
+self-hosted host whenever work is queued.
 
 Other Windows hardware may work but remains untested and unsupported until packaged attestations exist.
 

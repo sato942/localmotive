@@ -1634,3 +1634,57 @@ test("QD-06 local doc links resolve (the vendored upstream README is excluded)",
   }
   assert.deepEqual(missing, [], `unresolved relative links: ${missing.join(", ")}`);
 });
+
+test("GH-07 the evidence matrix exists and the README reads it", async () => {
+  const matrix = await readFile(join(process.cwd(), "docs", "EVIDENCE-MATRIX.md"), "utf8");
+  for (const cell of ["CPU packaged lifecycle", "Accelerator (CUDA) packaged", "Clean-account Sandbox"]) {
+    assert.ok(matrix.includes(cell), `the matrix must define ${cell}`);
+  }
+  assert.ok(matrix.includes("assets"), "evidence assets must be named");
+  const readme = await readFile(join(process.cwd(), "README.md"), "utf8");
+  assert.ok(readme.includes("docs/EVIDENCE-MATRIX.md"), "the README points at the matrix");
+  assert.ok(
+    /not\s+covered by that lifecycle evidence unless/.test(readme),
+    "accelerator coverage is not inferred",
+  );
+  assert.ok(
+    !readme.includes("during 01:00-06:00 Asia/Dubai."),
+    "the stale night-window-only claim must not return",
+  );
+  const workflow = await readFile(
+    join(process.cwd(), ".github", "workflows", "hardware-qualify.yml"),
+    "utf8",
+  );
+  assert.ok(
+    !workflow.includes("Runner online window: **01:00-06:00"),
+    "the workflow summary must not claim a night-only window",
+  );
+});
+
+test("GH-08 supply-chain posture and SBOM step are documented", async () => {
+  const supply = await readFile(join(process.cwd(), "docs", "SUPPLY-CHAIN.md"), "utf8");
+  assert.ok(supply.includes("not cryptographic"), "attestation limits are stated");
+  assert.ok(supply.includes("does not authenticate application installers"), "catalog scope is stated");
+  assert.ok(supply.includes("Unsigned installers"), "the unsigned posture is stated");
+  const release = await readFile(
+    join(process.cwd(), ".github", "workflows", "release.yml"),
+    "utf8",
+  );
+  assert.ok(release.includes("npm sbom --sbom-format cyclonedx"), "the SBOM step exists");
+  assert.match(release, /name: sbom-\$\{\{ needs\.quality\.outputs\.version \}\}/, "the SBOM artifact is versioned");
+});
+
+test("GH-09 governance files exist and dependency updates are configured", async () => {
+  const security = await readFile(join(process.cwd(), "SECURITY.md"), "utf8");
+  assert.ok(security.includes("private vulnerability reporting"), "a reporting path is documented");
+  assert.ok(security.includes("no bug bounty"), "expectations are stated");
+  const contributing = await readFile(join(process.cwd(), "CONTRIBUTING.md"), "utf8");
+  assert.ok(contributing.includes("cargo clippy --all-targets -- -D warnings"), "the check suite is listed");
+  assert.ok(contributing.includes("Maintenance and recovery"), "backup/recovery guidance exists");
+  await stat(join(process.cwd(), ".github", "ISSUE_TEMPLATE", "bug_report.yml"));
+  await stat(join(process.cwd(), ".github", "ISSUE_TEMPLATE", "feature_request.yml"));
+  const dependabot = await readFile(join(process.cwd(), ".github", "dependabot.yml"), "utf8");
+  for (const ecosystem of ["npm", "cargo", "github-actions"]) {
+    assert.ok(dependabot.includes(`package-ecosystem: ${ecosystem}`), `dependabot covers ${ecosystem}`);
+  }
+});

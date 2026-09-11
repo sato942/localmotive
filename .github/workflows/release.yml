@@ -212,6 +212,19 @@ jobs:
 
       - run: npm ci
 
+      - name: Generate an SBOM for the shipped frontend dependencies
+        shell: bash
+        run: |
+          npm sbom --sbom-format cyclonedx > sbom.cdx.json
+          test -s sbom.cdx.json
+
+      - name: Upload the SBOM (audit GH-08)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sbom-${{ needs.quality.outputs.version }}
+          path: sbom.cdx.json
+          retention-days: 90
+
       - name: Build installers and portable executable
         run: npm run tauri build
 

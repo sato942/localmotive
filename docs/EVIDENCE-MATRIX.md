@@ -1,0 +1,46 @@
+# Evidence matrix
+
+Version → what was actually exercised. A cell says PASS only where release
+evidence for that exact version exists; everything else stays UNKNOWN or NOT
+RUN. This file is the index for the README support statement and is updated
+with each release. The authoritative per-item evidence lives in
+`docs/history/TODO-0.6.md` and the release assets named below.
+
+Legend: **PASS** evidence present · **FAIL** evidence present and failing ·
+**UNKNOWN** not established for that version · **NOT RUN** deliberately not
+executed.
+
+## Hosts
+
+| Host | Role |
+|---|---|
+| Ryzen 9 9950X3D, GeForce RTX 5090, Windows 11 26100 | Primary validation and CI self-hosted runner `DESKTOP-HPTF57N-zen5-blackwell` |
+| Windows Sandbox (clean account) | Installer lifecycle isolation |
+
+## Versions
+
+| Version | Channel | CPU packaged lifecycle | Accelerator (CUDA) packaged | Clean-account Sandbox | Notes / evidence |
+|---|---|---|---|---|---|
+| 0.4.0 | Public release | PASS (as published) | UNKNOWN | UNKNOWN | Its release notes labeled three L2/PARTIAL rows "Supported"; the correction is explained in the 0.4.1 notes and this repository. Binaries stay immutable. |
+| 0.4.1 | Public release | PASS (as published) | UNKNOWN | UNKNOWN | See `docs/history/TODO-0.4.1.md` for the frozen record. |
+| 0.5.0 | Public release | PASS (release workflow `package-smoke` + packaged matrix on this host) | UNKNOWN | FAIL (failed before installation; recorded in the release evidence) | Health evidence is CPU only. Release notes disclose broad L4 limitations. See the ship ledger in `docs/history/TODO-0.5.md`. |
+| 0.6.0 | In development | In progress (tracked in `docs/history/TODO-0.6.md`) | NOT RUN | NOT RUN | No support claim before the 0.6 evidence exists. |
+
+## What each column means
+
+- **CPU packaged lifecycle**: the packaged binary built by the release
+  workflow, the MSI/NSIS install, launch, uninstall, and packaged screens
+  exercised over CDP on this host.
+- **Accelerator (CUDA) packaged**: a lifecycle run where a CUDA runtime
+  serves a model end to end. CPU health runs, flag inspection, or "the UI
+  offers CUDA" are not evidence for this column.
+- **Clean-account Sandbox**: the same lifecycle inside Windows Sandbox with a
+  clean account, proving no dependency on the maintainer's machine state.
+
+## Reading rules
+
+- A green row here never upgrades to a broader claim: one exact attestation
+  matches one qualification key.
+- The catalog signature authenticates the catalog document; it does not
+  authenticate application installers (see `SECURITY.md`).
+- Releases ship unsigned with disclosure; verify published SHA-256 checksums.
