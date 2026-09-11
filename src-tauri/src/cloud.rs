@@ -9,6 +9,8 @@
 //! All traffic is OpenAI-compatible `chat/completions`, so Anthropic, Gemini,
 //! OpenAI, DeepSeek, xAI, and OpenRouter share one code path.
 
+use std::io::Read as _;
+
 use crate::tune::{Advisor, Proposal, TuningBrief};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -55,7 +57,12 @@ pub const PROVIDERS: &[Provider] = &[
         console_url: "https://platform.claude.com/settings/keys",
         supports_oauth: false,
         default_model: "claude-sonnet-4-6",
-        lists_models: true,
+        // The documented OpenAI compatibility layer covers chat completions
+        // (Bearer `authorization`, `choices[].message.content`, `retry-after`);
+        // it documents no `GET /models`, so the picker offers the fixed model
+        // instead of guessing at an undocumented route (audit S-21.I3,
+        // platform.claude.com/docs/en/cli-sdks-libraries/libraries/openai-sdk).
+        lists_models: false,
     },
     Provider {
         id: "openai",
@@ -668,6 +675,110 @@ pub fn parse_models(body: &str) -> Result<Vec<CloudModel>, String> {
     Ok(models)
 }
 
+/// Hard caps on what a provider response may make this process buffer
+/// (audit S-21.I1). Model lists are small; a chat completion can carry a
+/// long proposal, but not an unbounded body.
+pub const MAX_MODEL_LIST_BYTES: usize = 512 * 1024;
+pub const MAX_CHAT_BYTES: usize = 2 * 1024 * 1024;
+/// One bounded retry after a 429: at most this many seconds of waiting
+/// (audit S-21.I1 — visible, never an unlimited invisible retry loop).
+pub const MAX_RETRY_AFTER_SECS: u64 = 30;
+
+/// Read a response body with a hard byte cap. Exceeding the cap is an error
+/// naming the limit, not a silent truncation and not an unbounded buffer.
+fn read_bounded_body(
+    mut response: reqwest::blocking::Response,
+    cap: usize,
+) -> Result<String, String> {
+    let mut bytes: Vec<u8> = Vec::new();
+    let mut chunk = [0_u8; 64 * 1024];
+    loop {
+        let read = response
+            .read(&mut chunk)
+            .map_err(|error| error.to_string())?;
+        if read == 0 {
+            break;
+        }
+        if bytes.len() + read > cap {
+            return Err(format!(
+                "Provider response exceeded the {} byte limit for this request",
+                cap
+            ));
+        }
+        bytes.extend_from_slice(&chunk[..read]);
+    }
+    String::from_utf8(bytes).map_err(|_| "Provider response was not valid UTF-8".to_string())
+}
+
+/// The bounded wait named by a `Retry-After` header (numeric seconds or an
+/// HTTP date), clamped to 1..=MAX_RETRY_AFTER_SECS. `None` means no usable
+/// header.
+pub fn retry_after_secs(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    let raw = headers.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?;
+    let raw = raw.trim();
+    let secs = if let Ok(value) = raw.parse::<u64>() {
+        value
+    } else {
+        let target = crate::download::httpdate_secs(raw)? as i64;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_secs() as i64;
+        (target - now).max(0) as u64
+    };
+    Some(secs.clamp(1, MAX_RETRY_AFTER_SECS))
+}
+
+/// The one place both request paths turn an HTTP status into the same user
+/// message. `Ok(None)` means success; `Ok(Some(message))` an error; `Err`
+/// never happens (kept in the signature for future variants).
+pub fn status_outcome(
+    provider: &Provider,
+    status: reqwest::StatusCode,
+    body: &str,
+    retry_after: Option<u64>,
+) -> Option<String> {
+    if status.is_success() {
+        return None;
+    }
+    if status.as_u16() == 401 || status.as_u16() == 403 {
+        return Some(format!(
+            "{} rejected the API key ({status})",
+            provider.label
+        ));
+    }
+    if status.as_u16() == 429 {
+        let wait = retry_after
+            .map(|secs| format!(" Retry-After: {secs} s."))
+            .unwrap_or_default();
+        return Some(format!(
+            "{} rate limited or out of quota ({status}).{wait}",
+            provider.label
+        ));
+    }
+    let detail = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v["error"]["message"].as_str().map(str::to_string))
+        .unwrap_or_else(|| body.chars().take(200).collect());
+    Some(format!("{} returned {status}: {detail}", provider.label))
+}
+
+/// Sleep the bounded retry wait in slices, returning false when the optional
+/// deadline would be crossed (the wait never outlives the tuning budget).
+fn bounded_wait(secs: u64, deadline: Option<std::time::Instant>) -> bool {
+    let mut remaining = secs;
+    while remaining > 0 {
+        if let Some(deadline) = deadline {
+            if std::time::Instant::now() + std::time::Duration::from_secs(1) > deadline {
+                return false;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        remaining -= 1;
+    }
+    true
+}
+
 pub fn list_models<S: SecretStore>(
     store: &S,
     provider_id: &str,
@@ -680,23 +791,34 @@ pub fn list_models<S: SecretStore>(
             label: provider.default_model.into(),
         }]);
     }
-    let response = authed(
+    let mut response = authed(
         http_client(Duration::from_secs(30))?.get(format!("{}/models", provider.base_url)),
         provider,
         &secret,
     )
     .send()
     .map_err(|error| format!("{} model list failed: {error}", provider.label))?;
-    let status = response.status();
-    let text = response.text().map_err(|error| error.to_string())?;
-    if status.as_u16() == 401 || status.as_u16() == 403 {
-        return Err(format!(
-            "{} rejected the API key ({status})",
-            provider.label
-        ));
+    let mut status = response.status();
+    let mut wait = retry_after_secs(response.headers());
+    if status.as_u16() == 429 {
+        if let Some(secs) = wait {
+            if bounded_wait(secs, None) {
+                response = authed(
+                    http_client(Duration::from_secs(30))?
+                        .get(format!("{}/models", provider.base_url)),
+                    provider,
+                    &secret,
+                )
+                .send()
+                .map_err(|error| format!("{} model list failed: {error}", provider.label))?;
+                status = response.status();
+                wait = retry_after_secs(response.headers());
+            }
+        }
     }
-    if !status.is_success() {
-        return Err(format!("{} model list returned {status}", provider.label));
+    let text = read_bounded_body(response, MAX_MODEL_LIST_BYTES)?;
+    if let Some(message) = status_outcome(provider, status, &text, wait) {
+        return Err(message);
     }
     parse_models(&text)
 }
@@ -730,13 +852,56 @@ pub fn chat<S: SecretStore>(
     system: &str,
     user: &str,
 ) -> Result<String, String> {
+    chat_with_deadline(store, provider_id, model, system, user, None)
+}
+
+/// The chat call with an optional deadline: the request timeout never
+/// outlives the remaining tuning budget (audit S-21.I1), so one slow request
+/// cannot overrun a run that is almost out of time.
+pub fn chat_with_deadline<S: SecretStore>(
+    store: &S,
+    provider_id: &str,
+    model: &str,
+    system: &str,
+    user: &str,
+    deadline: Option<std::time::Instant>,
+) -> Result<String, String> {
     let provider = provider(provider_id)?;
     let secret = require_secret(store, provider_id)?;
-    let response = authed(
-        http_client(Duration::from_secs(180))?
-            .post(format!("{}/chat/completions", provider.base_url)),
+    chat_via(
         provider,
+        provider.base_url,
         &secret,
+        model,
+        system,
+        user,
+        deadline,
+    )
+}
+
+/// The transport, with the base URL injectable so tests can point it at a
+/// local fixture server without touching the fixed provider allowlist.
+#[allow(clippy::too_many_arguments)]
+fn chat_via(
+    provider: &Provider,
+    base_url: &str,
+    secret: &str,
+    model: &str,
+    system: &str,
+    user: &str,
+    deadline: Option<std::time::Instant>,
+) -> Result<String, String> {
+    let timeout = match deadline {
+        Some(deadline) => {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            remaining.clamp(Duration::from_secs(1), Duration::from_secs(180))
+        }
+        None => Duration::from_secs(180),
+    };
+    let mut response = authed(
+        http_client(timeout)?.post(format!("{base_url}/chat/completions")),
+        provider,
+        secret,
     )
     .json(&serde_json::json!({
         "model": model,
@@ -749,20 +914,35 @@ pub fn chat<S: SecretStore>(
     }))
     .send()
     .map_err(|error| format!("{} request failed: {error}", provider.label))?;
-    let status = response.status();
-    let text = response.text().map_err(|error| error.to_string())?;
-    if status.as_u16() == 401 || status.as_u16() == 403 {
-        return Err(format!(
-            "{} rejected the API key ({status})",
-            provider.label
-        ));
+    let mut status = response.status();
+    let mut wait = retry_after_secs(response.headers());
+    if status.as_u16() == 429 {
+        if let Some(secs) = wait {
+            if bounded_wait(secs, deadline) {
+                response = authed(
+                    http_client(timeout)?.post(format!("{base_url}/chat/completions")),
+                    provider,
+                    secret,
+                )
+                .json(&serde_json::json!({
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    "temperature": 0.2,
+                    "max_tokens": 1200,
+                }))
+                .send()
+                .map_err(|error| format!("{} request failed: {error}", provider.label))?;
+                status = response.status();
+                wait = retry_after_secs(response.headers());
+            }
+        }
     }
-    if !status.is_success() {
-        let detail = serde_json::from_str::<serde_json::Value>(&text)
-            .ok()
-            .and_then(|v| v["error"]["message"].as_str().map(str::to_string))
-            .unwrap_or_else(|| text.chars().take(200).collect());
-        return Err(format!("{} returned {status}: {detail}", provider.label));
+    let text = read_bounded_body(response, MAX_CHAT_BYTES)?;
+    if let Some(message) = status_outcome(provider, status, &text, wait) {
+        return Err(message);
     }
     extract_reply(&text)
 }
@@ -785,6 +965,9 @@ pub struct CloudAdvisor<'a, S: SecretStore> {
     pub provider_id: String,
     pub model: String,
     pub last_raw_reply: String,
+    /// The tuning run's remaining time; each request timeout is clamped to
+    /// it so one slow request cannot outlive the run (audit S-21.I1).
+    pub deadline: Option<std::time::Instant>,
 }
 
 impl<S: SecretStore> Advisor for CloudAdvisor<'_, S> {
@@ -793,12 +976,13 @@ impl<S: SecretStore> Advisor for CloudAdvisor<'_, S> {
             "Here is the tuning brief as JSON. Propose the next configuration to measure.\n\n{}",
             serde_json::to_string_pretty(&brief.wire).map_err(|error| error.to_string())?
         );
-        let reply = chat(
+        let reply = chat_with_deadline(
             self.store,
             &self.provider_id,
             &self.model,
             crate::tune::SYSTEM_PROMPT,
             &user,
+            self.deadline,
         )?;
         self.last_raw_reply = reply.clone();
         crate::tune::parse_proposal(&reply)
@@ -1132,6 +1316,283 @@ mod tests {
         assert!(extract_reply(error)
             .unwrap_err()
             .contains("Insufficient credits"));
+    }
+
+    #[test]
+    fn s21_contract_fixtures_cover_every_provider_and_case() {
+        let raw = include_str!("../../scripts/tests/fixtures/cloud-contracts.json");
+        let fixture: serde_json::Value = serde_json::from_str(raw).unwrap();
+        let entries = fixture["providers"].as_object().unwrap();
+        assert_eq!(
+            entries.len(),
+            PROVIDERS.len(),
+            "one fixture entry per fixed provider"
+        );
+        for provider in PROVIDERS {
+            let entry = entries
+                .get(provider.id)
+                .unwrap_or_else(|| panic!("missing fixture for {}", provider.id));
+            assert_eq!(
+                entry["baseUrl"].as_str().unwrap(),
+                provider.base_url,
+                "{}: base URL drifted from the fixed allowlist",
+                provider.id
+            );
+            let cases = entry["cases"].as_object().unwrap();
+            for required in [
+                "modelsSuccess",
+                "modelsEmpty",
+                "chatSuccess",
+                "authFailure",
+                "quota",
+                "malformed",
+                "oversized",
+            ] {
+                assert!(
+                    cases.contains_key(required),
+                    "{}: missing case {required}",
+                    provider.id
+                );
+            }
+
+            // Model list: successful shape parses, empty list is an empty Ok.
+            let models_body = serde_json::to_string(&cases["modelsSuccess"]["body"]).unwrap();
+            let models = parse_models(&models_body)
+                .unwrap_or_else(|error| panic!("{}: {error}", provider.id));
+            assert!(!models.is_empty(), "{}: expected a model", provider.id);
+            let empty_body = serde_json::to_string(&cases["modelsEmpty"]["body"]).unwrap();
+            assert!(parse_models(&empty_body).unwrap().is_empty());
+
+            // Chat reply shapes: text and content-part arrays both extract.
+            let chat_body = serde_json::to_string(&cases["chatSuccess"]["body"]).unwrap();
+            let reply = extract_reply(&chat_body)
+                .unwrap_or_else(|error| panic!("{}: {error}", provider.id));
+            assert!(!reply.is_empty(), "{}: empty reply", provider.id);
+
+            // Malformed bodies are clean errors, never panics.
+            let malformed = cases["malformed"]["rawBody"].as_str().unwrap();
+            let _ = extract_reply(malformed);
+
+            // Auth failure mapping.
+            let auth = &cases["authFailure"];
+            let message = status_outcome(
+                provider,
+                reqwest::StatusCode::from_u16(auth["status"].as_u64().unwrap() as u16).unwrap(),
+                &serde_json::to_string(&auth["body"]).unwrap(),
+                None,
+            )
+            .expect("auth failure must map to an error");
+            assert!(
+                message.contains("rejected the API key") || message.contains("returned"),
+                "{}: {message}",
+                provider.id
+            );
+
+            // Quota / rate limit mapping keeps the bounded Retry-After.
+            let quota = &cases["quota"];
+            let wait = quota["retryAfter"]
+                .as_u64()
+                .or_else(|| quota["retryAfter"].as_str().and_then(|s| s.parse().ok()))
+                .map(|secs: u64| secs.clamp(1, MAX_RETRY_AFTER_SECS));
+            let message = status_outcome(
+                provider,
+                reqwest::StatusCode::from_u16(quota["status"].as_u64().unwrap() as u16).unwrap(),
+                &serde_json::to_string(&quota["body"]).unwrap(),
+                wait,
+            )
+            .expect("quota must map to an error");
+            if quota["status"].as_u64() == Some(429) {
+                assert!(
+                    message.contains("rate limited or out of quota"),
+                    "{}: {message}",
+                    provider.id
+                );
+                if let Some(secs) = wait {
+                    assert!(
+                        message.contains(&format!("Retry-After: {secs} s")),
+                        "{}: {message}",
+                        provider.id
+                    );
+                }
+            } else {
+                // Providers with a non-429 quota signal (e.g. insufficient
+                // balance) carry the provider's own message instead.
+                assert!(message.contains("returned"), "{}: {message}", provider.id);
+            }
+        }
+    }
+
+    #[test]
+    fn s21_retry_after_is_bounded_and_tolerant() {
+        let header = |value: &str| {
+            let mut headers = reqwest::header::HeaderMap::new();
+            headers.insert(
+                reqwest::header::RETRY_AFTER,
+                reqwest::header::HeaderValue::from_str(value).unwrap(),
+            );
+            headers
+        };
+        assert_eq!(retry_after_secs(&header("7")), Some(7));
+        // Anything above the cap clamps to the cap; anything unusable is None.
+        assert_eq!(
+            retry_after_secs(&header("9999")),
+            Some(MAX_RETRY_AFTER_SECS)
+        );
+        assert_eq!(retry_after_secs(&header("0")), Some(1));
+        assert_eq!(retry_after_secs(&header("soon")), None);
+        assert_eq!(retry_after_secs(&reqwest::header::HeaderMap::new()), None);
+        // An HTTP-date an hour in the future clamps to the cap too.
+        let future = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
+        let date = httpdate_format(future);
+        assert_eq!(retry_after_secs(&header(&date)), Some(MAX_RETRY_AFTER_SECS));
+    }
+
+    /// Minimal IMF-fixdate formatter for the retry-after date case.
+    fn httpdate_format(at: std::time::SystemTime) -> String {
+        let secs = at.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+        let days = secs.div_euclid(86_400);
+        let rem = secs.rem_euclid(86_400);
+        let (year, month, day) = civil_from_days(days);
+        let weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+        let weekday = weekdays[(days.rem_euclid(7) + 3) as usize % 7];
+        let months = [
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        ];
+        format!(
+            "{weekday}, {day:02} {} {year} {:02}:{:02}:{:02} GMT",
+            months[(month - 1) as usize],
+            rem / 3600,
+            (rem / 60) % 60,
+            rem % 60
+        )
+    }
+
+    fn civil_from_days(days: i64) -> (i64, u32, u32) {
+        let z = days + 719_468;
+        let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+        let doe = z - era * 146_097;
+        let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+        let y = yoe + era * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let m = if mp < 10 { mp + 3 } else { mp - 9 };
+        (y + i64::from(m <= 2), m as u32, d as u32)
+    }
+
+    fn fixture_http(status: u16, headers: &str, body: &[u8]) -> Vec<u8> {
+        let mut out = format!(
+            "HTTP/1.1 {status} STATUS\r\nContent-Length: {}\r\nConnection: close\r\n{headers}\r\n",
+            body.len()
+        )
+        .into_bytes();
+        out.extend_from_slice(body);
+        out
+    }
+
+    /// A one-shot-per-entry fixture server; returns (base_url, served_count).
+    fn fixture_server(responses: Vec<Vec<u8>>) -> (String, std::thread::JoinHandle<usize>) {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = std::thread::spawn(move || {
+            let mut served = 0_usize;
+            for body in responses {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    break;
+                };
+                let mut buf = [0_u8; 4096];
+                let _ = std::io::Read::read(&mut stream, &mut buf);
+                let _ = std::io::Write::write_all(&mut stream, &body);
+                served += 1;
+            }
+            served
+        });
+        (format!("http://127.0.0.1:{port}"), handle)
+    }
+
+    #[test]
+    fn s21_oversized_response_terminates_with_the_cap_error() {
+        let huge = vec![b'x'; MAX_CHAT_BYTES + 1];
+        let (base, server) = fixture_server(vec![fixture_http(200, "", &huge)]);
+        let provider = provider("openai").unwrap();
+        let error = chat_via(
+            provider,
+            &base,
+            "sk-canary-secret-value",
+            "m",
+            "s",
+            "u",
+            None,
+        )
+        .expect_err("an oversized body must fail, not buffer");
+        assert!(
+            error.contains(&MAX_CHAT_BYTES.to_string()),
+            "the error must name the byte cap: {error}"
+        );
+        assert_eq!(server.join().unwrap(), 1);
+    }
+
+    #[test]
+    fn s21_one_bounded_retry_after_a_429_then_success() {
+        let retry = fixture_http(
+            429,
+            "Retry-After: 1\r\n",
+            br#"{"error":{"message":"rate limited"}}"#,
+        );
+        let ok = fixture_http(200, "", br#"{"choices":[{"message":{"content":"ok"}}]}"#);
+        let (base, server) = fixture_server(vec![retry, ok]);
+        let provider = provider("openai").unwrap();
+        let started = std::time::Instant::now();
+        let reply = chat_via(
+            provider,
+            &base,
+            "sk-canary-secret-value",
+            "m",
+            "s",
+            "u",
+            None,
+        )
+        .expect("the bounded retry must recover");
+        assert_eq!(reply, "ok");
+        assert!(
+            started.elapsed() >= std::time::Duration::from_secs(1),
+            "the documented Retry-After wait must actually be observed"
+        );
+        assert_eq!(server.join().unwrap(), 2, "exactly one retry, never more");
+    }
+
+    #[test]
+    fn s21_a_hung_request_ends_at_the_deadline() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let _hang = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                std::thread::sleep(std::time::Duration::from_secs(8));
+                let _ = std::io::Write::write_all(&mut stream, b"");
+            }
+        });
+        let provider = provider("openai").unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let started = std::time::Instant::now();
+        let error = chat_via(
+            provider,
+            &format!("http://127.0.0.1:{port}"),
+            "sk-canary-secret-value",
+            "m",
+            "s",
+            "u",
+            Some(deadline),
+        )
+        .expect_err("a hung request must end at the deadline");
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "the request must not outlive the deadline by much: {elapsed:?} ({error})"
+        );
+        assert!(
+            !error.contains("sk-canary-secret-value"),
+            "the key must never appear in an error message: {error}"
+        );
     }
 
     #[test]

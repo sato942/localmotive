@@ -1,0 +1,355 @@
+{
+  "comment": "Six-provider contract fixture (audit S-21.I2). Every case here is STUBBED against the provider's documented OpenAI-compatible behavior; none was checked with live credentials (see the S-21 record). `oversized` documents the transport cap exercised by the local fixture-server test rather than a body.",
+  "providers": {
+    "openrouter": {
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "cases": {
+        "modelsSuccess": {
+          "status": 200,
+          "body": {
+            "data": [
+              {
+                "id": "anthropic/claude-sonnet-4.6"
+              }
+            ]
+          }
+        },
+        "modelsEmpty": {
+          "status": 200,
+          "body": {
+            "data": []
+          }
+        },
+        "chatSuccess": {
+          "status": 200,
+          "body": {
+            "choices": [
+              {
+                "message": {
+                  "content": "{\"changes\":{}, \"done\": true}"
+                }
+              }
+            ]
+          }
+        },
+        "authFailure": {
+          "status": 401,
+          "body": {
+            "error": {
+              "message": "No auth credentials found"
+            }
+          }
+        },
+        "quota": {
+          "status": 429,
+          "retryAfter": "7",
+          "body": {
+            "error": {
+              "message": "rate limit exceeded"
+            }
+          }
+        },
+        "malformed": {
+          "status": 200,
+          "rawBody": "<html>gateway</html>"
+        },
+        "oversized": {
+          "bytes": 2097153
+        }
+      }
+    },
+    "anthropic": {
+      "baseUrl": "https://api.anthropic.com/v1",
+      "cases": {
+        "modelsSuccess": {
+          "status": 200,
+          "body": {
+            "data": [
+              {
+                "id": "claude-sonnet-4-6"
+              }
+            ]
+          }
+        },
+        "modelsEmpty": {
+          "status": 200,
+          "body": {
+            "data": []
+          }
+        },
+        "chatSuccess": {
+          "status": 200,
+          "body": {
+            "choices": [
+              {
+                "message": {
+                  "content": "{\"changes\":{}, \"done\": true}"
+                }
+              }
+            ]
+          }
+        },
+        "authFailure": {
+          "status": 401,
+          "body": {
+            "error": {
+              "message": "invalid x-api-key"
+            }
+          }
+        },
+        "quota": {
+          "status": 429,
+          "retryAfter": "12",
+          "body": {
+            "error": {
+              "message": "rate limited"
+            }
+          }
+        },
+        "malformed": {
+          "status": 200,
+          "rawBody": "{}"
+        },
+        "oversized": {
+          "bytes": 2097153
+        }
+      }
+    },
+    "openai": {
+      "baseUrl": "https://api.openai.com/v1",
+      "cases": {
+        "modelsSuccess": {
+          "status": 200,
+          "body": {
+            "data": [
+              {
+                "id": "gpt-5"
+              }
+            ]
+          }
+        },
+        "modelsEmpty": {
+          "status": 200,
+          "body": {
+            "data": []
+          }
+        },
+        "chatSuccess": {
+          "status": 200,
+          "body": {
+            "choices": [
+              {
+                "message": {
+                  "content": "ok"
+                }
+              }
+            ]
+          }
+        },
+        "authFailure": {
+          "status": 401,
+          "body": {
+            "error": {
+              "message": "Incorrect API key provided"
+            }
+          }
+        },
+        "quota": {
+          "status": 429,
+          "retryAfter": "3",
+          "body": {
+            "error": {
+              "message": "Rate limit reached"
+            }
+          }
+        },
+        "malformed": {
+          "status": 200,
+          "rawBody": "not-json"
+        },
+        "oversized": {
+          "bytes": 2097153
+        }
+      }
+    },
+    "gemini": {
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "cases": {
+        "modelsSuccess": {
+          "status": 200,
+          "body": {
+            "data": [
+              {
+                "id": "gemini-2.5-pro"
+              }
+            ]
+          }
+        },
+        "modelsEmpty": {
+          "status": 200,
+          "body": {
+            "data": []
+          }
+        },
+        "chatSuccess": {
+          "status": 200,
+          "body": {
+            "choices": [
+              {
+                "message": {
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "part one "
+                    },
+                    {
+                      "type": "text",
+                      "text": "part two"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "authFailure": {
+          "status": 400,
+          "body": {
+            "error": {
+              "message": "API key not valid"
+            }
+          }
+        },
+        "quota": {
+          "status": 429,
+          "retryAfter": "Retry-After",
+          "body": {
+            "error": {
+              "message": "quota exceeded"
+            }
+          }
+        },
+        "malformed": {
+          "status": 200,
+          "rawBody": "[]"
+        },
+        "oversized": {
+          "bytes": 2097153
+        }
+      }
+    },
+    "deepseek": {
+      "baseUrl": "https://api.deepseek.com/v1",
+      "cases": {
+        "modelsSuccess": {
+          "status": 200,
+          "body": {
+            "data": [
+              {
+                "id": "deepseek-reasoner"
+              }
+            ]
+          }
+        },
+        "modelsEmpty": {
+          "status": 200,
+          "body": {
+            "data": []
+          }
+        },
+        "chatSuccess": {
+          "status": 200,
+          "body": {
+            "choices": [
+              {
+                "message": {
+                  "content": "ok"
+                }
+              }
+            ]
+          }
+        },
+        "authFailure": {
+          "status": 401,
+          "body": {
+            "error": {
+              "message": "Authentication Fails"
+            }
+          }
+        },
+        "quota": {
+          "status": 402,
+          "body": {
+            "error": {
+              "message": "Insufficient Balance"
+            }
+          }
+        },
+        "malformed": {
+          "status": 200,
+          "rawBody": "{"
+        },
+        "oversized": {
+          "bytes": 2097153
+        }
+      }
+    },
+    "xai": {
+      "baseUrl": "https://api.x.ai/v1",
+      "cases": {
+        "modelsSuccess": {
+          "status": 200,
+          "body": {
+            "data": [
+              {
+                "id": "grok-4"
+              }
+            ]
+          }
+        },
+        "modelsEmpty": {
+          "status": 200,
+          "body": {
+            "data": []
+          }
+        },
+        "chatSuccess": {
+          "status": 200,
+          "body": {
+            "choices": [
+              {
+                "message": {
+                  "content": "ok"
+                }
+              }
+            ]
+          }
+        },
+        "authFailure": {
+          "status": 401,
+          "body": {
+            "error": {
+              "message": "Invalid API key"
+            }
+          }
+        },
+        "quota": {
+          "status": 429,
+          "retryAfter": "1",
+          "body": {
+            "error": {
+              "message": "Too many requests"
+            }
+          }
+        },
+        "malformed": {
+          "status": 200,
+          "rawBody": "<html>"
+        },
+        "oversized": {
+          "bytes": 2097153
+        }
+      }
+    }
+  }
+}

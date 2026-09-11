@@ -3606,6 +3606,7 @@ async fn start_tuning(
             provider_id: request.provider.clone(),
             model: request.model.clone(),
             last_raw_reply: String::new(),
+            deadline: Some(std::time::Instant::now() + Duration::from_secs(tune::TUNING_DEADLINE_SECS)),
         };
         let progress_handle = handle.clone();
         tune::run_tuning(&request.profile, &inputs, &mut bench, &mut advisor, |trial| {
