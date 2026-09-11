@@ -2290,18 +2290,18 @@ These packages preserve actionable recommendations outside the 72-item findings 
 
 **Make catalog fit labels refer to the selected build**
 
-**Status:** Not started · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
 **Audit trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims)  
 **Prerequisites:** [V06-DC-09](#v06-dc-09)
 
 **Implementation**
 
-- [ ] **V06-S-11.I1** — Distinguish a model having some small variant from the selected quantized file meeting the size heuristic. Return or display the selected build and the inputs behind fit decisions. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
-- [ ] **V06-S-11.I2** — Keep disk-size/weight heuristics separate from actual inference-memory qualification; show unknown metadata without fabricating capacity guarantees. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
+- [x] **V06-S-11.I1** — Distinguish a model having some small variant from the selected quantized file meeting the size heuristic. Return or display the selected build and the inputs behind fit decisions. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
+- [x] **V06-S-11.I2** — Keep disk-size/weight heuristics separate from actual inference-memory qualification; show unknown metadata without fabricating capacity guarantees. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
 
 **Verification**
 
-- [ ] **V06-S-11.V1** — Use a model with small and large quants and a budget between them; switch quant filters and verify the label never claims the larger selected build fits solely because the smaller one does. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
+- [x] **V06-S-11.V1** — Use a model with small and large quants and a budget between them; switch quant filters and verify the label never claims the larger selected build fits solely because the smaller one does. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
 
 **Complete when:** Catalog fit language and filtering describe the same selected variant.
 
@@ -3748,3 +3748,11 @@ Revalidated at the candidate source (`065248a1` + the G-07 test addition) on Win
 - V1: Rust `s10_validator_semantics_are_strict_and_weak_etags_are_never_replayed` (unit matrix + fixture: weak validator stored as none; strong validator stored; case-differing 304 refused with the cached body served; identical 304 is the ordinary not-modified path) and `s10_retry_after_values_are_bounded_and_parsed_from_both_forms` (numeric clamps, date parsing against the canonical epoch 784111777, refusal of PST/garbage/past). Node `scripts/tests/http_retry.test.mjs` 6/6 (numeric/date clamps, malformed/extreme values, retry-then-success, attempts+budget bounds, stalled fetch aborted by the deadline). A fixture defect found during this work (missing CRLF when no ETag header) was fixed and re-verified against the retained dc07 suite.
 - Mutations: PA1 (weak-etag filter removed), PA2 (304 strict compare removed), PA3 (JS clamps removed) and PA4 (JS total-budget check removed) each failed their guarding test and passed after restore.
 - Commands: `cargo fmt --check` PASS; clippy `-D warnings` 0 errors; `cargo test` 553 passed / 0 failed / 2 ignored (551 + the two S-10 tests); `npm run check` PASS (node tests 21 + 6 + release gates); docs updated in `docs/SUPPLY-CHAIN.md`.
+
+#### S-11 closure record — fit labels describe the selected build
+
+- I1: `catalogBuildFit(selectedBytes, smallestBytes, fitPerMille, budgetBytes)` returns the threshold, whether the SELECTED build passes, and whether the auto-filter keeps the row (smallest-file rule, mirroring `catalog::model_hidden_by_fit_rule`). Each catalog row now shows a note for the build selected in its Build selector: "SIZE CHECK PASSES · <size> ≤ <threshold> on <source> budget · size only, runtime memory not measured" or "SIZE CHECK FAILS FOR THIS BUILD · <size> > <threshold> … The model stays listed because a smaller build fits; runtime memory is not measured." The filter caption was corrected to "filter keeps models whose smallest build is ≤ <threshold> on <source>", so a model with a small variant never reads as the selection fitting.
+- I2: the note states the check is a size comparison only and that runtime memory is not measured; with no observed budget the note reads "SIZE CHECK UNKNOWN · no measured memory budget; open the build to check allocation" and the fit fields are null, never a fabricated capacity claim. Disk-size heuristics stay separate from inference-memory qualification.
+- V1: `catalogBuildFit` unit cases (small passes / large fails with the row kept / unknown nulls / fraction clamp) and the component test "labels the fit of the selected build, never the smallest variant (S-11)": fixture model with a 2 GB Q4_K_M build and an 8 GB Q8_0 build under a 10 GB dedicated budget (5 GB threshold); default small build passes, switching the selector to the large build shows the failure and the row-survival explanation, and the passing claim disappears.
+- Mutations: PB1 (selectedPasses computed from the smallest build — the original defect) failed both the unit and component tests; PB2 (the row-survival explanation removed) failed the component test; both restored green.
+- Commands: `tsc --noEmit` PASS; Vitest 97 passed (93 + 4); node tests 140 passed; `npm run build` PASS (339.01 kB); `npm run check` PASS; impeccable detector shows the same four pre-existing advisories as at HEAD (font-size 7px, side-tab, two palette colors), none from `.catalog-fit-note`.

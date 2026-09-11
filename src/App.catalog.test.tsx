@@ -221,6 +221,78 @@ describe("HF catalog presentation through public interfaces", () => {
     expect(text()).toContain("rate-limited");
   });
 
+
+  it("labels the fit of the selected build, never the smallest variant (S-11)", async () => {
+    // A 10 GB dedicated budget with the default 50% fraction is a 5 GB
+    // threshold: the 2 GB build passes, the 8 GB build does not. The row
+    // stays listed (the smallest build fits), but the label for the selected
+    // larger build must fail and must say why the row survives.
+    const evidence = (value: number | string | null) => ({
+      value,
+      level: value === null ? "unknown" : "observed",
+      source: { kind: "vendorApi", detail: "fixture" },
+      observedAtMs: 1,
+      notes: [],
+    });
+    const hardware = {
+      ...runtimeSetup().hardware,
+      adapters: [
+        {
+          adapterId: "gpu-0",
+          compatibilityId: "compat-gpu-0",
+          name: "GPU 0",
+          vendor: "nvidia",
+          driver: evidence("580.0"),
+          backend: evidence("cuda"),
+          dedicatedBytes: evidence(10_000_000_000),
+          sharedBytes: evidence(null),
+          budgetBytes: evidence(10_000_000_000),
+          currentUsageBytes: evidence(0),
+          availableBudgetBytes: evidence(9_000_000_000),
+          reservationBytes: evidence(0),
+          availableForReservationBytes: evidence(null),
+          capacityObservations: [],
+        },
+      ],
+    };
+    handlers.set("load_runtime_setup", () => runtimeSetup({ hardware }));
+    handlers.set("detect_hardware", () => runtimeSetup({ hardware }));
+
+    const twoBuild = {
+      ...model("m1", "alpha"),
+      files: [
+        { filename: "alpha-Q4_K_M.gguf", quant: "Q4_K_M", sizeBytes: 2_000_000_000, sha256: "a".repeat(64), revision: "main" },
+        { filename: "alpha-Q8_0.gguf", quant: "Q8_0", sizeBytes: 8_000_000_000, sha256: "b".repeat(64), revision: "main" },
+      ],
+    };
+    const rows = [twoBuild];
+    useRows(rows);
+    handlers.set("load_model_catalog", () => snapshot(rows));
+    handlers.set("fetch_model_catalog", () => snapshot(rows));
+
+    await mount();
+    await openCatalogTab();
+    await settle();
+
+    expect(text()).toContain("SIZE CHECK PASSES");
+    expect(text()).not.toContain("SIZE CHECK FAILS");
+
+    const buildSelect = [...container.querySelectorAll("select")].find((select) =>
+      [...select.options].some((option) => (option.textContent ?? "").includes("Q8_0")),
+    );
+    expect(buildSelect, "the build selector must list both quants").toBeTruthy();
+    await act(async () => {
+      buildSelect!.value = "alpha-Q8_0.gguf";
+      buildSelect!.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await settle();
+
+    expect(text()).toContain("SIZE CHECK FAILS FOR THIS BUILD");
+    expect(text()).toContain("smaller build fits");
+    // The passing claim for the small build must be gone for the selection.
+    expect(text()).not.toContain("SIZE CHECK PASSES");
+  });
+
   it("shows the empty state when no row matches the filters", async () => {
     useRows([]);
     handlers.set("load_model_catalog", () => snapshot([model("m1", "alpha")]));

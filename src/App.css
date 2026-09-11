@@ -537,3 +537,11 @@ label input:disabled { color: #8d9491; }
   .rail nav { overflow-x: auto; justify-content: flex-start; }
   .nav-item { min-width: 44px; flex: 0 0 auto; }
 }
+
+/* Fit note for the selected build (audit S-11): words carry the state. */
+.catalog-fit-note {
+  margin: 6px 0 0;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}

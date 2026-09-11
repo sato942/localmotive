@@ -10,6 +10,7 @@ import {
   safeJsonParse,
   artifactReadyForLaunch,
   calibrationState,
+  catalogBuildFit,
   catalogRevision,
   conflictingCapacityMetrics,
   defaultWorkload,
@@ -1007,5 +1008,44 @@ describe("evidence tone (FE-15)", () => {
     expect(evidenceTone("Blocked")).toBe("bad");
     expect(evidenceTone("Rejected")).toBe("bad");
     expect(evidenceTone("Cancelled")).toBe("bad");
+  });
+});
+
+describe("catalogBuildFit", () => {
+  const budget = 10_000_000_000; // 10 GB
+  const small = 2_000_000_000; // 2 GB
+  const large = 8_000_000_000; // 8 GB, above the 50% threshold of 5 GB
+
+  it("reports the selected build, never the smallest one, against the threshold", () => {
+    const smallFit = catalogBuildFit(small, small, 500, budget);
+    expect(smallFit.selectedPasses).toBe(true);
+    expect(smallFit.rowKept).toBe(true);
+    expect(smallFit.thresholdBytes).toBe(5_000_000_000);
+
+    const largeFit = catalogBuildFit(large, small, 500, budget);
+    expect(largeFit.selectedPasses).toBe(false);
+    // The row survives because a smaller build fits; the larger selected
+    // build must never inherit that pass.
+    expect(largeFit.rowKept).toBe(true);
+  });
+
+  it("keeps unknown metadata unknown instead of implying a fit", () => {
+    expect(catalogBuildFit(large, small, 500, 0)).toEqual({
+      thresholdBytes: null,
+      selectedPasses: null,
+      rowKept: null,
+    });
+    expect(catalogBuildFit(large, small, 0, budget)).toEqual({
+      thresholdBytes: null,
+      selectedPasses: null,
+      rowKept: null,
+    });
+    expect(catalogBuildFit(large, small, undefined, undefined).selectedPasses).toBeNull();
+  });
+
+  it("clamps the fraction like the Rust rule", () => {
+    const fit = catalogBuildFit(large, large, 2000, budget);
+    expect(fit.thresholdBytes).toBe(budget);
+    expect(fit.selectedPasses).toBe(true);
   });
 });

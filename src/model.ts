@@ -1907,6 +1907,39 @@ export function modelHiddenByFitRule(
   return smallestBytes > Math.floor((budget * clamped) / 1000);
 }
 
+/**
+ * The fit decision for one specific build (audit S-11): whether the SELECTED
+ * file passes the size heuristic, whether the auto-filter keeps the row at
+ * all (driven by the model's smallest file), and the threshold used. All
+ * fields are null when the rule is off or no budget was observed: the
+ * interface must say unknown instead of implying a fit.
+ */
+export type BuildFit = {
+  thresholdBytes: number | null;
+  selectedPasses: boolean | null;
+  rowKept: boolean | null;
+};
+
+export function catalogBuildFit(
+  selectedBytes: number,
+  smallestBytes: number,
+  fitPerMille: number | undefined,
+  budgetBytes: number | undefined,
+): BuildFit {
+  const perMille = fitPerMille ?? 0;
+  const budget = budgetBytes ?? 0;
+  if (!(perMille > 0) || !(budget > 0)) {
+    return { thresholdBytes: null, selectedPasses: null, rowKept: null };
+  }
+  const clamped = Math.min(1000, Math.floor(perMille));
+  const thresholdBytes = Math.floor((budget * clamped) / 1000);
+  return {
+    thresholdBytes,
+    selectedPasses: selectedBytes <= thresholdBytes,
+    rowKept: smallestBytes <= thresholdBytes,
+  };
+}
+
 /** Default auto-filter fraction: hide files above half the detected budget. */
 export const DEFAULT_FIT_PER_MILLE = 500;
 

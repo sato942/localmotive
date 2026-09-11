@@ -39,6 +39,7 @@ import {
 import "./App.css";
 import {
   bytesLabel,
+  catalogBuildFit,
   catalogRevision,
   conflictingCapacityMetrics,
   contextChoices,
@@ -1564,7 +1565,7 @@ function App() {
               <label className="toggle-line catalog-toggle"><input type="checkbox" checked={catalogHideGated} onChange={(event) => setCatalogHideGated(event.target.checked)} /> Hide gated</label>
               <label className="toggle-line catalog-toggle"><input type="checkbox" checked={catalogFitEnabled} onChange={(event) => setCatalogFitEnabled(event.target.checked)} /> Hardware fit{
                 catalogFitBudget && catalogFitBudget.budgetBytes > 0
-                  ? ` · ≤ ${bytesLabel(Math.floor((catalogFitBudget.budgetBytes * catalogFitPerMille) / 1000))} on ${catalogFitBudget.source} budget`
+                  ? ` · filter keeps models whose smallest build is ≤ ${bytesLabel(Math.floor((catalogFitBudget.budgetBytes * catalogFitPerMille) / 1000))} on ${catalogFitBudget.source}`
                   : " · budget unknown"
               }</label>
               {catalogFitEnabled && (
@@ -1599,6 +1600,13 @@ function App() {
                     ?? downloadKey(model.repo, file.filename, modelRoot, catalogRevision(file));
                   const progress = downloads[progressKey];
                   const running = activeJob !== undefined;
+                  const smallestBytes = Math.min(...model.files.map((entry) => entry.sizeBytes));
+                  const buildFit = catalogBuildFit(
+                    file.sizeBytes,
+                    smallestBytes,
+                    catalogFitEnabled ? catalogFitPerMille : 0,
+                    catalogFitBudget?.budgetBytes,
+                  );
                   const alreadyOnDisk = inventoryHasFile(file.filename) || progress?.state === "done";
                   const readiness = downloadReadiness({ destination: modelRoot, running, alreadyOnDisk, gated: model.gated, hasToken: hfToken.configured });
                   return (
@@ -1629,6 +1637,15 @@ function App() {
                           </button>
                         )}
                       </div>
+                      {catalogFitEnabled && (
+                        <p className="catalog-fit-note">
+                          {buildFit.selectedPasses === false
+                            ? `SIZE CHECK FAILS FOR THIS BUILD · ${bytesLabel(file.sizeBytes)} > ${bytesLabel(buildFit.thresholdBytes ?? 0)} threshold on ${catalogFitBudget?.source ?? "unknown"} budget${buildFit.rowKept ? ". The model stays listed because a smaller build fits; runtime memory is not measured." : ""}`
+                            : buildFit.selectedPasses === true
+                              ? `SIZE CHECK PASSES · ${bytesLabel(file.sizeBytes)} ≤ ${bytesLabel(buildFit.thresholdBytes ?? 0)} on ${catalogFitBudget?.source ?? "unknown"} budget · size only, runtime memory not measured`
+                              : "SIZE CHECK UNKNOWN · no measured memory budget; open the build to check allocation"}
+                        </p>
+                      )}
                       {progress && (
                         <div className={`download-progress ${progress.state}`}>
                           <div><b style={{ width: `${downloadPercent(progress.downloaded, progress.total)}%` }} /></div>
