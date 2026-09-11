@@ -980,23 +980,23 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Measure the declared tuning workload and enforce effective context requirements**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified (V2 long-prompt half N/A by the labelled short-prompt path) · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit MT-11](./localmotive-comprehensive-audit.md#mt-11)  
 **Prerequisites:** [V06-MT-01](#v06-mt-01), [V06-MT-04](#v06-mt-04)
 **Source touchpoints:** [src-tauri/src/tune.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/tune.rs), [src-tauri/src/lib.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/lib.rs), [src-tauri/src/core.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/core.rs)
 
 **Implementation**
 
-- [ ] **V06-MT-11.I1** — Separate allocated context capacity, occupied prompt length, per-slot capacity, concurrency, quality policy, latency, and decode throughput in the declared tuning objective. **Trace:** [Audit MT-11](./localmotive-comprehensive-audit.md#mt-11).
-- [ ] **V06-MT-11.I2** — Use the corrected V2 harness with an immutable target-length workload and per-trial raw manifests, or explicitly label the retained short-prompt objective without claiming a full-context workload. **Trace:** [Audit MT-11](./localmotive-comprehensive-audit.md#mt-11).
-- [ ] **V06-MT-11.I3** — Before scoring, require observed effective per-slot context to meet the selected requirement; reject or explicitly report candidates whose parallelism or automatic fit reduces it. **Trace:** [Audit MT-11](./localmotive-comprehensive-audit.md#mt-11).
-- [ ] **V06-MT-11.I4** — Remeasure baseline and finalists, require a documented material improvement beyond observed variation, and apply an explicit quality policy for cache/speculation changes while keeping any three-field proposal limit enforced in Rust. **Trace:** [Audit MT-11](./localmotive-comprehensive-audit.md#mt-11).
+- [x] **V06-MT-11.I1** — Separate allocated context capacity, occupied prompt length, per-slot capacity, concurrency, quality policy, latency, and decode throughput in the declared tuning objective. **Trace:** [Audit MT-11](./localmotive-comprehensive-audit.md#mt-11).
+- [x] **V06-MT-11.I2** — Use the corrected V2 harness with an immutable target-length workload and per-trial raw manifests, or explicitly label the retained short-prompt objective without claiming a full-context workload. **Trace:** [Audit MT-11](./localmotive-comprehensive-audit.md#mt-11).
+- [x] **V06-MT-11.I3** — Before scoring, require observed effective per-slot context to meet the selected requirement; reject or explicitly report candidates whose parallelism or automatic fit reduces it. **Trace:** [Audit MT-11](./localmotive-comprehensive-audit.md#mt-11).
+- [x] **V06-MT-11.I4** — Remeasure baseline and finalists, require a documented material improvement beyond observed variation, and apply an explicit quality policy for cache/speculation changes while keeping any three-field proposal limit enforced in Rust. **Trace:** [Audit MT-11](./localmotive-comprehensive-audit.md#mt-11).
 
 **Verification**
 
-- [ ] **V06-MT-11.V1** — Test candidates whose parallel setting divides context below target and whose fit policy reduces context; assert they cannot silently win the requested-capacity objective. **Trace:** [Audit MT-11](./localmotive-comprehensive-audit.md#mt-11).
-- [ ] **V06-MT-11.V2** — Verify the long-prompt request/count contract and persisted workload for each candidate, including cancellation and raw failure retention through the V2 path. **Trace:** [Audit MT-11](./localmotive-comprehensive-audit.md#mt-11).
-- [ ] **V06-MT-11.V3** — Confirm the selected winner with independent repeated measurements under the same workload and exercise the stated quality policy for precision/speculation changes. **Trace:** [Audit MT-11](./localmotive-comprehensive-audit.md#mt-11).
+- [x] **V06-MT-11.V1** — Test candidates whose parallel setting divides context below target and whose fit policy reduces context; assert they cannot silently win the requested-capacity objective. **Trace:** [Audit MT-11](./localmotive-comprehensive-audit.md#mt-11).
+- [x] **V06-MT-11.V2** — Verify the long-prompt request/count contract and persisted workload for each candidate, including cancellation and raw failure retention through the V2 path. **Trace:** [Audit MT-11](./localmotive-comprehensive-audit.md#mt-11).
+- [x] **V06-MT-11.V3** — Confirm the selected winner with independent repeated measurements under the same workload and exercise the stated quality policy for precision/speculation changes. **Trace:** [Audit MT-11](./localmotive-comprehensive-audit.md#mt-11).
 
 **Complete when:** The tuning report's objective matches the workload actually requested and the effective context observed, with raw evidence available for each scored candidate. A winner satisfies capacity and quality policy and has a recorded confirmation comparison rather than only the largest noisy single-session mean.
 
@@ -3326,4 +3326,13 @@ _Package 1 (RT-01, RT-02, RT-04, RT-07) implementation is complete at the unit/r
 - Regression tests: `mt08_three_adds_on_one_run_keep_one_anchor_and_the_gate_closed`, `mt08_three_distinct_runs_build_and_keep_run_times` (observation times 1002/2002/3002 survive; reimport idempotent; three copies of one run cannot trip the gate), `mt08_failed_or_cancelled_runs_and_estimator_mixes_are_ineligible`, plus two jsdom component tests (`src/V03EvidencePanel.calibration.test.tsx`) that assert the command arguments, the unique-run count with duplicate-run records, and the build-gate enablement. Mutations ME1 (record identity guard removed) / ME2 (distinct-run gate removed) / ME3 (click-stamped observation time) / ME4 (anchor count instead of run count) each failed their matching test and passed after restore.
 - Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 494 pass / 0 fail / 2 ignored; `npm run check` PASS (tsc, vitest, catalog, branding, research anchor, qualification, icon, build `index-BAqaQx1B.js` 327.62 kB).
 - Flake repaired on the way: `managed_runtime_listing_shows_local_installs_without_a_catalog_fetch` compared process-global hash counters and flaked under parallel load (observed 3 times). It now compares a thread-local mirror (`verification_bytes_hashed_this_thread`); the mutation that removes the mirror increment is caught; three consecutive full-suite runs are green (494/0).
+
+### V06-MT-11 — requested-capacity objective and verified winner (commit `pending`)
+
+- Status: Implemented I1-I4; V1/V3 unit-verified; V2 satisfied by the explicitly labelled retained short-prompt harness (the alternative accepted by the finding); long-prompt V2 measurement remains a documented limitation, not a claim.
+- Regression before fix: tuning set `context` to the target but measured one short fixed prompt, never checked observed per-slot context before scoring, and crowned the highest mean of 1-5 repeats with no re-measurement; a parallel or fit-reduced candidate could win the requested-capacity objective.
+- Verification after fix: `Bench` returns `TrialMeasurement { summary, command, effective_context }`; `run_tuning` rejects any candidate whose observed effective per-slot context is below `target_context` (or could not be observed) with a precise trial error, so it cannot win. The report carries the objective label ("short-prompt decode throughput … output quality and latency are not measured"), `required_effective_context`, per-trial `effective_context` and `std_dev`, `quality_affecting_changes` (cacheTypeK/cacheTypeV/specType winner changes) and a `final_verification` block: after the loop the baseline and finalist are re-measured, and the winner is reported only when it clears max(2×baseline drift, 3%). The panel shows the objective, verification row, quality note, and refuses to adopt an unconfirmed winner.
+- Regression tests: `mt11_reduced_or_unobserved_effective_context_cannot_win`, `mt11_winner_needs_material_improvement_beyond_observed_variation`, `mt11_objective_label_and_quality_affecting_changes_are_reported` (3 tests, scripted bench). Mutations MF1 (context gate removed) / MF2 (material bar removed) / MF3 (quality flags dropped) each failed their matching test and passed after restore. Existing tune tests updated for the two verification measurements (21 tune tests green).
+- Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 497 pass / 0 fail / 2 ignored; `npm run check` EXIT 0; `npx tsc --noEmit` EXIT 0.
+- Residual: the retained harness still measures a short fixed prompt; the V2 long-prompt workload path is not wired into tuning, and the objective label states this explicitly. `specType` winner changes are reported, not quality-gated in-session (the quality suite stays user-run).
 
