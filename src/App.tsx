@@ -576,10 +576,12 @@ function App() {
       setCatalogTags(tags);
       setCatalogQuants(quants);
       if (rich) {
-        setCatalogAuthors(rich.authors);
-        setCatalogLicenses(rich.licenses);
-        setCatalogPipelines(rich.pipeline_tags);
-        setCatalogArchitectures(rich.architectures);
+        // Defensive defaults: a partial facet payload must degrade to empty
+        // filters, never crash the render on `.map` (GH-05).
+        setCatalogAuthors(rich.authors ?? []);
+        setCatalogLicenses(rich.licenses ?? []);
+        setCatalogPipelines(rich.pipelineTags ?? []);
+        setCatalogArchitectures(rich.architectures ?? []);
       }
       setHfToken(token);
       const userCount = localModels.filter((model) => model.userSourced).length;

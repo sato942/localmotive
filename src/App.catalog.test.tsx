@@ -358,6 +358,33 @@ describe("HF catalog presentation through public interfaces", () => {
     });
   });
 
+  it("renders the rich filter controls from the backend camelCase facet response (GH-05)", async () => {
+    // The packaged matrix crash: the backend serializes CatalogFacets with
+    // rename_all = camelCase, so pipeline_tags arrives as `pipelineTags`.
+    // Reading the snake_case name set the pipeline state to undefined and
+    // the render died on .map, blanking the whole app.
+    const rows = [model("m1", "alpha")];
+    useRows(rows);
+    handlers.set("load_model_catalog", () => snapshot(rows));
+    handlers.set("fetch_model_catalog", () => snapshot(rows));
+    handlers.set("catalog_rich_facets", () => ({
+      authors: ["fixture"],
+      licenses: ["apache-2.0"],
+      pipelineTags: ["text-generation"],
+      architectures: ["qwen3"],
+    }));
+    await mount();
+    await openCatalogTab();
+    await settle();
+    const navs = container.querySelectorAll("button.nav-item, button");
+    expect(navs.length).toBeGreaterThan(0);
+    const licenceOptions = [...container.querySelectorAll("option")].map((option) => option.textContent ?? "");
+    expect(licenceOptions).toContain("apache-2.0");
+    const pipelineOptions = [...container.querySelectorAll("option")].map((option) => option.textContent ?? "");
+    expect(pipelineOptions).toContain("text-generation");
+    expect(pipelineOptions).toContain("qwen3");
+  });
+
   it("a manual refresh reuses the merged collection and reports cooldown honestly", async () => {
     const rows = [model("m1", "alpha")];
     useRows(rows);

@@ -1657,7 +1657,10 @@ export type CatalogFacets = {
   quants: string[];
   authors: string[];
   licenses: string[];
-  pipeline_tags: string[];
+  // The Rust `CatalogFacets` serializes with rename_all = "camelCase": the
+  // pipeline tag list arrives as `pipelineTags`. Reading a snake_case name
+  // here left the state undefined and crashed the catalog render (GH-05).
+  pipelineTags: string[];
   architectures: string[];
 };
 

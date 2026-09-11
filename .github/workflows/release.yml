@@ -217,6 +217,9 @@ jobs:
 
       - name: Verify the packaged executable
         shell: pwsh
+        env:
+          VERSION: ${{ needs.quality.outputs.version }}
+          RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
         run: |
           $portable = "src-tauri/target/release/localmotive.exe"
           if (-not (Test-Path $portable)) { throw "Portable executable was not built" }
@@ -251,32 +254,79 @@ jobs:
           $env:LOCALMOTIVE_VERIFY_ISOLATED_ROOT = $isolatedRoot
           $env:WEBVIEW2_USER_DATA_FOLDER = $profile
           $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$cdpPort --user-data-dir=$profile"
-          $process = Start-Process $portable -PassThru
-          try {
-            # The WebView needs seconds to expose CDP: poll /json/list
-            # for a real page target, not an empty or stale list.
+          # Controlled signed catalog fixture for the 0.6 catalog/SQLite
+          # packaged matrix (audit GH-05); verifier-owned profiles only.
+          $catalogState = Join-Path $env:RUNNER_TEMP "localmotive-verify-catalog"
+          Remove-Item -LiteralPath $catalogState -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $catalogState | Out-Null
+          $catalogInit = (node scripts/verify_060_catalog.mjs init $catalogState "artifacts/catalog-fixture-init.json" | ConvertFrom-Json)
+          if ($catalogInit.status -ne "PASS") { throw "The catalog fixture server did not initialize" }
+          $env:LOCALMOTIVE_CATALOG_URL = $catalogInit.fixture_url
+          $env:LOCALMOTIVE_CATALOG_PUBKEY = $catalogInit.fixture_pubkey
+          # Tauri's known-folder cache ignores a redirected LOCALAPPDATA, so
+          # the verifier names the catalog cache root explicitly; it must sit
+          # inside the isolated profile or the candidate refuses it.
+          $catalogRoot = Join-Path $isolatedRoot "catalog-cache"
+          New-Item -ItemType Directory -Force -Path $catalogRoot | Out-Null
+          $env:LOCALMOTIVE_CATALOG_ROOT = $catalogRoot
+          function Start-Candidate([int]$Port) {
+            $process = Start-Process $portable -PassThru
             $deadline = (Get-Date).AddSeconds(90)
             while ($true) {
               try {
-                $tabs = Invoke-RestMethod "http://127.0.0.1:$cdpPort/json/list"
+                $tabs = Invoke-RestMethod "http://127.0.0.1:$Port/json/list"
                 $ready = @($tabs | Where-Object {
                   $_.type -eq 'page' -and $_.webSocketDebuggerUrl -and
                   ($_.url -match 'tauri|localhost|localmotive|asset' -or $_.title)
                 })
                 if ($ready.Count -gt 0) { break }
               } catch { }
-              if ((Get-Date) -gt $deadline) { throw "Candidate WebView did not expose a page CDP target in 90s (port $cdpPort)" }
+              if ((Get-Date) -gt $deadline) {
+                if ($process -and -not $process.HasExited) { cmd /c "taskkill /F /T /PID $($process.Id)" | Out-Null }
+                throw "Candidate WebView did not expose a page CDP target in 90s (port $Port)"
+              }
               Start-Sleep -Seconds 2
             }
-            node scripts/verify_041.mjs $cdpPort $portable "artifacts/packaged-verification-0.4.1.json"
-            if ($LASTEXITCODE -ne 0) { throw "verify_041 failed with code $LASTEXITCODE" }
-            $record = Get-Content "artifacts/packaged-verification-0.4.1.json" -Raw | ConvertFrom-Json
-            if ($record.overall_status -ne "PASS") { throw "Packaged verification record is not PASS" }
-          } finally {
+            return $process
+          }
+          function Stop-Candidate($process) {
             if ($process -and -not $process.HasExited) {
               cmd /c "taskkill /F /T /PID $($process.Id)" | Out-Null
             }
             Stop-VerifyLeftovers -Port $cdpPort
+          }
+          $process = Start-Candidate $cdpPort
+          try {
+            node scripts/verify_041.mjs $cdpPort $portable "artifacts/packaged-verification-0.4.1.json"
+            if ($LASTEXITCODE -ne 0) { throw "verify_041 failed with code $LASTEXITCODE" }
+            $record = Get-Content "artifacts/packaged-verification-0.4.1.json" -Raw | ConvertFrom-Json
+            if ($record.overall_status -ne "PASS") { throw "Packaged verification record is not PASS" }
+
+            # Catalog/SQLite matrix (audit GH-05): launch #1 first fill,
+            # controlled signature and cooldown, then corruption and restart.
+            node scripts/verify_060_catalog.mjs first-fill $cdpPort $catalogState "artifacts/catalog-matrix-first-fill.json"
+            if ($LASTEXITCODE -ne 0) { throw "Catalog first-fill phase failed with code $LASTEXITCODE" }
+          } finally {
+            Stop-Candidate $process
+          }
+          node scripts/verify_060_catalog.mjs prep $catalogState
+          if ($LASTEXITCODE -ne 0) { throw "Catalog corruption phase failed with code $LASTEXITCODE" }
+          $process = $null
+          try {
+            $process = Start-Candidate $cdpPort
+            node scripts/verify_060_catalog.mjs restart $cdpPort $catalogState "artifacts/catalog-matrix-restart.json"
+            if ($LASTEXITCODE -ne 0) { throw "Catalog restart phase failed with code $LASTEXITCODE" }
+          } finally {
+            Stop-Candidate $process
+          }
+          $env:LOCALMOTIVE_SOURCE_REVISION = $env:RESOLVED_SHA
+          node scripts/verify_060_catalog.mjs merge $portable "artifacts/catalog-matrix-first-fill.json" "artifacts/catalog-matrix-restart.json" "artifacts/packaged-verification-catalog-$env:VERSION.json"
+          if ($LASTEXITCODE -ne 0) { throw "The catalog/SQLite packaged matrix is not PASS" }
+          # Also kill the fixture server explicitly: prep already did, this is
+          # belt-and-braces against an early failure before prep ran.
+          if ($catalogInit -and $catalogInit.fixture_url -match ':(\d+)/') {
+            $fixturePid = (Get-Content (Join-Path $catalogState 'state.json') -Raw | ConvertFrom-Json).serverPid
+            if ($fixturePid) { cmd /c "taskkill /F /PID $fixturePid" 2>$null | Out-Null }
           }
 
       - name: Stage release artifacts

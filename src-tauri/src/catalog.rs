@@ -25,6 +25,88 @@ const MAX_CATALOG_BODY_BYTES: usize = 4 * 1024 * 1024;
 const MAX_CATALOG_SIGNATURE_BYTES: usize = 16 * 1024;
 const MAX_CATALOG_CACHE_BYTES: u64 = 5 * 1024 * 1024;
 
+/// Verifier-only catalog source overrides (audit GH-05). The packaged
+/// verifier needs a controlled, signed catalog fixture and a locally hosted
+/// endpoint to exercise first fill, cooldown, offline availability and
+/// corruption recovery without touching the production endpoint. The
+/// overrides apply only when `LOCALMOTIVE_VERIFY_ISOLATED_ROOT` is set (the
+/// verifier launches the candidate with an isolated application-data
+/// profile), so a normal user run always verifies against the shipped key.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct VerifySource {
+    url: Option<String>,
+    pubkey: Option<[u8; 32]>,
+    catalog_root: Option<std::path::PathBuf>,
+}
+
+fn parse_verify_source(mut env: impl FnMut(&str) -> Option<String>) -> VerifySource {
+    let mut source = VerifySource::default();
+    let Some(isolated_root) = env("LOCALMOTIVE_VERIFY_ISOLATED_ROOT") else {
+        return source;
+    };
+    if let Some(url) = env("LOCALMOTIVE_CATALOG_URL") {
+        if url.starts_with("http://127.0.0.1:") || url.starts_with("http://localhost:") {
+            source.url = Some(url);
+        }
+    }
+    if let Some(encoded) = env("LOCALMOTIVE_CATALOG_PUBKEY") {
+        if let Ok(bytes) = <[u8; 32]>::try_from(hex32(&encoded)) {
+            source.pubkey = Some(bytes);
+        }
+    }
+    // The catalog root must live inside the verifier-owned isolated root:
+    // Tauri's known-folder cache path ignores a redirected LOCALAPPDATA, so
+    // the packaged verifier names the root explicitly. A path outside the
+    // isolated root is refused.
+    if let Some(root) = env("LOCALMOTIVE_CATALOG_ROOT") {
+        let candidate = std::path::PathBuf::from(&root);
+        let isolated = std::path::PathBuf::from(&isolated_root);
+        if candidate.is_absolute() && candidate.starts_with(&isolated) && candidate != isolated {
+            source.catalog_root = Some(candidate);
+        }
+    }
+    source
+}
+
+fn hex32(value: &str) -> Vec<u8> {
+    let trimmed = value.trim();
+    if trimmed.len() != 64 {
+        return Vec::new();
+    }
+    (0..32)
+        .map(|index| u8::from_str_radix(&trimmed[index * 2..index * 2 + 2], 16))
+        .collect::<Result<Vec<u8>, _>>()
+        .unwrap_or_default()
+}
+
+static VERIFY_SOURCE: std::sync::OnceLock<VerifySource> = std::sync::OnceLock::new();
+
+/// Record the verifier-only source overrides once per process. The first
+/// call wins; later calls (or normal runs) keep the shipped defaults.
+pub fn apply_env_verify_source() {
+    let source = parse_verify_source(|name| std::env::var(name).ok());
+    let _ = VERIFY_SOURCE.set(source);
+}
+
+fn verify_source() -> &'static VerifySource {
+    VERIFY_SOURCE.get_or_init(VerifySource::default)
+}
+
+/// The catalog endpoint for this process: the shipped default, or the
+/// verifier fixture endpoint inside a verifier-owned profile.
+pub fn effective_catalog_url() -> String {
+    verify_source()
+        .url
+        .clone()
+        .unwrap_or_else(|| DEFAULT_CATALOG_URL.to_string())
+}
+
+/// The verifier-owned catalog cache root, when the process runs inside a
+/// verifier profile. `None` means the shipped Tauri cache directory.
+pub fn verify_catalog_root() -> Option<std::path::PathBuf> {
+    verify_source().catalog_root.clone()
+}
+
 fn read_bounded_catalog_body(mut reader: impl Read, limit: usize) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::with_capacity(limit.min(64 * 1024));
     reader
@@ -251,14 +333,9 @@ fn verify_catalog_signature_with_key(body: &[u8], encoded: &str, key: &[u8; 32])
         .is_ok()
 }
 
-fn verify_catalog_signature(body: &[u8], encoded: &str) -> bool {
-    // Ed25519 signs exact bytes, so a CRLF checkout would invalidate the
-    // shipped signature. Normalize CRLF to LF before verifying: JSON treats
-    // both as insignificant whitespace, and the LF policy in .gitattributes
-    // keeps the canonical bytes stable.
-    let mut normalized: Vec<u8>;
-    let bytes = if body.windows(2).any(|pair| pair == b"\r\n") {
-        normalized = body
+fn normalize_crlf(body: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if body.windows(2).any(|pair| pair == b"\r\n") {
+        let mut normalized: Vec<u8> = body
             .split(|byte| *byte == b'\r')
             .flat_map(|segment| {
                 let stripped = segment.strip_prefix(b"\n").unwrap_or(segment);
@@ -267,11 +344,25 @@ fn verify_catalog_signature(body: &[u8], encoded: &str) -> bool {
             .collect::<Vec<u8>>();
         // Drop the trailing newline the fold above always appends.
         normalized.pop();
-        normalized.as_slice()
+        std::borrow::Cow::Owned(normalized)
     } else {
-        body
-    };
-    verify_catalog_signature_with_key(bytes, encoded, &CATALOG_VERIFYING_KEY)
+        std::borrow::Cow::Borrowed(body)
+    }
+}
+
+fn verify_catalog_signature(body: &[u8], encoded: &str) -> bool {
+    // Verifier-owned fixture runs (audit GH-05) verify against the fixture
+    // key recorded by `apply_env_verify_source`; every other run verifies
+    // against the shipped key. Ed25519 signs exact bytes, so a CRLF
+    // checkout would invalidate the shipped signature: both keys therefore
+    // check the LF-normalized body.
+    let bytes = normalize_crlf(body);
+    if let Some(key) = verify_source().pubkey {
+        if verify_catalog_signature_with_key(bytes.as_ref(), encoded, &key) {
+            return true;
+        }
+    }
+    verify_catalog_signature_with_key(bytes.as_ref(), encoded, &CATALOG_VERIFYING_KEY)
 }
 
 /// `owner/name`, the only shape Hugging Face uses. Rejecting anything else
@@ -1307,6 +1398,96 @@ pub fn clear_hf_token() -> Result<TokenStatus, String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn gh05_verify_source_overrides_require_the_isolated_verifier_root() {
+        // Without LOCALMOTIVE_VERIFY_ISOLATED_ROOT nothing is overridden,
+        // even when the other variables are present.
+        let vars = [
+            (
+                "LOCALMOTIVE_CATALOG_URL",
+                "http://127.0.0.1:1234/catalog.json",
+            ),
+            ("LOCALMOTIVE_CATALOG_PUBKEY", "aa"),
+        ];
+        let source = parse_verify_source(|name| {
+            vars.iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| value.to_string())
+        });
+        assert_eq!(source, VerifySource::default());
+
+        // Inside the verifier profile the local endpoint and key apply.
+        let mut lookup = |name: &str| -> Option<String> {
+            match name {
+                "LOCALMOTIVE_VERIFY_ISOLATED_ROOT" => Some("C:/tmp/verify".into()),
+                "LOCALMOTIVE_CATALOG_URL" => Some("http://127.0.0.1:1234/catalog.json".into()),
+                "LOCALMOTIVE_CATALOG_PUBKEY" => {
+                    Some("1b106e861dfb14bdede0bb625586d6001daef8f24168e09d93e65fa9fead2dce".into())
+                }
+                _ => None,
+            }
+        };
+        let source = parse_verify_source(&mut lookup);
+        assert_eq!(
+            source.url.as_deref(),
+            Some("http://127.0.0.1:1234/catalog.json")
+        );
+        assert!(source.pubkey.is_some());
+        // The catalog root must live INSIDE the isolated verifier root; a
+        // sibling or outside path is refused so the controlled matrix can
+        // never be pointed at the real user cache.
+        let mut root_lookup = |name: &str| -> Option<String> {
+            match name {
+                "LOCALMOTIVE_VERIFY_ISOLATED_ROOT" => Some("C:/tmp/verify".into()),
+                "LOCALMOTIVE_CATALOG_ROOT" => Some("C:/tmp/verify/catalog".into()),
+                _ => None,
+            }
+        };
+        assert_eq!(
+            parse_verify_source(&mut root_lookup).catalog_root,
+            Some(std::path::PathBuf::from("C:/tmp/verify/catalog"))
+        );
+        let mut outside = |name: &str| -> Option<String> {
+            match name {
+                "LOCALMOTIVE_VERIFY_ISOLATED_ROOT" => Some("C:/tmp/verify".into()),
+                "LOCALMOTIVE_CATALOG_ROOT" => Some("C:/Users/real/AppData/Local".into()),
+                _ => None,
+            }
+        };
+        assert_eq!(parse_verify_source(&mut outside).catalog_root, None);
+        let mut equal_to_root = |name: &str| -> Option<String> {
+            match name {
+                "LOCALMOTIVE_VERIFY_ISOLATED_ROOT" => Some("C:/tmp/verify".into()),
+                "LOCALMOTIVE_CATALOG_ROOT" => Some("C:/tmp/verify".into()),
+                _ => None,
+            }
+        };
+        assert_eq!(parse_verify_source(&mut equal_to_root).catalog_root, None);
+
+        // A non-local endpoint is refused even inside the verifier profile:
+        // the fixture seam must never point the candidate at remote bytes.
+        let mut remote = |name: &str| -> Option<String> {
+            match name {
+                "LOCALMOTIVE_VERIFY_ISOLATED_ROOT" => Some("C:/tmp/verify".into()),
+                "LOCALMOTIVE_CATALOG_URL" => Some("https://example.invalid/catalog.json".into()),
+                _ => None,
+            }
+        };
+        let source = parse_verify_source(&mut remote);
+        assert_eq!(source.url, None);
+
+        // An invalid key length is ignored, never truncated.
+        let mut bad_key = |name: &str| -> Option<String> {
+            match name {
+                "LOCALMOTIVE_VERIFY_ISOLATED_ROOT" => Some("C:/tmp/verify".into()),
+                "LOCALMOTIVE_CATALOG_PUBKEY" => Some("abcd".into()),
+                _ => None,
+            }
+        };
+        assert_eq!(parse_verify_source(&mut bad_key).pubkey, None);
+    }
+
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;

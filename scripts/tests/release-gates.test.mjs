@@ -881,6 +881,55 @@ test("packaged cancellation check cancels on a backend progress phase, not a fix
   assert.doesNotMatch(cancellation, /setTimeout\(resolvePromise, 250\)/);
 });
 
+test("release package job runs the catalog/SQLite packaged matrix (GH-05)", async () => {
+  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  const pkg = release.split("\n  package:")[1].split("\n  clean-account-lifecycle:")[0];
+  for (const needle of [
+    "verify_060_catalog.mjs init",
+    "verify_060_catalog.mjs first-fill",
+    "verify_060_catalog.mjs prep",
+    "verify_060_catalog.mjs restart",
+    "verify_060_catalog.mjs merge",
+    "LOCALMOTIVE_CATALOG_URL",
+    "LOCALMOTIVE_CATALOG_PUBKEY",
+    // Tauri known-folder cache paths ignore a redirected LOCALAPPDATA: the
+    // verifier must name the catalog cache root inside the isolated profile.
+    "LOCALMOTIVE_CATALOG_ROOT",
+    "packaged-verification-catalog-$env:VERSION.json",
+  ]) {
+    assert.ok(pkg.includes(needle), `package job is missing ${needle}`);
+  }
+  // Two launches share the isolated profile so the restart phase runs on the
+  // same application data the first-fill phase wrote.
+  assert.equal((pkg.match(/Start-Candidate \$cdpPort/g) ?? []).length, 2);
+});
+
+test("rich catalog facets keep the backend camelCase contract (GH-05)", async () => {
+  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const model = await readFile(join(process.cwd(), "src", "model.ts"), "utf8");
+  const catalog = await readFile(join(process.cwd(), "src-tauri", "src", "catalog.rs"), "utf8");
+  // The Rust struct serializes with rename_all = "camelCase"; a snake_case
+  // read left the pipeline state undefined and crashed the catalog render.
+  assert.match(catalog, /#\[serde\(rename_all = "camelCase"\)\]\npub struct CatalogFacets/);
+  assert.match(app, /rich\.pipelineTags/);
+  assert.doesNotMatch(app, /rich\.pipeline_tags/);
+  assert.match(model, /pipelineTags: string\[\];/);
+  const component = await readFile(join(process.cwd(), "src", "App.catalog.test.tsx"), "utf8");
+  assert.match(component, /pipelineTags: \["text-generation"\]/);
+});
+
+test("verifier-only catalog overrides stay gated to the isolated verifier profile (GH-05)", async () => {
+  const catalog = await readFile(join(process.cwd(), "src-tauri", "src", "catalog.rs"), "utf8");
+  assert.match(catalog, /LOCALMOTIVE_VERIFY_ISOLATED_ROOT/);
+  assert.match(catalog, /starts_with\("http:\/\/127\.0\.0\.1:"\)/);
+  assert.match(catalog, /fn parse_verify_source/);
+  const verify = await readFile(join(process.cwd(), "scripts", "verify_060_catalog.mjs"), "utf8");
+  assert.match(verify, /LOCALMOTIVE_VERIFY_ISOLATED_ROOT/);
+  assert.match(verify, /ed25519|generateKeyPairSync\("ed25519"\)/);
+  assert.match(verify, /corrupted-signature/);
+  assert.match(verify, /catalog-mirror\.sqlite/);
+});
+
 test("component test environment owns the catalog presentation scenarios (QD-02, QD-03)", async () => {
   const source = await readFile(join(process.cwd(), "src", "App.catalog.test.tsx"), "utf8");
   assert.match(source, /@vitest-environment jsdom/);
@@ -1059,11 +1108,15 @@ test("release verify step waits for the candidate WebView before driving checks"
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
   const at = release.indexOf("Verify the packaged executable");
   assert.ok(at >= 0, "verify step is missing");
-  const block = release.slice(at, at + 3000);
+  const block = release.slice(at, at + 6000);
+  assert.match(block, /function Start-Candidate/);
   assert.match(block, /Start-Process \$portable/);
-  // A fixed sleep races WebView startup: the step must poll the CDP
-  // endpoint until the page appears instead of assuming readiness.
+  // A fixed sleep races WebView startup: the launch helper must poll the
+  // CDP endpoint until the page appears instead of assuming readiness, and
+  // every verifier run must go through the helper (two launches for the
+  // catalog restart matrix).
   assert.match(block, /json\/list/);
+  assert.equal((block.match(/Start-Candidate \$cdpPort/g) ?? []).length, 2);
 });
 
 test("release workflow serializes runs so two packages never share one runner", async () => {

@@ -46,10 +46,15 @@
         ]
       },
       "packageJobs": {
-        "package-smoke": ["check", "rust-audit"]
+        "package-smoke": [
+          "check",
+          "rust-audit"
+        ]
       },
       "requiredCommands": {
-        "package-smoke": ["npm run tauri build"]
+        "package-smoke": [
+          "npm run tauri build"
+        ]
       },
       "publicationJobs": {}
     },
@@ -72,13 +77,21 @@
         "clean-account-lifecycle": []
       },
       "packageJobs": {
-        "package": ["quality", "rust-audit"]
+        "package": [
+          "quality",
+          "rust-audit"
+        ]
       },
       "requiredCommands": {
         "package": [
           "npm run tauri build",
           "node scripts/verify_041.mjs $cdpPort $portable \"artifacts/packaged-verification-0.4.1.json\"",
-          "node scripts/verify_candidate_inventory.mjs artifacts \"$VERSION\" \"artifacts/candidate-inventory-${VERSION}.json\""
+          "node scripts/verify_candidate_inventory.mjs artifacts \"$VERSION\" \"artifacts/candidate-inventory-${VERSION}.json\"",
+          "$catalogInit = (node scripts/verify_060_catalog.mjs init $catalogState \"artifacts/catalog-fixture-init.json\" | ConvertFrom-Json)",
+          "node scripts/verify_060_catalog.mjs first-fill $cdpPort $catalogState \"artifacts/catalog-matrix-first-fill.json\"",
+          "node scripts/verify_060_catalog.mjs prep $catalogState",
+          "node scripts/verify_060_catalog.mjs restart $cdpPort $catalogState \"artifacts/catalog-matrix-restart.json\"",
+          "node scripts/verify_060_catalog.mjs merge $portable \"artifacts/catalog-matrix-first-fill.json\" \"artifacts/catalog-matrix-restart.json\" \"artifacts/packaged-verification-catalog-$env:VERSION.json\""
         ],
         "publish": [
           "LOCALMOTIVE_SOURCE_REVISION=\"$RESOLVED_SHA\" node scripts/verify_candidate_inventory.mjs --verify \"artifacts/candidate-inventory-${VERSION}.json\"",
@@ -89,7 +102,11 @@
         ]
       },
       "publicationJobs": {
-        "publish": ["quality", "rust-audit", "package"]
+        "publish": [
+          "quality",
+          "rust-audit",
+          "package"
+        ]
       }
     },
     "hardware-qualify.yml": {

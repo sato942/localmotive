@@ -3164,6 +3164,13 @@ fn suggest_port(host: String, preferred: u16) -> Result<u16, String> {
 /// Where the catalog cache and any in-flight download bookkeeping live.
 fn catalog_cache_root(app: &tauri::AppHandle) -> std::path::PathBuf {
     use tauri::Manager;
+    // The packaged verifier runs inside an isolated profile whose root the
+    // process names explicitly (audit GH-05): Tauri's known-folder cache
+    // path ignores a redirected LOCALAPPDATA, so the override keeps the
+    // controlled matrix off the real user cache.
+    if let Some(root) = catalog::verify_catalog_root() {
+        return root;
+    }
     app.path()
         .app_cache_dir()
         .unwrap_or_else(|_| std::env::temp_dir().join("localmotive"))
@@ -3180,7 +3187,7 @@ async fn load_model_catalog(
 ) -> Result<catalog::CatalogSnapshot, String> {
     let root = catalog_cache_root(&app);
     let snapshot = tauri::async_runtime::spawn_blocking(move || {
-        catalog::load_catalog_snapshot(&root, catalog::DEFAULT_CATALOG_URL)
+        catalog::load_catalog_snapshot(&root, &catalog::effective_catalog_url())
     })
     .await
     .map_err(|error| format!("Catalog load failed: {error}"))??;
@@ -3240,7 +3247,7 @@ async fn fetch_model_catalog(
             "The catalog was refreshed recently. Try again in about {left} min."
         ));
     }
-    let url = catalog::DEFAULT_CATALOG_URL.to_string();
+    let url = catalog::effective_catalog_url();
     let fetch_root = root.clone();
     let snapshot =
         tauri::async_runtime::spawn_blocking(move || catalog::fetch_catalog(&url, &fetch_root))
@@ -3734,6 +3741,9 @@ struct AboutInfo {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Record verifier-only catalog source overrides before any catalog work
+    // starts (audit GH-05); normal runs keep the shipped defaults.
+    catalog::apply_env_verify_source();
     tauri::Builder::default()
         .manage(AppState::default())
         .plugin(tauri_plugin_opener::init())
