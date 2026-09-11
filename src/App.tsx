@@ -2195,7 +2195,10 @@ function App() {
                           </div>
                         ))}
                       </div>
-                      {tuneReport && <div className="tune-actions"><button className="button primary" onClick={adoptTunedProfile}><Save size={15} /> Adopt best as profile</button><small>{tuneReport.stoppedReason}</small></div>}
+                      {tuneReport && <div className="tune-actions"><button className="button primary" onClick={adoptTunedProfile} disabled={tuneReport.bestIndex === null}><Save size={15} /> Adopt best as profile</button><small>{tuneReport.stoppedReason}</small>
+                        <small>{tuneReport.objective ?? "Measured objective: short-prompt decode throughput at the allocated context."}</small>
+                        {tuneReport.finalVerification ? <small>Final verification: baseline {tuneReport.finalVerification.baselineTps.toFixed(2)} tok/s, winner {tuneReport.finalVerification.winnerTps.toFixed(2)} tok/s, required +{(tuneReport.finalVerification.requiredImprovement * 100).toFixed(1)}% — {tuneReport.finalVerification.confirmed ? "confirmed" : "not confirmed"}.</small> : null}
+                        {tuneReport.qualityAffectingChanges && tuneReport.qualityAffectingChanges.length > 0 ? <small>Quality not measured for: {tuneReport.qualityAffectingChanges.join(", ")}. Run the quality suite before adopting output-quality-sensitive changes.</small> : null}</div>}
                     </>
                   ) : (
                     <div className="empty-result tune-empty"><Sparkles size={28} /><p>{tuning ? tuneProgress?.message ?? "Starting…" : tuneBlocker}</p></div>

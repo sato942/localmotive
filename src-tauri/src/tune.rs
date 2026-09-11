@@ -84,6 +84,34 @@ impl Default for TuningBudgets {
     }
 }
 
+/// Fields whose changes can alter generated output quality rather than only
+/// speed; the session reports them with the winner (audit MT-11 I4).
+pub const QUALITY_AFFECTING_FIELDS: &[&str] = &["cacheTypeK", "cacheTypeV", "specType"];
+
+/// One measurement as the bench saw it: the summary, the command that ran,
+/// and the observed effective per-slot context from the running server. The
+/// observed value is what the requested-capacity objective is checked against
+/// (audit MT-11).
+#[derive(Clone, Debug)]
+pub struct TrialMeasurement {
+    pub summary: BenchmarkSummary,
+    pub command: String,
+    pub effective_context: Option<u32>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FinalVerification {
+    pub baseline_tps: f64,
+    pub winner_tps: f64,
+    /// Relative improvement the winner had to beat (2x the baseline drift,
+    /// floored at [`MIN_MATERIAL_IMPROVEMENT`]).
+    pub required_improvement: f64,
+    pub confirmed: bool,
+}
+
+pub const MIN_MATERIAL_IMPROVEMENT: f64 = 0.03;
+
 pub fn is_tunable(field: &str) -> bool {
     TUNABLE_FIELDS.iter().any(|(name, _)| *name == field)
 }
@@ -101,6 +129,14 @@ pub struct TuningTrial {
     pub median_tps: Option<f64>,
     pub error: Option<String>,
     pub command: String,
+    /// Observed effective per-slot context of the trial server, when the
+    /// runtime reported it (audit MT-11 I1/I3).
+    #[serde(default)]
+    pub effective_context: Option<u32>,
+    /// Standard deviation of the trial samples, so improvement claims can be
+    /// checked against observed variation (audit MT-11 I4).
+    #[serde(default)]
+    pub std_dev: Option<f64>,
 }
 
 /// What the cloud model must return.
@@ -380,7 +416,7 @@ fn coerce_like(
 
 /// Outcome of measuring one configuration. Injected so tests never launch a server.
 pub trait Bench {
-    fn measure(&mut self, profile: &LaunchProfile) -> Result<(BenchmarkSummary, String), String>;
+    fn measure(&mut self, profile: &LaunchProfile) -> Result<TrialMeasurement, String>;
 }
 
 /// The cloud model. Injected so tests never make HTTP calls.
@@ -397,6 +433,22 @@ pub struct TuningReport {
     pub best_profile: LaunchProfile,
     pub trials: Vec<TuningTrial>,
     pub stopped_reason: String,
+    /// The measured objective, stated plainly (audit MT-11 I1/I2): the
+    /// retained harness measures short-prompt decode throughput at an
+    /// allocated context, not a filled full-context workload.
+    #[serde(default)]
+    pub objective: String,
+    /// The requested per-slot context every scored candidate had to observe.
+    #[serde(default)]
+    pub required_effective_context: u32,
+    /// Baseline and winner remeasured after the loop; `None` when the
+    /// verification could not run (cancelled or failed measurement).
+    #[serde(default)]
+    pub final_verification: Option<FinalVerification>,
+    /// Winner changes that can alter output quality and were NOT quality
+    /// gated in this session (audit MT-11 I4).
+    #[serde(default)]
+    pub quality_affecting_changes: Vec<String>,
 }
 
 pub struct TuningInputs<'a> {
@@ -408,6 +460,10 @@ pub struct TuningInputs<'a> {
     pub capabilities: &'a RuntimeCapabilities,
     pub companions: &'a [String],
     pub max_trials: u32,
+    /// The workload the retained harness measures (audit MT-11 I1): generated
+    /// token count and repeats go into the objective label and the brief.
+    pub measured_tokens: u32,
+    pub measured_repeats: u16,
     pub budgets: TuningBudgets,
     /// The user's Stop signal. Checked before and after every advisor call
     /// and before every measurement; cancellation is a terminal outcome, not
@@ -432,9 +488,34 @@ fn push_rejection(
         median_tps: None,
         error: Some(reason),
         command: String::new(),
+        effective_context: None,
+        std_dev: None,
     };
     on_trial(&trial);
     trials.push(trial);
+}
+
+/// The measured objective, stated plainly (audit MT-11 I1/I2): the retained
+/// harness scores short-prompt decode throughput at the allocated context.
+fn objective_label(inputs: &TuningInputs) -> String {
+    format!(
+        "Short-prompt decode throughput: {} repeats × {} generated tokens on the fixed harness prompt (prompt occupancy is a few dozen tokens) at an allocated context of {} tokens; output quality and latency are not measured",
+        inputs.measured_repeats, inputs.measured_tokens, inputs.target_context
+    )
+}
+
+/// Sample standard deviation of the trial samples; zero when undefined.
+fn sample_std_dev(samples: &[f64]) -> f64 {
+    if samples.len() < 2 {
+        return 0.0;
+    }
+    let mean = samples.iter().sum::<f64>() / samples.len() as f64;
+    let variance = samples
+        .iter()
+        .map(|sample| (sample - mean).powi(2))
+        .sum::<f64>()
+        / (samples.len() as f64 - 1.0);
+    variance.sqrt()
 }
 
 /// Measure the baseline, then alternate propose → validate → measure until the
@@ -453,6 +534,7 @@ pub fn run_tuning<B: Bench, A: Advisor>(
 
     let mut trials: Vec<TuningTrial> = Vec::new();
     let mut best: Option<(u32, f64, LaunchProfile)> = None;
+    let required_context = inputs.target_context;
 
     let record = |trials: &mut Vec<TuningTrial>,
                   best: &mut Option<(u32, f64, LaunchProfile)>,
@@ -460,24 +542,51 @@ pub fn run_tuning<B: Bench, A: Advisor>(
                   profile: &LaunchProfile,
                   changes: BTreeMap<String, serde_json::Value>,
                   rationale: String,
-                  outcome: Result<(BenchmarkSummary, String), String>| {
+                  outcome: Result<TrialMeasurement, String>| {
         let index = trials.len() as u32;
         let trial = match outcome {
-            Ok((summary, command)) => {
-                if best
-                    .as_ref()
-                    .is_none_or(|(_, tps, _)| summary.mean_tps > *tps)
-                {
-                    *best = Some((index, summary.mean_tps, profile.clone()));
-                }
-                TuningTrial {
-                    index,
-                    changes,
-                    rationale,
-                    mean_tps: Some(summary.mean_tps),
-                    median_tps: Some(summary.median_tps),
-                    error: None,
-                    command,
+            Ok(measurement) => {
+                let scoreable = match measurement.effective_context {
+                    Some(observed) if observed >= required_context => Ok(observed),
+                    Some(observed) => Err(format!(
+                        "Effective per-slot context was {observed} tokens, below the required {required_context}; the candidate cannot win the requested-capacity objective"
+                    )),
+                    None => Err(
+                        "The effective per-slot context could not be observed, so the candidate cannot be scored for the requested-capacity objective"
+                            .into(),
+                    ),
+                };
+                match scoreable {
+                    Ok(observed) => {
+                        if best
+                            .as_ref()
+                            .is_none_or(|(_, tps, _)| measurement.summary.mean_tps > *tps)
+                        {
+                            *best = Some((index, measurement.summary.mean_tps, profile.clone()));
+                        }
+                        TuningTrial {
+                            index,
+                            changes,
+                            rationale,
+                            mean_tps: Some(measurement.summary.mean_tps),
+                            median_tps: Some(measurement.summary.median_tps),
+                            error: None,
+                            command: measurement.command,
+                            effective_context: Some(observed),
+                            std_dev: Some(sample_std_dev(&measurement.summary.samples)),
+                        }
+                    }
+                    Err(error) => TuningTrial {
+                        index,
+                        changes,
+                        rationale,
+                        mean_tps: None,
+                        median_tps: None,
+                        error: Some(error),
+                        command: measurement.command,
+                        effective_context: measurement.effective_context,
+                        std_dev: None,
+                    },
                 }
             }
             Err(error) => TuningTrial {
@@ -488,6 +597,8 @@ pub fn run_tuning<B: Bench, A: Advisor>(
                 median_tps: None,
                 error: Some(error),
                 command: String::new(),
+                effective_context: None,
+                std_dev: None,
             },
         };
         on_trial(&trial);
@@ -513,6 +624,10 @@ pub fn run_tuning<B: Bench, A: Advisor>(
             best_profile: baseline.clone(),
             trials,
             stopped_reason: "Cancelled by the user before the baseline measurement".into(),
+            objective: objective_label(inputs),
+            required_effective_context: required_context,
+            final_verification: None,
+            quality_affecting_changes: Vec::new(),
         });
     }
     record(
@@ -535,6 +650,10 @@ pub fn run_tuning<B: Bench, A: Advisor>(
                 best_profile: baseline.clone(),
                 trials,
                 stopped_reason: "Cancelled by the user during the baseline measurement".into(),
+                objective: objective_label(inputs),
+                required_effective_context: required_context,
+                final_verification: None,
+                quality_affecting_changes: Vec::new(),
             });
         }
         return Err(format!(
@@ -741,10 +860,83 @@ pub fn run_tuning<B: Bench, A: Advisor>(
         );
     }
 
-    let (best_index, best_tps, best_profile) = match best {
+    let mut quality_affecting_changes: Vec<String> = Vec::new();
+    // Final verification (audit MT-11 I4): remeasure the baseline and the
+    // finalist, and require a material improvement beyond the observed
+    // baseline drift. A winner that cannot clear it is not reported.
+    let mut final_verification: Option<FinalVerification> = None;
+    let mut confirmed_winner_tps: Option<(u32, f64, LaunchProfile)> = None;
+    // Trial index 0 is the baseline; when nothing beat it there is no winner
+    // to re-verify, and re-measuring the baseline against itself would only
+    // invent a failure note.
+    if let Some((index, _winner_tps, winner_profile)) =
+        best.clone().filter(|(index, _, _)| *index != 0)
+    {
+        if is_cancelled(inputs) {
+            stopped_reason = format!("{stopped_reason}; final verification skipped (cancelled)");
+        } else {
+            quality_affecting_changes = trials
+                .iter()
+                .find(|trial| trial.index == index)
+                .map(|trial| {
+                    trial
+                        .changes
+                        .keys()
+                        .filter(|field| QUALITY_AFFECTING_FIELDS.contains(&field.as_str()))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            quality_affecting_changes.sort();
+            let remeasure_baseline = bench.measure(&baseline);
+            let remeasure_winner = if is_cancelled(inputs) {
+                Err("Cancelled".into())
+            } else {
+                bench.measure(&winner_profile)
+            };
+            match (remeasure_baseline, remeasure_winner) {
+                (Ok(baseline_again), Ok(winner_again)) => {
+                    let b = baseline_again.summary.mean_tps;
+                    let w = winner_again.summary.mean_tps;
+                    let drift = if b.abs() > f64::EPSILON {
+                        (b - baseline_tps.unwrap_or(b)).abs() / b.abs()
+                    } else {
+                        0.0
+                    };
+                    let required = (2.0 * drift).max(MIN_MATERIAL_IMPROVEMENT);
+                    let confirmed = w > b * (1.0 + required);
+                    final_verification = Some(FinalVerification {
+                        baseline_tps: b,
+                        winner_tps: w,
+                        required_improvement: required,
+                        confirmed,
+                    });
+                    if confirmed {
+                        confirmed_winner_tps = Some((index, w, winner_profile.clone()));
+                    } else {
+                        stopped_reason = format!(
+                            "{stopped_reason}; the measured winner did not clear the material-improvement bar (winner {:.2} tok/s vs baseline {:.2} tok/s, required +{:.1}%)",
+                            w,
+                            b,
+                            required * 100.0
+                        );
+                    }
+                }
+                _ => {
+                    stopped_reason = format!(
+                        "{stopped_reason}; the winner could not be re-verified (remeasurement failed or was cancelled)"
+                    );
+                }
+            }
+        }
+    }
+    let (mut best_index, mut best_tps, mut best_profile) = match confirmed_winner_tps {
         Some((index, tps, profile)) => (Some(index), Some(tps), profile),
         None => (None, None, baseline.clone()),
     };
+    let _ = &mut best_index;
+    let _ = &mut best_tps;
+    let _ = &mut best_profile;
     Ok(TuningReport {
         baseline_tps,
         best_index,
@@ -752,6 +944,10 @@ pub fn run_tuning<B: Bench, A: Advisor>(
         best_profile,
         trials,
         stopped_reason,
+        objective: objective_label(inputs),
+        required_effective_context: required_context,
+        final_verification,
+        quality_affecting_changes,
     })
 }
 
@@ -991,10 +1187,7 @@ mod tests {
         calls: Vec<LaunchProfile>,
     }
     impl Bench for FakeBench {
-        fn measure(
-            &mut self,
-            profile: &LaunchProfile,
-        ) -> Result<(BenchmarkSummary, String), String> {
+        fn measure(&mut self, profile: &LaunchProfile) -> Result<TrialMeasurement, String> {
             self.calls.push(profile.clone());
             if profile.cache_type_k == "q4_0" {
                 return Err("server exited with code 1".into());
@@ -1006,13 +1199,15 @@ mod tests {
                     0.0
                 }
                 + if profile.draft_max == 5 { 15.0 } else { 0.0 };
-            Ok((
-                summarize_benchmark(vec![tps, tps + 1.0], 256, 2).unwrap(),
-                format!(
+            Ok(TrialMeasurement {
+                summary: summarize_benchmark(vec![tps, tps + 1.0], 256, 2).unwrap(),
+                command: format!(
                     "cmd draft={} fa={}",
                     profile.draft_max, profile.flash_attention
                 ),
-            ))
+                // A one-slot server at the target context: the gate passes.
+                effective_context: Some(4096 / u32::from(profile.parallel.max(1))),
+            })
         }
     }
 
@@ -1046,6 +1241,8 @@ mod tests {
             capabilities: &caps(),
             companions: &["d.gguf".to_string()],
             max_trials: 6,
+            measured_tokens: 256,
+            measured_repeats: 2,
             budgets: TuningBudgets::default(),
             cancel: None,
         };
@@ -1090,8 +1287,8 @@ mod tests {
         assert_eq!(report.stopped_reason, "Advisor stopped: converged");
         assert_eq!(
             bench.calls.len(),
-            4,
-            "the rejected proposal must not be measured"
+            6,
+            "the rejected proposal must not be measured; the winner and baseline are re-measured for final verification"
         );
         assert_eq!(seen, vec![0, 1, 2, 3, 4]);
         assert_eq!(
@@ -1115,6 +1312,8 @@ mod tests {
             capabilities: &caps(),
             companions: &[],
             max_trials: 4,
+            measured_tokens: 256,
+            measured_repeats: 2,
             budgets: TuningBudgets::default(),
             cancel: None,
         };
@@ -1141,7 +1340,11 @@ mod tests {
             "{}",
             report.stopped_reason
         );
-        assert_eq!(bench.calls.len(), 2, "garbled replies are never measured");
+        assert_eq!(
+            bench.calls.len(),
+            4,
+            "garbled replies are never measured; the winner and baseline are re-measured for final verification"
+        );
     }
 
     #[test]
@@ -1157,6 +1360,8 @@ mod tests {
             capabilities: &caps(),
             companions: &[],
             max_trials: 3,
+            measured_tokens: 256,
+            measured_repeats: 2,
             budgets: TuningBudgets::default(),
             cancel: None,
         };
@@ -1234,6 +1439,8 @@ mod tests {
             capabilities,
             companions: &[],
             max_trials: 6,
+            measured_tokens: 256,
+            measured_repeats: 2,
             budgets,
             cancel,
         }
@@ -1387,7 +1594,11 @@ mod tests {
         };
         let report = run_tuning(&base, &inputs, &mut bench, &mut advisor, |_| {}).unwrap();
 
-        assert_eq!(bench.calls.len(), 2, "the duplicate is not measured again");
+        assert_eq!(
+            bench.calls.len(),
+            4,
+            "the duplicate is not measured again; the winner and baseline are re-measured for final verification"
+        );
         assert!(
             report.trials[2]
                 .error
@@ -1461,10 +1672,7 @@ mod tests {
         flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
     }
     impl Bench for CancelDuringMeasureBench {
-        fn measure(
-            &mut self,
-            _profile: &LaunchProfile,
-        ) -> Result<(BenchmarkSummary, String), String> {
+        fn measure(&mut self, _profile: &LaunchProfile) -> Result<TrialMeasurement, String> {
             self.calls += 1;
             if self.calls > 1 {
                 // The user presses Stop while this candidate is running; the
@@ -1473,11 +1681,206 @@ mod tests {
                 self.flag.store(true, std::sync::atomic::Ordering::Relaxed);
                 return Err("server exited with code 1".into());
             }
-            Ok((
-                summarize_benchmark(vec![100.0], 256, 1).unwrap(),
-                "cmd".into(),
-            ))
+            Ok(TrialMeasurement {
+                summary: summarize_benchmark(vec![100.0], 256, 1).unwrap(),
+                command: "cmd".into(),
+                effective_context: Some(4096),
+            })
         }
+    }
+
+    /// A bench scripted per call: (tps, observed effective context). Calls
+    /// beyond the script repeat the last entry.
+    struct ScriptedBench {
+        calls: Vec<LaunchProfile>,
+        script: Vec<(f64, Option<u32>)>,
+    }
+    impl Bench for ScriptedBench {
+        fn measure(&mut self, profile: &LaunchProfile) -> Result<TrialMeasurement, String> {
+            let index = self.calls.len().min(self.script.len() - 1);
+            self.calls.push(profile.clone());
+            let (tps, ctx) = self.script[index];
+            Ok(TrialMeasurement {
+                summary: summarize_benchmark(vec![tps, tps + 1.0], 256, 2).unwrap(),
+                command: "cmd".into(),
+                effective_context: ctx,
+            })
+        }
+    }
+
+    #[test]
+    fn mt11_reduced_or_unobserved_effective_context_cannot_win() {
+        // V1: a candidate whose parallelism divides the context below target
+        // (4096/4 = 1024) must not silently win, even at a much higher mean.
+        let base = base_profile();
+        let hw = hardware();
+        let cap = caps();
+        let inputs = tuning_inputs(&hw, &cap, TuningBudgets::default(), None);
+        let mut bench = ScriptedBench {
+            calls: vec![],
+            // baseline 100 @4096; candidate 999 @1024 (parallel divides);
+            // then verification re-measurements are not reached because no
+            // candidate is scoreable.
+            script: vec![
+                (100.0, Some(4096)),
+                (999.0, Some(1024)),
+                (100.0, Some(4096)),
+            ],
+        };
+        let mut advisor = ScriptedAdvisor {
+            replies: vec![
+                r#"{"changes":{"flashAttention":"on"},"rationale":"fast","done":false}"#,
+                r#"{"changes":{},"rationale":"converged","done":true}"#,
+            ],
+            briefs_seen: vec![],
+        };
+        let report = run_tuning(&base, &inputs, &mut bench, &mut advisor, |_| {}).unwrap();
+        let candidate = report.trials.iter().find(|trial| trial.index == 1).unwrap();
+        let error = candidate.error.as_deref().unwrap();
+        assert!(error.contains("below the required 4096"), "{error}");
+        assert_eq!(
+            report.best_index, None,
+            "an unscoreable candidate cannot win"
+        );
+        assert_eq!(
+            report.best_profile.parallel, base.parallel,
+            "the reported profile stays the baseline when nothing scored"
+        );
+
+        // A candidate whose context could not be observed is rejected too.
+        let mut bench = ScriptedBench {
+            calls: vec![],
+            script: vec![(100.0, Some(4096)), (999.0, None), (100.0, Some(4096))],
+        };
+        let mut advisor = ScriptedAdvisor {
+            replies: vec![
+                r#"{"changes":{"flashAttention":"on"},"rationale":"fast","done":false}"#,
+                r#"{"changes":{},"rationale":"converged","done":true}"#,
+            ],
+            briefs_seen: vec![],
+        };
+        let report = run_tuning(&base, &inputs, &mut bench, &mut advisor, |_| {}).unwrap();
+        let error = report.trials[1].error.as_deref().unwrap();
+        assert!(error.contains("could not be observed"), "{error}");
+        assert_eq!(report.best_index, None);
+    }
+
+    #[test]
+    fn mt11_winner_needs_material_improvement_beyond_observed_variation() {
+        // V3: a winner that only edges past the baseline inside the observed
+        // drift is not reported; the final verification records why.
+        let base = base_profile();
+        let hw = hardware();
+        let cap = caps();
+        let inputs = tuning_inputs(&hw, &cap, TuningBudgets::default(), None);
+        // baseline 100; candidate 101 (+1%); verification remeasures baseline
+        // 100 and the candidate 101: below the 3% floor.
+        let mut bench = ScriptedBench {
+            calls: vec![],
+            script: vec![
+                (100.0, Some(4096)),
+                (101.0, Some(4096)),
+                (100.0, Some(4096)),
+                (101.0, Some(4096)),
+            ],
+        };
+        let mut advisor = ScriptedAdvisor {
+            replies: vec![
+                r#"{"changes":{"flashAttention":"on"},"rationale":"tiny","done":false}"#,
+                r#"{"changes":{},"rationale":"converged","done":true}"#,
+            ],
+            briefs_seen: vec![],
+        };
+        let report = run_tuning(&base, &inputs, &mut bench, &mut advisor, |_| {}).unwrap();
+        let verification = report.final_verification.expect("verification ran");
+        assert!(!verification.confirmed);
+        assert_eq!(
+            report.best_index, None,
+            "an unconfirmed winner is not reported"
+        );
+        assert!(
+            report.stopped_reason.contains("material-improvement"),
+            "{}",
+            report.stopped_reason
+        );
+
+        // A large, clear improvement is confirmed by the re-measurement.
+        let mut bench = ScriptedBench {
+            calls: vec![],
+            script: vec![
+                (100.0, Some(4096)),
+                (130.0, Some(4096)),
+                (100.0, Some(4096)),
+                (130.0, Some(4096)),
+            ],
+        };
+        let mut advisor = ScriptedAdvisor {
+            replies: vec![
+                r#"{"changes":{"flashAttention":"on"},"rationale":"clear win","done":false}"#,
+                r#"{"changes":{},"rationale":"converged","done":true}"#,
+            ],
+            briefs_seen: vec![],
+        };
+        let report = run_tuning(&base, &inputs, &mut bench, &mut advisor, |_| {}).unwrap();
+        let verification = report.final_verification.expect("verification ran");
+        assert!(verification.confirmed);
+        assert_eq!(report.best_index, Some(1));
+        assert_eq!(report.best_tps, Some(130.5));
+    }
+
+    #[test]
+    fn mt11_objective_label_and_quality_affecting_changes_are_reported() {
+        // I1/I2/I4: the report states the retained short-prompt objective,
+        // the per-slot requirement, and flags winner changes that affect
+        // output quality without a quality gate.
+        let base = base_profile();
+        let hw = hardware();
+        let cap = caps();
+        let inputs = tuning_inputs(&hw, &cap, TuningBudgets::default(), None);
+        let mut bench = ScriptedBench {
+            calls: vec![],
+            script: vec![
+                (100.0, Some(4096)),
+                (130.0, Some(4096)),
+                (100.0, Some(4096)),
+                (130.0, Some(4096)),
+            ],
+        };
+        let mut advisor = ScriptedAdvisor {
+            replies: vec![
+                r#"{"changes":{"cacheTypeK":"q8_0"},"rationale":"kv quality trade","done":false}"#,
+                r#"{"changes":{},"rationale":"converged","done":true}"#,
+            ],
+            briefs_seen: vec![],
+        };
+        let report = run_tuning(&base, &inputs, &mut bench, &mut advisor, |_| {}).unwrap();
+        assert_eq!(report.required_effective_context, 4096);
+        assert!(
+            report.objective.contains("Short-prompt decode throughput"),
+            "{}",
+            report.objective
+        );
+        assert!(
+            report
+                .objective
+                .contains("quality and latency are not measured"),
+            "{}",
+            report.objective
+        );
+        assert_eq!(
+            report.quality_affecting_changes,
+            vec!["cacheTypeK".to_string()]
+        );
+        // Sample standard deviation of [130, 131] is sqrt(1/2); compare
+        // against the computed value instead of a magic literal.
+        let expected = (0.5_f64).sqrt();
+        let std_dev = report.trials[1]
+            .std_dev
+            .expect("a scored trial records its spread");
+        assert!(
+            (std_dev - expected).abs() < 1e-9,
+            "spread of [130, 131] should be {expected}, got {std_dev}"
+        );
     }
 
     #[test]

@@ -3112,7 +3112,7 @@ struct LiveBench<'a> {
 }
 
 impl tune::Bench for LiveBench<'_> {
-    fn measure(&mut self, profile: &LaunchProfile) -> Result<(BenchmarkSummary, String), String> {
+    fn measure(&mut self, profile: &LaunchProfile) -> Result<tune::TrialMeasurement, String> {
         if self.cancel.load(Ordering::Relaxed) {
             return Err("Cancelled".into());
         }
@@ -3151,6 +3151,9 @@ impl tune::Bench for LiveBench<'_> {
                 Duration::from_secs(5),
                 observed_at_ms,
             );
+            // The observed effective per-slot context is the identity the
+            // requested-capacity objective is checked against (audit MT-11).
+            let effective_context = validation.effective_context.value;
             let _ = self.app.emit(
                 "tuning-progress",
                 TuningProgress {
@@ -3170,6 +3173,11 @@ impl tune::Bench for LiveBench<'_> {
             // (audit MT-04).
             let client = crate::local_client::LocalHttpClient::from_profile(profile)?;
             core::benchmark_server_cancellable(&client, self.tokens, self.repeats, &self.cancel)
+                .map(|summary| tune::TrialMeasurement {
+                    summary,
+                    command: String::new(),
+                    effective_context,
+                })
         })();
         // Cleanup failures must be visible: a measured result may not be
         // reported as a clean success when the trial server could not be
@@ -3178,7 +3186,10 @@ impl tune::Bench for LiveBench<'_> {
         // Give the OS a moment to release the port before the next launch.
         std::thread::sleep(Duration::from_millis(600));
         match (result, cleanup) {
-            (Ok(summary), true) => Ok((summary, command)),
+            (Ok(mut measurement), true) => {
+                measurement.command = command;
+                Ok(measurement)
+            }
             (Ok(_), false) => Err(
                 "The measured configuration succeeded, but its trial server could not be stopped cleanly; the result is withheld for the next session to re-check."
                     .into(),
@@ -3260,7 +3271,7 @@ async fn start_tuning(
         let gguf = gguf::read_summary(Path::new(&request.profile.model)).ok();
         let system_ram_bytes = system_ram_bytes();
         let inputs = tune::TuningInputs {
-            objective: "Maximise measured generation tokens/second at the target context while the server starts and answers.",
+            objective: "Maximise measured short-prompt decode throughput at the target allocated context while the server starts and answers. Quality and latency are not measured.",
             target_context: request.target_context,
             hardware: &hardware,
             system_ram_bytes,
@@ -3268,6 +3279,8 @@ async fn start_tuning(
             capabilities: &capabilities,
             companions: &request.companions,
             max_trials: request.max_trials,
+            measured_tokens: request.tokens,
+            measured_repeats: request.repeats,
             budgets: tune::TuningBudgets {
                 // Independent of measured trials: no-op and duplicate replies
                 // each consume one of these calls, so the session cannot stay

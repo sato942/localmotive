@@ -1322,6 +1322,8 @@ export type TuningTrial = {
   medianTps: number | null;
   error: string | null;
   command: string;
+  effectiveContext?: number | null;
+  stdDev?: number | null;
 };
 
 export type TuningReport = {
@@ -1331,6 +1333,17 @@ export type TuningReport = {
   bestProfile: LaunchProfile;
   trials: TuningTrial[];
   stoppedReason: string;
+  // Added with the requested-capacity objective (audit MT-11). Optional so a
+  // report stored by an older build still loads.
+  objective?: string;
+  requiredEffectiveContext?: number;
+  finalVerification?: {
+    baselineTps: number;
+    winnerTps: number;
+    requiredImprovement: number;
+    confirmed: boolean;
+  } | null;
+  qualityAffectingChanges?: string[];
 };
 
 export type TuningProgress = {
