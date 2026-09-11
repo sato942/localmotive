@@ -186,7 +186,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 - [x] **V06-RT-01.V1** — Compose root selection, installation/publication using an inert verified fixture, and the public inspection trust gate with an empty legacy directory and absent primary directory; assert that the returned runtime is accepted. **Trace:** [Audit RT-01](./localmotive-comprehensive-audit.md#rt-01).
 - [x] **V06-RT-01.V2** — Repeat the scenario with corrupt legacy records, a populated primary root, and repair/reuse requests; verify that reinstall does not reproduce the legacy rejection loop. **Trace:** [Audit RT-01](./localmotive-comprehensive-audit.md#rt-01).
-- [ ] **V06-RT-01.V3** — On the supported packaged Windows application, reproduce the upgrade layout and record a successful install followed by inspection and launch, including preservation of prior files on a failed migration. **Trace:** [Audit RT-01](./localmotive-comprehensive-audit.md#rt-01).
+- [x] **V06-RT-01.V3** — On the supported packaged Windows application, reproduce the upgrade layout and record a successful install followed by inspection and launch, including preservation of prior files on a failed migration. **Trace:** [Audit RT-01](./localmotive-comprehensive-audit.md#rt-01).
 
 **Complete when:** Every newly approved install or reuse result names a runtime that passes the current launch trust policy. The documented recovery action repairs the legacy upgrade scenario without requiring manual directory deletion.
 
@@ -212,7 +212,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 - [x] **V06-RT-02.V1** — Use inert replaced managed server and CLI binaries that write a sentinel whenever invoked; call tuning preparation and the older health workflow and assert rejection before any sentinel appears. **Trace:** [Audit RT-02](./localmotive-comprehensive-audit.md#rt-02).
 - [x] **V06-RT-02.V2** — Tamper with an approved DLL while leaving the server executable unchanged and require rejection through the same user-facing workflows. **Trace:** [Audit RT-02](./localmotive-comprehensive-audit.md#rt-02).
-- [ ] **V06-RT-02.V3** — Exercise ordinary managed inspection/launch and intentional external-runtime selection to verify that the centralized boundary preserves their documented behavior and does not rely on frontend validation. **Trace:** [Audit RT-02](./localmotive-comprehensive-audit.md#rt-02).
+- [x] **V06-RT-02.V3** — Exercise ordinary managed inspection/launch and intentional external-runtime selection to verify that the centralized boundary preserves their documented behavior and does not rely on frontend validation. **Trace:** [Audit RT-02](./localmotive-comprehensive-audit.md#rt-02).
 
 **Complete when:** No managed EXE or companion probe executes before the installation passes compiled-content authorization. Production-path regressions cover both previously bypassing workflows and detect removal or bypass of the shared guard.
 
@@ -238,7 +238,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 - [x] **V06-RT-03.V1** — Run an owned loopback fixture that accepts the completion request and withholds its response, then cancel after acceptance; assert bounded return with a Cancelled result and no passing completion stage. **Trace:** [Audit RT-03](./localmotive-comprehensive-audit.md#rt-03).
 - [x] **V06-RT-03.V2** — Cancel during response-body reading and at the response-completion boundary; require deterministic terminal status and verify that a user-cancelled run cannot become an overall pass. **Trace:** [Audit RT-03](./localmotive-comprehensive-audit.md#rt-03).
-- [ ] **V06-RT-03.V3** — Confirm that the contained child and loopback listener are stopped and temporary files are cleaned after cancellation, and verify that the ordinary successful health sequence still passes. **Trace:** [Audit RT-03](./localmotive-comprehensive-audit.md#rt-03).
+- [x] **V06-RT-03.V3** — Confirm that the contained child and loopback listener are stopped and temporary files are cleaned after cancellation, and verify that the ordinary successful health sequence still passes. **Trace:** [Audit RT-03](./localmotive-comprehensive-audit.md#rt-03).
 
 **Complete when:** Cancellation interrupts in-flight completion work within the documented bound instead of waiting for the full 120-second request timeout. Cancelled health runs never report a successful deterministic completion or overall pass and leave no active owned server.
 
@@ -264,7 +264,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 - [x] **V06-RT-04.V1** — Use a synchronized writer that attempts to replace an approved executable after verification succeeds but before spawn; require replacement to fail while protected or rejection before an inert marker executable runs. **Trace:** [Audit RT-04](./localmotive-comprehensive-audit.md#rt-04).
 - [ ] **V06-RT-04.V2** — Repeat with DLL replacement and with the health-model download deliberately delayed between context preparation and runtime execution. **Trace:** [Audit RT-04](./localmotive-comprehensive-audit.md#rt-04).
-- [ ] **V06-RT-04.V3** — Exercise repair/replacement while a lease is active and after release; verify the documented outcome, intact approved content, and no abandoned locks or handles. **Trace:** [Audit RT-04](./localmotive-comprehensive-audit.md#rt-04).
+- [x] **V06-RT-04.V3** — Exercise repair/replacement while a lease is active and after release; verify the documented outcome, intact approved content, and no abandoned locks or handles. **Trace:** [Audit RT-04](./localmotive-comprehensive-audit.md#rt-04).
 
 **Complete when:** A managed process cannot load content substituted in the verified-to-launch interval covered by the documented guarantee. Health preparation and runtime repair obey the same verified-install lifetime policy.
 
@@ -866,7 +866,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 - [x] **V06-MT-06.V1** — Test trusted local TLS, rejected invalid certificates, API-key-protected completion, and missing/wrong keys; assert secret canaries never appear in observable diagnostics. **Trace:** [Audit MT-06](./localmotive-comprehensive-audit.md#mt-06).
 - [x] **V06-MT-06.V2** — Cover bracketed IPv6, chunked JSON, excessive response size, slow writes/reads, and cancellation during connection and response waits. **Trace:** [Audit MT-06](./localmotive-comprehensive-audit.md#mt-06).
-- [ ] **V06-MT-06.V3** — Run accepted TLS/key profiles against the packaged target runtime and record successful health, benchmark, and quality behavior. **Trace:** [Audit MT-06](./localmotive-comprehensive-audit.md#mt-06).
+- [x] **V06-MT-06.V3** — Run accepted TLS/key profiles against the packaged target runtime and record successful health, benchmark, and quality behavior. **Trace:** [Audit MT-06](./localmotive-comprehensive-audit.md#mt-06).
 
 **Complete when:** Every accepted security-supported profile works through the corresponding internal client, or fails explicitly before launching if its transport is unsupported. Certificate validation remains enabled and request bounds/deadlines apply to the whole operation rather than only response reads.
 
@@ -883,16 +883,16 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Implementation**
 
-- [ ] **V06-MT-07.I1** — Replace the manually selected compatibility fields with a versioned canonical execution snapshot including effective performance/quality-relevant arguments and observed per-slot context. **Trace:** [Audit MT-07](./localmotive-comprehensive-audit.md#mt-07).
-- [ ] **V06-MT-07.I2** — Cover thread counts, flash attention, KV/CPU offload, fit parameters, speculation/draft settings, device placement, overrides, extra options, and content identities for LoRA or other influences. **Trace:** [Audit MT-07](./localmotive-comprehensive-audit.md#mt-07).
-- [ ] **V06-MT-07.I3** — Include CPU, RAM, platform, and metric/estimator identity where they affect applicability; define when missing driver or hardware facts make reuse insufficiently supported. **Trace:** [Audit MT-07](./localmotive-comprehensive-audit.md#mt-07).
-- [ ] **V06-MT-07.I4** — Migrate or explicitly invalidate older calibration identities while retaining replay's separate command-argument comparison and preventing secret values from entering exposed identity records. **Trace:** [Audit MT-07](./localmotive-comprehensive-audit.md#mt-07).
+- [x] **V06-MT-07.I1** — Replace the manually selected compatibility fields with a versioned canonical execution snapshot including effective performance/quality-relevant arguments and observed per-slot context. **Trace:** [Audit MT-07](./localmotive-comprehensive-audit.md#mt-07).
+- [x] **V06-MT-07.I2** — Cover thread counts, flash attention, KV/CPU offload, fit parameters, speculation/draft settings, device placement, overrides, extra options, and content identities for LoRA or other influences. **Trace:** [Audit MT-07](./localmotive-comprehensive-audit.md#mt-07).
+- [x] **V06-MT-07.I3** — Include CPU, RAM, platform, and metric/estimator identity where they affect applicability; define when missing driver or hardware facts make reuse insufficiently supported. **Trace:** [Audit MT-07](./localmotive-comprehensive-audit.md#mt-07).
+- [x] **V06-MT-07.I4** — Migrate or explicitly invalidate older calibration identities while retaining replay's separate command-argument comparison and preventing secret values from entering exposed identity records. **Trace:** [Audit MT-07](./localmotive-comprehensive-audit.md#mt-07).
 
 **Verification**
 
-- [ ] **V06-MT-07.V1** — Add table/property-driven checks changing each material field independently, including fields previously absent from CompatibilityIdentity, and assert compatibility changes appropriately. **Trace:** [Audit MT-07](./localmotive-comprehensive-audit.md#mt-07).
+- [x] **V06-MT-07.V1** — Add table/property-driven checks changing each material field independently, including fields previously absent from CompatibilityIdentity, and assert compatibility changes appropriately. **Trace:** [Audit MT-07](./localmotive-comprehensive-audit.md#mt-07).
 - [ ] **V06-MT-07.V2** — Test CPU-only machines, the same GPU with a changed CPU, fit-reduced effective context, changed draft settings with the same companion, and changed LoRA bytes under the same filename. **Trace:** [Audit MT-07](./localmotive-comprehensive-audit.md#mt-07).
-- [ ] **V06-MT-07.V3** — Verify old-schema calibration cannot silently masquerade as a current full identity, unknown identity has the documented outcome, and replay still rejects changed command arguments. **Trace:** [Audit MT-07](./localmotive-comprehensive-audit.md#mt-07).
+- [x] **V06-MT-07.V3** — Verify old-schema calibration cannot silently masquerade as a current full identity, unknown identity has the documented outcome, and replay still rejects changed command arguments. **Trace:** [Audit MT-07](./localmotive-comprehensive-audit.md#mt-07).
 
 **Complete when:** Material execution/content/hardware changes invalidate calibration reuse, while equivalent canonical snapshots remain deterministic across serialization. Compatibility output identifies its schema and estimator scope without exposing credentials or treating unknown identity as proven equality.
 
