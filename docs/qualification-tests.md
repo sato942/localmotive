@@ -157,7 +157,7 @@ Each step unblocks the next step.
 
 To run the fast local gates, execute each command separately.
 
-Use `node scripts/verify_versions.mjs` for versions; the script reads the three manifests (`package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`).
+Use `node scripts/verify_versions.mjs 0.6.0` (argument: the expected version) to check the three manifests (`package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`).
 
 Use `node scripts/verify_workflow_pins.mjs` for action pins.
 

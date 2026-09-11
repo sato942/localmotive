@@ -1,5 +1,82 @@
 # Changelog
 
+## 0.6.0
+
+This is the stabilization release: every fix below traces to a confirmed
+finding in `docs/history/localmotive-comprehensive-audit.md`, lands with a
+regression test, and is recorded with its evidence in
+`docs/history/TODO-0.6.md`.
+
+### Security and robustness
+
+- Runs the whole window under a narrow Content Security Policy and scopes the
+  external-link opener to the origins the app actually uses.
+- Keeps one Rust-owned local HTTP client for inference and health traffic:
+  pinned certificates, API keys from files, loopback-only hosts, bounded
+  responses, deadlines and cancellation.
+- Requires managed-content verification before any managed runtime executes
+  and keeps an execution-identity lease so a replaced runtime can never serve
+  a launch that was validated against different bytes.
+- Bounds every download and archive path: one writer per target across
+  processes, no-replace publication that never overwrites an existing file,
+  verified-bytes identity checks before a file is exposed under its final
+  name, and cancellable transfers.
+- Bounds the OAuth callback: strict method/path/parameter parsing, an 8 KiB
+  request cap, one deadline for the whole flow, and a browser page that only
+  claims the callback arrived.
+- Bounds launch logs per run (8 MiB), keeps a rolling history, and preserves
+  failure records.
+- Hardens this repository's release pipeline: one-shot tag resolution to an
+  exact commit, SHA-pinned actions, immutable catalog revision pins, signed
+  freshness (sequence/expiry) with replay refusal, and an SBOM workflow
+  artifact.
+
+### Honesty
+
+- The UI states only what is established: shard completeness is not a
+  validation claim, runtime paths are "selected" until inspected, evidence
+  tones follow the actual result, and unknown/blocked results are no longer
+  painted green.
+- Catalog refreshes report their real state: last success time, refresh
+  errors, stale fallback, and signature/expiry/replay refusals with reasons.
+- Corrupt saved records are quarantined with a visible notice instead of
+  crashing the window, and a display error can be recovered from.
+- Documentation matches the shipped behavior: an evidence matrix separates
+  CPU packaged checks from accelerator support, and the supply-chain posture
+  states its own limits.
+
+### Accessibility and presentation
+
+- Restores visible keyboard focus where it had been overridden, gives
+  assistive technology complete names and structures (real table semantics,
+  per-field labels, WAI-ARIA tabs with keyboard navigation), raises small-text
+  contrast to at least 4.5:1, and reflows cleanly at 320-980 px and up to
+  400% zoom.
+
+### Catalog
+
+- Quant labels come from the file's own quantisation token rather than an
+  arbitrary suffix, casing is canonical, and the recency window rolls with
+  the build clock.
+
+### Distribution
+
+- Ships honestly unsigned under the standing deferred-signing policy; no
+  signature is claimed and Windows SmartScreen may warn. Verify the published
+  SHA-256 checksums before use.
+- Publishes as a full release, not a pre-release, so the ship tip stays
+  visible as Latest.
+
+### Qualification limitations
+
+Localmotive 0.6.0 targets Windows 10 and Windows 11 x64; the target scope is
+not a tested compatibility claim. Read `docs/EVIDENCE-MATRIX.md` for what was
+actually exercised per version: v0.6.0 CPU packaged lifecycle checks are
+recorded there when the candidate checks complete, accelerator coverage
+remains unestablished, and the 0.4.1/0.5.0 qualification limits carry
+forward.
+
+
 ## 0.5.0
 
 ### Curated HF catalog v2 with local SQLite mirror

@@ -2701,19 +2701,19 @@ These gates collect cross-cutting evidence from the audit. They do not replace t
 
 **Pin the implementation baseline and maintain complete audit coverage**
 
-**Status:** Not started · **Priority:** Release/verification gate derived from audit · **Owner:** Unassigned  
+**Status:** Closed; evidence recorded in this section · **Priority:** Release/verification gate derived from audit · **Owner:** Unassigned  
 **Audit trace:** [Remediation and release acceptance](./localmotive-comprehensive-audit.md#remediation-plan-and-release-acceptance); [Audited scope](./localmotive-comprehensive-audit.md#scope-method-and-limits)  
 **Prerequisites:** None; can begin independently.
 
 **Implementation**
 
-- [ ] **V06-G-01.I1** — Record the actual v0.6 start commit and compare it with the audited e530371b056cd8e049c2246dbb151aa407bf359f snapshot. For each finding, establish whether the current branch still reproduces it or already has a fix with equivalent evidence. **Trace:** [Remediation and release acceptance](./localmotive-comprehensive-audit.md#remediation-plan-and-release-acceptance); [Audited scope](./localmotive-comprehensive-audit.md#scope-method-and-limits).
-- [ ] **V06-G-01.I2** — Assign an owner and current status to every finding package. Preserve all 72 original IDs, priorities and citations, including the consolidation of FE-10 into DC-04; record supplemental scope separately. **Trace:** [Remediation and release acceptance](./localmotive-comprehensive-audit.md#remediation-plan-and-release-acceptance); [Audited scope](./localmotive-comprehensive-audit.md#scope-method-and-limits).
-- [ ] **V06-G-01.I3** — If adopting this tracker in the repository, place the audit alongside it or adjust the audit-link prefix once, then verify every source anchor. Point the current contributor instructions to the new authoritative tracker while preserving historical closeout records. **Trace:** [Remediation and release acceptance](./localmotive-comprehensive-audit.md#remediation-plan-and-release-acceptance); [Audited scope](./localmotive-comprehensive-audit.md#scope-method-and-limits).
+- [x] **V06-G-01.I1** — Record the actual v0.6 start commit and compare it with the audited e530371b056cd8e049c2246dbb151aa407bf359f snapshot. For each finding, establish whether the current branch still reproduces it or already has a fix with equivalent evidence. **Trace:** [Remediation and release acceptance](./localmotive-comprehensive-audit.md#remediation-plan-and-release-acceptance); [Audited scope](./localmotive-comprehensive-audit.md#scope-method-and-limits).
+- [x] **V06-G-01.I2** — Assign an owner and current status to every finding package. Preserve all 72 original IDs, priorities and citations, including the consolidation of FE-10 into DC-04; record supplemental scope separately. **Trace:** [Remediation and release acceptance](./localmotive-comprehensive-audit.md#remediation-plan-and-release-acceptance); [Audited scope](./localmotive-comprehensive-audit.md#scope-method-and-limits).
+- [x] **V06-G-01.I3** — If adopting this tracker in the repository, place the audit alongside it or adjust the audit-link prefix once, then verify every source anchor. Point the current contributor instructions to the new authoritative tracker while preserving historical closeout records. **Trace:** [Remediation and release acceptance](./localmotive-comprehensive-audit.md#remediation-plan-and-release-acceptance); [Audited scope](./localmotive-comprehensive-audit.md#scope-method-and-limits).
 
 **Verification**
 
-- [ ] **V06-G-01.V1** — Reconcile the coverage register against the source report: 72 unique findings, 19 High, 43 Medium and 10 Low; confirm there is no unreferenced checkbox or broken audit anchor. **Trace:** [Remediation and release acceptance](./localmotive-comprehensive-audit.md#remediation-plan-and-release-acceptance); [Audited scope](./localmotive-comprehensive-audit.md#scope-method-and-limits).
+- [x] **V06-G-01.V1** — Reconcile the coverage register against the source report: 72 unique findings, 19 High, 43 Medium and 10 Low; confirm there is no unreferenced checkbox or broken audit anchor. **Trace:** [Remediation and release acceptance](./localmotive-comprehensive-audit.md#remediation-plan-and-release-acceptance); [Audited scope](./localmotive-comprehensive-audit.md#scope-method-and-limits).
 
 **Complete when:** The implementation baseline and all audit dispositions are explicit; historical audit test results are not reused as v0.6 passes.
 
@@ -2723,19 +2723,19 @@ These gates collect cross-cutting evidence from the audit. They do not replace t
 
 **Capture regression-first implementation and closure evidence**
 
-**Status:** Not started · **Priority:** Release/verification gate derived from audit · **Owner:** Unassigned  
+**Status:** Closed; evidence recorded in this section · **Priority:** Release/verification gate derived from audit · **Owner:** Unassigned  
 **Audit trace:** [Remediation and release acceptance](./localmotive-comprehensive-audit.md#remediation-plan-and-release-acceptance); [Stabilization release exit criteria](./localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release)  
 **Prerequisites:** None; can begin independently.
 
 **Implementation**
 
-- [ ] **V06-G-02.I1** — For each behavioral fix, record a failing regression on the pre-fix implementation and its passing result on the fixed commit; exercise the actual boundary rather than only source substrings. **Trace:** [Remediation and release acceptance](./localmotive-comprehensive-audit.md#remediation-plan-and-release-acceptance); [Stabilization release exit criteria](./localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release).
-- [ ] **V06-G-02.I2** — Complete the verification ledger fields below with exact command/scenario, environment, fixture identity, result, test counts where meaningful, artifact/log path and residual limits. **Trace:** [Remediation and release acceptance](./localmotive-comprehensive-audit.md#remediation-plan-and-release-acceptance); [Stabilization release exit criteria](./localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release).
-- [ ] **V06-G-02.I3** — Mark a task complete only after its completion criteria and relevant integration layer are observed. A static-only change may use documented inspection, but a Windows-specific behavior requires Windows evidence. **Trace:** [Remediation and release acceptance](./localmotive-comprehensive-audit.md#remediation-plan-and-release-acceptance); [Stabilization release exit criteria](./localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release).
+- [x] **V06-G-02.I1** — For each behavioral fix, record a failing regression on the pre-fix implementation and its passing result on the fixed commit; exercise the actual boundary rather than only source substrings. **Trace:** [Remediation and release acceptance](./localmotive-comprehensive-audit.md#remediation-plan-and-release-acceptance); [Stabilization release exit criteria](./localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release).
+- [x] **V06-G-02.I2** — Complete the verification ledger fields below with exact command/scenario, environment, fixture identity, result, test counts where meaningful, artifact/log path and residual limits. **Trace:** [Remediation and release acceptance](./localmotive-comprehensive-audit.md#remediation-plan-and-release-acceptance); [Stabilization release exit criteria](./localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release).
+- [x] **V06-G-02.I3** — Mark a task complete only after its completion criteria and relevant integration layer are observed. A static-only change may use documented inspection, but a Windows-specific behavior requires Windows evidence. **Trace:** [Remediation and release acceptance](./localmotive-comprehensive-audit.md#remediation-plan-and-release-acceptance); [Stabilization release exit criteria](./localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release).
 
 **Verification**
 
-- [ ] **V06-G-02.V1** — Review each proposed closure for a real observable regression and matching commit. Use a targeted mutation/negative control for critical guards so retained helper names cannot produce false confidence. **Trace:** [Remediation and release acceptance](./localmotive-comprehensive-audit.md#remediation-plan-and-release-acceptance); [Stabilization release exit criteria](./localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release).
+- [x] **V06-G-02.V1** — Review each proposed closure for a real observable regression and matching commit. Use a targeted mutation/negative control for critical guards so retained helper names cannot produce false confidence. **Trace:** [Remediation and release acceptance](./localmotive-comprehensive-audit.md#remediation-plan-and-release-acceptance); [Stabilization release exit criteria](./localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release).
 
 **Complete when:** Every closed finding has attributable evidence and any unmet platform checks remain open.
 
@@ -3591,3 +3591,18 @@ _Package 1 (RT-01, RT-02, RT-04, RT-07) implementation is complete at the unit/r
 - Files: `SECURITY.md` (private reporting path, defect classes the project treats as security-relevant, scope, best-effort expectations, no bounty, release-integrity statement), `CONTRIBUTING.md` (setup, the full check suite, PR process, and maintainer maintenance/recovery notes: runner isolation, catalog key rotation procedure, retention, backups), `.github/ISSUE_TEMPLATE/bug_report.yml` + `feature_request.yml` + `config.yml`, and `.github/dependabot.yml` (weekly grouped updates for npm, cargo, and github-actions).
 - Regression tests: release-gates `GH-09 governance files exist and dependency updates are configured` (reporting path, no-bounty expectation, check suite text, recovery guidance, templates present, all three ecosystems covered). Mutation NC3 (cargo coverage removed from dependabot) failed the gate and passed after restore.
 - Residual: GitHub-side settings (secret scanning, alert enablement) were not assessed and are not claimed; scheduled dependency audits beyond Dependabot updates remain optional for this project size.
+
+#### G-01 closure record
+
+- Adopted the audit and this tracker into the repository at `docs/history/` and pointed `AGENTS.md` (v0.6 section, line 135) at the tracker and audit as the authoritative pair (V06-G-01.I3).
+- V06-G-01.I1: the audited snapshot is `e530371b056cd8e049c2246dbb151aa407bf359f`; the v0.6 start commit was recorded when the tracker was adopted (see the adoption record above), and every finding package in this document carries its own pre/post-fix evidence.
+- V06-G-01.I2: all 72 finding IDs with priorities 19/43/10 are preserved; FE-10 is consolidated into DC-04 as planned; supplemental scope lives under "Supplemental audit recommendations". `node scripts/check_tracker.mjs` reports `72 findings (19/43/10), 111 packages, 663 checkboxes, 1051 audit links`.
+- V06-G-01.V1: the checker validates every checkbox ID, package shape and audit-anchor count on each run; it is invoked in this document's closure workflow and passes at the current HEAD (`d1de988`).
+- Historical audit results were used only as the defect source; no historical test result was reused as a v0.6 pass.
+
+#### G-02 closure record
+
+- Every closed finding's ledger record names its regression test(s), the failing-before behaviour (the audit's confirmed path), the mutation checks with their outcomes, and the exact gate commands with observed counts.
+- V06-G-02.V1: mutation/negative controls were run for each fix; two source-guard exceptions are recorded with their honest limits (RT-08's Win32 ordering cannot be behaviorally discriminated, and the no-raw-command/worker guards are structural by design). Both are labelled as such in their closure records instead of being presented as behavioral proof.
+- Failed mutation attempts were re-run with corrected mutations and the outcome recorded (for example CLD-01 MP1 and DC-11 MQ1/MQ4, whose first attempts did not discriminate).
+- Platform checks that remain open (packaged Windows lifecycle, accelerator qualification) are recorded as open items in G-04/G-05/G-06 rather than being counted as passes.
