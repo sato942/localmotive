@@ -46,3 +46,8 @@ credited in the changelog unless you ask otherwise.
 Public releases ship **unsigned with an explicit disclosure**; verify the
 published SHA-256 checksums before use. Signing is deferred, tracked in the
 repository, and never claimed where it did not happen.
+
+## Review limits
+
+The residual boundaries of the secret and runner reviews, with what could and
+could not be inspected, are recorded in `docs/SECURITY-REVIEW-LIMITS.md`.

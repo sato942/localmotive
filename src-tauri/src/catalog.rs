@@ -2168,8 +2168,8 @@ mod tests {
     #[test]
     fn s07_hf_token_input_is_bounded_before_validation_and_never_echoed() {
         // A real token is far below the bound and passes.
-        let ok = validate_hf_token("hf_abcdefghijklmnopqrstuvwxyz0123456789").unwrap();
-        assert_eq!(ok, "hf_abcdefghijklmnopqrstuvwxyz0123456789");
+        let ok = validate_hf_token("hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx").unwrap();
+        assert_eq!(ok, "hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
 
         // Exactly the bound passes; one byte over is refused with an
         // actionable message that never contains the input.

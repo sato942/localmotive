@@ -2655,22 +2655,29 @@ These packages preserve actionable recommendations outside the 72-item findings 
 
 **Record remaining security and provenance review limits**
 
-**Status:** Not started · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
+**Status:** Complete (evidence-backed limits recorded; see the S-28 record) · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
 **Audit trace:** [Scope, method, and limits](./localmotive-comprehensive-audit.md#scope-method-and-limits); [Remaining target verification](./localmotive-comprehensive-audit.md#remaining-verification-requiring-the-target-environment)  
 **Prerequisites:** [V06-GH-08](#v06-gh-08), [V06-GH-09](#v06-gh-09)
 
 **Implementation**
 
-- [ ] **V06-S-28.I1** — Track a separately scoped full-history secret review, owner-provided repository security/settings review and runner isolation assessment, using access explicitly available for that review; retain unavailable items as unverified rather than inventing findings. **Trace:** [Scope, method, and limits](./localmotive-comprehensive-audit.md#scope-method-and-limits); [Remaining target verification](./localmotive-comprehensive-audit.md#remaining-verification-requiring-the-target-environment).
-- [ ] **V06-S-28.I2** — If historical secrets are actually found, record a private remediation/rotation outcome without copying values into this tracker or public evidence. Link target-specific dependency/license work to GH-08 rather than duplicating it. **Trace:** [Scope, method, and limits](./localmotive-comprehensive-audit.md#scope-method-and-limits); [Remaining target verification](./localmotive-comprehensive-audit.md#remaining-verification-requiring-the-target-environment).
+- [x] **V06-S-28.I1** — Track a separately scoped full-history secret review, owner-provided repository security/settings review and runner isolation assessment, using access explicitly available for that review; retain unavailable items as unverified rather than inventing findings. **Trace:** [Scope, method, and limits](./localmotive-comprehensive-audit.md#scope-method-and-limits); [Remaining target verification](./localmotive-comprehensive-audit.md#remaining-verification-requiring-the-target-environment).
+- [x] **V06-S-28.I2** — If historical secrets are actually found, record a private remediation/rotation outcome without copying values into this tracker or public evidence. Link target-specific dependency/license work to GH-08 rather than duplicating it. **Trace:** [Scope, method, and limits](./localmotive-comprehensive-audit.md#scope-method-and-limits); [Remaining target verification](./localmotive-comprehensive-audit.md#remaining-verification-requiring-the-target-environment).
 
 **Verification**
 
-- [ ] **V06-S-28.V1** — Record inspected scope, tools/date, sanitized result and remaining access gaps for each review; do not turn an unavailable scan or absent alert into a clean bill of health. **Trace:** [Scope, method, and limits](./localmotive-comprehensive-audit.md#scope-method-and-limits); [Remaining target verification](./localmotive-comprehensive-audit.md#remaining-verification-requiring-the-target-environment).
+- [x] **V06-S-28.V1** — Record inspected scope, tools/date, sanitized result and remaining access gaps for each review; do not turn an unavailable scan or absent alert into a clean bill of health. **Trace:** [Scope, method, and limits](./localmotive-comprehensive-audit.md#scope-method-and-limits); [Remaining target verification](./localmotive-comprehensive-audit.md#remaining-verification-requiring-the-target-environment).
 
 **Complete when:** Residual review boundaries are explicit and evidence-backed; no secret leak or secure configuration is asserted without evidence.
 
 **Scope / decision note:** This task expands an unnumbered audit observation; it is not an additional prioritized finding.
+
+#### S-28 progress record — security and provenance review limits
+
+- I1: three separately scoped reviews were performed with access available on this machine and no invented findings. (a) Full-history secret review: `git log --all -p` over all 246 commits / 8 922 814 diff bytes with a bounded provider-prefix + PEM-header + `password=` pattern pass, plus a history-wide private-key path listing (none found). Six diff lines matched: one 39-character `hf_`-shaped test fixture (S-07, commit `9757d8d`) whose provenance is unverifiable - it was replaced in the working tree with an obviously synthetic literal and recorded privately (sha256 prefix `ec206b4d`; no value anywhere public); two lines of the literal placeholder `[REDACTED PRIVATE KEY]`; two lines of test-only PEM keys embedded for MT-06 pinning tests (locally generated, authenticate nothing). (b) Repository security settings, read via GitHub API as the owner on 2026-09-11: secret scanning enabled, push protection enabled, non-provider patterns disabled, validity checks disabled, Dependabot security updates disabled, 0 open secret-scanning alerts. (c) Runner isolation assessment of `C:\actions-runner-localmotive\localmotive-control\start-runner.ps1`: dedicated `CARGO_HOME`/`RUSTUP_HOME` set at process level and at machine level, both directories populated and in use; recorded discrepancy - a stale second copy at `C:\Users\Mubarak\actions-runner\localmotive-control\start-runner.ps1` starts the disabled Windows service (account `NT AUTHORITY\NETWORK SERVICE`); live state at assessment time: service stopped and disabled, no listener running.
+- I2: a conditional finding required the private remediation path, exercised as `S28-F1`/`S28-F2` in the git-ignored private review log: owner guidance for the fixture is revoke-if-ever-real at huggingface.co/settings/tokens with history rewrite as an owner decision; no value was copied into the tracker or public evidence; dependency/license work links to GH-08 rather than being duplicated.
+- V1: `docs/SECURITY-REVIEW-LIMITS.md` (linked from `SECURITY.md`) records inspected scope, tools/date, sanitized results, and remaining access gaps for each review - including the missing dedicated scanner (`gitleaks`/`trufflehog`/`ggshield` not installed), disabled non-provider patterns/validity checks/Dependabot, and unassessed runner group permissions and directory ACLs. No unavailable scan or absent alert is presented as a clean bill of health.
+- Commands: `.hermes-0.6/s28-history-scan.sh` (scan + sanitized log), `gh api repos/sato942/localmotive --jq .security_and_analysis`, `gh api .../secret-scanning/alerts --jq length` (0), `cargo test` 580/0/3, Vitest 122, node 145/145.
 
 ### V06-S-29
 
