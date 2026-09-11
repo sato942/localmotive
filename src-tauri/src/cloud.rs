@@ -13,7 +13,7 @@ use crate::tune::{Advisor, Proposal, TuningBrief};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::net::TcpListener;
 use std::time::Duration;
 
@@ -297,16 +297,111 @@ fn percent_encode(value: &str) -> String {
     out
 }
 
-/// Pull the `code` query parameter out of the first request line the browser
-/// sends to the loopback callback.
+/// Limits for the loopback callback (audit CLD-01): a request line, a code
+/// value, and the number of stray connections one login may tolerate.
+pub const MAX_CALLBACK_REQUEST_LINE_BYTES: usize = 8 * 1024;
+pub const MAX_CALLBACK_CODE_BYTES: usize = 512;
+pub const MAX_CALLBACK_REQUESTS: u32 = 32;
+
+/// The callback request as parsed under the strict contract.
+#[derive(Debug, PartialEq, Eq)]
+pub enum CallbackRequest {
+    /// A well-formed `GET /callback?code=…` with one unambiguous code.
+    Code(String),
+    /// A harmless probe (favicon, another path, another method) that must
+    /// not end the login.
+    Ignored,
+    /// A malformed or ambiguous callback request.
+    Malformed(String),
+}
+
+fn percent_decode(value: &str) -> Result<String, String> {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'%' => {
+                if index + 2 >= bytes.len() {
+                    return Err("truncated percent escape".into());
+                }
+                let hex = std::str::from_utf8(&bytes[index + 1..index + 3])
+                    .map_err(|_| "invalid percent escape".to_string())?;
+                let byte = u8::from_str_radix(hex, 16)
+                    .map_err(|_| "invalid percent escape".to_string())?;
+                out.push(byte);
+                index += 3;
+            }
+            b'+' => {
+                out.push(b' ');
+                index += 1;
+            }
+            byte => {
+                out.push(byte);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8(out).map_err(|_| "percent-decoded code is not UTF-8".into())
+}
+
+/// Parse the first request line under the audited contract (CLD-01 I2):
+/// only `GET /callback` is accepted; the query is decoded; exactly one
+/// non-empty `code` parameter must be present.
+pub fn parse_callback_request_line(line: &str) -> CallbackRequest {
+    if line.len() > MAX_CALLBACK_REQUEST_LINE_BYTES {
+        return CallbackRequest::Malformed("request line exceeds the supported length".into());
+    }
+    let mut parts = line.split_whitespace();
+    let (Some(method), Some(target)) = (parts.next(), parts.next()) else {
+        return CallbackRequest::Malformed("request line is incomplete".into());
+    };
+    let (path, query) = match target.split_once('?') {
+        Some((path, query)) => (path, Some(query)),
+        None => (target, None),
+    };
+    if path != "/callback" {
+        return CallbackRequest::Ignored;
+    }
+    if method != "GET" {
+        return CallbackRequest::Malformed(format!("only GET is accepted, saw {method}"));
+    }
+    let Some(query) = query else {
+        return CallbackRequest::Malformed("callback arrived without a code".into());
+    };
+    let mut codes = Vec::new();
+    for pair in query.split('&') {
+        let (key, raw) = match pair.split_once('=') {
+            Some((key, raw)) => (key, raw),
+            None => (pair, ""),
+        };
+        if key != "code" {
+            continue;
+        }
+        let raw = raw.split('#').next().unwrap_or(raw);
+        match percent_decode(raw) {
+            Ok(code) => codes.push(code),
+            Err(reason) => return CallbackRequest::Malformed(format!("code {reason}")),
+        }
+    }
+    match codes.len() {
+        0 => CallbackRequest::Malformed("callback arrived without a code".into()),
+        1 if codes[0].is_empty() => CallbackRequest::Malformed("code is empty".into()),
+        1 if codes[0].len() > MAX_CALLBACK_CODE_BYTES => {
+            CallbackRequest::Malformed("code exceeds the supported length".into())
+        }
+        1 => CallbackRequest::Code(codes.remove(0)),
+        _ => CallbackRequest::Malformed("code was supplied more than once".into()),
+    }
+}
+
+/// Historical test helper: the code when the request parses strictly.
+#[cfg(test)]
 pub fn code_from_request_line(line: &str) -> Option<String> {
-    let path = line.split_whitespace().nth(1)?;
-    let query = path.split_once('?')?.1;
-    query
-        .split('&')
-        .find_map(|pair| pair.strip_prefix("code="))
-        .map(|code| code.split('#').next().unwrap_or(code).to_string())
-        .filter(|code| !code.is_empty())
+    match parse_callback_request_line(line) {
+        CallbackRequest::Code(code) => Some(code),
+        _ => None,
+    }
 }
 
 /// Bind a loopback listener on an ephemeral port and return it with the
@@ -320,59 +415,166 @@ pub fn bind_callback() -> Result<(TcpListener, String), String> {
     Ok((listener, format!("http://127.0.0.1:{port}/callback")))
 }
 
-/// Wait (bounded) for the browser to hit the callback, answer it with a small
-/// HTML page, and return the authorization code.
+fn callback_page(title: &str, accent: &str, message: &str) -> String {
+    format!(
+        "<!doctype html><meta charset=utf-8><title>Localmotive</title><body style=\"background:#171a1b;color:#e8e9e4;font:15px 'Public Sans','Segoe UI',sans-serif;display:grid;place-items:center;height:100vh;margin:0\"><div style=\"border:1px solid #424849;background:#222627;padding:28px 32px;text-align:center\"><div style=\"font:700 22px 'Bahnschrift Condensed','Arial Narrow',sans-serif;letter-spacing:.06em;color:{accent}\">{title}</div><p style=\"color:#9ca3a0;margin:12px 0 0\">{message}</p></div></body>"
+    )
+}
+
+/// Read one bounded request line from an accepted stream. The deadline is
+/// enforced per chunk, so a steady byte trickle cannot extend the login
+/// beyond its overall budget (audit CLD-01 I1).
+fn read_bounded_request_line(
+    stream: &mut std::net::TcpStream,
+    deadline: std::time::Instant,
+) -> Result<Option<String>, String> {
+    use std::io::Read;
+    let mut line = Vec::new();
+    let mut chunk = [0_u8; 1024];
+    loop {
+        if std::time::Instant::now() >= deadline {
+            return Err("Timed out waiting for the browser to finish signing in".into());
+        }
+        let read = match stream.read(&mut chunk) {
+            Ok(read) => read,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                if std::time::Instant::now() >= deadline {
+                    return Err("Timed out waiting for the browser to finish signing in".into());
+                }
+                continue;
+            }
+            Err(error) => return Err(error.to_string()),
+        };
+        if read == 0 {
+            return Ok(None);
+        }
+        // The request line ends at the first LF (CRLF and bare LF clients
+        // both exist); a trailing CR is part of the line ending.
+        if let Some(position) = chunk[..read].iter().position(|byte| *byte == b'\n') {
+            let mut end = position;
+            if end > 0 && chunk[end - 1] == b'\r' {
+                end -= 1;
+            }
+            line.extend_from_slice(&chunk[..end]);
+            break;
+        }
+        if line.len() + read > MAX_CALLBACK_REQUEST_LINE_BYTES {
+            return Err("The callback request line exceeded the supported length".into());
+        }
+        line.extend_from_slice(&chunk[..read]);
+    }
+    String::from_utf8(line)
+        .map(Some)
+        .map_err(|_| "The callback request line was not valid UTF-8".into())
+}
+
+/// Wait (bounded) for the browser to hit the callback, answer it, and return
+/// the authorization code. Stray probes are answered and ignored; malformed
+/// callback attempts get an explicit 400 without ending the login before the
+/// deadline or the request budget is exhausted (audit CLD-01).
 pub fn wait_for_code(listener: &TcpListener, timeout: Duration) -> Result<String, String> {
-    listener
-        .set_nonblocking(false)
-        .map_err(|error| error.to_string())?;
     let deadline = std::time::Instant::now() + timeout;
     listener
         .set_nonblocking(true)
         .map_err(|error| error.to_string())?;
+    let mut served = 0_u32;
     loop {
+        if std::time::Instant::now() >= deadline {
+            return Err("Timed out waiting for the browser to finish signing in".into());
+        }
         match listener.accept() {
             Ok((mut stream, _)) => {
                 stream
                     .set_nonblocking(false)
                     .map_err(|error| error.to_string())?;
                 stream
-                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .set_read_timeout(Some(Duration::from_secs(2)))
                     .map_err(|error| error.to_string())?;
-                let mut reader =
-                    BufReader::new(stream.try_clone().map_err(|error| error.to_string())?);
-                let mut line = String::new();
-                // A half-opened probe connection can reach `accept` with no
-                // request bytes yet; skip it and keep waiting for the real
-                // browser callback rather than answering an empty request.
-                match reader.read_line(&mut line) {
-                    Ok(0) | Ok(_) if line.is_empty() => continue,
-                    Ok(_) => {}
-                    Err(error) => return Err(error.to_string()),
+                served += 1;
+                if served > MAX_CALLBACK_REQUESTS {
+                    return Err(
+                        "Too many connections reached the callback; the sign-in was stopped".into(),
+                    );
                 }
-                let code = code_from_request_line(&line);
-                let body = if code.is_some() {
-                    "<!doctype html><meta charset=utf-8><title>Localmotive</title><body style=\"background:#171a1b;color:#e8e9e4;font:15px 'Public Sans','Segoe UI',sans-serif;display:grid;place-items:center;height:100vh;margin:0\"><div style=\"border:1px solid #424849;background:#222627;padding:28px 32px;text-align:center\"><div style=\"font:700 22px 'Bahnschrift Condensed','Arial Narrow',sans-serif;letter-spacing:.06em;color:#9edc72\">OPENROUTER CONNECTED</div><p style=\"color:#9ca3a0;margin:12px 0 0\">You can close this tab and return to Localmotive.</p></div></body>"
-                } else {
-                    "<!doctype html><meta charset=utf-8><title>Localmotive</title><body style=\"background:#171a1b;color:#e8e9e4;font:15px sans-serif;display:grid;place-items:center;height:100vh;margin:0\"><div style=\"border:1px solid #424849;background:#222627;padding:28px 32px\">No authorization code was returned. Return to Localmotive and try again.</div></body>"
+                let line = match read_bounded_request_line(&mut stream, deadline) {
+                    Ok(Some(line)) => line,
+                    Ok(None) => continue,
+                    Err(error) => {
+                        if error.contains("Timed out") {
+                            return Err(error);
+                        }
+                        let body = callback_page(
+                            "INVALID CALLBACK",
+                            "#e0705f",
+                            "The callback request was malformed. Return to Localmotive and try again.",
+                        );
+                        let _ = write!(
+                            stream,
+                            "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                            body.len(),
+                            body
+                        );
+                        let _ = stream.flush();
+                        continue;
+                    }
                 };
-                let _ = write!(
-                    stream,
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    body.len(),
-                    body
-                );
-                let _ = stream.flush();
-                if let Some(code) = code {
-                    return Ok(code);
+                match parse_callback_request_line(&line) {
+                    CallbackRequest::Ignored => {
+                        let body = callback_page(
+                            "NOT FOUND",
+                            "#9ca3a0",
+                            "This address is not the Localmotive callback. Continue the sign-in from the application.",
+                        );
+                        let _ = write!(
+                            stream,
+                            "HTTP/1.1 404 Not Found\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                            body.len(),
+                            body
+                        );
+                        let _ = stream.flush();
+                    }
+                    CallbackRequest::Malformed(reason) => {
+                        let body = callback_page(
+                            "INVALID CALLBACK",
+                            "#e0705f",
+                            "The sign-in callback was malformed. Return to Localmotive and try again.",
+                        );
+                        let _ = write!(
+                            stream,
+                            "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html; charset=utf-8\r\nX-Localmotive-Reason: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                            reason.replace(['\r', '\n'], " "),
+                            body.len(),
+                            body
+                        );
+                        let _ = stream.flush();
+                    }
+                    CallbackRequest::Code(code) => {
+                        // The connection is not confirmed until the exchange
+                        // and the credential write succeed (CLD-01 I4); the
+                        // application window reports that outcome.
+                        let body = callback_page(
+                            "CALLBACK RECEIVED",
+                            "#9edc72",
+                            "Return to Localmotive; the application confirms the connection when the key exchange finishes.",
+                        );
+                        let _ = write!(
+                            stream,
+                            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                            body.len(),
+                            body
+                        );
+                        let _ = stream.flush();
+                        return Ok(code);
+                    }
                 }
-                // A favicon or stray request: keep waiting.
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                if std::time::Instant::now() >= deadline {
-                    return Err("Timed out waiting for the browser to finish signing in".into());
-                }
-                std::thread::sleep(Duration::from_millis(100));
+                std::thread::sleep(Duration::from_millis(50));
             }
             Err(error) => return Err(error.to_string()),
         }
@@ -695,6 +897,166 @@ mod tests {
     }
 
     #[test]
+    fn cld01_request_line_contract_is_strict_and_decoded() {
+        assert_eq!(
+            parse_callback_request_line("GET /callback?code=abc123 HTTP/1.1"),
+            CallbackRequest::Code("abc123".into())
+        );
+        assert_eq!(
+            parse_callback_request_line("GET /callback?code=a%2Db%20c HTTP/1.1"),
+            CallbackRequest::Code("a-b c".into())
+        );
+        assert_eq!(
+            parse_callback_request_line("GET /favicon.ico HTTP/1.1"),
+            CallbackRequest::Ignored
+        );
+        assert_eq!(
+            parse_callback_request_line("GET /other?code=x HTTP/1.1"),
+            CallbackRequest::Ignored
+        );
+        assert!(matches!(
+            parse_callback_request_line("POST /callback?code=x HTTP/1.1"),
+            CallbackRequest::Malformed(_)
+        ));
+        assert!(matches!(
+            parse_callback_request_line("GET /callback?code=a&code=b HTTP/1.1"),
+            CallbackRequest::Malformed(_)
+        ));
+        assert!(matches!(
+            parse_callback_request_line("GET /callback?code= HTTP/1.1"),
+            CallbackRequest::Malformed(_)
+        ));
+        assert!(matches!(
+            parse_callback_request_line("GET /callback?code=%ZZ HTTP/1.1"),
+            CallbackRequest::Malformed(_)
+        ));
+        assert!(matches!(
+            parse_callback_request_line("GET /callback?code=%E2 HTTP/1.1"),
+            CallbackRequest::Malformed(_)
+        ));
+        let overlong = format!(
+            "GET /callback?code={} HTTP/1.1",
+            "a".repeat(MAX_CALLBACK_CODE_BYTES + 1)
+        );
+        assert!(matches!(
+            parse_callback_request_line(&overlong),
+            CallbackRequest::Malformed(_)
+        ));
+    }
+
+    #[test]
+    fn cld01_probes_and_bad_requests_do_not_end_the_login() {
+        let (listener, url) = bind_callback().unwrap();
+        let port: u16 = url
+            .rsplit(':')
+            .next()
+            .unwrap()
+            .split('/')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let handle = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            // A favicon probe, a malformed duplicate-code callback, and an
+            // overlong request line all arrive before the real browser.
+            let send = |request: String| {
+                let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+                let _ = stream.write_all(request.as_bytes());
+                let mut response = String::new();
+                let _ = std::io::Read::read_to_string(&mut stream, &mut response);
+                response
+            };
+            let favicon = send("GET /favicon.ico HTTP/1.1\r\nHost: x\r\n\r\n".into());
+            let duplicate = send("GET /callback?code=a&code=b HTTP/1.1\r\nHost: x\r\n\r\n".into());
+            let overlong = send(format!(
+                "GET /callback?code={} HTTP/1.1\r\nHost: x\r\n\r\n",
+                "b".repeat(MAX_CALLBACK_REQUEST_LINE_BYTES + 64)
+            ));
+            let real = send("GET /callback?code=real-code HTTP/1.1\r\nHost: x\r\n\r\n".into());
+            (favicon, duplicate, overlong, real)
+        });
+        let code = wait_for_code(&listener, Duration::from_secs(10)).unwrap();
+        assert_eq!(code, "real-code");
+        let (favicon, duplicate, overlong, real) = handle.join().unwrap();
+        assert!(favicon.starts_with("HTTP/1.1 404"), "{favicon}");
+        assert!(duplicate.starts_with("HTTP/1.1 400"), "{duplicate}");
+        assert!(overlong.starts_with("HTTP/1.1 400"), "{overlong}");
+        assert!(real.starts_with("HTTP/1.1 200"), "{real}");
+    }
+
+    #[test]
+    fn cld01_successive_probes_are_bounded_by_the_request_budget() {
+        let (listener, url) = bind_callback().unwrap();
+        let port: u16 = url
+            .rsplit(':')
+            .next()
+            .unwrap()
+            .split('/')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let handle = std::thread::spawn(move || {
+            for _ in 0..(MAX_CALLBACK_REQUESTS + 2) {
+                if let Ok(mut stream) = std::net::TcpStream::connect(("127.0.0.1", port)) {
+                    // Once the request budget trips, the listener stops
+                    // answering; a bounded client timeout keeps this thread
+                    // from blocking on a silent socket.
+                    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+                    let _ = stream.write_all(b"GET /favicon.ico HTTP/1.1\r\nHost: x\r\n\r\n");
+                    let mut response = String::new();
+                    if std::io::Read::read_to_string(&mut stream, &mut response).is_err() {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+        });
+        let error = wait_for_code(&listener, Duration::from_secs(10)).unwrap_err();
+        assert!(error.contains("Too many connections"), "{error}");
+        let _ = handle.join();
+    }
+
+    #[test]
+    fn cld01_a_byte_trickle_cannot_extend_the_overall_deadline() {
+        let (listener, url) = bind_callback().unwrap();
+        let port: u16 = url
+            .rsplit(':')
+            .next()
+            .unwrap()
+            .split('/')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let handle = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            if let Ok(mut stream) = std::net::TcpStream::connect(("127.0.0.1", port)) {
+                // A slow header trickle that never completes the request.
+                for _ in 0..40 {
+                    if stream.write_all(b"G").is_err() {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            }
+        });
+        let started = std::time::Instant::now();
+        let error = wait_for_code(&listener, Duration::from_millis(1_200)).unwrap_err();
+        let elapsed = started.elapsed();
+        assert!(error.contains("Timed out"), "{error}");
+        // The 1.2 s budget plus one read-timeout of slack: a trickle that
+        // ignores the deadline would run for the full 4 s of client writes.
+        assert!(
+            elapsed < Duration::from_millis(2_200),
+            "the deadline must bound the trickle, took {elapsed:?}"
+        );
+        let _ = handle.join();
+    }
+
+    #[test]
     fn loopback_callback_receives_code_from_a_browser_like_client() {
         let (listener, url) = bind_callback().unwrap();
         let port: u16 = url
@@ -736,7 +1098,14 @@ mod tests {
             return;
         }
         assert!(response.starts_with("HTTP/1.1 200"));
-        assert!(response.contains("OPENROUTER CONNECTED"));
+        // The browser page must not claim the connection succeeded before
+        // the key exchange and credential write finish (audit CLD-01 I4).
+        assert!(response.contains("CALLBACK RECEIVED"), "{response}");
+        assert!(
+            response.contains("confirms the connection when the key exchange finishes")
+                || response.contains("Return to Localmotive"),
+            "{response}"
+        );
     }
 
     #[test]
