@@ -26,7 +26,18 @@ if (-not $env:LOCALMOTIVE_SOURCE_REVISION) {
 
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $attestations = Join-Path $root "release-evidence\$Version\attestations"
+$candidateDir = Join-Path $root $CandidateDir
+$script:expectedSetupSha = (Get-FileHash (Join-Path $candidateDir "Localmotive_${Version}_x64-setup.exe") -Algorithm SHA256).Hash.ToLowerInvariant()
+$script:expectedMsiSha = (Get-FileHash (Join-Path $candidateDir "Localmotive_${Version}_x64.msi") -Algorithm SHA256).Hash.ToLowerInvariant()
 New-Item -ItemType Directory -Force -Path $attestations | Out-Null
+
+function Remove-Witness([string]$WitnessName) {
+  # A deleted file cannot be satisfied by a previous candidate's document; the
+  # leg must produce its own evidence (a stale FAIL once defeated this check).
+  foreach ($suffix in @(".json", ".log")) {
+    Remove-Item (Join-Path $attestations "$WitnessName$suffix") -Force -ErrorAction SilentlyContinue
+  }
+}
 
 function Assert-Witness([string]$WitnessName, [string]$ExpectedStatus, [string]$ExpectedStage, [bool]$ExpectDigests) {
   $docPath = Join-Path $attestations "$WitnessName.json"
@@ -36,13 +47,17 @@ function Assert-Witness([string]$WitnessName, [string]$ExpectedStatus, [string]$
   if ($doc.stage -ne $ExpectedStage) { throw "witness ${WitnessName}: stage '$($doc.stage)' != '$ExpectedStage'" }
   if (-not ($doc.PSObject.Properties.Name -contains "sourceRevision")) { throw "witness ${WitnessName}: missing sourceRevision binding" }
   if (-not ($doc.PSObject.Properties.Name -contains "candidateDigests")) { throw "witness ${WitnessName}: missing candidateDigests binding" }
-  if ($ExpectDigests -and -not $doc.candidateDigests.currentSetup) { throw "witness ${WitnessName}: candidate digest not bound" }
+  if ($ExpectDigests) {
+    if ($doc.candidateDigests.currentSetup -ne $script:expectedSetupSha) { throw "witness ${WitnessName}: setup digest '$($doc.candidateDigests.currentSetup)' does not match the staged candidate '$script:expectedSetupSha'" }
+    if ($doc.candidateDigests.currentMsi -ne $script:expectedMsiSha) { throw "witness ${WitnessName}: msi digest does not match the staged candidate" }
+  }
   Write-Host "WITNESS OK: $WitnessName -> $($doc.status) at stage $($doc.stage)"
 }
 
 Push-Location $root
 try {
   # Leg 1: an early installer-asset failure is bounded at resolve-installers.
+  Remove-Witness "witness-missing-assets"
   try {
     & "$PSScriptRoot\host-run-lifecycle.ps1" -Tag "v$Version" -Version $Version `
       -CandidateDir (Join-Path $root "missing-assets-fixture") `
@@ -52,6 +67,7 @@ try {
 
   # Leg 2: the bounded wait expiring produces TIMEOUT at sandbox-timeout with
   # the candidate identity bound.
+  Remove-Witness "witness-timeout"
   try {
     & "$PSScriptRoot\host-run-lifecycle.ps1" -Tag "v$Version" -Version $Version `
       -CandidateDir $CandidateDir -PreviousTag $PreviousTag `
@@ -61,6 +77,7 @@ try {
 
   # Leg 3: a malformed in-sandbox result produces FAIL at sandbox-run with the
   # candidate identity bound.
+  Remove-Witness "witness-malformed-result"
   try {
     & "$PSScriptRoot\host-run-lifecycle.ps1" -Tag "v$Version" -Version $Version `
       -CandidateDir $CandidateDir -PreviousTag $PreviousTag `

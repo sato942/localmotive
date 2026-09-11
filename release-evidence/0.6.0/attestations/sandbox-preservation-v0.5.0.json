@@ -1,13 +1,13 @@
 ﻿{
     "previousTag":  "v0.5.0",
     "version":  "0.6.0",
-    "finishedAtUtc":  "2026-09-11T18:45:03.6919099Z",
+    "finishedAtUtc":  "2026-09-11T22:35:59.6069990Z",
     "installedDigests":  {
-                             "Preservation upgrade":  "6a481c23d189ccb536aab4bf422b287eb2630ff5c0baa95d8778e3f1e5a392a4",
-                             "Post-update install":  "6a481c23d189ccb536aab4bf422b287eb2630ff5c0baa95d8778e3f1e5a392a4",
+                             "Preservation upgrade":  "901e9f9514133464d65369157ce88c33e8f2d39f1a80b6a1edb0769665b3f3cd",
+                             "Post-update install":  "901e9f9514133464d65369157ce88c33e8f2d39f1a80b6a1edb0769665b3f3cd",
                              "Pre-update install":  "67f70fc399d1c31bcd573390042a49c97e8699beeb21759591b93a678a11ee76",
-                             "MSI fresh install":  "58f28baf499ffb4be4edfb9f8564e39d50846602dd87f058f89bce2ec79aa9fc",
-                             "NSIS fresh install":  "6a481c23d189ccb536aab4bf422b287eb2630ff5c0baa95d8778e3f1e5a392a4"
+                             "MSI fresh install":  "bfd8999e042d59c86efe640c755e7c90e876de711fbc0f813f339e95b61325d2",
+                             "NSIS fresh install":  "901e9f9514133464d65369157ce88c33e8f2d39f1a80b6a1edb0769665b3f3cd"
                          },
     "tag":  "v0.6.0",
     "schema":  "localmotive.sandbox-lifecycle.v0",
@@ -39,9 +39,9 @@
                          "status":  "PASS",
                          "output":  "PRESERVE_PASS mirror: canary_marker intact\r\nPRESERVE_PASS userdata: canary content intact"
                      },
-    "sourceRevision":  "6384df0387a6269a3ae5c01667eb6e83214d1972",
+    "sourceRevision":  "57bde64ebbb7d148e0ff757add75f440e8241ece",
     "candidateDigests":  {
-                             "currentSetup":  "a4d14496d14a4f98ffcd1e9c9ae5d78f36dab74d309d86ed6e2dfdb38eb2b7de",
-                             "currentMsi":  "2dd036c6a9397e0491e8ebb276af187bf0c9701c8f176c56cba42e6f4bd0512d"
+                             "currentSetup":  "255bfdd24d13905cb58f4d210c700b0c8facc1b8fbef1e56d3ebd4feb8e9c13f",
+                             "currentMsi":  "01b62b7646850d4c86d92e5d05cc6f0b5b492d28a9a3ebc228851c927535b124"
                          }
 }

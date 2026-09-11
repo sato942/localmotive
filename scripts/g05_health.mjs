@@ -34,10 +34,12 @@ for (let attempt = 0; attempt < 200; attempt += 1) {
   await settle(3000);
   const state = await evaluate(`(() => {
     const nodes = [...document.querySelectorAll(
-      ".health-result, [role=alert], .warning-band, .health-stage, .runtime-option",
+      ".health-result, .health-stage, [role=alert], .warning-band",
     )].map((n) => n.textContent.replace(/\\s+/g, " ").slice(0, 400));
+    const notice = [...document.querySelectorAll(".notice-line")].map((n) => (n.textContent ?? "").trim()).filter(Boolean).slice(-1)[0] ?? "";
     return {
-      results: nodes.filter((t) => /PASS|FAIL|UNKNOWN|healthy|refus|mismatch|digest|changed|error/i.test(t)).slice(0, 6),
+      results: nodes.filter((t) => /PASS|FAIL|UNKNOWN|healthy|refus|mismatch|withheld|error/i.test(t)).slice(0, 6),
+      notice,
       buttons: [...document.querySelectorAll("button")].map((b) => (b.textContent ?? "").trim()).filter((t) => /health/i.test(t)).slice(0, 3),
     };
   })()`);
@@ -46,9 +48,16 @@ for (let attempt = 0; attempt < 200; attempt += 1) {
     console.log(`[${label} ${attempt}]`, line.slice(0, 420));
     last = line;
   }
-  const text = state.results.join(" | ");
-  if (/PASS|FAIL|refus|mismatch|digest|changed/i.test(text)) {
-    terminal = text;
+  // The pinned terminal signals: the completion notice names the health
+  // contract, or the result card shows stage verdicts. Catalog card text
+  // ("digest available") must not read as a terminal state (the old matcher
+  // matched it and exited before the run finished).
+  if (/health/i.test(state.notice) && /passed|failed|withheld|refus/i.test(state.notice)) {
+    terminal = state.notice;
+    break;
+  }
+  if (state.results.some((text) => /PASSED|FAILED|withheld/i.test(text))) {
+    terminal = state.results.join(" | ");
     break;
   }
   if (state.buttons.length === 0) {

@@ -39,7 +39,15 @@ const status = () =>
 // 1) Tamper: overwrite the DLL with marker bytes.
 writeFileSync(DLL, "LOCALMOTIVE_TAMPER_MARKER\n");
 console.log(`TAMPERED_SHA ${sha(DLL)}`);
-await client.evaluate(`(() => { const b = [...document.querySelectorAll("button")].find(x => (x.textContent ?? "").trim() === "Start" && !x.disabled); if (b) { b.dispatchEvent(new MouseEvent("click", { bubbles: true })); return true; } return false; })()`);
+const tamperClicked = await client.evaluate(`(() => { const b = [...document.querySelectorAll("button")].find(x => ["Start", "Start profile"].includes((x.textContent ?? "").trim()) && !x.disabled); if (!b) return false; b.dispatchEvent(new MouseEvent("click", { bubbles: true })); return true; })()`);
+console.log(`TAMPER_START_CLICKED ${tamperClicked}`);
+const tamperNotice = tamperClicked
+  ? ""
+  : await (async () => {
+      // The Control screen can swap Start for Stop when a server is up; surface that instead of a silent skip.
+      return client.evaluate(`(() => [...document.querySelectorAll("button")].map(b => (b.textContent ?? "").trim()).filter((t) => /start|stop/i.test(t)).join(","))()`);
+    })();
+if (!tamperClicked) console.log(`TAMPER_START_CANDIDATES ${tamperNotice}`);
 await new Promise((r) => setTimeout(r, 8000));
 const refuseNotice = (await notice()).replace(/\s+/g, " ");
 console.log(`TAMPER_NOTICE ${refuseNotice}`);
@@ -52,7 +60,7 @@ const restoredSha = sha(DLL);
 console.log(`RESTORED_SHA ${restoredSha} MATCHES ${restoredSha === originalSha}`);
 
 // 3) Clean start after restore.
-const started = await client.evaluate(`(() => { const b = [...document.querySelectorAll("button")].find(x => (x.textContent ?? "").trim() === "Start" && !x.disabled); if (b) { b.dispatchEvent(new MouseEvent("click", { bubbles: true })); return true; } return false; })()`);
+const started = await client.evaluate(`(() => { const b = [...document.querySelectorAll("button")].find(x => ["Start", "Start profile"].includes((x.textContent ?? "").trim()) && !x.disabled); if (b) { b.dispatchEvent(new MouseEvent("click", { bubbles: true })); return true; } return false; })()`);
 console.log(`RESTART_CLICKED ${started}`);
 let live = false;
 for (let i = 0; i < 40 && !live; i += 1) {

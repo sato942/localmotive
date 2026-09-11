@@ -5,7 +5,7 @@
 //
 // Usage: node scripts/g05_fe05v3.mjs <debugPort>
 import { attach } from "./lib/cdp_client.mjs";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const [portArg] = process.argv.slice(2);
@@ -20,7 +20,7 @@ const check = (name, ok, detail = "") => {
 };
 
 const HOME = process.env.USERPROFILE ?? "C:\\Users\\Mubarak";
-const BENCH_DIR = join(HOME, "AppData", "Local", "Localmotive", "benchmarks");
+const BENCH_DIR = join(HOME, "AppData", "Roaming", "io.github.localmotive.app", "benchmarks");
 
 const clickText = (text) =>
   evaluate(`(() => { const b = [...document.querySelectorAll("button")].find(x => (x.textContent ?? "").trim() === ${JSON.stringify(text)} && !x.disabled); if (!b) return false; b.dispatchEvent(new MouseEvent("click", { bubbles: true })); return true; })()`);
@@ -59,7 +59,9 @@ const manifestsWithWorkload = (workloadId) => {
       // A malformed manifest is not this walk's subject; the panel quarantines those.
     }
   }
-  return results.sort((a, b) => a.path.localeCompare(b.path));
+  // Newest first: a previous walk can leave older manifests with the same
+  // workload id, and the current run is the subject.
+  return results.sort((a, b) => statSync(b.path).mtimeMs - statSync(a.path).mtimeMs);
 };
 
 // ---------- Preconditions: server LIVE ----------
@@ -134,17 +136,23 @@ check("fe05v3.run-b-manifest-persisted", manifestsB.length >= 1, `count=${manife
 
 // ---------- Compare provenance ----------
 const resolveContext = (manifest) => {
-  const args = Array.isArray(manifest?.command_args) ? manifest.command_args : [];
+  const args = Array.isArray(manifest?.launch?.commandArgs) ? manifest.launch.commandArgs : [];
   const index = args.indexOf("-c");
   return index >= 0 ? args[index + 1] : null;
 };
 const ctxA = manifestsA[0] ? resolveContext(manifestsA[0].parsed) : null;
 const ctxB = manifestsB[0] ? resolveContext(manifestsB[0].parsed) : null;
-const keyA = manifestsA[0]?.parsed?.compatibility_key ?? null;
-const keyB = manifestsB[0]?.parsed?.compatibility_key ?? null;
+const keyA = manifestsA[0]?.parsed?.compatibilityKey ?? null;
+const keyB = manifestsB[0]?.parsed?.compatibilityKey ?? null;
 check("fe05v3.records-distinct-paths", Boolean(manifestsA[0] && manifestsB[0] && manifestsA[0].path !== manifestsB[0].path), `A=${manifestsA[0]?.path ?? "none"} B=${manifestsB[0]?.path ?? "none"}`);
 check("fe05v3.records-distinct-provenance", ctxA === "8192" && ctxB === "4096", `contextA=${ctxA} contextB=${ctxB}`);
-check("fe05v3.records-carry-identities", Boolean(keyA && keyB && manifestsA[0]?.parsed?.execution_snapshot_status !== undefined), `keyA=${String(keyA).slice(0, 12)} keyB=${String(keyB).slice(0, 12)}`);
+check(
+  "fe05v3.records-carry-identities",
+  Boolean(keyA && keyB && keyA !== keyB) &&
+    (manifestsA[0]?.parsed?.executionSnapshotSchema === "localmotive.execution-snapshot.v2") &&
+    (manifestsB[0]?.parsed?.executionSnapshotSchema === "localmotive.execution-snapshot.v2"),
+  `keyA=${String(keyA).slice(0, 20)} keyB=${String(keyB).slice(0, 20)} schema=${manifestsB[0]?.parsed?.executionSnapshotSchema ?? "none"}`,
+);
 
 // ---------- Recovery through the supported saved-manifest route ----------
 await setNamedInput("Uncalibrated estimate", "1500");
@@ -152,9 +160,11 @@ await settle(300);
 const anchorBClicked = await clickText("Add anchor");
 const anchorBMessage = await waitFor(async () => /Calibration anchor persisted/i.test(await messageText()), 20, 500);
 check("fe05v3.run-b-anchor-from-manifest", anchorBClicked === true && anchorBMessage, `message=${JSON.stringify(await messageText())}`);
-const records = await evaluate(`window.__TAURI_INTERNALS__.invoke("load_calibration_records", { compatibilityKey: ${JSON.stringify(keyB)} })`);
+const records = keyB
+  ? await evaluate(`window.__TAURI_INTERNALS__.invoke("load_calibration_records", { compatibilityKey: ${JSON.stringify(keyB)} })`)
+  : null;
 const anchorsB = Array.isArray(records?.anchors) ? records.anchors : [];
-check("fe05v3.anchor-records-recoverable", anchorsB.length >= 1 && anchorsB.every((a) => typeof a.sourceRunId === "string" && a.sourceRunId.length > 0), `anchors=${anchorsB.length}`);
+check("fe05v3.anchor-records-recoverable", anchorsB.length >= 1 && anchorsB.every((a) => typeof a.sourceRunId === "string" && a.sourceRunId.length > 0), `anchors=${anchorsB.length} keyB=${String(keyB).slice(0, 20)}`);
 const replayed = await clickText("Replay manifest");
 const replayRoundtrip = await waitFor(async () => (await readAriaValue("Benchmark workload ID")) === "fe05v3-b", 10, 500);
 check("fe05v3.replay-manifest-route", replayed === true && replayRoundtrip, `workload=${await readAriaValue("Benchmark workload ID")}`);

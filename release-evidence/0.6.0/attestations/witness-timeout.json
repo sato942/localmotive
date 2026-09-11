@@ -6,11 +6,11 @@
     "tag":  "v0.6.0",
     "version":  "0.6.0",
     "previousTag":  "v0.4.1",
-    "sourceRevision":  "b953e8456a1be7198e9b9df73fa929d6476f3878",
-    "startedAtUtc":  "2026-09-11T21:12:09.3192399Z",
-    "finishedAtUtc":  "2026-09-11T21:12:09.8027773Z",
+    "sourceRevision":  "57bde64ebbb7d148e0ff757add75f440e8241ece",
+    "startedAtUtc":  "2026-09-11T22:41:25.7163693Z",
+    "finishedAtUtc":  "2026-09-11T22:41:26.0930287Z",
     "candidateDigests":  {
-                             "currentSetup":  "a4d14496d14a4f98ffcd1e9c9ae5d78f36dab74d309d86ed6e2dfdb38eb2b7de",
-                             "currentMsi":  "2dd036c6a9397e0491e8ebb276af187bf0c9701c8f176c56cba42e6f4bd0512d"
+                             "currentSetup":  "255bfdd24d13905cb58f4d210c700b0c8facc1b8fbef1e56d3ebd4feb8e9c13f",
+                             "currentMsi":  "01b62b7646850d4c86d92e5d05cc6f0b5b492d28a9a3ebc228851c927535b124"
                          }
 }

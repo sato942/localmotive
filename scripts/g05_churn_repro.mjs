@@ -46,7 +46,11 @@ await settle(1200);
 
 for (let round = 1; round <= 3; round += 1) {
   console.log(`--- round ${round}`);
-  const started = await clickEnabled("^Start$");
+  // Re-anchor the view each round: a successful start navigates the app to
+  // Control, so the Start control must be re-found from the Profile screen.
+  await clickEnabled("^Profile$");
+  await settle(900);
+  const started = await clickEnabled("^(Start|Start profile)$");
   console.log("start:", started);
   let cancelled = false;
   for (let attempt = 0; attempt < 30; attempt += 1) {
@@ -57,7 +61,7 @@ for (let round = 1; round <= 3; round += 1) {
   }
   console.log("cancel:", cancelled, "children:", childPids().join(",") || "none");
   await settle(2500);
-  const started2 = await clickEnabled("^Start$");
+  const started2 = await clickEnabled("^(Start|Start profile)$");
   console.log("start2:", started2);
   let live = false;
   for (let attempt = 0; attempt < 40; attempt += 1) {

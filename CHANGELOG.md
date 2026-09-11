@@ -14,6 +14,13 @@ regression test, and is recorded with its evidence in
 - Keeps one Rust-owned local HTTP client for inference and health traffic:
   pinned certificates, API keys from files, loopback-only hosts, bounded
   responses, deadlines and cancellation.
+- Keeps cancellable inference and health requests on their full deadline: a
+  response slower than the 500 ms cancel-check interval now completes instead
+  of being discarded and re-issued. The v2 benchmark previously stalled for
+  the whole request budget on slower runtimes or models - the approved
+  managed runtime serves the default workload at ~486 tok/s, just past the
+  interval - while llama-server generated hundreds of duplicate completions.
+  Cancellation is still observed within the interval.
 - Requires managed-content verification before any managed runtime executes
   and keeps an execution-identity lease so a replaced runtime can never serve
   a launch that was validated against different bytes.

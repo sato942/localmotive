@@ -1,11 +1,20 @@
 ﻿{
+    "previousTag":  "v0.4.0",
     "version":  "0.6.0",
-    "finishedAtUtc":  "2026-09-11T04:33:37.7538825Z",
+    "finishedAtUtc":  "2026-09-11T22:22:30.5982273Z",
+    "installedDigests":  {
+                             "Preservation upgrade":  "901e9f9514133464d65369157ce88c33e8f2d39f1a80b6a1edb0769665b3f3cd",
+                             "Post-update install":  "901e9f9514133464d65369157ce88c33e8f2d39f1a80b6a1edb0769665b3f3cd",
+                             "Pre-update install":  "af9f01ac31730798b584efd1aee8f8854e97cc894573106c6935acb0461ebb93",
+                             "MSI fresh install":  "bfd8999e042d59c86efe640c755e7c90e876de711fbc0f813f339e95b61325d2",
+                             "NSIS fresh install":  "901e9f9514133464d65369157ce88c33e8f2d39f1a80b6a1edb0769665b3f3cd"
+                         },
+    "tag":  "candidate-0.6.0",
     "schema":  "localmotive.sandbox-lifecycle.v0",
     "status":  "PASS",
     "steps":  [
                   {
-                      "detail":  "uninstall removed the executable",
+                      "detail":  "installed version 0.6.0; uninstall removed the executable",
                       "status":  "PASS",
                       "name":  "nsis-fresh-install-launch-uninstall"
                   },
@@ -18,9 +27,21 @@
                       "detail":  "executable version 0.4.0 -\u003e 0.6.0",
                       "status":  "PASS",
                       "name":  "nsis-update-from-previous-launch-uninstall"
+                  },
+                  {
+                      "detail":  "user-data canary and catalog mirror survived the upgrade; files collected for host verification; executable 0.6.0",
+                      "status":  "PASS",
+                      "name":  "nsis-preservation-from-v0.4.0"
                   }
               ],
-    "coverageNote":  "NSIS and MSI fresh install/launch/uninstall and the NSIS update path with executable version evidence. Eight-second process survival is a startup smoke, not full functional verification. Persisted-profile migration scenarios are not exercised in this harness.",
-    "tag":  "candidate-0.6.0",
-    "previousTag":  "v0.4.0"
+    "coverageNote":  "NSIS and MSI fresh install/launch/uninstall and the NSIS update path with executable version and cross-path digest evidence. Eight-second process survival is a startup smoke, not full functional verification. The preservation step (staged via preserve.json) plants a user-data canary file and a valid marker-bearing catalog mirror after the previous install and requires both to survive the upgrade and a launch smoke; the mirror is collected for host-side marker verification.",
+    "preservation":  {
+                         "status":  "PASS",
+                         "output":  "PRESERVE_PASS mirror: canary_marker intact\r\nPRESERVE_PASS userdata: canary content intact"
+                     },
+    "sourceRevision":  "57bde64ebbb7d148e0ff757add75f440e8241ece",
+    "candidateDigests":  {
+                             "currentSetup":  "255bfdd24d13905cb58f4d210c700b0c8facc1b8fbef1e56d3ebd4feb8e9c13f",
+                             "currentMsi":  "01b62b7646850d4c86d92e5d05cc6f0b5b492d28a9a3ebc228851c927535b124"
+                         }
 }

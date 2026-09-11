@@ -542,6 +542,15 @@ try {
                 .filter((button) => button.textContent.includes('View server-cuda evidence')).length : 0
             };
           })()`);
+          if (blocked.count === 0) {
+            // This check binds to the LIVE upstream release: a backend-card is
+            // blocked only while one of its required upstream jobs is failed
+            // or queued. When every required job is green there is no blocked
+            // card to inspect, and the blocked-card rendering is pinned by the
+            // unit tests (`blocked_backend_update_stops_when_a_required_job_fails_or_queues`).
+            // Report the skip instead of failing on a healthy upstream.
+            return { blocked_cards: 0, note: "no blocked backend in the live upstream release; card rendering is unit-covered" };
+          }
           requireCondition(blocked.count === 1, "The blocked CUDA selector did not match one intended card");
           requireCondition(blocked.text.includes("server-cuda"), "The blocked CUDA card omitted server-cuda");
           requireCondition(blocked.evidenceButtons === 1, "The blocked CUDA card omitted one public evidence action");

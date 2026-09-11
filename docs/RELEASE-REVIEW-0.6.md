@@ -139,6 +139,15 @@ The fixes from the batch-7 defect family changed shipped code, so the lifecycle 
 
 G-05.V1 is satisfied at the final candidate; the earlier `1a9ab98` binding is superseded.
 
+## Re-bind 2 and the MT-06 livelock fix (2026-09-12)
+
+The FE-16/FE-05 closure work changed shipped frontend code, and the re-bind probes then found a live defect in the cancellable local client, so the candidate was frozen at `57bde64e`, rebuilt, and the whole packaged set re-run (full record: `docs/history/TODO-0.6.md`, "Re-bind campaign...").
+
+- Defect: the v2 benchmark never completed on the approved managed runtime (476 tok/s, ~560 ms per completion, just past the 500 ms cancel-check slice); it churned hundreds of duplicate generations until the request budget. Fixed at `57bde64e`: cancellable requests keep their full deadline on a worker thread and the caller observes cancel in slices.
+- New candidate: portable `79615950...` (20 997 632 bytes), MSI `01b62b76...`, NSIS `255bfdd2...`; candidate inventory PASS at source `57bde64e`.
+- Re-verified on the rebuilt candidate: supervision; seven-stage health 7/7; default v2 completes (486.51 tok/s, p50 490.02, p95 491.62, n=5, 5/5); tamper negative; FE-16.V1/V3 ALL-PASS; FE-05.V3 ALL-PASS; IPC-01.V2 legs; MT-05 reservation cycle; GH-06.V2 witnesses re-bound; churn reproducer still finds no orphan.
+- The `075daa54...` lineage is now history; all evidence binds to the new digests (lifecycle results in the tracker).
+
 ## Owner package for G-09 (authorization required)
 
 Everything below is prepared and intentionally NOT executed. No tag, no release, no repository setting changes without the owner's explicit go.
@@ -185,7 +194,7 @@ gh run watch $(gh run list --workflow=release.yml --limit 1 --json databaseId --
 gh release view v0.6.0 --json tagName,isLatest,isPrerelease,assets
 ```
 
-Expected assets: the MSI (`2dd036c6…` when built from `a0ed247`; the workflow rebuilds from the tagged SHA, so verify the published digests against `SHA256SUMS`), the NSIS setup, the portable exe, `SHA256SUMS`, the SBOM, and the attestation artifacts. G-09 additionally requires the negative publication controls (wrong SHA, moved tag, modified bytes, missing assets, absent lifecycle evidence) exercised before the real path is trusted.
+Expected assets: the MSI (`01b62b76…` when built from `57bde64e`; the workflow rebuilds from the tagged SHA, so verify the published digests against `SHA256SUMS`), the NSIS setup, the portable exe, `SHA256SUMS`, the SBOM, and the attestation artifacts. G-09 additionally requires the negative publication controls (wrong SHA, moved tag, modified bytes, missing assets, absent lifecycle evidence) exercised before the real path is trusted.
 
 ### 3. Approved runs and sessions still pending owner approval
 

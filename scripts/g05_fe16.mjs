@@ -10,6 +10,8 @@
 // Usage: node scripts/g05_fe16.mjs <debugPort>
 import { attach } from "./lib/cdp_client.mjs";
 import { execSync } from "node:child_process";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 
 const [portArg] = process.argv.slice(2);
 const client = await attach(Number(portArg));
@@ -28,7 +30,6 @@ const buttonState = (text) =>
   evaluate(`(() => { const b = [...document.querySelectorAll("button")].find(x => (x.textContent ?? "").trim() === ${JSON.stringify(text)}); return b ? { present: true, disabled: b.disabled } : { present: false, disabled: null }; })()`);
 const nav = (label) => clickText(label);
 const status = () => evaluate(`window.__TAURI_INTERNALS__.invoke("server_status")`);
-const readLog = () => evaluate(`window.__TAURI_INTERNALS__.invoke("read_server_log")`);
 const instruments = () =>
   evaluate(`(() => [...document.querySelectorAll(".instrument-strip .instrument")].map(x => ({ label: (x.querySelector(".instrument-label")?.textContent ?? "").trim(), value: (x.querySelector("strong")?.textContent ?? "").trim(), detail: (x.querySelector("small")?.textContent ?? "").trim() })))()`);
 const setNamedInput = (labelText, value) =>
@@ -147,26 +148,67 @@ await settle(600);
 await setNamedInput("Profile name", draftNameBefore ?? "smollm2-135m");
 await settle(300);
 
-// ---------- V3: unexpected exit keeps the final bounded log visible ----------
+// ---------- V3: unexpected exit keeps a bounded failure record visible ----------
 const killPid = st.pid ?? pid0;
+const killWallTime = Date.now();
 try {
   execSync(`taskkill /F /PID ${killPid}`, { stdio: "pipe" });
 } catch (error) {
   check("fe16.v3.unexpected-exit-kill", false, `taskkill failed: ${error.message}`);
 }
-const exited = await waitFor(async () => (await status()).running === false, 30);
+let firstExitStatus = null;
+const exited = await waitFor(async () => {
+  const current = await status();
+  if (!current.running) {
+    firstExitStatus = firstExitStatus ?? current;
+    return true;
+  }
+  return false;
+}, 30);
 const stExited = await status();
 const pids = llamaPids();
 check("fe16.v3.state-goes-non-live", exited && stExited.running === false && !pids.includes(String(killPid)), `exited=${exited} running=${stExited.running} pids=${JSON.stringify(pids)}`);
-const finalLog = await readLog();
+// The exit status is one-shot by design (the first observer consumes it and
+// the slot clears; the app's own 2 s poll often wins), so the durable route
+// is the persisted failure record beside the run log (OPS-01 I3) plus the
+// retained log well on the Control view.
+const logDir = join(process.env.LOCALAPPDATA ?? "C:\\Users\\Mubarak\\AppData\\Local", "Temp", "localmotive");
+let failureDoc = null;
+let failurePath = null;
+if (existsSync(logDir)) {
+  const candidates = readdirSync(logDir)
+    .filter((name) => name.endsWith(".log.failure.json"))
+    .map((name) => {
+      const fullPath = join(logDir, name);
+      return { path: fullPath, modified: statSync(fullPath).mtimeMs };
+    })
+    .filter((entry) => entry.modified >= killWallTime - 5000)
+    .sort((left, right) => right.modified - left.modified);
+  if (candidates[0]) {
+    failurePath = candidates[0].path;
+    try {
+      failureDoc = JSON.parse(readFileSync(failurePath, "utf8"));
+    } catch {
+      failureDoc = null;
+    }
+  }
+}
+const failureTail = typeof failureDoc?.logTail === "string" ? failureDoc.logTail.length : 0;
+check(
+  "fe16.v3.failure-evidence-retained",
+  failureDoc?.phase === "runtime_exit" && failureTail > 0,
+  `phase=${failureDoc?.phase} exitCode=${failureDoc?.exitCode} tail=${failureTail} file=${failurePath ? failurePath.split(/[\\\\/]/).pop() : "none"}`,
+);
+// The retained evidence is visible on the Control view's log well.
+await nav("Control");
+await settle(900);
 const panelText = await logPanelText();
 const retained = await evaluate(`(() => { const el = document.querySelector(".log-retained pre"); return el ? (el.textContent ?? "").length : 0; })()`);
 check(
   "fe16.v3.final-log-visible",
-  typeof finalLog === "string" && finalLog.length > 0 && panelText !== null && panelText.includes("Server is stopped") && retained > 0,
-  `read_server_log=${typeof finalLog === "string" ? finalLog.length : "?"} chars retained=${retained}`,
+  panelText !== null && panelText.includes("Server is stopped") && panelText.includes("last bounded output") && retained > 0,
+  `retained=${retained} oneShot=${JSON.stringify(firstExitStatus?.logPath ?? null).slice(0, 60)}`,
 );
-check("fe16.v3.log-path-retained", typeof stExited.logPath === "string" && stExited.logPath.length > 0, `logPath=${stExited.logPath}`);
 const text = await bodyText();
 check("fe16.v3.no-leaked-placeholder-text", !text.includes("props.profile"), "");
 // A clean start from the exited state must reach LIVE again (recovery).

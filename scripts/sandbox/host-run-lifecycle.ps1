@@ -78,10 +78,11 @@ function Download-Asset([string]$RelTag, [string]$Name, [string]$OutPath) {
 }
 
 try {
+  # GH-06.V2 witness: an early installer-asset failure must leave a bounded
+  # structured outcome at this stage, before any sandbox work.
+  $runStarted = Get-Date
   $stage = "resolve-installers"
   if ($FaultSimulation -eq "missing-assets") {
-    # GH-06.V2 witness: an early installer-asset failure must leave a bounded
-    # structured outcome at this stage, before any sandbox work.
     throw "installer assets are unavailable (fault simulation)"
   }
   $currentSetup = "Localmotive_${Version}_x64-setup.exe"
@@ -274,8 +275,14 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
   throw "Timed out waiting for Sandbox result.json after $TimeoutMinutes minutes"
 } catch {
   # Retain structured evidence on any terminal outcome while preserving the
-  # original failure (audit GH-06 I1/I2).
-  if (-not (Test-Path $EvidencePath) -or (Get-Content $EvidencePath -Raw | ConvertFrom-Json).status -eq "PASS") {
+  # original failure (audit GH-06 I1/I2). A file from THIS run (written after
+  # the try began) is authoritative; anything older is stale identity and is
+  # rewritten, so a previous candidate's FAIL can never masquerade as this
+  # run's outcome.
+  $existingEvidence = Test-Path $EvidencePath
+  $staleEvidence = -not $existingEvidence -or (Get-Item $EvidencePath).LastWriteTime -lt $runStarted
+  $passEvidence = $existingEvidence -and -not $staleEvidence -and (Get-Content $EvidencePath -Raw | ConvertFrom-Json).status -eq "PASS"
+  if ($staleEvidence -or $passEvidence) {
     Write-FailureEvidence "FAIL" $_.Exception.Message
   }
   throw

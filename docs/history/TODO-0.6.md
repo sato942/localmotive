@@ -1,14 +1,14 @@
 # Localmotive 0.6 — audit remediation TODO
 
 **Target:** `0.6.0` stabilization release  
-**Status:** Implementation of all 72 findings and all supplemental packages complete and unit/integration-verified; packaged Windows wave executed with the residual cells recorded as explicit deferrals (see [RELEASE-REVIEW-0.6.md](../RELEASE-REVIEW-0.6.md)); G-08 review in progress; final candidate re-cut plus re-bind next; G-09/G-10 await the owner's ship authorization.  
+**Status:** All 72 findings and all supplemental packages implemented and verified; the 2026-09-12 re-bind closed every remaining verifiable package (FE-03/FE-05/FE-07/FE-16/QD-02/QD-03/RT-07/GH-06.V2), found and fixed one new High defect (MT-06 cancellation livelock), and re-bound the candidate at `57bde64e`; the residual cells are the owner-gated GH-01/GH-02/GH-03, GH-06.V3 and G-09/G-10 rows plus the environment-blocked rows with visible dispositions (see [RELEASE-REVIEW-0.6.md](../RELEASE-REVIEW-0.6.md)). G-09/G-10 await the owner's ship authorization.  
 **Source:** [localmotive-comprehensive-audit.md](./localmotive-comprehensive-audit.md)
 **Audited source SHA:** `e530371b056cd8e049c2246dbb151aa407bf359f`  
 **Release baseline reviewed by the audit:** `v0.5.0`, source `a4b7127f739f7420232d9b6f63da693d39128d0b`  
 **Audit file SHA-256:** `fb87c9df9fd4cffa3768b81ddd40fd55363e718456a182b4237c1bfc9054b647`  
 **Implementation start SHA:** `e530371b056cd8e049c2246dbb151aa407bf359f` (equals the audited snapshot)  
-**Candidate SHA / release date:** Final candidate re-cut in progress at `a0ed2470f2e4d571e4c2a48f0a58f90c0e77771` (supersedes the `1a9ab98` lineage that G-06 lifecycle evidence binds to); release date pending the G-09 authorization.
-**Current checkpoint (2026-09-11, HEAD `bfea215` + G-08.V1 reconciliation):** full gates green (TSC 0; npm 146/146; fmt 0; clippy 0; cargo 586 passed / 0 failed / 7 ignored). Final candidate re-cut and RE-BOUND: lifecycle PASS on both baselines (`a4d14496…` setup / `2dd036c6…` msi), portable `075daa54…` passed supervision, seven-stage health, default v2 (984.76 tok/s, 5/5), and the tamper negative. G-08.I1 review complete with all deferrals recorded in `docs/RELEASE-REVIEW-0.6.md`; G-08.I2/I3 published (`docs/SUPPORT-MATRIX.md`); wrong-candidate negative control FAIL-with-identity; host attestation MATCH. G-08.I1/I2/I3/V1 all closed. The High-finding packaged campaign executed the remaining verifiable items (FE-01.V3, FE-02.V2, FE-05.V1/V2, IPC-01.V2, MT-04.V2, MT-05.V3) with recorded evidence; FE-05.V3 and the GH-01/GH-02/GH-03 items are deferred with six-field rows, the latter being the owner-gated release prerequisites. Gates at this checkpoint: npm 146/146, fmt/clippy clean, cargo 590 passed / 0 failed / 7 ignored. Remaining: ONLY the owner-gated G-09/G-10 (apply rulesets, authorize the PR runs, tag + publish + readback, closeout) - the exact owner package is prepared in `docs/RELEASE-REVIEW-0.6.md`.
+**Candidate SHA / release date:** Final candidate re-cut at `57bde64ebbb7d148e0ff757add75f440e8241ece` (supersedes `272ae153` → `075daa54…`; rebuilt after the cancellation-livelock fix recorded below); release date pending the G-09 authorization.
+**Current checkpoint (2026-09-12, HEAD `57bde64e`):** every remaining verification package is closed and one new High defect (the MT-06 cancellation livelock) was found by the re-bind probes, fixed regression-first and re-verified on the rebuilt candidate (section "Re-bind campaign…" below). Gates: `npx tsc --noEmit` 0; Vitest 141; node tests 125; `cargo fmt --check` 0; clippy `-D warnings` 0; `cargo test` 593 passed / 0 failed / 7 ignored. Candidate re-cut at `57bde64e` (portable `79615950…`, msi `01b62b76…`, setup `255bfdd2…`) with the packaged evidence set and the lifecycle re-bind recorded below. The previous checkpoint's records (G-08.I1 review, SUPPORT-MATRIX, wrong-candidate negative, host attestation, the (2026-09-11) candidate `075daa54…` lineage) remain valid as history. Open boxes are exactly the owner-gated GH-01/GH-02/GH-03 rows, GH-06.V3, G-09/G-10, plus the environment-blocked rows (RT-04.V2 remainder, RT-06.V3, DC-04.V2, DC-12.V3, MT-07.V2, S-25.I3, G-05.I3) with visible dispositions.
 
 This tracker translates the complete audit into implementation and acceptance work. It contains **72 finding packages** (19 High, 43 Medium, 10 Low), **29 supplemental packages** for unnumbered audit recommendations, and **10 verification/release gates**. Every checkbox carries a stable task ID and a direct link to its supporting audit finding or section. No task is pre-completed, and no implementation, test, GitHub setting or release change is claimed by this document.
 
@@ -264,7 +264,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 **Verification**
 
 - [x] **V06-RT-04.V1** — Use a synchronized writer that attempts to replace an approved executable after verification succeeds but before spawn; require replacement to fail while protected or rejection before an inert marker executable runs. **Trace:** [Audit RT-04](./localmotive-comprehensive-audit.md#rt-04).
-- [ ] **V06-RT-04.V2** — Repeat with DLL replacement and with the health-model download deliberately delayed between context preparation and runtime execution. **Trace:** [Audit RT-04](./localmotive-comprehensive-audit.md#rt-04).
+- [ ] **V06-RT-04.V2** — Repeat with DLL replacement and with the health-model download deliberately delayed between context preparation and runtime execution. **Trace:** [Audit RT-04](./localmotive-comprehensive-audit.md#rt-04). **Partial (2026-09-12):** the DLL-replacement half is now exercised at the packaged level by the tamper negative (replaced managed DLL → "failed content verification", zero processes; exact bytes restored → clean LIVE) and by the `rt04` execution-lease unit tests; the deliberately-delayed health-model-download leg still has no harness — the lease coverage of that window is pinned by the same unit tests. Not claimed as fully verified.
 - [x] **V06-RT-04.V3** — Exercise repair/replacement while a lease is active and after release; verify the documented outcome, intact approved content, and no abandoned locks or handles. **Trace:** [Audit RT-04](./localmotive-comprehensive-audit.md#rt-04).
 
 **Complete when:** A managed process cannot load content substituted in the verified-to-launch interval covered by the documented guarantee. Health preparation and runtime repair obey the same verified-install lifetime policy.
@@ -327,7 +327,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Verify and extract approved archives through the tested production path**
 
-**Status:** Implemented; unit-verified (commit `ad5bcd0`); symlink-swap variant pending a privileged packaged check · **Priority:** Medium · **Owner:** sato942  
+**Status:** Implemented; unit-verified (commit `ad5bcd0`); the symlink/reparse replacement variant is now unit-verified too (`runtime::tests::rt07_path_and_reparse`, junction swap + symlink payload + reparse-ancestor refusal, mutant MR1 caught); no packaged UI route exists for it. · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit RT-07](./localmotive-comprehensive-audit.md#rt-07)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src-tauri/src/runtime.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/runtime.rs)
@@ -342,7 +342,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 **Verification**
 
 - [x] **V06-RT-07.V1** — Replace the archive between completed download and actual production extraction with same-size changed content and with a changed-size file; assert rejection before any archive entry is extracted. **Trace:** [Audit RT-07](./localmotive-comprehensive-audit.md#rt-07).
-- [ ] **V06-RT-07.V2** — Attempt symlink/reparse replacement and a path change after the archive is opened; verify that the protected original handle remains authoritative or the operation fails safely. **Trace:** [Audit RT-07](./localmotive-comprehensive-audit.md#rt-07).
+- [x] **V06-RT-07.V2** — Attempt symlink/reparse replacement and a path change after the archive is opened; verify that the protected original handle remains authoritative or the operation fails safely. **Closed 2026-09-12:** `runtime::tests::rt07_path_and_reparse` (real NTFS: junction swap after open, symlink-payload archive open+verify refusal, reparse-ancestor refusal); mutant MR1 (share-mode narrowed) failed the test and passed after restore. **Trace:** [Audit RT-07](./localmotive-comprehensive-audit.md#rt-07).
 - [x] **V06-RT-07.V3** — Cancel during archive verification and confirm bounded cancellation/cleanup, then run an intact approved fixture through the same production path to exercise successful extraction and final content checks. **Trace:** [Audit RT-07](./localmotive-comprehensive-audit.md#rt-07).
 
 **Complete when:** The production installer verifies the exact protected archive bytes consumed by extraction. Regression tests fail if production archive verification is removed or bypassed; no test-only security implementation supplies the apparent guarantee.
@@ -1182,9 +1182,9 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Verification**
 
-- [ ] **V06-FE-03.V1** — Use deferred IPC-boundary promises to resolve provider A after B across credential/model/probe and credential-mutation operations; assert B's tab and actual readiness retain B's data. **Trace:** [Audit FE-03](./localmotive-comprehensive-audit.md#fe-03).
+- [x] **V06-FE-03.V1** — Use deferred IPC-boundary promises to resolve provider A after B across credential/model/probe and credential-mutation operations; assert B's tab and actual readiness retain B's data. **Closed 2026-09-12:** `src/App.staleResponses.test.tsx` drives the production callers (deferred invokes) — provider-swap relabel, credential-save, probe reply and command-preview legs; mutants MB1-MB5 each failed their leg and passed after restore. **Trace:** [Audit FE-03](./localmotive-comprehensive-audit.md#fe-03).
 - [x] **V06-FE-03.V2** — Resolve model A metadata after selecting B or clearing selection; verify architecture and native-context choices are not overwritten or incorrectly clamped. **Trace:** [Audit FE-03](./localmotive-comprehensive-audit.md#fe-03).
-- [ ] **V06-FE-03.V3** — Return an old port suggestion after a manual edit and an old command after a newer preview; assert both are discarded through actual component callers. **Trace:** [Audit FE-03](./localmotive-comprehensive-audit.md#fe-03).
+- [x] **V06-FE-03.V3** — Return an old port suggestion after a manual edit and an old command after a newer preview; assert both are discarded through actual component callers. **Closed 2026-09-12:** the manual-port-edit vs late-suggestion leg and the stale-preview discard leg in `src/App.staleResponses.test.tsx`; mutants MB1/MB2 caught. **Trace:** [Audit FE-03](./localmotive-comprehensive-audit.md#fe-03).
 
 **Complete when:** Out-of-order completion cannot replace the active provider, model metadata, chosen port or current command preview. Tests exercise production callers and not only the equality helper.
 
@@ -1221,7 +1221,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Preserve evidence history and active measurement controls across navigation**
 
-**Status:** Implemented; unit-verified (commit `0045cb6`); packaged navigation/cancel/completion scenario open (V06-G-04) · **Priority:** High · **Owner:** sato942  
+**Status:** Implemented; unit-verified (commit `0045cb6`); packaged navigation/cancel/completion scenario verified on the 2026-09-12 candidate (FE-05.V1 cancel-after-navigation in `g05_fe16.mjs`; FE-05.V2 completed-while-away in `g05_vitems_d.mjs`; FE-05.V3 A/B provenance walk in `g05_fe05v3.mjs`). · **Priority:** High · **Owner:** sato942  
 **Audit trace:** [Audit FE-05](./localmotive-comprehensive-audit.md#fe-05)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx), [src/V03EvidencePanel.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/V03EvidencePanel.tsx)
@@ -1238,7 +1238,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 - [x] **V06-FE-05.V1** — Start a deferred benchmark, navigate away and back, then cancel; assert the same run remains active and the original cancellation handle is available. **Trace:** [Audit FE-05](./localmotive-comprehensive-audit.md#fe-05).
 - [x] **V06-FE-05.V2** — Complete measurement while another screen is open and verify returning to Benchmark displays that run and its saved evidence rather than a new empty session. **Trace:** [Audit FE-05](./localmotive-comprehensive-audit.md#fe-05).
-- [ ] **V06-FE-05.V3** — Benchmark profile A, leave to edit/start B, benchmark B, then compare both records with distinct provenance and recover them through the supported saved-manifest route. **Trace:** [Audit FE-05](./localmotive-comprehensive-audit.md#fe-05).
+- [x] **V06-FE-05.V3** — Benchmark profile A, leave to edit/start B, benchmark B, then compare both records with distinct provenance and recover them through the supported saved-manifest route. **Closed 2026-09-12 (packaged, `scripts/g05_fe05v3.mjs`):** A (8192 context) and B (4096) each measured; manifests persisted under the app-data `benchmarks/` root with distinct paths, distinct launch provenance (`-c 8192` vs `-c 4096`) and distinct compatibility identities; both recovered through the supported route (`Add anchor` from each saved manifest, records loaded by key with `sourceRunId`s, `Replay manifest` restored the workload). **Trace:** [Audit FE-05](./localmotive-comprehensive-audit.md#fe-05).
 
 **Complete when:** Navigation cannot erase accessible completed results or active measurement controls. Profile changes retain historical candidates while current-input evidence is invalidated appropriately.
 
@@ -1291,7 +1291,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 **Verification**
 
 - [x] **V06-FE-07.V1** — Resolve cancel acknowledgement before the original benchmark ends; assert the interface stays cancelling and a new benchmark/quality action remains unavailable. **Trace:** [Audit FE-07](./localmotive-comprehensive-audit.md#fe-07).
-- [ ] **V06-FE-07.V2** — Exercise successful null/unit responses, rejected cancellation and no-active-benchmark errors through the actual IPC action wrapper; verify distinct messages and lifecycle outcomes. **Trace:** [Audit FE-07](./localmotive-comprehensive-audit.md#fe-07).
+- [x] **V06-FE-07.V2** — Exercise successful null/unit responses, rejected cancellation and no-active-benchmark errors through the actual IPC action wrapper; verify distinct messages and lifecycle outcomes. **Closed 2026-09-12:** `src/V03EvidencePanel.cancel.test.tsx` drives the panel's own wrapper — a void acknowledgement keeps run ownership and says the run ends after the current attempt, a rejected cancel keeps the run and the next affordance, a late cancel retains the measured result, and the no-active-benchmark error does not lock the UI; mutants MF1/MF2 caught. **Trace:** [Audit FE-07](./localmotive-comprehensive-audit.md#fe-07).
 - [x] **V06-FE-07.V3** — Complete, fail and cancel the original run after acknowledgement; assert only its terminal result releases active ownership and conflicting actions. **Trace:** [Audit FE-07](./localmotive-comprehensive-audit.md#fe-07).
 
 **Complete when:** Cancellation acknowledgement is distinguishable from actual measurement completion. Successful void responses are recognized, and no unrelated action clears or prematurely replaces the active run state.
@@ -1347,6 +1347,8 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 - [x] **V06-FE-09.V1** — Load malformed JSON, null, wrong extraArgs/trials types, older schemas and invalid enum values through normal selection/startup; assert the app remains usable and identifies the affected record. **Trace:** [Audit FE-09](./localmotive-comprehensive-audit.md#fe-09).
 - [x] **V06-FE-09.V2** — Inject quota/security write failures after successful native tuning/benchmark completion and in direct profile/settings handlers; verify completion remains visible and save failure is separately explained. **Trace:** [Audit FE-09](./localmotive-comprehensive-audit.md#fe-09).
 - [x] **V06-FE-09.V3** — Exercise blocked storage reads and recovery/reset of one corrupt record; assert other saved profiles survive and a valid migrated record still follows current-runtime normalization. **Trace:** [Audit FE-09](./localmotive-comprehensive-audit.md#fe-09).
+
+**Update (2026-09-12):** hardening pass over the write path — every settings/profile/report write now goes through `persistRecord` (returns success, surfaces a bounded notice on denial) and the guarded read path survives a denied origin at first render (a real crash was found in the disclosure initializer and fixed). Component matrix in `src/App.storage.test.tsx` (mutants M-C/M-A caught); the catalogue-filter legs of QD-02.I4 ride the same denied-origin environment. The FE-09 release-gate assertion now pins `persistRecord` + the failure notice instead of the raw `localStorage.setItem` call.
 
 **Complete when:** Corrupt local records cannot blank the entire interface through the audited parse/render paths. Successful native results and failed persistence have distinct observable outcomes, with documented recovery and retention behavior.
 
@@ -1491,7 +1493,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Coordinate UI operation state and separate running-server evidence from editable drafts**
 
-**Status:** Implemented; unit-verified (commit `6da40d8`); packaged overlap/exit scenarios open (V06-G-04) · **Priority:** Medium · **Owner:** sato942  
+**Status:** Implemented; unit-verified (commit `6da40d8`); packaged overlap/exit scenarios verified on the 2026-09-12 candidate (`g05_fe16.mjs` V1/V3 ALL-PASS, including the retained log well and the persisted exit-failure record; copy fix MW1/MW2 caught). · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx), [src/V03EvidencePanel.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/V03EvidencePanel.tsx)
@@ -1506,9 +1508,9 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Verification**
 
-- [ ] **V06-FE-16.V1** — Complete overlapping scan/cloud/start requests in different orders and verify active state persists; exercise legacy/v2 measurement and Start guards through actual UI interactions. **Trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16).
+- [x] **V06-FE-16.V1** — Complete overlapping scan/cloud/start requests in different orders and verify active state persists; exercise legacy/v2 measurement and Start guards through actual UI interactions. **Closed 2026-09-12 (packaged, `scripts/g05_fe16.mjs`):** scan+cloud overlap left the live server on the same pid; a 10-trial v2 run survived navigation, a rescan and a cloud reload with its Cancel handle usable, the legacy Run button was disabled for the whole run and re-enabled after the cancel, and the server persisted (same pid) throughout. **Trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16).
 - [x] **V06-FE-16.V2** — Resolve a delayed status poll after stop/start and assert it cannot replace the newer server snapshot; verify polling remains single-flight under slow native responses. **Trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16).
-- [ ] **V06-FE-16.V3** — Edit a draft while the server runs, then simulate unexpected exit; assert running identity was unchanged by edits and final logs/failure evidence remain visible. **Trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16).
+- [x] **V06-FE-16.V3** — Edit a draft while the server runs, then simulate unexpected exit; assert running identity was unchanged by edits and final logs/failure evidence remain visible. **Closed 2026-09-12 (packaged, `scripts/g05_fe16.mjs`):** the draft rename applied in the editor while the STRATEGY/PROCESS/ENDPOINT instruments and the snapshot strategy stayed identical; after a taskkill of the child the state went non-LIVE with zero processes, the persisted `*.log.failure.json` beside the run log carried `phase=runtime_exit`, `exitCode=1` and a 1313-character tail, and the Control log well kept the last bounded output under the stopped note; restart reached LIVE. **Also fixed:** the empty-state copy rendered a refactor placeholder (`Start this props.profile…`); the well now retains the tail after any stop (component test `src/screens/DashboardScreen.test.tsx`, mutants MW1/MW2 caught). **Trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16).
 
 **Complete when:** Each UI action reflects its own real lifecycle and conflicting controls cannot be reenabled by unrelated completion. Displayed running-server and benchmark identity is independent of drafts, with diagnostics retained after exit.
 
@@ -1779,7 +1781,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Preserve structured lifecycle evidence for failures and timeouts**
 
-**Status:** Implemented I1-I4 and gate-verified (commit `69894e3`); V1-V3 need the sandbox window · **Priority:** Medium · **Owner:** sato942  
+**Status:** Implemented I1-I4 and gate-verified (commit `69894e3`); V2 verified on the 2026-09-12 candidate via the fault-simulation witness legs (`scripts/sandbox/test-fault-evidence.ps1`, mutant MG1 caught); V1/V3 ride the owner-gated release run. · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit GH-06](./localmotive-comprehensive-audit.md#gh-06)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [scripts/sandbox/host-run-lifecycle.ps1](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/scripts/sandbox/host-run-lifecycle.ps1), [scripts/sandbox/run-lifecycle-in-sandbox.ps1](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/scripts/sandbox/run-lifecycle-in-sandbox.ps1), [.github/workflows/hardware-qualify.yml](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/.github/workflows/hardware-qualify.yml)
@@ -1794,7 +1796,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 **Verification**
 
 - [x] **V06-GH-06.V1** — Inject a Sandbox FAIL result and verify the job remains failed while its exact result JSON and diagnostic log are retained in the uploaded evidence. **Trace:** [Audit GH-06](./localmotive-comprehensive-audit.md#gh-06).
-- [ ] **V06-GH-06.V2** — Exercise timeout, missing or malformed result, early installer-download failure and cancellation paths; each must leave a bounded structured outcome with the correct stage and candidate identity. **Trace:** [Audit GH-06](./localmotive-comprehensive-audit.md#gh-06).
+- [x] **V06-GH-06.V2** — Exercise timeout, missing or malformed result, early installer-download failure and cancellation paths; each must leave a bounded structured outcome with the correct stage and candidate identity. **Closed 2026-09-12:** the harness's default-off fault simulations (`-FaultSimulation timeout|malformed-result|missing-assets|stall`) are driven by `scripts/sandbox/test-fault-evidence.ps1`; the witness files bind source revision and candidate digests, statuses are TIMEOUT at `sandbox-timeout` / FAIL at `sandbox-run` / FAIL at `resolve-installers`, and the cancellation leg proves a killed run leaves no PASS artifact (mutant MG1 caught — the harness's own catch guard converts a relabelled PASS to FAIL). **Trace:** [Audit GH-06](./localmotive-comprehensive-audit.md#gh-06).
 - [ ] **V06-GH-06.V3** — Inspect the completed workflow's artifact collection, not just its upload-step conclusion, and confirm the summary accurately reports both verification outcome and evidence availability. **Trace:** [Audit GH-06](./localmotive-comprehensive-audit.md#gh-06).
 
 **Complete when:** Every terminal lifecycle outcome produces retrievable structured evidence or an explicit evidence-collection failure. Failure propagation stays nonzero and upload success cannot be mistaken for successful installer verification.
@@ -1949,7 +1951,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 - [x] **V06-QD-02.I1** — Add a DOM/component test environment scoped to application tests, mocking IPC only at its boundary and preserving the exclusion of research and third-party tests. **Trace:** [Audit QD-02](./localmotive-comprehensive-audit.md#qd-02).
 - [x] **V06-QD-02.I2** — Add real temporary-database orchestration fixtures covering fetch, mirror publication, restart, cooldown, offline fallback, corrupt migration and download authorization, rather than calling only successful storage helpers. **Trace:** [Audit QD-02](./localmotive-comprehensive-audit.md#qd-02).
 - [x] **V06-QD-02.I3** — Exercise curated/local ID and filename collisions, atomic file replacement and preservation of local entries; write failing regressions before the corresponding catalog fixes are closed. **Trace:** [Audit QD-02](./localmotive-comprehensive-audit.md#qd-02).
-- [ ] **V06-QD-02.I4** — Cover delayed/rejected IPC, filter reapplication, hardware updates, stale responses, malformed saved profiles, denied browser storage and accessible catalog/profile interactions. **Trace:** [Audit QD-02](./localmotive-comprehensive-audit.md#qd-02).
+- [x] **V06-QD-02.I4** — Cover delayed/rejected IPC, filter reapplication, hardware updates, stale responses, malformed saved profiles, denied browser storage and accessible catalog/profile interactions. **Closed 2026-09-12:** `src/App.storage.test.tsx` (denied-origin matrix: runtime inspection, tuning report and benchmark saves keep the completed native result and surface bounded notices; first render survives a denied origin — this exposed and fixed a real crash in the disclosure initializer), catalog filter legs in `src/App.catalog.test.tsx` (slow-then-fast newest-wins, rejected filter keeps prior rows, null local-model snapshot tolerated), plus the stale-response suites above; mutants MC1/M-C/M-A caught. **Trace:** [Audit QD-02](./localmotive-comprehensive-audit.md#qd-02).
 - [x] **V06-QD-02.I5** — Extend version-aware packaged HF catalog acceptance to first run, restart, persistence, fallback, filters and actual serialization; distinguish these scenarios from the retained runtime-catalog checks. **Trace:** [Audit QD-02](./localmotive-comprehensive-audit.md#qd-02).
 
 **Verification**
@@ -1967,7 +1969,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Replace private React state injection with stable presentation and packaged-flow tests**
 
-**Status:** Implemented I1-I5, V1/V2 verified (commits `b722f4d`, `e44019c`); V3/V4 ride the next packaged verify · **Priority:** Medium · **Owner:** sato942  
+**Status:** Implemented I1-I5; V1/V2 verified (commits `b722f4d`, `e44019c`); V3 verified on the 2026-09-12 candidate (adaptive fast/slow classifier + fixture legs + gate; mutant MQ1 caught) · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit QD-03](./localmotive-comprehensive-audit.md#qd-03)  
 **Prerequisites:** [V06-QD-02](#v06-qd-02)
 **Source touchpoints:** [scripts/verify_041.mjs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/scripts/verify_041.mjs), [scripts/tests/release-gates.test.mjs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/scripts/tests/release-gates.test.mjs), [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx)
@@ -1984,7 +1986,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 - [x] **V06-QD-03.V1** — Change hook ordering or introduce similarly shaped component state and verify the public-interface tests remain valid without adapting private-memory selectors. **Trace:** [Audit QD-03](./localmotive-comprehensive-audit.md#qd-03).
 - [x] **V06-QD-03.V2** — Inject delayed and failed backend responses through the test boundary; assert Refresh actually starts retrieval and reaches the expected terminal UI state. **Trace:** [Audit QD-03](./localmotive-comprehensive-audit.md#qd-03).
-- [ ] **V06-QD-03.V3** — Exercise cancellation under fast and slow fixture progress, confirming it waits for an active operation and records completion or a bounded diagnostic failure. **Trace:** [Audit QD-03](./localmotive-comprehensive-audit.md#qd-03).
+- [x] **V06-QD-03.V3** — Exercise cancellation under fast and slow fixture progress, confirming it waits for an active operation and records completion or a bounded diagnostic failure. **Closed 2026-09-12:** one classifier (`scripts/lib/health_cancel.mjs`) owns the acceptance rules; `scripts/tests/health_cancel.test.mjs` drives fast (completed-before-cancel with the full passing contract), slow (accepted cancel with stage attribution), refused and bounded-timeout fixtures (mutant MQ1 caught); the packaged check (`scripts/verify_041.mjs`) now waits for an observed progress phase and records cancellation, completion or a bounded diagnostic through that classifier; `npm test` runs the fixture legs and the release gate pins the wiring. **Trace:** [Audit QD-03](./localmotive-comprehensive-audit.md#qd-03).
 - [x] **V06-QD-03.V4** — Run the preserved packaged IPC/install/tamper/health checks and inspect the evidence labels for a clear distinction between synthetic presentation and real execution. **Trace:** [Audit QD-03](./localmotive-comprehensive-audit.md#qd-03).
 
 **Complete when:** No packaged acceptance path traverses private React memory or requires hook-position assumptions. Presentation and lifecycle evidence retain their useful coverage while accurately identifying the boundary exercised.
@@ -2928,6 +2930,51 @@ Re-bind COMPLETE (2026-09-11, source HEAD `6384df0`, code state `a0ed247`):
   4. Tamper negative: DLL replaced -> "Managed file llama-server-impl.dll failed content verification" with 0 llama-server processes; exact bytes restored (`87c4e9d0…`); clean start -> LIVE (`g05_tamper_dll.mjs`, new driver).
 - This candidate supersedes `1a9ab98` as the binding source for G-05/G-06 evidence; G-05.V1 is satisfied at this candidate.
 
+#### Re-bind campaign, FE-16/FE-05 closures and a found-and-fixed benchmark livelock (2026-09-12)
+
+Work continued at HEAD for the remaining verification packages and a fresh candidate re-cut. Two freezes were taken: `272ae153` (log-well retention, stopped-log copy fix, FE-16/FE-05.V3 packaged walks) and `57bde64e` (the cancellation livelock fix below). The candidate was rebuilt from `57bde64`.
+
+**New defect found by the re-bind probes and fixed (H, repaired): the cancellable local-client slice livelocked slow-but-healthy completions (MT-06).**
+
+- Symptom: the DEFAULT v2 workload never completed on the approved MANAGED runtime (`Localmotive/runtimes/b10816/cuda-13.3`): the run stayed in flight, the server kept generating (~476 tok/s, ~560 ms per completion), `tokens_predicted_total` grew past 211 968 tokens (hundreds of duplicate generations; 442 completed completions counted in one log), and the only exit was the per-request budget (`timeoutMs` 600 000). The same workload on the legacy cuda-12.4 build (~985–1002 tok/s, ~300 ms) stayed under the boundary and always passed — which is why earlier evidence never saw it.
+- Root cause: `local_client::execute` bounded every cancellable attempt to `CANCEL_ATTEMPT_SLICE` (500 ms) and re-issued the request until the whole-operation deadline, so any response slower than the slice was discarded while the server completed it anyway. Cancel responsiveness was bought by discarding healthy slow responses.
+- Fix (`57bde64e`): cancellable requests run on a worker thread with the full deadline; the caller observes the cancel flag in 500 ms slices and abandons the worker on cancel (it exits by itself at the deadline). Cancel latency is unchanged (<= one slice).
+- Regression: `a_cancellable_response_that_outlives_the_cancel_slice_still_completes` (a 900 ms fixture response must complete exactly once; RED before the fix with the exact "did not answer within 6 seconds" signature and repeated requests), plus `a_cancellable_request_is_still_cancelled_during_a_long_slow_response` as the cancel-parity leg; mutant ML1 (worker budget re-sliced to 500 ms) failed the regression and passed after restore; new release gate "the cancellable local client never re-issues a slow-but-healthy response (MT-06)".
+- Packaged re-verification on the rebuilt candidate: the DEFAULT v2 workload completes — **decode mean 486.51 tok/s, p50 490.02, p95 491.62, n=5, 5/5 sampled**, 1 warmup (`g05_mt01d.mjs`, `.hermes-0.6/rebind2-mt01d.log`).
+
+**Second defect found by the re-bind and fixed (harness truthfulness, M): a stale window document could satisfy the fault-witness assert.** After the candidate re-cut, `witness-malformed-result.json` still carried the superseded candidate's digests: the harness catch guard (`if (-not (Test-Path $EvidencePath) -or status -eq "PASS")`) skipped rewriting whenever an older FAIL document existed, and the witness assertion accepted that stale document. Fixed in `scripts/sandbox/host-run-lifecycle.ps1` (any document older than the current run is stale identity and is rewritten) and `scripts/sandbox/test-fault-evidence.ps1` (each witness document is deleted before its leg, and the assertion now requires `candidateDigests` to equal the staged candidate's hashes). Mutant MG2 (old guard + planted a4d14496-era document) caught by the digest-equality check; all three witnesses re-verified bound to `57bde64e` + `255bfdd2…` / `01b62b76…`.
+
+**Re-cut at `57bde64e` (2026-09-12):**
+
+- portable `localmotive-portable.exe` sha256 `7961595091822b6d4fd1b8efcd4d4f8bec33b1a75a913ce3774e36ac2c3371fa`
+- MSI `Localmotive_0.6.0_x64.msi` sha256 `01b62b7646850d4c86d92e5d05cc6f0b5b492d28a9a3ebc228851c927535b124`
+- NSIS `Localmotive_0.6.0_x64-setup.exe` sha256 `255bfdd24d13905cb58f4d210c700b0c8facc1b8fbef1e56d3ebd4feb8e9c13f`
+- Candidate inventory PASS (3 artifacts) at source `57bde64e` (`.hermes-0.6/final-candidates/candidate-inventory-0.6.0.json`); SHA256SUMS in the staged directory; build log `.hermes-0.6/rebind-build-3.log`; the freeze supersedes `075daa54…` (stale because `06cfa99` touched `tune_service.rs` after that build, and `53a65ed`/`272ae15`/`57bde64e` changed shipped bytes afterwards).
+
+**Packaged evidence on the new candidate (CDP 10085, logs under `.hermes-0.6/rebind2-*.log`):**
+
+- Start/stop supervision: live, child gone in 1 s, none after stop, app idle (`g05_stop_supervision.mjs`).
+- Seven-stage health contract: PASSED all seven stages on the managed CPU runtime record; "No health process tree, loopback listener, or isolated temporary file remained" (`g05_health.mjs`, matcher fixed to stop matching catalog text).
+- Default v2 workload: completes (numbers above) — the livelock fix verified end-to-end.
+- Tamper negative: DLL replaced → "Managed file llama-server-impl.dll failed content verification" with 0 processes; exact bytes restored; clean start → LIVE (`g05_tamper_dll.mjs`; matcher now accepts both Start labels).
+- FE-16.V1/V3 (`g05_fe16.mjs`, new): ALL-PASS — scan/cloud overlap keeps the live server (same pid); a 10-trial v2 run survives navigation, rescan and cloud reload with its Cancel usable; the legacy Run button is disabled during the run and releases after the cancel; the draft rename leaves the instruments and snapshot identity unchanged; an unexpected exit goes non-LIVE with zero processes, leaves the persisted `*.log.failure.json` (phase `runtime_exit`, exit code 1, 1313-char tail) and keeps the last bounded output in the Control log well; restart reaches LIVE.
+- FE-05.V3 (`g05_fe05v3.mjs`, new): ALL-PASS — A (8192) and B (4096) both measured, manifests persisted in the app-data `benchmarks/` root with distinct paths, distinct launch provenance and distinct compatibility identities; recovery through the saved-manifest route (`Add anchor` per run, records by key with `sourceRunId`s, `Replay manifest`).
+- FE-01.V3 / FE-02.V2 / IPC-01.V2 re-run (`g05_vitems_c.mjs`): P1 preview now shows the MANAGED runtime argv; P2 CPU adoption; P3 kill-mid-run → non-LIVE, 0 processes → restart LIVE; P4 corrupted-model refusal → restore → LIVE; P5 app killed ~2.5 s after start → 0 orphans → relaunch → start → LIVE.
+- FE-02.V2 adoption walk re-run (`g05_vitems_d.mjs`): cuda-12.4 → cpu → cuda-12.4 child images verified per start; FE-05.V2 completed-while-away visible on return (974.72 tok/s on the legacy build, 5/5).
+- MT-05.V3 reservation release re-check: LIVE → Stop → 0 processes → Start → LIVE → Stop → 0 processes (`.hermes-0.6/rebind2-mt05-cycle.log`).
+- G-05.I1 residual: the orphan churn reproducer did not reproduce — three start/cancel/start/stop rounds left zero surviving children (`g05_churn_repro.mjs`, `.hermes-0.6/rebind2-churn.log`).
+- GH-06.V2 witnesses re-bound to the new candidate digests (`scripts/sandbox/test-fault-evidence.ps1`, `.hermes-0.6/` witness legs, ALL PASS).
+
+**Lifecycle re-bind (2026-09-12, Windows Sandbox, candidate installers `255bfdd2…` setup / `01b62b76…` msi):**
+
+- Run 1 (`PreviousTag v0.4.0`, EvidenceName `sandbox-clean-account-lifecycle-upgrade-from-v0.4.0`): `status: PASS` with a fourth preservation step (`nsis-preservation-from-v0.4.0`); NSIS fresh install/launch/uninstall, MSI fresh, NSIS update v0.4.0 -> 0.6.0 and the preservation check all PASS; bound with `sourceRevision 57bde64e` and the new candidate digests. Log `.hermes-0.6/rebind2-lifecycle-up40.log`.
+- Run 2 (`PreviousTag v0.5.0`, EvidenceName `sandbox-clean-account-lifecycle`): `status: PASS`, same four steps with `nsis-preservation-from-v0.5.0` (`executable version 0.5.0 -> 0.6.0`); bound with `sourceRevision 57bde64e` and the new digests. Log `.hermes-0.6/rebind2-lifecycle-main.log`. (The former `…-upgrade-from-v0.5.0.json` copy is superseded by the in-run fourth step in the main record.)
+- Run 3 (`PreviousTag v0.4.1`, EvidenceName `sandbox-preservation-v0.4.1`): `status: PASS`, preservation PASS, collected mirror + user-data canaries verified host-side; bound with source revision and the new digests. Log `.hermes-0.6/rebind2-lifecycle-pres041.log`.
+- Run 4 (`PreviousTag v0.5.0`, EvidenceName `sandbox-preservation-v0.5.0`): `status: PASS`, preservation PASS. Log `.hermes-0.6/rebind2-lifecycle-pres050.log`.
+- Negative control (v0.5.0 bytes staged under 0.6.0 names, `candidate-0.6.0`): `sandbox-negative-wrong-candidate.json` records `status: FAIL` with `NSIS fresh install expected executable version 0.6.0 but found '0.5.0'`, bound to `sourceRevision 57bde64e` and the doctored digests `22a7ef75…` / `581ae3d0…`.
+
+**Also fixed in this campaign (FE-16 log well):** the Control log well dropped its content when the server stopped and its empty-state copy rendered a refactor placeholder ("Start this props.profile…"). The well now retains the last bounded output under a two-line stopped note and the copy reads "Start this profile…" (`src/screens/DashboardScreen.tsx`, `src/App.css`; component test `src/screens/DashboardScreen.test.tsx`; mutants MW1/MW2 caught; `docs/DESIGN.md` updated; design detector unchanged at the four known advisories).
+
 #### G-05 packaged Windows wave — seventh batch: three chained evidence-flow defects found and fixed (candidate sha256 `0cebbba8e68922e9a1bea35cc1ef9833ffb5ff8470a74e9f706bed9b089fbe0f`)
 
 Exercising the DEFAULT v2 evidence flow on the packaged binary (approved CUDA b10816, SmolLM2, RTX 5090) exposed a broken chain: the flow could not complete end-to-end. Three independent defects were found, fixed regression-first, mutation-checked, and re-verified on the rebuilt package.
@@ -3370,7 +3417,7 @@ Closure records implement [V06-G-02](#v06-g-02). One record per finding package;
 - Status: Implemented; unit-verified; symlink/reparse swap variant open (privileged packaged check).
 - Regression before fix (mutation proof): mutation D restored the old path-based extraction; `rt07_archive_extraction_rejects_replaced_bytes_through_the_installer_path` FAILED (the replaced archive extracted).
 - Verification after fix: `cargo test rt07` — 2 passed / 0 failed (same-size replacement, changed-size replacement, cancellation during verification, intact approved success path through `extract_zip`, Windows handle-blocks-replacement). Full suite: 409 passed / 0 failed (2026-09-11).
-- Limits: the symlink/reparse replacement variant (V06-RT-07.V2, second half) requires symlink-creation privilege; it stays open for a privileged packaged check.
+- Limits/update (2026-09-12): the symlink/reparse replacement variant (V06-RT-07.V2) is now covered at the unit level by `runtime::tests::rt07_path_and_reparse` (junction swap after open, symlink-payload refusal, reparse-ancestor refusal; mutant MR1 caught); no packaged UI route exists to click it, so it is recorded as harness coverage, not packaged evidence.
 
 _Package 1 (RT-01, RT-02, RT-04, RT-07) implementation is complete at the unit/regression layer. The three open packaged items above are collected by the V06-G-05 target-environment gate and must not be counted as passed before that evidence exists._
 

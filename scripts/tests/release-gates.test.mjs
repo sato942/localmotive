@@ -931,6 +931,10 @@ test("packaged cancellation check observes progress, records completion or a bou
     pkg.scripts.test.includes("scripts/tests/health_cancel.test.mjs"),
     "npm test must run the health-cancel fixture legs",
   );
+  // The blocked-backend card check binds to the live upstream release; when
+  // every required job is green it must report the skip rather than fail on a
+  // healthy upstream (the card rendering stays unit-covered).
+  assert.match(source, /no blocked backend in the live upstream release/);
 });
 
 test("release package job runs the catalog/SQLite packaged matrix (GH-05)", async () => {

@@ -17,6 +17,10 @@ const BACKUP_DIR = `${process.cwd()}\\.hermes-0.6\\vitems-backup`;
 
 const clickText = (text) =>
   evaluate(`(() => { const b = [...document.querySelectorAll("button")].find(x => (x.textContent ?? "").trim() === ${JSON.stringify(text)} && !x.disabled); if (!b) return false; b.dispatchEvent(new MouseEvent("click", { bubbles: true })); return true; })()`);
+// A successful start navigates the app to the Control view, where the same
+// action is labelled "Start profile"; accept both labels.
+const clickStart = () =>
+  evaluate(`(() => { const b = [...document.querySelectorAll("button")].find(x => ["Start", "Start profile"].includes((x.textContent ?? "").trim()) && !x.disabled); if (!b) return false; b.dispatchEvent(new MouseEvent("click", { bubbles: true })); return true; })()`);
 const nav = (label) =>
   evaluate(`(() => { const b = [...document.querySelectorAll("button")].find(x => (x.textContent ?? "").trim() === ${JSON.stringify(label)} && !x.disabled); if (!b) return false; b.dispatchEvent(new MouseEvent("click", { bubbles: true })); return true; })()`);
 const bodyText = () => evaluate(`(document.body.innerText || "").replace(/\\s+/g, " ").slice(0, 6000)`);
@@ -98,7 +102,7 @@ console.log("P2_DONE");
 // ---------- P3: IPC-01.V2 early child exit ----------
 await nav("Profile");
 await settle(500);
-console.log("P3_START", await clickText("Start"));
+console.log("P3_START", await clickStart());
 const live3 = await waitLive(true, 90);
 console.log("P3_LIVE", live3);
 if (live3) {
@@ -112,7 +116,12 @@ if (live3) {
     if (!/LIVE/.test(t)) { terminal = "status no longer LIVE"; break; }
   }
   console.log("P3_TERMINAL", JSON.stringify(terminal).slice(0, 160), "| LLAMA_PROCS", llamaCount());
-  console.log("P3_RESTART", await clickText("Start"));
+  // The exit detection races the next click: wait for the non-LIVE state and
+  // an enabled Start before restarting (a click during the transition lands
+  // on the still-visible Stop).
+  await waitLive(false, 30);
+  await settle(800);
+  console.log("P3_RESTART", await clickStart());
   const live3b = await waitLive(true, 90);
   console.log("P3_LIVE_AGAIN", live3b);
   await stopServer();
@@ -154,10 +163,10 @@ await nav("Profile");
 await settle(400);
 console.log("P5_START", await clickText("Start"));
 await settle(2500);
-execSync('powershell -NoProfile -Command "Get-Process localmotive -ErrorAction SilentlyContinue | Stop-Process -Force"');
+execSync('powershell -NoProfile -Command "Get-Process localmotive-portable,localmotive -ErrorAction SilentlyContinue | Stop-Process -Force; exit 0"');
 await settle(3000);
 console.log("P5_APP_KILLED | LLAMA_PROCS_AFTER", llamaCount());
-execSync(`powershell -NoProfile -Command "Start-Process -FilePath '.hermes-0.6\\final-candidates\\localmotive-portable.exe'"`);
+execSync(`powershell -NoProfile -Command "Start-Process -FilePath '.hermes-0.6\\final-candidates\\localmotive-portable.exe'; exit 0"`);
 let ready = false;
 for (let i = 0; i < 60 && !ready; i += 1) {
   await settle(1000);

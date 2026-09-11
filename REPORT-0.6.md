@@ -246,12 +246,13 @@ workflow has nothing newer to build from.
 
 ## 7. Release identity and next steps
 
-Final candidate (re-cut after all fixes, re-bound):
+Final candidate (re-cut and re-bound at the 2026-09-12 freeze):
 
-- portable `localmotive.exe` sha256 `075daa54027c7234d36b5ff869eb6ac4b264c5e4abe14db3de944944d4b34f2a`
-- MSI `Localmotive_0.6.0_x64_en-US.msi` sha256 `2dd036c6a9397e0491e8ebb276af187bf0c9701c8f176c56cba42e6f4bd0512d`
-- NSIS `Localmotive_0.6.0_x64-setup.exe` sha256 `a4d14496d14a4f98ffcd1e9c9ae5d78f36dab74d309d86ed6e2dfdb38eb2b7de`
-- source code state `a0ed247`; lifecycle evidence re-run and bound at `6384df0`
+- portable `localmotive.exe` sha256 `7961595091822b6d4fd1b8efcd4d4f8bec33b1a75a913ce3774e36ac2c3371fa`
+- MSI `Localmotive_0.6.0_x64.msi` sha256 `01b62b7646850d4c86d92e5d05cc6f0b5b492d28a9a3ebc228851c927535b124`
+- NSIS `Localmotive_0.6.0_x64-setup.exe` sha256 `255bfdd24d13905cb58f4d210c700b0c8facc1b8fbef1e56d3ebd4feb8e9c13f`
+- source code state `57bde64e`; this re-cut supersedes `075daa54...` (which went stale when `06cfa99` changed shipped code after its build) and includes the MT-06 cancellation-livelock fix found by the re-bind probes
+- lifecycle evidence re-run and bound to the new digests (see `docs/history/TODO-0.6.md`, "Re-bind campaign...")
 - host attestation: Zen 5 / RTX 5090 / driver 610.74 / Windows 11 build 26100, verdict MATCH
 
 Owner actions, in order: push `main`; apply the two rulesets; authorize the PR
