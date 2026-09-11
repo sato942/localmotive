@@ -8,6 +8,7 @@ mod download;
 pub mod evidence;
 mod gguf;
 mod health;
+mod local_client;
 pub mod measurement;
 pub mod preflight;
 mod proc;
@@ -21,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 #[cfg(test)]
 use std::net::TcpListener;
-use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -922,19 +923,17 @@ fn listener_is_owned_by_at(_address: SocketAddr, _expected_pid: u32) -> Result<b
     Err("TCP listener ownership verification is available only on Windows".into())
 }
 
+#[cfg(test)]
 fn is_healthy_response(response: &[u8]) -> bool {
     response.starts_with(b"HTTP/1.1 200 ") || response.starts_with(b"HTTP/1.0 200 ")
 }
 
-fn parse_server_effective_context(response: &[u8]) -> Result<u32, String> {
-    if !is_healthy_response(response) {
-        return Err("llama-server /props did not return HTTP 200".into());
+fn parse_server_effective_context(status: u16, body: &[u8]) -> Result<u32, String> {
+    if status != 200 {
+        return Err(format!("llama-server /props returned HTTP {status}"));
     }
-    let response = std::str::from_utf8(response)
+    let payload = std::str::from_utf8(body)
         .map_err(|_| "llama-server /props returned invalid UTF-8".to_string())?;
-    let (_, payload) = response
-        .split_once("\r\n\r\n")
-        .ok_or("llama-server /props response did not contain an HTTP body")?;
     let value: serde_json::Value = serde_json::from_str(payload)
         .map_err(|error| format!("Could not parse llama-server /props: {error}"))?;
     value
@@ -946,6 +945,7 @@ fn parse_server_effective_context(response: &[u8]) -> Result<u32, String> {
         .ok_or_else(|| "llama-server /props did not contain a positive effective context".into())
 }
 
+#[cfg(test)]
 fn read_health_response(reader: &mut impl std::io::Read) -> std::io::Result<Vec<u8>> {
     use std::io::Read;
 
@@ -963,6 +963,7 @@ fn read_health_response(reader: &mut impl std::io::Read) -> std::io::Result<Vec<
     Ok(response)
 }
 
+#[cfg(test)]
 fn read_props_response(reader: &mut impl std::io::Read) -> std::io::Result<Vec<u8>> {
     const MAX_PROPS_RESPONSE_BYTES: usize = 1_048_576;
     let mut response = Vec::with_capacity(16 * 1024);
@@ -983,56 +984,25 @@ fn read_props_response(reader: &mut impl std::io::Read) -> std::io::Result<Vec<u
     Ok(response)
 }
 
-fn query_server_effective_context(host: &str, port: u16, timeout: Duration) -> Result<u32, String> {
-    use std::io::Write;
-
-    let addresses = health_socket_addresses(host, port)?;
-    let deadline = Instant::now() + timeout;
-    let mut last_error = "No address accepted the /props request".to_string();
-    for address in addresses {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            break;
-        }
-        let mut stream = match TcpStream::connect_timeout(&address, remaining) {
-            Ok(stream) => stream,
-            Err(error) => {
-                last_error = error.to_string();
-                continue;
-            }
-        };
-        stream
-            .set_read_timeout(Some(remaining))
-            .map_err(|error| error.to_string())?;
-        stream
-            .set_write_timeout(Some(remaining))
-            .map_err(|error| error.to_string())?;
-        let request =
-            format!("GET /props HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n");
-        if let Err(error) = stream.write_all(request.as_bytes()) {
-            last_error = error.to_string();
-            continue;
-        }
-        match read_props_response(&mut stream)
-            .map_err(|error| error.to_string())
-            .and_then(|response| parse_server_effective_context(&response))
-        {
-            Ok(context) => return Ok(context),
-            Err(error) => last_error = error,
-        }
-    }
-    Err(format!(
-        "Could not observe llama-server effective context: {last_error}"
-    ))
+fn query_server_effective_context(
+    client: &crate::local_client::LocalHttpClient,
+    timeout: Duration,
+) -> Result<u32, String> {
+    // The effective-context probe goes through the centralized local client
+    // (audit MT-06), so a TLS/API-key-configured server answers it.
+    let (status, body) = client
+        .get_bytes("/props", timeout)
+        .map_err(|error| format!("Could not observe llama-server effective context: {error}"))?;
+    parse_server_effective_context(status, &body)
+        .map_err(|error| format!("Could not observe llama-server effective context: {error}"))
 }
 
 fn observe_server_effective_context(
-    host: &str,
-    port: u16,
+    client: &crate::local_client::LocalHttpClient,
     timeout: Duration,
     observed_at_ms: u64,
 ) -> evidence::Evidence<u32> {
-    match query_server_effective_context(host, port, timeout) {
+    match query_server_effective_context(client, timeout) {
         Ok(context) => evidence::Evidence {
             value: Some(context),
             level: evidence::EvidenceLevel::Observed,
@@ -1081,8 +1051,13 @@ fn update_launch_effective_context(
     timeout: Duration,
     observed_at_ms: u64,
 ) {
-    validation.effective_context =
-        observe_server_effective_context(host, port, timeout, observed_at_ms);
+    validation.effective_context = observe_server_effective_context(
+        &crate::local_client::LocalHttpClient::plain(host, port).unwrap_or_else(|_| {
+            crate::local_client::LocalHttpClient::plain("127.0.0.1", port).unwrap()
+        }),
+        timeout,
+        observed_at_ms,
+    );
 }
 
 fn bounded_log_tail(log_path: &str) -> String {
@@ -1159,43 +1134,34 @@ fn launch_failure_evidence(
 #[cfg(test)]
 fn wait_until_healthy(
     child: &mut impl HealthProcess,
-    host: &str,
-    port: u16,
+    client: &crate::local_client::LocalHttpClient,
     log_path: &str,
     timeout: Duration,
 ) -> Result<(), String> {
-    wait_until_healthy_inner(child, host, port, log_path, timeout, None)
+    wait_until_healthy_inner(child, client, log_path, timeout, None)
 }
 
 fn wait_until_healthy_cancellable(
     child: &mut impl HealthProcess,
-    host: &str,
-    port: u16,
+    client: &crate::local_client::LocalHttpClient,
     log_path: &str,
     timeout: Duration,
     cancelled: &AtomicBool,
 ) -> Result<(), String> {
-    wait_until_healthy_inner(child, host, port, log_path, timeout, Some(cancelled))
+    wait_until_healthy_inner(child, client, log_path, timeout, Some(cancelled))
 }
 
 fn wait_until_healthy_inner(
     child: &mut impl HealthProcess,
-    host: &str,
-    port: u16,
+    client: &crate::local_client::LocalHttpClient,
     log_path: &str,
     timeout: Duration,
     cancelled: Option<&AtomicBool>,
 ) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     let mut last_health_error = None;
-    let connect_host = connect_host(host);
-    let addresses = health_socket_addresses(host, port)
+    let addresses = health_socket_addresses(client.host(), client.port())
         .map_err(|message| launch_failure("health_connect", message, log_path, None, false))?;
-    let authority = if connect_host.contains(':') {
-        format!("[{connect_host}]:{port}")
-    } else {
-        format!("{connect_host}:{port}")
-    };
     loop {
         if cancelled.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
             return Err(cancelled_launch_failure(
@@ -1217,19 +1183,35 @@ fn wait_until_healthy_inner(
                 false,
             ));
         }
-        for address in &addresses {
-            if let Ok(mut stream) = TcpStream::connect_timeout(address, Duration::from_millis(500))
-            {
-                use std::io::Write;
-                let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-                let request = format!(
-                    "GET /health HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\n\r\n"
-                );
-                if stream.write_all(request.as_bytes()).is_ok()
-                    && read_health_response(&mut stream)
-                        .is_ok_and(|response| is_healthy_response(&response))
-                {
-                    match listener_is_owned_by_at(*address, child.id()) {
+        {
+            // The startup health probe goes through the centralized local
+            // client (audit MT-06): a TLS/API-key-configured server answers
+            // it, framing and bounds apply, and the profile's transport is
+            // honored instead of a plaintext TCP guess.
+            // Bound each probe so the loop still observes process exit and
+            // cancellation between attempts (a refused connect can retry for
+            // seconds inside one call).
+            let probe_budget = deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_secs(1));
+            if let Ok((status, _)) = client.get_bytes("/health", probe_budget) {
+                if status == 200 {
+                    // Any of the host's candidate loopback addresses must be
+                    // owned by the child; an explicit check error surfaces.
+                    let owner_checks = addresses
+                        .iter()
+                        .map(|address| listener_is_owned_by_at(*address, child.id()))
+                        .collect::<Vec<_>>();
+                    let owned = if owner_checks.iter().any(|check| matches!(check, Ok(true))) {
+                        Ok(true)
+                    } else if let Some(Err(error)) =
+                        owner_checks.iter().find(|check| check.is_err())
+                    {
+                        Err(error.clone())
+                    } else {
+                        Ok(false)
+                    };
+                    match owned {
                         Ok(true) => match child.try_wait() {
                             Ok(None) => return Ok(()),
                             Ok(Some(code)) => {
@@ -1260,8 +1242,9 @@ fn wait_until_healthy_inner(
                         },
                         Ok(false) => {
                             last_health_error = Some(format!(
-                                "llama-server process {} does not own TCP port {port}",
-                                child.id()
+                                "llama-server process {} does not own TCP port {}",
+                                child.id(),
+                                client.port()
                             ));
                         }
                         Err(error) => {
@@ -1276,6 +1259,22 @@ fn wait_until_healthy_inner(
                     }
                 }
             }
+        }
+        // Exit wins over the timeout verdict: a child that exited during the
+        // final probe must still produce structured health_exit evidence.
+        if let Ok(Some(code)) = child.try_wait() {
+            return Err(launch_failure(
+                "health_exit",
+                format!(
+                    "llama-server exited with {} before becoming healthy",
+                    code.code()
+                        .map(|c| format!("code {c}"))
+                        .unwrap_or_else(|| "a signal".into())
+                ),
+                log_path,
+                code.code(),
+                false,
+            ));
         }
         if Instant::now() >= deadline {
             let detail = last_health_error
@@ -1749,8 +1748,7 @@ fn start_server_worker(
         };
     let health = wait_until_healthy_cancellable(
         &mut child,
-        &profile.host,
-        profile.port,
+        &local_client(&profile)?,
         &log_path,
         Duration::from_secs(600),
         &cancel,
@@ -1935,7 +1933,8 @@ async fn benchmark_server(
     // blocking worker instead of the main thread or async executor
     // (audit IPC-01 I4).
     tauri::async_runtime::spawn_blocking(move || {
-        core::benchmark_server(&server.profile.host, server.profile.port, tokens, repeats)
+        let client = local_client(&server.profile)?;
+        core::benchmark_server(&client, tokens, repeats)
     })
     .await
     .map_err(|error| format!("Benchmark task failed: {error}"))?
@@ -2123,8 +2122,7 @@ fn run_benchmark_snapshot(
         }
         (_, Some(prompt_tokens)) => prompt_tokens,
         (evidence::CacheMode::Warm, None) => measurement::prepare_exact_prompt_tokens_cancellable(
-            &profile.host,
-            profile.port,
+            &local_client(&profile)?,
             &workload,
             cancelled,
         )?,
@@ -2139,16 +2137,14 @@ fn run_benchmark_snapshot(
             let (mut child, _, log_path, _lease) = spawn_server(&profile, "benchmark-cold")?;
             let attempt = wait_until_healthy_cancellable(
                 &mut child,
-                &profile.host,
-                profile.port,
+                &local_client(&profile)?,
                 &log_path,
                 Duration::from_secs(120),
                 cancelled,
             )
             .and_then(|_| {
                 let mut timing = measurement::completion_request_with_prompt_tokens_cancellable(
-                    &profile.host,
-                    profile.port,
+                    &local_client(&profile)?,
                     &workload,
                     &prompt_tokens,
                     cancelled,
@@ -2171,8 +2167,7 @@ fn run_benchmark_snapshot(
     } else {
         measurement::run_workload_with(&workload, cancelled, || {
             let mut timing = measurement::completion_request_with_prompt_tokens_cancellable(
-                &profile.host,
-                profile.port,
+                &local_client(&profile)?,
                 &workload,
                 &prompt_tokens,
                 cancelled,
@@ -2277,9 +2272,9 @@ async fn benchmark_v2(
             let preparation_cancelled = cancelled.clone();
             Some(
                 tauri::async_runtime::spawn_blocking(move || {
+                    let client = crate::local_client::LocalHttpClient::from_profile(&profile)?;
                     measurement::prepare_exact_prompt_tokens_cancellable(
-                        &profile.host,
-                        profile.port,
+                        &client,
                         &workload,
                         preparation_cancelled.as_ref(),
                     )
@@ -2427,7 +2422,7 @@ async fn run_quality_suite(
     // operations reservation and must not finalize against a replacement
     // (audit MT-05).
     let reservation = reserve_operation(&state.operations, OperationOwner::Quality)?;
-    let (host, port, runtime_path, model_logical_id) = {
+    let (profile, runtime_path, model_logical_id) = {
         let mut slot = state
             .server
             .lock()
@@ -2440,16 +2435,16 @@ async fn run_quality_suite(
             .map(|artifact| artifact.logical_id.clone())
             .ok_or("Validated model identity is unavailable")?;
         (
-            server.profile.host.clone(),
-            server.profile.port,
+            server.profile.clone(),
             server.profile.runtime.clone(),
             model_logical_id,
         )
     };
     let joined = tauri::async_runtime::spawn_blocking(
         move || -> Result<recommend::QualitySuiteResult, String> {
+            let client = crate::local_client::LocalHttpClient::from_profile(&profile)?;
             let mut result = recommend::run_quality_suite_with(|_, prompt| {
-                measurement::quality_completion_request(&host, port, prompt)
+                measurement::quality_completion_request(&client, prompt)
             });
             result.observed_at_ms = Some(
                 SystemTime::now()
@@ -2930,8 +2925,7 @@ impl tune::Bench for LiveBench<'_> {
             // (audit MT-04).
             wait_until_healthy_cancellable(
                 &mut child,
-                &profile.host,
-                profile.port,
+                &local_client(profile)?,
                 &log_path,
                 Duration::from_secs(600),
                 &self.cancel,
@@ -2965,13 +2959,8 @@ impl tune::Bench for LiveBench<'_> {
             // The cancellable completion path replaces the legacy benchmark so
             // Stop cannot be ignored while a generation request is pending
             // (audit MT-04).
-            core::benchmark_server_cancellable(
-                &profile.host,
-                profile.port,
-                self.tokens,
-                self.repeats,
-                &self.cancel,
-            )
+            let client = crate::local_client::LocalHttpClient::from_profile(profile)?;
+            core::benchmark_server_cancellable(&client, self.tokens, self.repeats, &self.cancel)
         })();
         // Cleanup failures must be visible: a measured result may not be
         // reported as a clean success when the trial server could not be
@@ -3162,6 +3151,15 @@ fn suggest_port(host: String, preferred: u16) -> Result<u16, String> {
 // ---------------------------------------------------------------------------
 
 /// Where the catalog cache and any in-flight download bookkeeping live.
+/// The centralized local-server client for one validated profile (audit
+/// MT-06): honors TLS/API-key configuration and applies bounded,
+/// deadline-governed requests.
+fn local_client(
+    profile: &core::LaunchProfile,
+) -> Result<crate::local_client::LocalHttpClient, String> {
+    crate::local_client::LocalHttpClient::from_profile(profile)
+}
+
 fn catalog_cache_root(app: &tauri::AppHandle) -> std::path::PathBuf {
     use tauri::Manager;
     // The packaged verifier runs inside an isolated profile whose root the
@@ -4027,8 +4025,7 @@ mod release_security_tests {
 
         let error = wait_until_healthy(
             &mut child,
-            "127.0.0.1",
-            port,
+            &crate::local_client::LocalHttpClient::plain("127.0.0.1", port).unwrap(),
             "",
             Duration::from_millis(500),
         )
@@ -4042,9 +4039,13 @@ mod release_security_tests {
 
     #[test]
     fn server_props_parser_reads_the_effective_slot_context() {
-        let response = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"default_generation_settings\":{\"n_ctx\":4096}}";
+        let body = b"{\"default_generation_settings\":{\"n_ctx\":4096}}";
 
-        assert_eq!(parse_server_effective_context(response).unwrap(), 4_096);
+        assert_eq!(parse_server_effective_context(200, body).unwrap(), 4_096);
+        // A non-200 status is surfaced, never parsed as a body.
+        assert!(parse_server_effective_context(500, body)
+            .unwrap_err()
+            .contains("HTTP 500"));
     }
 
     #[test]
@@ -4068,8 +4069,11 @@ mod release_security_tests {
             .unwrap();
         });
 
-        let context =
-            observe_server_effective_context("127.0.0.1", port, Duration::from_secs(1), 42);
+        let context = observe_server_effective_context(
+            &crate::local_client::LocalHttpClient::plain("127.0.0.1", port).unwrap(),
+            Duration::from_secs(1),
+            42,
+        );
 
         assert_eq!(context.value, Some(8_192));
         assert_eq!(context.level, evidence::EvidenceLevel::Observed);
@@ -4120,8 +4124,11 @@ mod release_security_tests {
         let port = listener.local_addr().unwrap().port();
         drop(listener);
 
-        let context =
-            observe_server_effective_context("127.0.0.1", port, Duration::from_millis(100), 42);
+        let context = observe_server_effective_context(
+            &crate::local_client::LocalHttpClient::plain("127.0.0.1", port).unwrap(),
+            Duration::from_millis(100),
+            42,
+        );
 
         assert_eq!(context.value, None);
         assert_eq!(context.level, evidence::EvidenceLevel::Unknown);
@@ -4167,10 +4174,13 @@ mod release_security_tests {
             .spawn()
             .expect("spawn test process");
 
+        // A syntactically plain host that cannot resolve keeps the covered
+        // behavior: the health wait fails through the structured
+        // health_connect evidence path.
         let error = wait_until_healthy(
             &mut child,
-            "host name with spaces",
-            30_144,
+            &crate::local_client::LocalHttpClient::plain("host-name-with-no-dns.invalid", 30_144)
+                .unwrap(),
             "",
             Duration::from_millis(10),
         )
@@ -4222,8 +4232,7 @@ mod release_security_tests {
 
         let error = wait_until_healthy(
             &mut child,
-            "127.0.0.1",
-            port,
+            &crate::local_client::LocalHttpClient::plain("127.0.0.1", port).unwrap(),
             log_path.to_string_lossy().as_ref(),
             Duration::from_millis(1),
         )
@@ -4263,8 +4272,7 @@ mod release_security_tests {
 
         let error = wait_until_healthy_cancellable(
             &mut child,
-            "127.0.0.1",
-            port,
+            &crate::local_client::LocalHttpClient::plain("127.0.0.1", port).unwrap(),
             &log_path.to_string_lossy(),
             Duration::from_secs(120),
             &cancelled,
@@ -4303,8 +4311,7 @@ mod release_security_tests {
 
         let error = wait_until_healthy(
             &mut child,
-            "127.0.0.1",
-            port,
+            &crate::local_client::LocalHttpClient::plain("127.0.0.1", port).unwrap(),
             log_path.to_string_lossy().as_ref(),
             Duration::from_secs(2),
         )

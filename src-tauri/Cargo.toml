@@ -42,3 +42,7 @@ windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_Graphics
 windows-version = "=0.1.7"
 process-wrap = { version = "=10.0.0", default-features = false, features = ["std", "job-object", "creation-flags"] }
 
+[dev-dependencies]
+# Test-only TLS fixture server for the centralized local client (audit
+# MT-06); the same rustls version reqwest already links.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }

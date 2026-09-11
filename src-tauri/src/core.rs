@@ -3,8 +3,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -623,6 +622,11 @@ impl LaunchProfile {
         if !loopback && matches!(self.cors_origins.trim(), "" | "*") {
             return Err("A non-loopback host requires restricted CORS origins".into());
         }
+        // Transport files are validated here, before launch: a missing or
+        // malformed API-key/certificate file would otherwise surface as the
+        // server's own launch failure or a long health timeout (audit MT-06
+        // I4). The centralized local client uses the same rules.
+        crate::local_client::LocalHttpClient::validate_transport_files(self)?;
         let model_backed = matches!(
             self.spec_type.as_str(),
             "draft-simple" | "draft-eagle3" | "draft-dflash" | "draft-dspark"
@@ -1808,12 +1812,13 @@ pub fn parse_tps(body: &str) -> Result<f64, String> {
         .ok_or_else(|| "llama-server response did not include generation throughput".into())
 }
 
-fn completion_request(host: &str, port: u16, tokens: u32) -> Result<f64, String> {
-    let connect_host = match host {
-        "0.0.0.0" => "127.0.0.1",
-        "::" | "[::]" => "::1",
-        value => value,
-    };
+fn completion_request(
+    client: &crate::local_client::LocalHttpClient,
+    tokens: u32,
+) -> Result<f64, String> {
+    // The legacy benchmark path uses the centralized local client (audit
+    // MT-06): profile TLS/API-key configuration applies, responses are
+    // bounded, and the deadline covers the whole operation.
     let body = serde_json::json!({
         "prompt": "Write a detailed technical explanation of speculative decoding, including verification, acceptance, and performance tradeoffs.",
         "n_predict": tokens,
@@ -1821,61 +1826,62 @@ fn completion_request(host: &str, port: u16, tokens: u32) -> Result<f64, String>
         "seed": 42,
         "ignore_eos": true,
         "stream": false
-    }).to_string();
-    let mut stream = TcpStream::connect((connect_host, port)).map_err(|e| e.to_string())?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(600)))
-        .map_err(|e| e.to_string())?;
-    let request = format!(
-        "POST /completion HTTP/1.1\r\nHost: {connect_host}:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.len(), body
-    );
-    stream
-        .write_all(request.as_bytes())
-        .map_err(|e| e.to_string())?;
-    let mut response = String::new();
-    stream
-        .read_to_string(&mut response)
-        .map_err(|e| e.to_string())?;
-    let (headers, payload) = response
-        .split_once("\r\n\r\n")
-        .ok_or_else(|| "Invalid HTTP response from llama-server".to_string())?;
-    if !headers.contains(" 200 ") {
-        return Err(format!(
-            "Benchmark request failed: {}",
-            headers.lines().next().unwrap_or(headers)
-        ));
+    });
+    let (status, bytes) = client.post_json("/completion", &body, LEGACY_BENCH_TIMEOUT)?;
+    if status != 200 {
+        return Err(format!("Benchmark request failed: HTTP {status}"));
     }
-    parse_tps(payload)
+    let payload = String::from_utf8(bytes)
+        .map_err(|_| "Benchmark response was not valid UTF-8".to_string())?;
+    parse_tps(&payload)
 }
 
+fn completion_request_cancellable(
+    client: &crate::local_client::LocalHttpClient,
+    tokens: u32,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> Result<f64, String> {
+    let body = serde_json::json!({
+        "prompt": "Write a detailed technical explanation of speculative decoding, including verification, acceptance, and performance tradeoffs.",
+        "n_predict": tokens,
+        "temperature": 0,
+        "seed": 42,
+        "ignore_eos": true,
+        "stream": false
+    });
+    let (status, bytes) =
+        client.post_json_cancellable("/completion", &body, LEGACY_BENCH_TIMEOUT, cancelled)?;
+    if status != 200 {
+        return Err(format!("Benchmark request failed: HTTP {status}"));
+    }
+    let payload = String::from_utf8(bytes)
+        .map_err(|_| "Benchmark response was not valid UTF-8".to_string())?;
+    parse_tps(&payload)
+}
 pub fn benchmark_server(
-    host: &str,
-    port: u16,
+    client: &crate::local_client::LocalHttpClient,
     tokens: u32,
     repeats: u16,
 ) -> Result<BenchmarkSummary, String> {
     if repeats == 0 || repeats > 10 {
         return Err("Repeats must be between 1 and 10".into());
     }
-    completion_request(host, port, tokens.min(64))?;
+    completion_request(client, tokens.min(64))?;
     let mut samples = Vec::new();
     for _ in 0..repeats {
-        samples.push(completion_request(host, port, tokens)?);
+        samples.push(completion_request(client, tokens)?);
     }
     summarize_benchmark(samples, tokens, repeats)
 }
 
-/// Upper bound on one benchmark HTTP response body, so a misbehaving server
-/// cannot inflate memory through this path.
-const MAX_BENCH_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+/// Whole-operation deadline for one legacy benchmark generation.
+const LEGACY_BENCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
 
 /// The cancellable benchmark the tuner uses: identical measurements, but
 /// every read waits in short slices and checks the cancellation flag, so a
 /// Stop during an in-flight generation cannot be ignored (audit MT-04).
 pub fn benchmark_server_cancellable(
-    host: &str,
-    port: u16,
+    client: &crate::local_client::LocalHttpClient,
     tokens: u32,
     repeats: u16,
     cancelled: &std::sync::atomic::AtomicBool,
@@ -1883,86 +1889,12 @@ pub fn benchmark_server_cancellable(
     if repeats == 0 || repeats > 10 {
         return Err("Repeats must be between 1 and 10".into());
     }
-    completion_request_cancellable(host, port, tokens.min(64), cancelled)?;
+    completion_request_cancellable(client, tokens.min(64), cancelled)?;
     let mut samples = Vec::new();
     for _ in 0..repeats {
-        samples.push(completion_request_cancellable(
-            host, port, tokens, cancelled,
-        )?);
+        samples.push(completion_request_cancellable(client, tokens, cancelled)?);
     }
     summarize_benchmark(samples, tokens, repeats)
-}
-
-fn completion_request_cancellable(
-    host: &str,
-    port: u16,
-    tokens: u32,
-    cancelled: &std::sync::atomic::AtomicBool,
-) -> Result<f64, String> {
-    use std::io::Read as _;
-    let connect_host = match host {
-        "0.0.0.0" => "127.0.0.1",
-        "::" | "[::]" => "::1",
-        value => value,
-    };
-    let body = serde_json::json!({
-        "prompt": "Write a detailed technical explanation of speculative decoding, including verification, acceptance, and performance tradeoffs.",
-        "n_predict": tokens,
-        "temperature": 0,
-        "seed": 42,
-        "ignore_eos": true,
-        "stream": false
-    })
-    .to_string();
-    let mut stream = TcpStream::connect((connect_host, port)).map_err(|e| e.to_string())?;
-    // Short read slices: each timeout returns to the loop, where the
-    // cancellation flag is checked, so Stop is honoured within ~250 ms even
-    // while the model is still generating.
-    stream
-        .set_read_timeout(Some(Duration::from_millis(250)))
-        .map_err(|e| e.to_string())?;
-    let request = format!(
-        "POST /completion HTTP/1.1\r\nHost: {connect_host}:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.len(),
-        body
-    );
-    stream
-        .write_all(request.as_bytes())
-        .map_err(|e| e.to_string())?;
-    let mut response: Vec<u8> = Vec::new();
-    let mut buffer = [0_u8; 16 * 1024];
-    loop {
-        if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
-            return Err("Benchmark cancelled while waiting for a response".into());
-        }
-        match stream.read(&mut buffer) {
-            Ok(0) => break,
-            Ok(read) => {
-                if response.len() + read > MAX_BENCH_RESPONSE_BYTES {
-                    return Err("Benchmark response exceeded its size limit".into());
-                }
-                response.extend_from_slice(&buffer[..read]);
-            }
-            Err(error)
-                if error.kind() == std::io::ErrorKind::WouldBlock
-                    || error.kind() == std::io::ErrorKind::TimedOut =>
-            {
-                continue
-            }
-            Err(error) => return Err(error.to_string()),
-        }
-    }
-    let response = String::from_utf8_lossy(&response);
-    let (headers, payload) = response
-        .split_once("\r\n\r\n")
-        .ok_or_else(|| "Invalid HTTP response from llama-server".to_string())?;
-    if !headers.contains(" 200 ") {
-        return Err(format!(
-            "Benchmark request failed: {}",
-            headers.lines().next().unwrap_or(headers)
-        ));
-    }
-    parse_tps(payload)
 }
 
 #[cfg(test)]
@@ -3045,12 +2977,19 @@ fn main() {
         };
         assert!(profile.build_args().unwrap_err().contains("API key file"));
 
-        profile.api_key_file = r"C:\secrets\llama.keys".into();
+        // A real key file is required now (audit MT-06 I4): pre-launch
+        // validation reads it instead of deferring to the server.
+        let dir = std::env::temp_dir().join(format!("localmotive-lan-key-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let key_path = dir.join("llama.keys");
+        std::fs::write(&key_path, "lan-secret-key").unwrap();
+        profile.api_key_file = key_path.to_string_lossy().to_string();
         profile.cors_origins = "*".into();
         assert!(profile.build_args().unwrap_err().contains("CORS"));
 
         profile.cors_origins = "http://192.168.1.20:3000".into();
         assert!(profile.build_args().is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -3240,6 +3179,105 @@ fn main() {
 
         assert_eq!(compact.supported_flags, spaced.supported_flags);
         assert_ne!(compact.help_sha256, spaced.help_sha256);
+    }
+
+    #[test]
+    fn mt06_profile_validation_rejects_unusable_transport_files_before_launch() {
+        let dir = std::env::temp_dir().join(format!("localmotive-mt06-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut profile = LaunchProfile {
+            model: "C:/models/model.gguf".into(),
+            alias: "test-model".into(),
+            host: "127.0.0.1".into(),
+            port: 8080,
+            ..LaunchProfile::default()
+        };
+
+        // A missing API-key file is rejected with the file named.
+        profile.api_key_file = dir.join("missing.key").to_string_lossy().to_string();
+        let error = profile.build_args().unwrap_err();
+        assert!(error.contains("API key file"), "{error}");
+
+        // An empty key file is rejected.
+        let empty = dir.join("empty.key");
+        std::fs::write(&empty, "   \n").unwrap();
+        profile.api_key_file = empty.to_string_lossy().to_string();
+        assert!(profile.build_args().unwrap_err().contains("empty"));
+
+        // A certificate that is not PEM is rejected.
+        let bad_cert = dir.join("bad.crt");
+        std::fs::write(&bad_cert, "not a certificate").unwrap();
+        profile.api_key_file = String::new();
+        profile.ssl_cert_file = bad_cert.to_string_lossy().to_string();
+        profile.ssl_key_file = bad_cert.to_string_lossy().to_string();
+        let error = profile.build_args().unwrap_err();
+        assert!(error.contains("SSL certificate"), "{error}");
+
+        // A real PEM pair passes the file checks.
+        let cert = dir.join("ok.crt");
+        let key = dir.join("ok.key");
+        std::fs::write(
+            &cert,
+            "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &key,
+            "-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----\n",
+        )
+        .unwrap();
+        profile.ssl_cert_file = cert.to_string_lossy().to_string();
+        profile.ssl_key_file = key.to_string_lossy().to_string();
+        profile
+            .build_args()
+            .expect("a readable PEM pair must validate");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn mt06_managaged_transport_flags_require_runtime_capability() {
+        // A runtime whose help does not advertise the TLS flags must fail
+        // validation before launch instead of starting a plaintext server.
+        let mut profile = LaunchProfile {
+            model: "C:/models/model.gguf".into(),
+            alias: "test-model".into(),
+            host: "127.0.0.1".into(),
+            port: 8080,
+            ..LaunchProfile::default()
+        };
+        let dir = std::env::temp_dir().join(format!("localmotive-mt06b-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cert = dir.join("ok.crt");
+        let key = dir.join("ok.key");
+        std::fs::write(
+            &cert,
+            "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &key,
+            "-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----\n",
+        )
+        .unwrap();
+        profile.ssl_cert_file = cert.to_string_lossy().to_string();
+        profile.ssl_key_file = key.to_string_lossy().to_string();
+
+        let capabilities = RuntimeCapabilities {
+            path: "C:/runtime/llama-server.exe".into(),
+            version: "test".into(),
+            build: "test".into(),
+            commit: "test".into(),
+            help_sha256: "test".into(),
+            spec_types: Vec::new(),
+            supported_flags: vec!["--host".into(), "--port".into(), "-m".into()],
+            metrics: false,
+            fit: false,
+            multimodal: false,
+        };
+        let error = validate_launch_arguments(&profile, &capabilities).unwrap_err();
+        assert!(error.contains("--ssl-cert-file"), "{error}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

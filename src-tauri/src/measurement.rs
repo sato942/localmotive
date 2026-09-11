@@ -2,15 +2,14 @@ use crate::evidence::{
     AttemptOutcome, BenchmarkManifest, BenchmarkObservation, CacheMode, Evidence, EvidenceSource,
     EvidenceSourceKind, FitClass, WarmupObservation, Workload,
 };
+use crate::local_client::LocalHttpClient;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
-use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-const MAX_HTTP_RESPONSE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_HTTP_REQUEST_BYTES: usize = 16 * 1024 * 1024;
 const BENCHMARK_PROMPT: &str = "Explain deterministic local inference measurement with fixed inputs, explicit evidence, and reproducible results. ";
 static MANIFEST_NONCE: AtomicU64 = AtomicU64::new(0);
@@ -456,8 +455,7 @@ where
 }
 
 fn post_json(
-    host: &str,
-    port: u16,
+    client: &LocalHttpClient,
     path: &str,
     body: &str,
     timeout: Duration,
@@ -466,78 +464,27 @@ fn post_json(
     if cancelled.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
         return Err("Benchmark cancelled before the request".into());
     }
-    if host.contains(['\r', '\n']) {
-        return Err("Benchmark host contains an invalid header character".into());
-    }
     if body.len() > MAX_HTTP_REQUEST_BYTES {
         return Err(format!(
             "Benchmark request exceeds the {MAX_HTTP_REQUEST_BYTES}-byte limit"
         ));
     }
-    let connect_host = match host {
-        "0.0.0.0" => "127.0.0.1",
-        "::" | "[::]" => "::1",
-        value => value,
+    // The centralized local client (audit MT-06) owns framing (including
+    // chunked responses), size bounds, the whole-operation deadline and the
+    // profile's TLS/API-key configuration.
+    let value: serde_json::Value = serde_json::from_str(body).map_err(|error| error.to_string())?;
+    let (status, bytes) = match cancelled {
+        Some(flag) => client.post_json_cancellable(path, &value, timeout, flag)?,
+        None => client.post_json(path, &value, timeout)?,
     };
-    let mut stream = TcpStream::connect((connect_host, port)).map_err(|error| error.to_string())?;
-    stream
-        .set_read_timeout(Some(Duration::from_millis(100).min(timeout)))
-        .map_err(|error| error.to_string())?;
-    stream
-        .set_write_timeout(Some(timeout))
-        .map_err(|error| error.to_string())?;
-    let request = format!(
-        "POST {path} HTTP/1.1\r\nHost: {connect_host}:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.len(), body
-    );
-    stream
-        .write_all(request.as_bytes())
-        .map_err(|error| error.to_string())?;
-
-    let started = Instant::now();
-    let mut response_bytes = Vec::new();
-    let mut buffer = [0_u8; 16 * 1024];
-    loop {
-        if cancelled.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
-            return Err("Benchmark cancelled while waiting for a response".into());
-        }
-        if started.elapsed() >= timeout {
-            return Err("Benchmark request timed out".into());
-        }
-        match stream.read(&mut buffer) {
-            Ok(0) => break,
-            Ok(read) => {
-                if response_bytes.len().saturating_add(read) > MAX_HTTP_RESPONSE_BYTES as usize {
-                    return Err(format!(
-                        "Benchmark response exceeds the {}-byte limit",
-                        MAX_HTTP_RESPONSE_BYTES
-                    ));
-                }
-                response_bytes.extend_from_slice(&buffer[..read]);
-            }
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) => {}
-            Err(error) => return Err(error.to_string()),
-        }
+    if status != 200 {
+        return Err(format!("Benchmark request failed: HTTP {status}"));
     }
-    let response = String::from_utf8(response_bytes)
-        .map_err(|_| "Benchmark response was not valid UTF-8".to_string())?;
-    let (headers, payload) = response
-        .split_once("\r\n\r\n")
-        .ok_or("Invalid HTTP response from llama-server")?;
-    let status = headers.lines().next().unwrap_or_default();
-    if !(status.starts_with("HTTP/1.1 200 ") || status.starts_with("HTTP/1.0 200 ")) {
-        return Err(format!("Benchmark request failed: {status}"));
-    }
-    Ok(payload.into())
+    String::from_utf8(bytes).map_err(|_| "Benchmark response was not valid UTF-8".to_string())
 }
 
 fn exact_prompt_tokens(
-    host: &str,
-    port: u16,
+    client: &LocalHttpClient,
     target: u32,
     timeout: Duration,
     cancelled: Option<&AtomicBool>,
@@ -549,7 +496,7 @@ fn exact_prompt_tokens(
         "with_pieces": false
     })
     .to_string();
-    let payload = post_json(host, port, "/tokenize", &body, timeout, cancelled)?;
+    let payload = post_json(client, "/tokenize", &body, timeout, cancelled)?;
     let value: serde_json::Value =
         serde_json::from_str(&payload).map_err(|error| error.to_string())?;
     let source = value
@@ -572,8 +519,7 @@ fn exact_prompt_tokens(
 }
 
 fn completion_request_with_prompt_tokens_inner(
-    host: &str,
-    port: u16,
+    client: &LocalHttpClient,
     workload: &Workload,
     prompt: &[i32],
     cancelled: Option<&AtomicBool>,
@@ -602,7 +548,7 @@ fn completion_request_with_prompt_tokens_inner(
         "cache_prompt": matches!(workload.cache_mode, crate::evidence::CacheMode::Warm)
     })
     .to_string();
-    let payload = post_json(host, port, "/completion", &body, timeout, cancelled)?;
+    let payload = post_json(client, "/completion", &body, timeout, cancelled)?;
     let timing = parse_completion_timing(&payload)?;
     // b10816 reports newly evaluated prompt tokens separately from tokens
     // restored from the prompt cache; the requested prompt is fully accounted
@@ -628,15 +574,13 @@ fn completion_request_with_prompt_tokens_inner(
 }
 
 pub fn prepare_exact_prompt_tokens_cancellable(
-    host: &str,
-    port: u16,
+    client: &LocalHttpClient,
     workload: &Workload,
     cancelled: &AtomicBool,
 ) -> Result<Vec<i32>, String> {
     workload.validate().map_err(|error| error.to_string())?;
     exact_prompt_tokens(
-        host,
-        port,
+        client,
         workload.prompt_tokens,
         Duration::from_millis(workload.timeout_ms),
         Some(cancelled),
@@ -644,50 +588,48 @@ pub fn prepare_exact_prompt_tokens_cancellable(
 }
 
 pub fn completion_request_with_prompt_tokens_cancellable(
-    host: &str,
-    port: u16,
+    client: &LocalHttpClient,
     workload: &Workload,
     prompt: &[i32],
     cancelled: &AtomicBool,
 ) -> Result<CompletionTiming, String> {
-    completion_request_with_prompt_tokens_inner(host, port, workload, prompt, Some(cancelled))
+    completion_request_with_prompt_tokens_inner(client, workload, prompt, Some(cancelled))
 }
 
 fn completion_request_inner(
-    host: &str,
-    port: u16,
+    client: &LocalHttpClient,
     workload: &Workload,
     cancelled: Option<&AtomicBool>,
 ) -> Result<CompletionTiming, String> {
     workload.validate().map_err(|error| error.to_string())?;
     let prompt = exact_prompt_tokens(
-        host,
-        port,
+        client,
         workload.prompt_tokens,
         Duration::from_millis(workload.timeout_ms),
         cancelled,
     )?;
-    completion_request_with_prompt_tokens_inner(host, port, workload, &prompt, cancelled)
+    completion_request_with_prompt_tokens_inner(client, workload, &prompt, cancelled)
 }
 
 pub fn completion_request(
-    host: &str,
-    port: u16,
+    client: &LocalHttpClient,
     workload: &Workload,
 ) -> Result<CompletionTiming, String> {
-    completion_request_inner(host, port, workload, None)
+    completion_request_inner(client, workload, None)
 }
 
 pub fn completion_request_cancellable(
-    host: &str,
-    port: u16,
+    client: &LocalHttpClient,
     workload: &Workload,
     cancelled: &AtomicBool,
 ) -> Result<CompletionTiming, String> {
-    completion_request_inner(host, port, workload, Some(cancelled))
+    completion_request_inner(client, workload, Some(cancelled))
 }
 
-pub fn quality_completion_request(host: &str, port: u16, prompt: &str) -> Result<String, String> {
+pub fn quality_completion_request(
+    client: &LocalHttpClient,
+    prompt: &str,
+) -> Result<String, String> {
     let body = serde_json::json!({
         "prompt": prompt,
         "n_predict": 64,
@@ -698,14 +640,7 @@ pub fn quality_completion_request(host: &str, port: u16, prompt: &str) -> Result
         "cache_prompt": false
     })
     .to_string();
-    let payload = post_json(
-        host,
-        port,
-        "/completion",
-        &body,
-        Duration::from_secs(120),
-        None,
-    )?;
+    let payload = post_json(client, "/completion", &body, Duration::from_secs(120), None)?;
     parse_completion_content(&payload)
 }
 
@@ -786,6 +721,7 @@ pub fn validate_replay_compatibility(
 mod tests {
     use super::*;
     use crate::evidence::{LaunchFact, ModelFact, RuntimeFact};
+    use std::io::Read;
     use std::net::{TcpListener, TcpStream};
     use std::sync::Arc;
     use std::thread;
@@ -1180,7 +1116,11 @@ mod tests {
             ..Workload::default()
         };
 
-        let timing = completion_request("127.0.0.1", port, &workload).unwrap();
+        let timing = completion_request(
+            &LocalHttpClient::plain("127.0.0.1", port).unwrap(),
+            &workload,
+        )
+        .unwrap();
 
         assert_eq!(timing.decode_tps, 80.0);
         server.join().unwrap();
@@ -1225,7 +1165,11 @@ mod tests {
             ..Workload::default()
         };
 
-        let timing = completion_request("127.0.0.1", port, &workload).unwrap();
+        let timing = completion_request(
+            &LocalHttpClient::plain("127.0.0.1", port).unwrap(),
+            &workload,
+        )
+        .unwrap();
 
         assert_eq!(timing.prompt_tokens, 5);
         server.join().unwrap();
@@ -1265,7 +1209,11 @@ mod tests {
             ..Workload::default()
         };
 
-        let error = completion_request("127.0.0.1", port, &workload).unwrap_err();
+        let error = completion_request(
+            &LocalHttpClient::plain("127.0.0.1", port).unwrap(),
+            &workload,
+        )
+        .unwrap_err();
 
         assert!(
             error.contains(
@@ -1310,7 +1258,11 @@ mod tests {
             ..Workload::default()
         };
 
-        let error = completion_request("127.0.0.1", port, &workload).unwrap_err();
+        let error = completion_request(
+            &LocalHttpClient::plain("127.0.0.1", port).unwrap(),
+            &workload,
+        )
+        .unwrap_err();
 
         assert!(error.contains("generated 1 tokens; expected 2"));
         server.join().unwrap();
@@ -1355,17 +1307,13 @@ mod tests {
             ..Workload::default()
         };
         let cancelled = AtomicBool::new(false);
+        let client = LocalHttpClient::plain("127.0.0.1", port).unwrap();
         let prompt =
-            prepare_exact_prompt_tokens_cancellable("127.0.0.1", port, &workload, &cancelled)
-                .unwrap();
+            prepare_exact_prompt_tokens_cancellable(&client, &workload, &cancelled).unwrap();
 
         let run = run_workload_with(&workload, &cancelled, || {
             completion_request_with_prompt_tokens_cancellable(
-                "127.0.0.1",
-                port,
-                &workload,
-                &prompt,
-                &cancelled,
+                &client, &workload, &prompt, &cancelled,
             )
         })
         .unwrap();
@@ -1394,8 +1342,8 @@ mod tests {
         };
         let started = Instant::now();
 
-        let error =
-            completion_request_cancellable("127.0.0.1", port, &workload, &cancelled).unwrap_err();
+        let client = LocalHttpClient::plain("127.0.0.1", port).unwrap();
+        let error = completion_request_cancellable(&client, &workload, &cancelled).unwrap_err();
 
         assert!(error.contains("cancelled"));
         assert!(started.elapsed() < Duration::from_secs(1));
@@ -1575,7 +1523,10 @@ mod tests {
         };
         let cancelled = AtomicBool::new(false);
         let run = run_workload_with(&workload, &cancelled, || {
-            completion_request("127.0.0.1", port, &workload)
+            completion_request(
+                &LocalHttpClient::plain("127.0.0.1", port).unwrap(),
+                &workload,
+            )
         })
         .unwrap();
         let requests = server.join().unwrap();
@@ -1622,7 +1573,10 @@ mod tests {
         };
         let cancelled = AtomicBool::new(false);
         let run = run_workload_with(&workload, &cancelled, || {
-            completion_request("127.0.0.1", port, &workload)
+            completion_request(
+                &LocalHttpClient::plain("127.0.0.1", port).unwrap(),
+                &workload,
+            )
         })
         .unwrap();
         server.join().unwrap();
@@ -1633,7 +1587,10 @@ mod tests {
         let bodies = vec![cached_timing_body(1, 100, 256)];
         let (port, server) = serve_cache_protocol(bodies);
         let error = run_workload_with(&workload, &cancelled, || {
-            completion_request("127.0.0.1", port, &workload)
+            completion_request(
+                &LocalHttpClient::plain("127.0.0.1", port).unwrap(),
+                &workload,
+            )
         })
         .unwrap();
         server.join().unwrap();
@@ -1652,7 +1609,10 @@ mod tests {
         let bodies = vec![cached_timing_body(1, 511, 100)];
         let (port, server) = serve_cache_protocol(bodies);
         let short = run_workload_with(&workload, &cancelled, || {
-            completion_request("127.0.0.1", port, &workload)
+            completion_request(
+                &LocalHttpClient::plain("127.0.0.1", port).unwrap(),
+                &workload,
+            )
         })
         .unwrap();
         server.join().unwrap();
@@ -1671,7 +1631,10 @@ mod tests {
         let bodies = vec![r#"{"timings":{"prompt_n":512,"cache_n":"lots","prompt_ms":80.0,"prompt_per_second":50.0,"predicted_n":256,"predicted_ms":40.0,"predicted_per_second":50.0,"predicted_per_token_ms":20.0}}"#.to_string()];
         let (port, server) = serve_cache_protocol(bodies);
         let malformed = run_workload_with(&workload, &cancelled, || {
-            completion_request("127.0.0.1", port, &workload)
+            completion_request(
+                &LocalHttpClient::plain("127.0.0.1", port).unwrap(),
+                &workload,
+            )
         })
         .unwrap();
         server.join().unwrap();

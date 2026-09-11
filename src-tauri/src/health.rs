@@ -714,41 +714,37 @@ fn completion_request_supervised(
 
 fn completion_request(port: u16) -> Result<(u16, Vec<u8>), (HealthFailureReason, String)> {
     let pin = crate::core::pinned_model_load_pin();
-    let client = reqwest::blocking::Client::builder()
-        .no_proxy()
-        .connect_timeout(Duration::from_secs(2))
-        .timeout(MODEL_OPERATION_TIMEOUT)
-        .build()
-        .map_err(|_| {
+    // The health run launches its own plaintext loopback server; the request
+    // still goes through the centralized local client (audit MT-06) so
+    // framing (including chunked bodies), size bounds and the whole-operation
+    // deadline always apply.
+    let client =
+        crate::local_client::LocalHttpClient::plain("127.0.0.1", port).map_err(|error| {
             (
                 HealthFailureReason::Spawn,
-                "The loopback completion client could not start.".into(),
+                format!("The loopback completion client could not start: {error}"),
             )
         })?;
-    let response = client
-        .post(format!("http://127.0.0.1:{port}/completion"))
-        .json(&serde_json::json!({
-            "prompt": pin.prompt,
-            "n_predict": pin.expected_tokens_predicted,
-            "temperature": 0,
-            "seed": 1234,
-            "cache_prompt": false,
-            "stream": false,
-        }))
-        .send()
+    let (status, body) = client
+        .post_json_cancellable(
+            "/completion",
+            &serde_json::json!({
+                "prompt": pin.prompt,
+                "n_predict": pin.expected_tokens_predicted,
+                "temperature": 0,
+                "seed": 1234,
+                "cache_prompt": false,
+                "stream": false,
+            }),
+            MODEL_OPERATION_TIMEOUT,
+            &AtomicBool::new(false),
+        )
         .map_err(|_| {
             (
                 HealthFailureReason::Timeout,
                 "The bounded loopback completion request failed.".into(),
             )
         })?;
-    let status = response.status().as_u16();
-    let body = bounded_body(response).map_err(|_| {
-        (
-            HealthFailureReason::OutputLimit,
-            "The loopback completion response exceeded its limit.".into(),
-        )
-    })?;
     Ok((status, body))
 }
 
