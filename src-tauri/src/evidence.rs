@@ -754,7 +754,11 @@ impl BenchmarkManifest {
                 "A complete benchmark manifest requires a compatibility key",
             )
         })?;
-        validate_sha256("compatibilityKey", compatibility_key)?;
+        // The compatibility key carries the execution-snapshot schema
+        // prefix; legacy keys are insufficient evidence (audit MT-07 I4).
+        crate::calibration::validate_compatibility_key(compatibility_key).map_err(|message| {
+            DomainError::new(ErrorCode::InvalidDigest, "compatibilityKey", &message)
+        })?;
         self.runtime
             .as_ref()
             .expect("runtime presence checked above")

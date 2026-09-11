@@ -2001,30 +2001,95 @@ fn benchmark_compatibility_key_from_snapshot(
         })
         .collect::<Vec<_>>();
     adapters.sort_by(|left, right| left.0.cmp(&right.0));
-    let (adapter_ids, driver_versions) = adapters.into_iter().unzip();
-    calibration::compatibility_key(&calibration::CompatibilityIdentity {
+    let (adapter_ids, driver_versions): (Vec<String>, Vec<String>) = adapters.into_iter().unzip();
+
+    // Content identities for file-backed influences: a changed file under
+    // the same name must change the key (audit MT-07 I2).
+    let file_sha = |path: &str| -> Result<String, String> {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            return Ok(String::new());
+        }
+        artifact::sha256_path(Path::new(trimmed))
+    };
+    let lora_path = profile.lora.split(',').next().unwrap_or("").trim();
+    let lora_scaled_path = profile.lora_scaled.split(',').next().unwrap_or("").trim();
+    let lora_sha256 = if !lora_path.is_empty() {
+        file_sha(lora_path)?
+    } else if !lora_scaled_path.is_empty() {
+        file_sha(lora_scaled_path)?
+    } else {
+        String::new()
+    };
+    let draft_model_sha256 = match profile.draft_model.as_deref() {
+        Some(path) => file_sha(path)?,
+        None => String::new(),
+    };
+    let mmproj_sha256 = match profile.mmproj.as_deref() {
+        Some(path) => file_sha(path)?,
+        None => String::new(),
+    };
+
+    let host_memory_bytes = hardware
+        .system_memory
+        .total_physical_bytes
+        .value
+        .unwrap_or(0);
+    let host_cpu_model = String::new();
+
+    // Material facts this machine cannot observe make reuse insufficiently
+    // supported and are named explicitly (audit MT-07 I3).
+    let mut unknown_identities = Vec::new();
+    for (adapter, driver) in adapter_ids.iter().zip(driver_versions.iter()) {
+        let normalized = driver.trim().to_ascii_lowercase();
+        if normalized.is_empty() || normalized == "unknown" {
+            unknown_identities.push(format!("driverVersion:{adapter}"));
+        }
+    }
+    if host_cpu_model.trim().is_empty() {
+        // The platform probe does not collect a CPU model yet; recorded as
+        // unknown so cross-machine reuse stays visibly unsupported.
+        unknown_identities.push("hostCpuModel".into());
+    }
+    if host_memory_bytes == 0 {
+        unknown_identities.push("hostMemoryBytes".into());
+    }
+    if validation.effective_context.value.is_none() {
+        unknown_identities.push("contextEffective".into());
+    }
+    let backend = runtime_identity.backend.clone();
+    if matches!(backend.as_str(), "cuda" | "vulkan" | "rocm" | "sycl") && adapter_ids.is_empty() {
+        unknown_identities.push("adapterIds".into());
+    }
+    unknown_identities.sort();
+    unknown_identities.dedup();
+
+    let snapshot = calibration::ExecutionSnapshotV2 {
+        schema_version: calibration::EXECUTION_SNAPSHOT_SCHEMA.into(),
+        effective_args: calibration::sanitize_effective_args(&validation.arguments.effective_args),
         model_content_sha256,
         model_architecture,
         runtime_sha256: executable_sha256.into(),
         runtime_help_sha256: validation.runtime.help_sha256.clone(),
-        runtime_backend: runtime_identity.backend.clone(),
+        runtime_backend: backend,
         runtime_version: validation.runtime.version.clone(),
         runtime_build: validation.runtime.build.clone(),
         adapter_ids,
         driver_versions,
-        context: profile.context,
-        parallel: profile.parallel,
-        batch: profile.batch,
-        ubatch: profile.ubatch,
-        main_gpu: profile.main_gpu,
-        cache_type_k: profile.cache_type_k.clone(),
-        cache_type_v: profile.cache_type_v.clone(),
-        gpu_layers: profile.gpu_layers.clone(),
-        split_mode: profile.split_mode.clone(),
-        tensor_split: profile.tensor_split.clone(),
+        host_cpu_model,
+        host_platform: std::env::consts::OS.into(),
+        host_memory_bytes,
+        context_requested: profile.context,
+        context_effective: validation.effective_context.value,
+        draft_model_sha256,
+        mmproj_sha256,
+        lora_sha256,
         workload_sha256: calibration::workload_sha256(workload)?,
         harness_version: env!("CARGO_PKG_VERSION").into(),
-    })
+        estimator_version: calibration::ESTIMATOR_VERSION.into(),
+        unknown_identities,
+    };
+    calibration::execution_snapshot_key(&snapshot)
 }
 
 fn run_benchmark_snapshot(

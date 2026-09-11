@@ -61,6 +61,145 @@ pub fn selected_artifact_set_sha256(content_ids: &[String]) -> Result<String, St
     Ok(hex::encode(hasher.finalize()))
 }
 
+/// Schema tag for the canonical execution snapshot (audit MT-07). A
+/// compatibility key carries this prefix plus the SHA-256 of the canonical
+/// snapshot JSON, so legacy keys cannot silently masquerade as a current
+/// complete identity.
+pub const EXECUTION_SNAPSHOT_SCHEMA: &str = "localmotive.execution-snapshot.v2";
+pub const EXECUTION_KEY_PREFIX: &str = "v2:";
+/// Estimator/metric identity: bump when the calibration arithmetic or the
+/// measured statistic changes meaning.
+pub const ESTIMATOR_VERSION: &str = "decode-tps-mean.v1";
+
+/// The versioned canonical execution snapshot: every material influence on a
+/// measurement, derived from the effective launch arguments plus observed
+/// facts, never a hand-maintained subset of profile fields.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutionSnapshotV2 {
+    pub schema_version: String,
+    /// The effective launch arguments after capability filtering, with secret
+    /// values and volatile paths replaced by identity tokens.
+    pub effective_args: Vec<String>,
+    pub model_content_sha256: String,
+    pub model_architecture: String,
+    pub runtime_sha256: String,
+    pub runtime_help_sha256: String,
+    pub runtime_backend: String,
+    pub runtime_version: String,
+    pub runtime_build: String,
+    pub adapter_ids: Vec<String>,
+    pub driver_versions: Vec<String>,
+    pub host_cpu_model: String,
+    pub host_platform: String,
+    pub host_memory_bytes: u64,
+    pub context_requested: u32,
+    pub context_effective: Option<u32>,
+    pub draft_model_sha256: String,
+    pub mmproj_sha256: String,
+    pub lora_sha256: String,
+    pub workload_sha256: String,
+    pub harness_version: String,
+    pub estimator_version: String,
+    /// Material facts this machine could not observe. A non-empty list makes
+    /// the snapshot insufficient for calibration reuse.
+    pub unknown_identities: Vec<String>,
+}
+
+impl ExecutionSnapshotV2 {
+    pub fn reuse_supported(&self) -> bool {
+        self.unknown_identities.is_empty()
+    }
+}
+
+/// Compute the canonical key for a snapshot: `v2:` plus the SHA-256 of the
+/// canonical JSON. Every field participates, so any material change yields a
+/// different key.
+pub fn execution_snapshot_key(snapshot: &ExecutionSnapshotV2) -> Result<String, String> {
+    if snapshot.schema_version != EXECUTION_SNAPSHOT_SCHEMA {
+        return Err(format!(
+            "Unsupported execution snapshot schema: {}",
+            snapshot.schema_version
+        ));
+    }
+    crate::evidence::validate_sha256("modelContentSha256", &snapshot.model_content_sha256)
+        .map_err(|error| error.to_string())?;
+    crate::evidence::validate_sha256("runtimeSha256", &snapshot.runtime_sha256)
+        .map_err(|error| error.to_string())?;
+    crate::evidence::validate_sha256("runtimeHelpSha256", &snapshot.runtime_help_sha256)
+        .map_err(|error| error.to_string())?;
+    crate::evidence::validate_sha256("workloadSha256", &snapshot.workload_sha256)
+        .map_err(|error| error.to_string())?;
+    if snapshot.model_architecture.trim().is_empty()
+        || snapshot.runtime_backend.trim().is_empty()
+        || snapshot.runtime_version.trim().is_empty()
+        || snapshot.runtime_build.trim().is_empty()
+        || snapshot.harness_version.trim().is_empty()
+        || snapshot.estimator_version.trim().is_empty()
+    {
+        return Err(
+            "Execution snapshot requires model, runtime, harness and estimator identities".into(),
+        );
+    }
+    if snapshot.adapter_ids.len() != snapshot.driver_versions.len() {
+        return Err("Execution snapshot adapter and driver identities must align".into());
+    }
+    let canonical = serde_json::to_vec(snapshot).map_err(|error| error.to_string())?;
+    let digest = Sha256::digest(canonical);
+    Ok(format!("{EXECUTION_KEY_PREFIX}{}", hex::encode(digest)))
+}
+
+/// Compatibility keys must carry the current schema prefix; a legacy key is
+/// explicitly insufficient evidence for reuse (audit MT-07 I4).
+pub fn validate_compatibility_key(value: &str) -> Result<(), String> {
+    let trimmed = value.trim();
+    let Some(hex_digest) = trimmed.strip_prefix(EXECUTION_KEY_PREFIX) else {
+        return Err(
+            "This record uses a legacy compatibility identity; rebuild it from current measurements"
+                .into(),
+        );
+    };
+    if hex_digest.len() != 64
+        || !hex_digest
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+    {
+        return Err("Compatibility key is not a v2 sha256 digest".into());
+    }
+    Ok(())
+}
+
+/// Replace secret values and volatile paths in the effective launch arguments
+/// with stable identity tokens. The API-key and TLS values never enter the
+/// snapshot; file-backed influences are represented by their content digests
+/// carried elsewhere in the snapshot.
+pub fn sanitize_effective_args(args: &[String]) -> Vec<String> {
+    let mut sanitized = Vec::with_capacity(args.len());
+    let mut index = 0;
+    while index < args.len() {
+        let argument = args[index].as_str();
+        let next = args.get(index + 1).map(String::as_str);
+        let token = match argument {
+            "-m" | "--model" => Some("[model]"),
+            "--mmproj" => Some("[mmproj]"),
+            "--lora" | "--lora-scaled" => Some("[lora]"),
+            "--api-key-file" | "--ssl-key-file" | "--ssl-cert-file" => Some("[configured]"),
+            value if value.ends_with("draft-model") || value.ends_with("model-draft") => {
+                Some("[draft-model]")
+            }
+            _ => None,
+        };
+        sanitized.push(argument.to_string());
+        if let (Some(token), Some(_)) = (token, next) {
+            sanitized.push(token.to_string());
+            index += 2;
+            continue;
+        }
+        index += 1;
+    }
+    sanitized
+}
+
 pub fn compatibility_key(identity: &CompatibilityIdentity) -> Result<String, String> {
     crate::evidence::validate_sha256("modelContentSha256", &identity.model_content_sha256)
         .map_err(|error| error.to_string())?;
@@ -107,6 +246,13 @@ pub struct CalibrationAnchor {
     pub estimated_value: f64,
     pub measured_value: f64,
     pub observed_at_ms: u64,
+    /// The schema of the execution snapshot behind `compatibility_key`
+    /// (empty for legacy records).
+    #[serde(default)]
+    pub snapshot_schema_version: String,
+    /// Material facts the source snapshot could not observe.
+    #[serde(default)]
+    pub unknown_identities: Vec<String>,
 }
 
 impl CalibrationAnchor {
@@ -116,11 +262,31 @@ impl CalibrationAnchor {
         measured_value: f64,
         observed_at_ms: u64,
     ) -> Self {
+        Self::new_with_snapshot(
+            compatibility_key,
+            EXECUTION_SNAPSHOT_SCHEMA,
+            &[],
+            estimated_value,
+            measured_value,
+            observed_at_ms,
+        )
+    }
+
+    pub fn new_with_snapshot(
+        compatibility_key: &str,
+        snapshot_schema_version: &str,
+        unknown_identities: &[String],
+        estimated_value: f64,
+        measured_value: f64,
+        observed_at_ms: u64,
+    ) -> Self {
         Self {
             compatibility_key: compatibility_key.into(),
             estimated_value,
             measured_value,
             observed_at_ms,
+            snapshot_schema_version: snapshot_schema_version.into(),
+            unknown_identities: unknown_identities.to_vec(),
         }
     }
 }
@@ -165,7 +331,27 @@ pub fn build_calibration(
     if key.is_empty() || anchors.iter().any(|anchor| anchor.compatibility_key != key) {
         return Err("Calibration anchors must share one non-empty compatibility key".into());
     }
-    crate::evidence::validate_sha256("compatibilityKey", key).map_err(|error| error.to_string())?;
+    validate_compatibility_key(key)?;
+    if anchors
+        .iter()
+        .any(|anchor| anchor.snapshot_schema_version != EXECUTION_SNAPSHOT_SCHEMA)
+    {
+        return Err(
+            "Calibration anchors predate the current execution snapshot schema; rebuild them from current measurements"
+                .into(),
+        );
+    }
+    let mut unknowns = anchors
+        .iter()
+        .flat_map(|anchor| anchor.unknown_identities.iter().cloned())
+        .collect::<std::collections::BTreeSet<_>>();
+    if !unknowns.is_empty() {
+        let listed = unknowns.iter().cloned().collect::<Vec<_>>().join(", ");
+        return Err(format!(
+            "Calibration reuse needs a complete hardware identity; unknown: {listed}"
+        ));
+    }
+    unknowns.clear();
     if created_at_ms == 0 || ttl_ms == 0 || ttl_ms > MAX_TTL_MS {
         return Err(format!(
             "Calibration timestamps require a positive creation time and TTL no greater than {MAX_TTL_MS} ms"
@@ -217,10 +403,8 @@ pub fn apply_calibration(
     estimated_value: f64,
     now_ms: u64,
 ) -> Result<CalibratedEstimate, String> {
-    crate::evidence::validate_sha256("compatibilityKey", compatibility_key)
-        .map_err(|error| error.to_string())?;
-    crate::evidence::validate_sha256("model.compatibilityKey", &model.compatibility_key)
-        .map_err(|error| error.to_string())?;
+    validate_compatibility_key(compatibility_key)?;
+    validate_compatibility_key(&model.compatibility_key)?;
     if compatibility_key != model.compatibility_key {
         return Err("Calibration compatibility key does not match".into());
     }
@@ -360,8 +544,7 @@ pub fn review_external_evidence(
 }
 
 fn validate_persisted_anchor(anchor: &CalibrationAnchor) -> Result<(), String> {
-    crate::evidence::validate_sha256("compatibilityKey", &anchor.compatibility_key)
-        .map_err(|error| error.to_string())?;
+    validate_compatibility_key(&anchor.compatibility_key)?;
     if anchor.observed_at_ms == 0 {
         return Err("Calibration anchor observedAtMs must be greater than zero".into());
     }
@@ -379,8 +562,7 @@ fn validate_persisted_anchor(anchor: &CalibrationAnchor) -> Result<(), String> {
 }
 
 fn validate_persisted_model(model: &CalibrationModel) -> Result<(), String> {
-    crate::evidence::validate_sha256("compatibilityKey", &model.compatibility_key)
-        .map_err(|error| error.to_string())?;
+    validate_compatibility_key(&model.compatibility_key)?;
     if model.created_at_ms == 0
         || model.expires_at_ms <= model.created_at_ms
         || model.expires_at_ms - model.created_at_ms > 365 * 24 * 60 * 60 * 1_000
@@ -503,6 +685,22 @@ fn record_paths(root: &Path, category: &str) -> Result<Vec<PathBuf>, String> {
     Ok(paths)
 }
 
+/// A filesystem-safe token for a compatibility key (the key itself carries
+/// the `v2:` schema prefix, which is not a Windows filename character).
+fn key_file_token(compatibility_key: &str) -> String {
+    compatibility_key
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character
+            } else {
+                '-'
+            }
+        })
+        .take(16)
+        .collect()
+}
+
 pub fn persist_calibration_anchor(
     root: &Path,
     anchor: &CalibrationAnchor,
@@ -514,7 +712,7 @@ pub fn persist_calibration_anchor(
         &format!(
             "{}-{}.json",
             anchor.observed_at_ms,
-            &anchor.compatibility_key[..16]
+            key_file_token(&anchor.compatibility_key)
         ),
         anchor,
     )
@@ -524,8 +722,7 @@ pub fn load_calibration_anchors(
     root: &Path,
     compatibility_key: &str,
 ) -> Result<Vec<CalibrationAnchor>, String> {
-    crate::evidence::validate_sha256("compatibilityKey", compatibility_key)
-        .map_err(|error| error.to_string())?;
+    validate_compatibility_key(compatibility_key)?;
     let mut records = Vec::new();
     for path in record_paths(root, "anchors")? {
         let record: CalibrationAnchor = read_bounded_record(&path)?;
@@ -547,7 +744,7 @@ pub fn persist_calibration_model(root: &Path, model: &CalibrationModel) -> Resul
         &format!(
             "{}-{}.json",
             model.created_at_ms,
-            &model.compatibility_key[..16]
+            key_file_token(&model.compatibility_key)
         ),
         model,
     )
@@ -557,8 +754,7 @@ pub fn load_calibration_models(
     root: &Path,
     compatibility_key: &str,
 ) -> Result<Vec<CalibrationModel>, String> {
-    crate::evidence::validate_sha256("compatibilityKey", compatibility_key)
-        .map_err(|error| error.to_string())?;
+    validate_compatibility_key(compatibility_key)?;
     let mut records = Vec::new();
     for path in record_paths(root, "models")? {
         let record: CalibrationModel = read_bounded_record(&path)?;
@@ -707,9 +903,13 @@ mod tests {
         );
     }
 
+    fn test_key(seed: char) -> String {
+        format!("v2:{}", seed.to_string().repeat(64))
+    }
+
     #[test]
     fn calibration_requires_matching_compatibility_and_expires() {
-        let key = "a".repeat(64);
+        let key = test_key('a');
         let anchors = vec![
             CalibrationAnchor::new(&key, 100.0, 110.0, 10),
             CalibrationAnchor::new(&key, 200.0, 220.0, 20),
@@ -719,30 +919,53 @@ mod tests {
 
         let applied = apply_calibration(&model, &key, 400.0, 50).unwrap();
         assert!((applied.value - 440.0).abs() < 0.000_001);
-        assert!(apply_calibration(&model, "key-b", 400.0, 50).is_err());
+        assert!(apply_calibration(&model, &test_key('b'), 400.0, 50).is_err());
         assert!(apply_calibration(&model, &key, 400.0, 140).is_err());
     }
 
     #[test]
     fn calibration_rejects_malformed_keys_and_unbounded_ttl() {
-        let anchors = vec![
-            CalibrationAnchor::new("key-a", 100.0, 110.0, 10),
-            CalibrationAnchor::new("key-a", 200.0, 220.0, 20),
-            CalibrationAnchor::new("key-a", 300.0, 330.0, 30),
+        // A legacy 64-hex key is explicitly insufficient (audit MT-07 I4).
+        let legacy = vec![
+            CalibrationAnchor::new(&"a".repeat(64), 100.0, 110.0, 10),
+            CalibrationAnchor::new(&"a".repeat(64), 200.0, 220.0, 20),
+            CalibrationAnchor::new(&"a".repeat(64), 300.0, 330.0, 30),
         ];
-
-        assert!(build_calibration(&anchors, 40, 100)
+        assert!(build_calibration(&legacy, 40, 100)
             .unwrap_err()
-            .contains("compatibilityKey"));
+            .contains("legacy compatibility identity"));
 
-        let key = "a".repeat(64);
-        let valid = anchors
-            .into_iter()
-            .map(|mut anchor| {
-                anchor.compatibility_key = key.clone();
-                anchor
-            })
-            .collect::<Vec<_>>();
+        // A malformed v2 digest is rejected.
+        let malformed = vec![
+            CalibrationAnchor::new("v2:nothex", 100.0, 110.0, 10),
+            CalibrationAnchor::new("v2:nothex", 200.0, 220.0, 20),
+            CalibrationAnchor::new("v2:nothex", 300.0, 330.0, 30),
+        ];
+        assert!(build_calibration(&malformed, 40, 100)
+            .unwrap_err()
+            .contains("sha256"));
+
+        // An anchor that predates the snapshot schema is rejected even with a
+        // v2 key.
+        let key = test_key('a');
+        let mut stale = vec![
+            CalibrationAnchor::new(&key, 100.0, 110.0, 10),
+            CalibrationAnchor::new(&key, 200.0, 220.0, 20),
+            CalibrationAnchor::new(&key, 300.0, 330.0, 30),
+        ];
+        for anchor in &mut stale {
+            anchor.snapshot_schema_version = String::new();
+        }
+        assert!(build_calibration(&stale, 40, 100)
+            .unwrap_err()
+            .contains("current execution snapshot schema"));
+
+        // A valid v2 set passes the key checks; the TTL bound still applies.
+        let valid = vec![
+            CalibrationAnchor::new(&key, 100.0, 110.0, 10),
+            CalibrationAnchor::new(&key, 200.0, 220.0, 20),
+            CalibrationAnchor::new(&key, 300.0, 330.0, 30),
+        ];
         assert!(build_calibration(&valid, 40, 366 * 24 * 60 * 60 * 1_000).is_err());
     }
 
@@ -755,7 +978,7 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        let key = "a".repeat(64);
+        let key = test_key('a');
         let anchor = CalibrationAnchor::new(&key, 10.0, 11.0, 42);
         let model =
             build_calibration(&[anchor.clone(), anchor.clone(), anchor.clone()], 50, 100).unwrap();
@@ -766,6 +989,283 @@ mod tests {
         assert_eq!(load_calibration_models(&root, &key).unwrap(), vec![model]);
 
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    fn snapshot_fixture() -> ExecutionSnapshotV2 {
+        ExecutionSnapshotV2 {
+            schema_version: EXECUTION_SNAPSHOT_SCHEMA.into(),
+            effective_args: vec![
+                "-m".into(),
+                "[model]".into(),
+                "--threads".into(),
+                "8".into(),
+            ],
+            model_content_sha256: "a".repeat(64),
+            model_architecture: "qwen35".into(),
+            runtime_sha256: "b".repeat(64),
+            runtime_help_sha256: "c".repeat(64),
+            runtime_backend: "vulkan".into(),
+            runtime_version: "1.0".into(),
+            runtime_build: "b10816".into(),
+            adapter_ids: vec!["luid:0000:1111".into()],
+            driver_versions: vec!["32.0.15.7283".into()],
+            host_cpu_model: "AMD Ryzen 9 9950X3D".into(),
+            host_platform: "windows".into(),
+            host_memory_bytes: 64 * 1024 * 1024 * 1024,
+            context_requested: 32768,
+            context_effective: Some(32768),
+            draft_model_sha256: String::new(),
+            mmproj_sha256: String::new(),
+            lora_sha256: String::new(),
+            workload_sha256: "d".repeat(64),
+            harness_version: "0.5.0".into(),
+            estimator_version: ESTIMATOR_VERSION.into(),
+            unknown_identities: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn mt07_snapshot_key_changes_for_every_material_field() {
+        let baseline = snapshot_fixture();
+        assert!(baseline.reuse_supported());
+        let baseline_key = execution_snapshot_key(&baseline).unwrap();
+        assert!(baseline_key.starts_with(EXECUTION_KEY_PREFIX));
+
+        type SnapshotMutation = (&'static str, Box<dyn Fn(&mut ExecutionSnapshotV2)>);
+        let mutations: Vec<SnapshotMutation> = vec![
+            (
+                "effective_args",
+                Box::new(|s| s.effective_args.push("--flash-attn".into())),
+            ),
+            (
+                "model_content_sha256",
+                Box::new(|s| s.model_content_sha256 = "e".repeat(64)),
+            ),
+            (
+                "model_architecture",
+                Box::new(|s| s.model_architecture = "llama".into()),
+            ),
+            (
+                "runtime_sha256",
+                Box::new(|s| s.runtime_sha256 = "e".repeat(64)),
+            ),
+            (
+                "runtime_help_sha256",
+                Box::new(|s| s.runtime_help_sha256 = "e".repeat(64)),
+            ),
+            (
+                "runtime_backend",
+                Box::new(|s| s.runtime_backend = "cuda".into()),
+            ),
+            (
+                "runtime_version",
+                Box::new(|s| s.runtime_version = "2.0".into()),
+            ),
+            (
+                "runtime_build",
+                Box::new(|s| s.runtime_build = "b20000".into()),
+            ),
+            (
+                "adapter_ids",
+                Box::new(|s| {
+                    s.adapter_ids.push("luid:0000:2222".into());
+                    s.driver_versions.push("32.0.15.7283".into());
+                }),
+            ),
+            (
+                "driver_versions",
+                Box::new(|s| s.driver_versions[0] = "32.0.15.9999".into()),
+            ),
+            (
+                "host_cpu_model",
+                Box::new(|s| s.host_cpu_model = "Intel Core i9".into()),
+            ),
+            (
+                "host_platform",
+                Box::new(|s| s.host_platform = "linux".into()),
+            ),
+            (
+                "host_memory_bytes",
+                Box::new(|s| s.host_memory_bytes = 32 * 1024 * 1024 * 1024),
+            ),
+            (
+                "context_requested",
+                Box::new(|s| s.context_requested = 8192),
+            ),
+            (
+                "context_effective",
+                Box::new(|s| s.context_effective = Some(8192)),
+            ),
+            (
+                "draft_model_sha256",
+                Box::new(|s| s.draft_model_sha256 = "e".repeat(64)),
+            ),
+            (
+                "mmproj_sha256",
+                Box::new(|s| s.mmproj_sha256 = "e".repeat(64)),
+            ),
+            ("lora_sha256", Box::new(|s| s.lora_sha256 = "e".repeat(64))),
+            (
+                "workload_sha256",
+                Box::new(|s| s.workload_sha256 = "e".repeat(64)),
+            ),
+            (
+                "harness_version",
+                Box::new(|s| s.harness_version = "0.6.0".into()),
+            ),
+            (
+                "estimator_version",
+                Box::new(|s| s.estimator_version = "other.v9".into()),
+            ),
+        ];
+        for (label, mutate) in mutations {
+            let mut changed = baseline.clone();
+            mutate(&mut changed);
+            let key = execution_snapshot_key(&changed).unwrap();
+            assert_ne!(key, baseline_key, "field {label} did not change the key");
+        }
+    }
+
+    #[test]
+    fn mt07_cpu_only_and_hardware_changes_are_distinguished() {
+        // CPU-only machine: no adapters, empty driver list, cpu backend.
+        let mut cpu_only = snapshot_fixture();
+        cpu_only.runtime_backend = "cpu".into();
+        cpu_only.adapter_ids.clear();
+        cpu_only.driver_versions.clear();
+        cpu_only.host_cpu_model = "AMD Ryzen 9 9950X3D".into();
+        let cpu_key = execution_snapshot_key(&cpu_only).unwrap();
+
+        // The same GPU with a changed CPU must not share the identity.
+        let mut changed_cpu = snapshot_fixture();
+        changed_cpu.host_cpu_model = "Intel Core Ultra 9".into();
+        assert_ne!(
+            execution_snapshot_key(&changed_cpu).unwrap(),
+            execution_snapshot_key(&snapshot_fixture()).unwrap()
+        );
+
+        // Fit-reduced effective context changes the identity.
+        let mut fit_reduced = snapshot_fixture();
+        fit_reduced.context_requested = 32768;
+        fit_reduced.context_effective = Some(16384);
+        assert_ne!(
+            execution_snapshot_key(&fit_reduced).unwrap(),
+            execution_snapshot_key(&snapshot_fixture()).unwrap()
+        );
+
+        // The same draft companion file with changed draft settings differs
+        // through the effective arguments.
+        let mut draft_a = snapshot_fixture();
+        draft_a.draft_model_sha256 = "f".repeat(64);
+        draft_a
+            .effective_args
+            .extend(["--spec-draft-n-max".into(), "16".into()]);
+        let mut draft_b = draft_a.clone();
+        draft_b.effective_args.pop();
+        draft_b.effective_args.push("64".into());
+        assert_ne!(
+            execution_snapshot_key(&draft_a).unwrap(),
+            execution_snapshot_key(&draft_b).unwrap()
+        );
+
+        // Changed LoRA bytes under the same filename change the digest.
+        let mut lora_a = snapshot_fixture();
+        lora_a.lora_sha256 = "1".repeat(64);
+        let mut lora_b = snapshot_fixture();
+        lora_b.lora_sha256 = "2".repeat(64);
+        assert_ne!(
+            execution_snapshot_key(&lora_a).unwrap(),
+            execution_snapshot_key(&lora_b).unwrap()
+        );
+
+        assert!(cpu_key.starts_with(EXECUTION_KEY_PREFIX));
+    }
+
+    #[test]
+    fn mt07_unknown_identity_blocks_reuse_and_legacy_keys_stay_out() {
+        let mut partial = snapshot_fixture();
+        partial.unknown_identities = vec!["driverVersion:luid:0000:1111".into()];
+        assert!(!partial.reuse_supported());
+        let key = execution_snapshot_key(&partial).unwrap();
+        let anchors = vec![
+            CalibrationAnchor::new_with_snapshot(
+                &key,
+                EXECUTION_SNAPSHOT_SCHEMA,
+                &partial.unknown_identities,
+                100.0,
+                110.0,
+                10,
+            ),
+            CalibrationAnchor::new_with_snapshot(
+                &key,
+                EXECUTION_SNAPSHOT_SCHEMA,
+                &partial.unknown_identities,
+                200.0,
+                220.0,
+                20,
+            ),
+            CalibrationAnchor::new_with_snapshot(
+                &key,
+                EXECUTION_SNAPSHOT_SCHEMA,
+                &partial.unknown_identities,
+                300.0,
+                330.0,
+                30,
+            ),
+        ];
+        let error = build_calibration(&anchors, 40, 100).unwrap_err();
+        assert!(error.contains("complete hardware identity"), "{error}");
+        assert!(error.contains("driverVersion:luid:0000:1111"), "{error}");
+
+        // A complete snapshot builds.
+        let complete_key = execution_snapshot_key(&snapshot_fixture()).unwrap();
+        let anchors = vec![
+            CalibrationAnchor::new(&complete_key, 100.0, 110.0, 10),
+            CalibrationAnchor::new(&complete_key, 200.0, 220.0, 20),
+            CalibrationAnchor::new(&complete_key, 300.0, 330.0, 30),
+        ];
+        assert!(build_calibration(&anchors, 40, 100).is_ok());
+    }
+
+    #[test]
+    fn mt07_effective_arguments_are_sanitized_of_secrets_and_paths() {
+        let args = vec![
+            "-m".to_string(),
+            "C:/models/model.gguf".to_string(),
+            "--api-key-file".to_string(),
+            "C:/secrets/llama.key".to_string(),
+            "--ssl-cert-file".to_string(),
+            "C:/secrets/cert.pem".to_string(),
+            "--ssl-key-file".to_string(),
+            "C:/secrets/key.pem".to_string(),
+            "--lora".to_string(),
+            "C:/models/adapter.gguf".to_string(),
+            "--model-draft".to_string(),
+            "C:/models/draft.gguf".to_string(),
+            "--threads".to_string(),
+            "8".to_string(),
+        ];
+        let sanitized = sanitize_effective_args(&args);
+        let joined = sanitized.join(" ");
+        for secret in [
+            "llama.key",
+            "cert.pem",
+            "key.pem",
+            "adapter.gguf",
+            "draft.gguf",
+            "model.gguf",
+        ] {
+            assert!(
+                !joined.contains(secret),
+                "sanitized args leaked {secret}: {joined}"
+            );
+        }
+        assert!(joined.contains("[model]"));
+        assert!(joined.contains("[configured]"));
+        assert!(joined.contains("[lora]"));
+        assert!(joined.contains("[draft-model]"));
+        assert!(joined.contains("--threads"));
+        assert!(joined.contains("8"));
     }
 
     #[test]

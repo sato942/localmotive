@@ -318,7 +318,7 @@ pub fn validate_share_bundle(bundle: &ShareBundle) -> Result<(), String> {
     if bundle.created_at_ms == 0 {
         return Err("Share bundle creation time is missing".into());
     }
-    crate::evidence::validate_sha256("compatibilityKey", &bundle.compatibility_key)
+    crate::calibration::validate_compatibility_key(&bundle.compatibility_key)
         .map_err(|error| error.to_string())?;
     for (label, digest) in [
         (
@@ -543,7 +543,7 @@ pub fn build_share_bundle(
     manifest
         .validate_complete()
         .map_err(|error| error.to_string())?;
-    crate::evidence::validate_sha256("compatibilityKey", &compatibility_key)
+    crate::calibration::validate_compatibility_key(&compatibility_key)
         .map_err(|error| error.to_string())?;
     if manifest.compatibility_key.as_deref() != Some(compatibility_key.as_str()) {
         return Err("Share export compatibility key does not match the benchmark manifest".into());
@@ -742,7 +742,7 @@ mod tests {
 
     fn manifest_fixture() -> BenchmarkManifest {
         BenchmarkManifest {
-            compatibility_key: Some("e".repeat(64)),
+            compatibility_key: Some(format!("v2:{}", "e".repeat(64))),
             runtime: Some(RuntimeFact {
                 path: r"C:\Users\Mubarak\secret\llama-server.exe".into(),
                 version: "v1".into(),
@@ -896,8 +896,14 @@ mod tests {
         let manifest = mixed_manifest_with_nested_canaries();
         let summary = crate::measurement::summarize_observations(&manifest.observations).unwrap();
 
-        let export = build_share_bundle(&manifest, Some(&summary), None, "e".repeat(64), 42)
-            .expect("a mixed manifest with a valid summary must export");
+        let export = build_share_bundle(
+            &manifest,
+            Some(&summary),
+            None,
+            format!("v2:{}", "e".repeat(64)),
+            42,
+        )
+        .expect("a mixed manifest with a valid summary must export");
         let json = serde_json::to_string(&export).unwrap();
 
         for canary in [
@@ -937,8 +943,14 @@ mod tests {
         // (audit MT-02 I3).
         let manifest = mixed_manifest_with_nested_canaries();
         let summary = crate::measurement::summarize_observations(&manifest.observations).unwrap();
-        let mut export =
-            build_share_bundle(&manifest, Some(&summary), None, "e".repeat(64), 42).unwrap();
+        let mut export = build_share_bundle(
+            &manifest,
+            Some(&summary),
+            None,
+            format!("v2:{}", "e".repeat(64)),
+            42,
+        )
+        .unwrap();
         // A tampered bundle: reintroduce a note after construction.
         export.hardware[0].shared_bytes.notes = vec!["NESTED-NOTE-CANARY".into()];
         let directory =
@@ -951,8 +963,14 @@ mod tests {
         assert!(!target.exists(), "a rejected export must not be written");
 
         // And an unbounded failure category is refused the same way.
-        let mut export =
-            build_share_bundle(&manifest, Some(&summary), None, "e".repeat(64), 42).unwrap();
+        let mut export = build_share_bundle(
+            &manifest,
+            Some(&summary),
+            None,
+            format!("v2:{}", "e".repeat(64)),
+            42,
+        )
+        .unwrap();
         if let Some(pub_summary) = export.summary.as_mut() {
             pub_summary.failure_categories[0].code = "raw: C:\\Users\\Mubarak".into();
         }
@@ -971,7 +989,7 @@ mod tests {
         let bundle = ShareBundle {
             schema: 1,
             created_at_ms: 42,
-            compatibility_key: "a".repeat(64),
+            compatibility_key: format!("v2:{}", "a".repeat(64)),
             runtime: ShareRuntime {
                 version: "v1".into(),
                 build: "1".into(),
@@ -1032,15 +1050,22 @@ mod tests {
         let mut manifest = manifest_fixture();
         manifest.workload.id = r#"C:\Users\private\prompt.txt"#.into();
 
-        let error = build_share_bundle(&manifest, None, None, "e".repeat(64), 42).unwrap_err();
+        let error = build_share_bundle(&manifest, None, None, format!("v2:{}", "e".repeat(64)), 42)
+            .unwrap_err();
 
         assert!(error.contains("workload.id"));
     }
 
     #[test]
     fn share_bundle_validation_rejects_future_schemas() {
-        let mut export =
-            build_share_bundle(&manifest_fixture(), None, None, "e".repeat(64), 42).unwrap();
+        let mut export = build_share_bundle(
+            &manifest_fixture(),
+            None,
+            None,
+            format!("v2:{}", "e".repeat(64)),
+            42,
+        )
+        .unwrap();
         export.schema = 2;
 
         assert!(validate_share_bundle(&export)

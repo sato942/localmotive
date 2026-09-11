@@ -707,10 +707,12 @@ pub fn validate_replay_compatibility(
         .compatibility_key
         .as_deref()
         .ok_or("Replay manifest does not contain a compatibility identity")?;
-    crate::evidence::validate_sha256("compatibilityKey", recorded_compatibility_key)
-        .map_err(|error| error.to_string())?;
-    crate::evidence::validate_sha256("currentCompatibilityKey", current_compatibility_key)
-        .map_err(|error| error.to_string())?;
+    // Compatibility keys carry the execution-snapshot schema prefix; legacy
+    // keys are rejected explicitly (audit MT-07 I4).
+    crate::calibration::validate_compatibility_key(recorded_compatibility_key)
+        .map_err(|error| format!("Recorded compatibilityKey: {error}"))?;
+    crate::calibration::validate_compatibility_key(current_compatibility_key)
+        .map_err(|error| format!("currentCompatibilityKey: {error}"))?;
     if recorded_compatibility_key != current_compatibility_key {
         return Err("Replay compatibility identity does not match the running server".into());
     }
@@ -1359,7 +1361,7 @@ mod tests {
         ));
         let _ = fs::remove_dir_all(&directory);
         let manifest = BenchmarkManifest {
-            compatibility_key: Some("c".repeat(64)),
+            compatibility_key: Some(format!("v2:{}", "c".repeat(64))),
             runtime: Some(RuntimeFact {
                 path: "runtime.exe".into(),
                 version: "1".into(),
@@ -1406,7 +1408,7 @@ mod tests {
     #[test]
     fn replay_rejects_a_changed_launch_command() {
         let manifest = BenchmarkManifest {
-            compatibility_key: Some("a".repeat(64)),
+            compatibility_key: Some(format!("v2:{}", "a".repeat(64))),
             model: Some(ModelFact {
                 logical_id: "model-a".into(),
                 ..ModelFact::default()
@@ -1435,7 +1437,7 @@ mod tests {
     #[test]
     fn replay_rejects_a_changed_compatibility_identity() {
         let manifest = BenchmarkManifest {
-            compatibility_key: Some("a".repeat(64)),
+            compatibility_key: Some(format!("v2:{}", "a".repeat(64))),
             model: Some(ModelFact {
                 logical_id: "model-a".into(),
                 ..ModelFact::default()
