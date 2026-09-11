@@ -2944,6 +2944,8 @@ Work continued at HEAD for the remaining verification packages and a fresh candi
 
 **Second defect found by the re-bind and fixed (harness truthfulness, M): a stale window document could satisfy the fault-witness assert.** After the candidate re-cut, `witness-malformed-result.json` still carried the superseded candidate's digests: the harness catch guard (`if (-not (Test-Path $EvidencePath) -or status -eq "PASS")`) skipped rewriting whenever an older FAIL document existed, and the witness assertion accepted that stale document. Fixed in `scripts/sandbox/host-run-lifecycle.ps1` (any document older than the current run is stale identity and is rewritten) and `scripts/sandbox/test-fault-evidence.ps1` (each witness document is deleted before its leg, and the assertion now requires `candidateDigests` to equal the staged candidate's hashes). Mutant MG2 (old guard + planted a4d14496-era document) caught by the digest-equality check; all three witnesses re-verified bound to `57bde64e` + `255bfdd2…` / `01b62b76…`.
 
+- Packaged `verify_041` on the clean tree: `overall_status: PASS` (25 checks) at `7dcc34f`, covering `candidate.clean-source`, the tamper/repair family, seven-stage health, `health.cancellation` (adaptive fast/slow classifier) and the blocked-backend check reporting the skip on a healthy upstream; record `release-evidence/0.6.0/attestations/packaged-verification-0.6.0.json`. The first isolated run on the dirty worktree showed 22/24 (dirty source; upstream green) and drove the blocked-backend adaptation.
+
 **Re-cut at `57bde64e` (2026-09-12):**
 
 - portable `localmotive-portable.exe` sha256 `7961595091822b6d4fd1b8efcd4d4f8bec33b1a75a913ce3774e36ac2c3371fa`

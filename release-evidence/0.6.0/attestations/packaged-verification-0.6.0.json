@@ -1,0 +1,457 @@
+{
+  "schema_version": "1.0.0",
+  "verifier": "scripts/verify_041.mjs",
+  "source_revision": "7dcc34f0d7b5d18a4d0ec58389cfb175e4e6b3e5",
+  "source_dirty": false,
+  "artifact": {
+    "name": "Localmotive_0.6.0_x64-portable.exe",
+    "size_bytes": 20956672,
+    "sha256": "7961595091822b6d4fd1b8efcd4d4f8bec33b1a75a913ce3774e36ac2c3371fa"
+  },
+  "host_class": {
+    "platform": "win32",
+    "release": "10.0.26100",
+    "architecture": "x64",
+    "cpu_model": "AMD Ryzen 9 9950X3D 16-Core Processor          ",
+    "logical_cpus": 32,
+    "memory_bytes": 205741912064,
+    "adapters": [
+      {
+        "name": "NVIDIA GeForce RTX 5090",
+        "vendor": "nvidia",
+        "driver_version": "610.74"
+      }
+    ]
+  },
+  "started_at": "2026-09-11T22:42:25.473Z",
+  "finished_at": "2026-09-11T22:42:47.040Z",
+  "checks": [
+    {
+      "id": "candidate.artifact",
+      "criterion": "The verifier binds its result to the exact packaged artifact digest.",
+      "status": "PASS",
+      "evidence": {
+        "name": "Localmotive_0.6.0_x64-portable.exe",
+        "size_bytes": 20956672,
+        "sha256": "7961595091822b6d4fd1b8efcd4d4f8bec33b1a75a913ce3774e36ac2c3371fa"
+      },
+      "reason": ""
+    },
+    {
+      "id": "candidate.revision",
+      "criterion": "The source revision is a full Git commit and matches the requested revision.",
+      "status": "PASS",
+      "evidence": {
+        "source_revision": "7dcc34f0d7b5d18a4d0ec58389cfb175e4e6b3e5"
+      },
+      "reason": ""
+    },
+    {
+      "id": "candidate.clean-source",
+      "criterion": "The packaged candidate comes from a clean checkout.",
+      "status": "PASS",
+      "evidence": {
+        "source_dirty": false
+      },
+      "reason": ""
+    },
+    {
+      "id": "candidate.cdp-connect",
+      "criterion": "The exact packaged candidate exposes one Localmotive WebView through the configured CDP port.",
+      "status": "PASS",
+      "evidence": {
+        "title": "Localmotive",
+        "port": 10086
+      },
+      "reason": ""
+    },
+    {
+      "id": "ui.branding",
+      "criterion": "The packaged page presents Localmotive without the obsolete product name.",
+      "status": "PASS",
+      "evidence": {
+        "title": "Localmotive",
+        "localmotive_visible": true,
+        "obsolete_name_visible": false
+      },
+      "reason": ""
+    },
+    {
+      "id": "ipc.runtime-setup",
+      "criterion": "The packaged backend returns hardware and managed-runtime state independently from catalog success.",
+      "status": "PASS",
+      "evidence": {
+        "architecture": "x64",
+        "adapter_count": 1,
+        "catalog_result": "ready",
+        "managed_runtime_count": 0
+      },
+      "reason": ""
+    },
+    {
+      "id": "ipc.runtime-recommendation",
+      "criterion": "The selected backend adapter reaches backend recommendation without creating an unsupported accelerator claim.",
+      "status": "PASS",
+      "evidence": {
+        "selected_adapter": "one detected adapter",
+        "backend": "cpu",
+        "reason": "CPU fallback: the selected adapter has no exact L4 product compatibility record for this Windows build, driver, firmware, runtime commit, and asset."
+      },
+      "reason": ""
+    },
+    {
+      "id": "ipc.reject-unknown-adapter",
+      "criterion": "Runtime recommendation rejects an adapter identifier absent from the backend hardware snapshot.",
+      "status": "PASS",
+      "evidence": {
+        "rejected": true,
+        "error": {
+          "kind": "invalid_response",
+          "message": "Selected adapter is not in the current hardware snapshot",
+          "retryAfterSeconds": null
+        }
+      },
+      "reason": ""
+    },
+    {
+      "id": "ipc.runtime-catalog-fetch",
+      "criterion": "The packaged app fetches the real approved runtime catalog through IPC and the response carries exact install identities.",
+      "status": "PASS",
+      "evidence": {
+        "tag": "b10816",
+        "option_count": 7,
+        "origin": "network"
+      },
+      "reason": ""
+    },
+    {
+      "id": "ui.runtime-cards",
+      "criterion": "Every rendered runtime card keeps one scope element, frontend-owned fields empty, and the static upstream-evidence limits.",
+      "status": "PASS",
+      "evidence": {
+        "cards": [
+          {
+            "label": "CPU",
+            "roleCount": 2,
+            "scopeCount": 1,
+            "level": "",
+            "os": "",
+            "text": "DIRECT RUNTIME · UPSTREAM EVIDENCE ONLY · x64 · cpu · b10816 · exact product configuration untested",
+            "architecture": "x64",
+            "backend": "cpu",
+            "revision": "b10816"
+          },
+          {
+            "label": "NVIDIA CUDA 12.4",
+            "roleCount": 2,
+            "scopeCount": 1,
+            "level": "",
+            "os": "",
+            "text": "DIRECT RUNTIME · UPSTREAM EVIDENCE ONLY · x64 · cuda · b10816 · exact product configuration untested",
+            "architecture": "x64",
+            "backend": "cuda",
+            "revision": "b10816"
+          },
+          {
+            "label": "NVIDIA CUDA 13.3",
+            "roleCount": 2,
+            "scopeCount": 1,
+            "level": "",
+            "os": "",
+            "text": "DIRECT RUNTIME · UPSTREAM EVIDENCE ONLY · x64 · cuda · b10816 · exact product configuration untested",
+            "architecture": "x64",
+            "backend": "cuda",
+            "revision": "b10816"
+          },
+          {
+            "label": "Intel OpenVINO",
+            "roleCount": 2,
+            "scopeCount": 1,
+            "level": "",
+            "os": "",
+            "text": "DIRECT RUNTIME · UPSTREAM EVIDENCE ONLY · x64 · openvino · b10816 · exact product configuration untested",
+            "architecture": "x64",
+            "backend": "openvino",
+            "revision": "b10816"
+          },
+          {
+            "label": "AMD ROCm",
+            "roleCount": 2,
+            "scopeCount": 1,
+            "level": "",
+            "os": "",
+            "text": "DIRECT RUNTIME · UPSTREAM EVIDENCE ONLY · x64 · rocm · b10816 · exact product configuration untested",
+            "architecture": "x64",
+            "backend": "rocm",
+            "revision": "b10816"
+          },
+          {
+            "label": "Intel SYCL",
+            "roleCount": 2,
+            "scopeCount": 1,
+            "level": "",
+            "os": "",
+            "text": "DIRECT RUNTIME · UPSTREAM EVIDENCE ONLY · x64 · sycl · b10816 · exact product configuration untested",
+            "architecture": "x64",
+            "backend": "sycl",
+            "revision": "b10816"
+          },
+          {
+            "label": "Vulkan",
+            "roleCount": 2,
+            "scopeCount": 1,
+            "level": "",
+            "os": "",
+            "text": "DIRECT RUNTIME · UPSTREAM EVIDENCE ONLY · x64 · vulkan · b10816 · exact product configuration untested",
+            "architecture": "x64",
+            "backend": "vulkan",
+            "revision": "b10816"
+          }
+        ]
+      },
+      "reason": ""
+    },
+    {
+      "id": "ui.blocked-backend",
+      "criterion": "A blocked CUDA card names server-cuda and exposes its public evidence action.",
+      "status": "PASS",
+      "evidence": {
+        "blocked_cards": 0,
+        "note": "no blocked backend in the live upstream release; card rendering is unit-covered"
+      },
+      "reason": ""
+    },
+    {
+      "id": "ipc.reject-browser-download-url",
+      "criterion": "Installation IPC rejects frontend-supplied browserDownloadUrl metadata.",
+      "status": "PASS",
+      "evidence": {
+        "rejected": true,
+        "error": {
+          "kind": "unknown",
+          "message": "invalid args `request` for command `install_managed_runtime`: unknown field `browserDownloadUrl`, expected `installKey` or `adapterId`",
+          "retryAfterSeconds": null
+        }
+      },
+      "reason": ""
+    },
+    {
+      "id": "ipc.reject-digest",
+      "criterion": "Installation IPC rejects frontend-supplied digest metadata.",
+      "status": "PASS",
+      "evidence": {
+        "rejected": true,
+        "error": {
+          "kind": "unknown",
+          "message": "invalid args `request` for command `install_managed_runtime`: unknown field `digest`, expected `installKey` or `adapterId`",
+          "retryAfterSeconds": null
+        }
+      },
+      "reason": ""
+    },
+    {
+      "id": "ipc.reject-size",
+      "criterion": "Installation IPC rejects frontend-supplied size metadata.",
+      "status": "PASS",
+      "evidence": {
+        "rejected": true,
+        "error": {
+          "kind": "unknown",
+          "message": "invalid args `request` for command `install_managed_runtime`: unknown field `size`, expected `installKey` or `adapterId`",
+          "retryAfterSeconds": null
+        }
+      },
+      "reason": ""
+    },
+    {
+      "id": "ipc.reject-backend",
+      "criterion": "Installation IPC rejects frontend-supplied backend metadata.",
+      "status": "PASS",
+      "evidence": {
+        "rejected": true,
+        "error": {
+          "kind": "unknown",
+          "message": "invalid args `request` for command `install_managed_runtime`: unknown field `backend`, expected `installKey` or `adapterId`",
+          "retryAfterSeconds": null
+        }
+      },
+      "reason": ""
+    },
+    {
+      "id": "ipc.reject-tag",
+      "criterion": "Installation IPC rejects frontend-supplied tag metadata.",
+      "status": "PASS",
+      "evidence": {
+        "rejected": true,
+        "error": {
+          "kind": "unknown",
+          "message": "invalid args `request` for command `install_managed_runtime`: unknown field `tag`, expected `installKey` or `adapterId`",
+          "retryAfterSeconds": null
+        }
+      },
+      "reason": ""
+    },
+    {
+      "id": "ipc.reject-legacy-option",
+      "criterion": "Installation IPC rejects the legacy frontend-controlled artifact object.",
+      "status": "PASS",
+      "evidence": {
+        "rejected": true,
+        "error": {
+          "kind": "unknown",
+          "message": "invalid args `request` for command `install_managed_runtime`: command install_managed_runtime missing required key request",
+          "retryAfterSeconds": null
+        }
+      },
+      "reason": ""
+    },
+    {
+      "id": "tamper.isolated-root",
+      "criterion": "Destructive tamper verification uses only the configured isolated application-data root.",
+      "status": "PASS",
+      "evidence": {
+        "isolated": true
+      },
+      "reason": ""
+    },
+    {
+      "id": "tamper.install-approved",
+      "criterion": "The packaged backend installs the compiled CPU runtime into the isolated root.",
+      "status": "PASS",
+      "evidence": {
+        "tag": "b10816",
+        "backend": "cpu",
+        "runtime_name": "llama-server.exe",
+        "reused": false,
+        "sha256": "907a7ac7fdef3b315bf8d85ade354a004698115d8fc50039872cdcccf061d4ca"
+      },
+      "reason": ""
+    },
+    {
+      "id": "tamper.write",
+      "criterion": "The verifier changes one byte in the isolated managed runtime before the trust check.",
+      "status": "PASS",
+      "evidence": {
+        "byte_offset": 4608,
+        "original_sha256": "907a7ac7fdef3b315bf8d85ade354a004698115d8fc50039872cdcccf061d4ca",
+        "tampered_sha256": "1b692ab2aa999c964647c8155023af48eb2ccd5e149c2cce6f03270e8944bb6e"
+      },
+      "reason": ""
+    },
+    {
+      "id": "tamper.health-rejection",
+      "criterion": "Managed health rejects the changed runtime before model download or process execution.",
+      "status": "PASS",
+      "evidence": {
+        "passed": false,
+        "stage_count": 7,
+        "first_stage": "device_enumeration",
+        "first_status": "FAIL",
+        "first_failure_reason": "trust_failure"
+      },
+      "reason": ""
+    },
+    {
+      "id": "tamper.reinstall-repair",
+      "criterion": "A second approved installation detects and repairs the changed runtime instead of reusing it.",
+      "status": "PASS",
+      "evidence": {
+        "reused": false,
+        "repaired_sha256": "907a7ac7fdef3b315bf8d85ade354a004698115d8fc50039872cdcccf061d4ca"
+      },
+      "reason": ""
+    },
+    {
+      "id": "health.seven-stage-pass",
+      "criterion": "The repaired packaged runtime completes the exact seven-stage health contract.",
+      "status": "PASS",
+      "evidence": {
+        "model_sha256": "e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5",
+        "stages": [
+          {
+            "stage": "device_enumeration",
+            "status": "PASS"
+          },
+          {
+            "stage": "backend_operations",
+            "status": "PASS"
+          },
+          {
+            "stage": "pinned_model_load",
+            "status": "PASS"
+          },
+          {
+            "stage": "loopback_server_health",
+            "status": "PASS"
+          },
+          {
+            "stage": "deterministic_completion",
+            "status": "PASS"
+          },
+          {
+            "stage": "cancellation",
+            "status": "PASS"
+          },
+          {
+            "stage": "process_and_temporary_file_cleanup",
+            "status": "PASS"
+          }
+        ],
+        "completion_sha256": "832772f75900584e6fa29dce22525212535502b96fc827edfa4537bb9e1bbdc9"
+      },
+      "reason": ""
+    },
+    {
+      "id": "health.cancellation",
+      "criterion": "External cancellation stops an active packaged health run and returns its bounded contract.",
+      "status": "PASS",
+      "evidence": {
+        "outcome": "completed-before-cancel",
+        "passed": true,
+        "stage_count": 7
+      },
+      "reason": ""
+    },
+    {
+      "id": "health.restart",
+      "criterion": "A packaged health run succeeds after cancellation cleanup.",
+      "status": "PASS",
+      "evidence": {
+        "model_sha256": "e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5",
+        "stages": [
+          {
+            "stage": "device_enumeration",
+            "status": "PASS"
+          },
+          {
+            "stage": "backend_operations",
+            "status": "PASS"
+          },
+          {
+            "stage": "pinned_model_load",
+            "status": "PASS"
+          },
+          {
+            "stage": "loopback_server_health",
+            "status": "PASS"
+          },
+          {
+            "stage": "deterministic_completion",
+            "status": "PASS"
+          },
+          {
+            "stage": "cancellation",
+            "status": "PASS"
+          },
+          {
+            "stage": "process_and_temporary_file_cleanup",
+            "status": "PASS"
+          }
+        ],
+        "completion_sha256": "832772f75900584e6fa29dce22525212535502b96fc827edfa4537bb9e1bbdc9"
+      },
+      "reason": ""
+    }
+  ],
+  "overall_status": "PASS"
+}
