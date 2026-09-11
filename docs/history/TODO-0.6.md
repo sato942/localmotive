@@ -2889,6 +2889,17 @@ Environment: Windows 11 (26100) host with Windows Sandbox (WDAGUtilityAccount cl
 - **Open observation (harness-caused condition):** one older row (nemotron 707 MiB) shows `Resume` with no bytes and no progress; its job record survived while the scratch folder was deliberately deleted mid-life between runs. Clicking Resume produced no visible error and no progress. Exact cause unverified; candidate expectation: a resume whose partial/sidecar no longer exists should fail visibly. Repro: start a download, delete its destination folder externally while the job record lives, then click Resume.
 - Evidence: `.hermes-0.6/g05-partial.log`, `.hermes-0.6/g05-partial2.log`; scratch files removed after the run (16 GB preallocation reclaimed; a transient file handle left the empty directory in place).
 
+#### Final candidate re-cut (2026-09-11)
+
+Built from the post-batch-7 fixed lineage at source `a0ed247` (the docs commits `a737cee`/`6384df0` changed no code):
+
+- portable `localmotive.exe` sha256 `075daa54027c7234d36b5ff869eb6ac4b264c5e4abe14db3de944944d4b34f2a` (20 998 144 bytes)
+- MSI `Localmotive_0.6.0_x64_en-US.msi` sha256 `2dd036c6a9397e0491e8ebb276af187bf0c9701c8f176c56cba42e6f4bd0512d`
+- NSIS `Localmotive_0.6.0_x64-setup.exe` sha256 `a4d14496d14a4f98ffcd1e9c9ae5d78f36dab74d309d86ed6e2dfdb38eb2b7de`
+- Build log: `.hermes-0.6/final-build-a0ed247.log`; staged copies `.hermes-0.6/final-candidates/`.
+
+Re-bind in progress: the lifecycle harness re-runs against these staged installers for both baselines, then the critical packaged probes (health, default v2 run, tamper refusal, kill supervision) re-run against the portable binary. This candidate supersedes `1a9ab98` as the binding source for G-05/G-06 evidence.
+
 #### G-05 packaged Windows wave — seventh batch: three chained evidence-flow defects found and fixed (candidate sha256 `0cebbba8e68922e9a1bea35cc1ef9833ffb5ff8470a74e9f706bed9b089fbe0f`)
 
 Exercising the DEFAULT v2 evidence flow on the packaged binary (approved CUDA b10816, SmolLM2, RTX 5090) exposed a broken chain: the flow could not complete end-to-end. Three independent defects were found, fixed regression-first, mutation-checked, and re-verified on the rebuilt package.
