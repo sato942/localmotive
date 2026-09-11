@@ -841,7 +841,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 - [x] **V06-MT-05.V1** — Use deterministic barriers to reproduce warm-benchmark/stop/restart, cold-benchmark/start/tune, quality/restart, and simultaneous start_server/start_tuning interleavings. **Trace:** [Audit MT-05](./localmotive-comprehensive-audit.md#mt-05).
 - [x] **V06-MT-05.V2** — Assert no second owner is granted, no old-PID memory evidence is joined to replacement responses, and replaced-server results cannot be finalized under the original identity. **Trace:** [Audit MT-05](./localmotive-comprehensive-audit.md#mt-05).
-- [ ] **V06-MT-05.V3** — Exercise packaged Windows cancellation and restart flows, preserving records of process generations, listener ownership, and eventual reservation release. **Trace:** [Audit MT-05](./localmotive-comprehensive-audit.md#mt-05).
+- [x] **V06-MT-05.V3** — Exercise packaged Windows cancellation and restart flows, preserving records of process generations, listener ownership, and eventual reservation release. **Trace:** [Audit MT-05](./localmotive-comprehensive-audit.md#mt-05).
 
 **Complete when:** All managed inference operations participate in the same ownership rules, including cold attempts that are absent from the ordinary managed-server slot. Concurrent stop/start requests cannot silently switch the model serving a recorded trial or quality case, and lifecycle protection does not block UI responsiveness through a long-held mutex.
 
@@ -1130,7 +1130,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 - [x] **V06-FE-01.V1** — Add component/IPC-boundary regressions selecting model B, rescanning inventory ordered A/B, deleting B, and failing the scan; assert visible identity and exact submitted/saved profile values. **Trace:** [Audit FE-01](./localmotive-comprehensive-audit.md#fe-01).
 - [x] **V06-FE-01.V2** — Exercise typed runtime B plus Inspect, file-picker B and managed activation B after configuring A; assert runtimePath, inspected runtime identity and profile.runtime converge. **Trace:** [Audit FE-01](./localmotive-comprehensive-audit.md#fe-01).
-- [ ] **V06-FE-01.V3** — Run the packaged select, rescan, inspect, save and start scenario and capture the resulting server snapshot and command arguments. **Trace:** [Audit FE-01](./localmotive-comprehensive-audit.md#fe-01).
+- [x] **V06-FE-01.V3** — Run the packaged select, rescan, inspect, save and start scenario and capture the resulting server snapshot and command arguments. **Trace:** [Audit FE-01](./localmotive-comprehensive-audit.md#fe-01).
 
 **Complete when:** No supported rescan or runtime-selection route displays one model/runtime while saving or launching another. Saved profiles remain under their originating model's key, and missing or failed selections have an explicit recoverable state.
 
@@ -1156,7 +1156,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 **Verification**
 
 - [x] **V06-FE-02.V1** — Start tuning A, select B before deferred progress/completion arrives, then adopt; assert B's report, profile and storage key are not overwritten by A. **Trace:** [Audit FE-02](./localmotive-comprehensive-audit.md#fe-02).
-- [ ] **V06-FE-02.V2** — Activate runtime B after measuring on runtime A and verify adoption follows the documented current-runtime policy without silently restoring A. **Trace:** [Audit FE-02](./localmotive-comprehensive-audit.md#fe-02).
+- [x] **V06-FE-02.V2** — Activate runtime B after measuring on runtime A and verify adoption follows the documented current-runtime policy without silently restoring A. **Trace:** [Audit FE-02](./localmotive-comprehensive-audit.md#fe-02).
 - [x] **V06-FE-02.V3** — Complete a run, start another and deliver late events from the first; verify the second run's trials and status remain unchanged. **Trace:** [Audit FE-02](./localmotive-comprehensive-audit.md#fe-02).
 
 **Complete when:** Every visible trial/report identifies its originating run and can be adopted only into the corresponding model's profile. Navigation and provider/model draft changes preserve active tuning provenance, and late events cannot contaminate another run.
@@ -1236,8 +1236,8 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Verification**
 
-- [ ] **V06-FE-05.V1** — Start a deferred benchmark, navigate away and back, then cancel; assert the same run remains active and the original cancellation handle is available. **Trace:** [Audit FE-05](./localmotive-comprehensive-audit.md#fe-05).
-- [ ] **V06-FE-05.V2** — Complete measurement while another screen is open and verify returning to Benchmark displays that run and its saved evidence rather than a new empty session. **Trace:** [Audit FE-05](./localmotive-comprehensive-audit.md#fe-05).
+- [x] **V06-FE-05.V1** — Start a deferred benchmark, navigate away and back, then cancel; assert the same run remains active and the original cancellation handle is available. **Trace:** [Audit FE-05](./localmotive-comprehensive-audit.md#fe-05).
+- [x] **V06-FE-05.V2** — Complete measurement while another screen is open and verify returning to Benchmark displays that run and its saved evidence rather than a new empty session. **Trace:** [Audit FE-05](./localmotive-comprehensive-audit.md#fe-05).
 - [ ] **V06-FE-05.V3** — Benchmark profile A, leave to edit/start B, benchmark B, then compare both records with distinct provenance and recover them through the supported saved-manifest route. **Trace:** [Audit FE-05](./localmotive-comprehensive-audit.md#fe-05).
 
 **Complete when:** Navigation cannot erase accessible completed results or active measurement controls. Profile changes retain historical candidates while current-input evidence is invalidated appropriately.
@@ -1562,7 +1562,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 **Verification**
 
 - [x] **V06-IPC-01.V1** — Use a benign fixture that binds the expected port but never becomes ready. In the packaged Windows application, verify responsive controls and starting status, then measure Stop-to-process-exit latency against a documented deadline. **Trace:** [Audit IPC-01](./localmotive-comprehensive-audit.md#ipc-01).
-- [ ] **V06-IPC-01.V2** — Exercise slow --help, unreadable GGUF, early child exit and window close during startup. Confirm child/listener cleanup, truthful terminal state and a successful subsequent start. **Trace:** [Audit IPC-01](./localmotive-comprehensive-audit.md#ipc-01).
+- [x] **V06-IPC-01.V2** — Exercise slow --help, unreadable GGUF, early child exit and window close during startup. Confirm child/listener cleanup, truthful terminal state and a successful subsequent start. **Trace:** [Audit IPC-01](./localmotive-comprehensive-audit.md#ipc-01).
 - [x] **V06-IPC-01.V3** — Force a late completion from an older operation after a new request and prove it cannot publish or clear the new operation's state. **Trace:** [Audit IPC-01](./localmotive-comprehensive-audit.md#ipc-01).
 
 **Complete when:** Start, status and Stop remain usable throughout loading; cleanup and latency evidence are attached for the packaged Windows candidate. No expensive command relies on merely adding async around blocking work or retaining a global lock for the operation lifetime.
@@ -2888,6 +2888,18 @@ Environment: Windows 11 (26100) host with Windows Sandbox (WDAGUtilityAccount cl
 - **Resume verified.** A row-scoped Resume click on the same entry continued the download: the sidecar completed-byte sum grew from 1 115 684 864 to 1 123 292 284 (+7 607 420 bytes) before the row was stopped again (driver `scripts/g05_partial_resume.mjs`; the first attempt mis-targeted an older row's Resume control and is recorded as a harness iteration, not a product result).
 - **Open observation (harness-caused condition):** one older row (nemotron 707 MiB) shows `Resume` with no bytes and no progress; its job record survived while the scratch folder was deliberately deleted mid-life between runs. Clicking Resume produced no visible error and no progress. Exact cause unverified; candidate expectation: a resume whose partial/sidecar no longer exists should fail visibly. Repro: start a download, delete its destination folder externally while the job record lives, then click Resume.
 - Evidence: `.hermes-0.6/g05-partial.log`, `.hermes-0.6/g05-partial2.log`; scratch files removed after the run (16 GB preallocation reclaimed; a transient file handle left the empty directory in place).
+
+#### High-finding verification campaign on the final candidate (2026-09-11, portable `075daa54…`, CDP 10070)
+
+The remaining open verification items on High findings were executed against the packaged portable binary. Evidence logs: `.hermes-0.6/final-vitems-*.log`, drivers `scripts/g05_vitems_*.mjs` / `g05_inflight_*.mjs`.
+
+- **FE-01.V3** (select/rescan/inspect/save/start + snapshot/command capture): packaged rescan found the model, profile saved, runtime inspected, Start reached LIVE, and the Provisional command panel captured the full argv (legacy cuda-12.4 executable + model + host/port/alias/context/threads/fit/flash-attn/KV/load/split/batching flags) plus the server snapshot.
+- **FE-02.V2** (adopt B after measuring A; no silent A): adopted the CUDA build -> Start -> child image `...\GGUF Pilot\runtimes\b10816\cuda-12.4\llama-server.exe`; adopted the CPU build -> Save -> Start -> child image `...\runtimes\b10816\cpu\llama-server.exe` (process-path proof that B was actually launched, not silently restored A); re-adopted CUDA -> child returned to cuda-12.4. The adoption choice persists across a fresh launch.
+- **FE-05.V1** (navigate away/back, cancel keeps the original handle): Run v2 -> navigate Dashboard -> back: the run remained active; fast-poll capture: the original Cancel was enabled at 204 ms and the click was accepted; the terminal state is the run discarded ("No v2 result", app idle) - the same handle cancelled the same run.
+- **FE-05.V2** (complete while another screen is open): run started, Dashboard open, completion observed while away; returning to Benchmark displayed that run's result (974.36 tok/s, p50 976.25, n=5, 5/5 sampled) instead of an empty session.
+- **IPC-01.V2** (slow --help, unreadable GGUF, early child exit, window close during startup): (a) a sleeper binary swapped into the legacy runtime path produced a 26 s bounded inspection-class operation with 1 ms UI round-trips and the compiled-content refusal ("Legacy managed runtimes need compiled content approval") - replaced bytes never execute; (b) a corrupted model produced the truthful artifact refusal "Model cannot be launched because its artifact is incomplete or inconsistent" with zero processes, then a clean start after restore; (c) killing the child mid-run turned the state non-LIVE with zero processes and the next Start reached LIVE; (d) the app killed ~2.5 s after Start left zero llama-server processes (per-child kill-on-close job), and a relaunched instance started cleanly.
+- **MT-05.V3** (cancellation/restart records, generations, ownership, reservation release): the cancel produced its own terminal record (result discarded); successive adoptions produced distinct child images across generations (cuda-12.4 -> cpu -> cuda-12.4); processor parentage showed the app owning the live child; the clean cycle Start -> LIVE -> Stop -> 0 processes -> Start -> LIVE proved reservation release. Note: multi-instance confusion during probing (several `localmotive-portable.exe` instances because an earlier kill pattern matched only `localmotive.exe`) was identified and eliminated; the recorded observations above come from re-verified single-instance runs or were re-checked after cleanup.
+- **FE-05.V3** remains deferred (the two-profile provenance walk with the saved-manifest route): the route's controls are present and enabled ("Replay manifest", "Add anchor", "Clear local history") and multiple manifests were saved today, but the full A/B record walk was not completed; see the deferral table.
 
 #### Final candidate re-cut (2026-09-11)
 
