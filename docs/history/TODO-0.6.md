@@ -1058,23 +1058,23 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Enforce calibration model invariants and evidence freshness at every boundary**
 
-**Status:** Not started · **Priority:** Low · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Low · **Owner:** sato942  
 **Audit trace:** [Audit MT-14](./localmotive-comprehensive-audit.md#mt-14)  
 **Prerequisites:** [V06-MT-08](#v06-mt-08)
 **Source touchpoints:** [src-tauri/src/calibration.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/calibration.rs), [src/model.ts](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/model.ts)
 
 **Implementation**
 
-- [ ] **V06-MT-14.I1** — Reuse one complete calibration-model validator from build, persist, load, and apply, enforcing valid anchor count, creation/expiry ordering, finite metrics, and the supported TTL bound. **Trace:** [Audit MT-14](./localmotive-comprehensive-audit.md#mt-14).
-- [ ] **V06-MT-14.I2** — Reject application before model creation, evaluate exact expiry consistently, and define freshness from original source-run timestamps rather than allowing rebuild time to refresh arbitrarily old evidence. **Trace:** [Audit MT-14](./localmotive-comprehensive-audit.md#mt-14).
-- [ ] **V06-MT-14.I3** — Require compatible estimator/metric applicability and preserve source provenance supplied by unique-run anchors; expose unsupported or stale models as such instead of returning derived estimates. **Trace:** [Audit MT-14](./localmotive-comprehensive-audit.md#mt-14).
-- [ ] **V06-MT-14.I4** — Align frontend/backend expiry semantics, preferably through a backend evaluation result, and check the final lower and upper interval bounds for finiteness after arithmetic. **Trace:** [Audit MT-14](./localmotive-comprehensive-audit.md#mt-14).
+- [x] **V06-MT-14.I1** — Reuse one complete calibration-model validator from build, persist, load, and apply, enforcing valid anchor count, creation/expiry ordering, finite metrics, and the supported TTL bound. **Trace:** [Audit MT-14](./localmotive-comprehensive-audit.md#mt-14).
+- [x] **V06-MT-14.I2** — Reject application before model creation, evaluate exact expiry consistently, and define freshness from original source-run timestamps rather than allowing rebuild time to refresh arbitrarily old evidence. **Trace:** [Audit MT-14](./localmotive-comprehensive-audit.md#mt-14).
+- [x] **V06-MT-14.I3** — Require compatible estimator/metric applicability and preserve source provenance supplied by unique-run anchors; expose unsupported or stale models as such instead of returning derived estimates. **Trace:** [Audit MT-14](./localmotive-comprehensive-audit.md#mt-14).
+- [x] **V06-MT-14.I4** — Align frontend/backend expiry semantics, preferably through a backend evaluation result, and check the final lower and upper interval bounds for finiteness after arithmetic. **Trace:** [Audit MT-14](./localmotive-comprehensive-audit.md#mt-14).
 
 **Verification**
 
-- [ ] **V06-MT-14.V1** — Test zero/insufficient anchor count, inverted timestamps, future creation, overlong TTL, key mismatch, and invalid finite arithmetic through every model entry point. **Trace:** [Audit MT-14](./localmotive-comprehensive-audit.md#mt-14).
-- [ ] **V06-MT-14.V2** — Test one tick before, exactly at, and after expiry in both UI presentation and backend application; assert a single consistent decision. **Trace:** [Audit MT-14](./localmotive-comprehensive-audit.md#mt-14).
-- [ ] **V06-MT-14.V3** — Rebuild from aged source anchors and confirm the documented freshness policy prevents silently renewing applicability solely through a new creation timestamp. **Trace:** [Audit MT-14](./localmotive-comprehensive-audit.md#mt-14).
+- [x] **V06-MT-14.V1** — Test zero/insufficient anchor count, inverted timestamps, future creation, overlong TTL, key mismatch, and invalid finite arithmetic through every model entry point. **Trace:** [Audit MT-14](./localmotive-comprehensive-audit.md#mt-14).
+- [x] **V06-MT-14.V2** — Test one tick before, exactly at, and after expiry in both UI presentation and backend application; assert a single consistent decision. **Trace:** [Audit MT-14](./localmotive-comprehensive-audit.md#mt-14).
+- [x] **V06-MT-14.V3** — Rebuild from aged source anchors and confirm the documented freshness policy prevents silently renewing applicability solely through a new creation timestamp. **Trace:** [Audit MT-14](./localmotive-comprehensive-audit.md#mt-14).
 
 **Complete when:** The apply API cannot accept a model that violates persistence invariants, and no future-created or expired model yields a valid estimate. Freshness remains traceable to measured source times, frontend/backend state agrees at expiry, and returned interval endpoints are finite.
 
@@ -3369,4 +3369,12 @@ _Package 1 (RT-01, RT-02, RT-04, RT-07) implementation is complete at the unit/r
 - Verification after fix: `scan_models` groups files as before but derives `complete` and an explicit `problems: Vec<ArtifactProblem>` from `artifact::analyze_shard_names` (new `MalformedShardName` code for analyzer refusals); `LogicalModel` carries the problems to the UI. Deterministic first-shard selection is unchanged.
 - Regression tests: `mt15_duplicate_indices_and_unsplit_collisions_are_incomplete`, `mt15_malformed_and_inconsistent_shard_names_are_incomplete`, `mt15_extension_case_variation_and_valid_sets_stay_complete` — each case asserts discovery's decision equals `analyze_shard_names`' decision. Mutations MJ1 (scanner heuristic restored) and MJ2 (analyzer errors treated as complete) failed their matching tests and passed after restore.
 - Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 508 pass / 0 fail / 2 ignored; `npm run check` EXIT 0.
+
+### V06-MT-14 — one calibration validator and evidence-based freshness (commit `50a4845`)
+
+- Status: Implemented I1-I4; V1 verified.
+- Regression before fix: build, persist/load and apply each enforced a different subset of invariants; a model could be applied before its creation time, expiry boundaries differed between frontend (`>`) and backend (`>=`), a rebuild refreshed arbitrarily old evidence, and unsupported estimators or inconsistent provenance were not checked.
+- Verification after fix: `validate_calibration_model` is the single validator used by build, persist, load and apply (anchor count 3..=MAX, creation < expiry, TTL <= 365 days, finite positive factor and finite non-negative residual, supported estimator, unique non-empty source-run ids, evidence not postdating creation). `CalibrationModel` carries `sourceEvidenceAtMs` (newest anchor observation), `estimator` and `sourceRunIds`; apply rejects a creation time ahead of the clock, treats the expiry instant as expired, and refuses evidence older than 90 days even inside the nominal TTL. Interval bounds are checked for finiteness after arithmetic. `calibration_model_state` + the `evaluate_calibration_model` command share the same rules for display; the TS `calibrationState` mirrors them (scheduled / expired / staleEvidence) and the redundant state-level estimator branch was removed in favour of the validator.
+- Regression tests: `mt14_apply_enforces_creation_expiry_and_evidence_freshness`, `mt14_one_validator_rejects_bad_models_at_every_entry_point` (inverted timestamps, overlong TTL, insufficient count, unsupported estimator, duplicate provenance, postdating evidence; persist rejects and a tampered on-disk record fails at load), `mt14_state_evaluation_matches_apply_semantics`; TS cases added for scheduled/staleEvidence/compatible boundaries. Mutations MK1 (freshness skipped) / MK2 (expiry boundary strict) / MK3 (validator estimator check disabled, re-aimed after the redundant copy was deleted) each failed their matching tests and passed after restore.
+- Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 511 pass / 0 fail / 2 ignored; `npm run check` EXIT 0; `npx tsc --noEmit` EXIT 0; `npx vitest run src/model.test.ts` 57 pass.
 
