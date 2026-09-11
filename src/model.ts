@@ -1826,6 +1826,9 @@ export type Catalog = {
     allowlist: string[];
   };
   models: CatalogModel[];
+  /** Rows removed by runtime validation, with reasons (audit S-05). Absent
+   * when nothing was dropped. */
+  dropped?: { id: string; repo: string; reason: string }[];
 };
 
 export type CatalogSort = "downloads" | "likes" | "name" | "size";

@@ -3694,6 +3694,7 @@ async fn fetch_model_catalog(
                         source: String::new(),
                         note: String::new(),
                         models: mirror_models,
+                        dropped: Vec::new(),
                     },
                     &migration_error,
                 )

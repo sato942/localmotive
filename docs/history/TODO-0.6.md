@@ -2164,18 +2164,18 @@ These packages preserve actionable recommendations outside the 72-item findings 
 
 **Unify catalog schema validation and repository lookup identity**
 
-**Status:** Not started · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
 **Audit trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims)  
 **Prerequisites:** [V06-DC-04](#v06-dc-04), [V06-DC-09](#v06-dc-09)
 
 **Implementation**
 
-- [ ] **V06-S-05.I1** — Create shared positive/negative fixtures for JavaScript and Rust catalog validation, including required rich metadata, dates, integer bounds, revisions, filenames and quant labels. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
-- [ ] **V06-S-05.I2** — Make dropped model counts and reasons visible. Enforce one row per repository or explicitly authorize files across all matching rows so a displayed second repository row is not unreachable. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
+- [x] **V06-S-05.I1** — Create shared positive/negative fixtures for JavaScript and Rust catalog validation, including required rich metadata, dates, integer bounds, revisions, filenames and quant labels. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
+- [x] **V06-S-05.I2** — Make dropped model counts and reasons visible. Enforce one row per repository or explicitly authorize files across all matching rows so a displayed second repository row is not unreachable. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
 
 **Verification**
 
-- [ ] **V06-S-05.V1** — Run the same fixtures through both validators, including duplicate repositories, duplicate IDs and malformed rows; assert displayed rows have predictable authorization and rejection diagnostics. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
+- [x] **V06-S-05.V1** — Run the same fixtures through both validators, including duplicate repositories, duplicate IDs and malformed rows; assert displayed rows have predictable authorization and rejection diagnostics. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
 
 **Complete when:** Catalog validation and lookup have one documented contract, and silent row loss is observable.
 
@@ -3700,3 +3700,11 @@ Revalidated at the candidate source (`065248a1` + the G-07 test addition) on Win
 - V1 proved with fixtures: a corrupt cache is quarantined with both the bytes and the note preserved while the repair errors when the download target is unreachable (no live server needed — the earlier HTTP-fixture plan hung and was discarded per the DC-11 precedent); a healthy cache returns unchanged with no network; retry after failure is safe and preserves the first quarantine; a pre-cancelled repair against an unverified cache quarantines first and keeps no unhealthy file live.
 - Mutation NU1 (quarantine replaced by plain deletion) failed the diagnostics-preservation assertions and passed after restore.
 - Commands: `cargo fmt --check` PASS; clippy `-D warnings` 0 errors; `cargo test` 542 passed / 0 failed / 2 ignored (540 + the two S-04 tests); `npm run check` PASS (337.79 kB, and `tsc --noEmit` PASS); Vitest 93 passed.
+
+#### S-05 closure record — one catalog schema contract, visible drops
+
+- I1: shared fixtures `scripts/tests/fixtures/catalog-schema-cases.json` (18 cases: valid rows, missing id, invalid repository, empty files, traversal/ADS/reserved-device/trailing-dot filenames, malformed revisions, bad digests, missing quant labels, bad dates, oversize beyond safe integers, duplicate repositories, duplicate ids, duplicate filenames, absent revision default). The JavaScript contract lives in `scripts/lib/catalog_schema.mjs`; the Rust contract is `catalog::parse_catalog` + `catalog_row_problem`; `scripts/tests/catalog_schema.test.mjs` (node --test, wired into `npm test`) and `catalog::tests::s05_shared_fixture_cases_agree_with_the_javascript_validator` run the SAME file and agree on every case. `validate_catalog.mjs` additionally proves the curated artifact has 0 drops under the shared contract.
+- I2: dropped rows are recorded (`CatalogDrop {id, repo, reason}`, capped at 64) and serialized on the catalog (empty list skipped), so the app notice now reports "N catalog rows dropped by validation: <first reasons>". A second row for an already-seen repository is dropped with the reason "duplicate repository row (first row stays authoritative)", keeping every displayed row reachable through `catalog_file` (first row per repository). A catalog whose rows all drop refuses with the reasons in the error text instead of a bare message. Windows reserved device names, trailing-dot/trailing-space, control characters, filenames without the trailing-dot check, and >2^53 sizes are now refused identically by both validators (overlaps S-06.I2's filename policy).
+- V1: `node --test scripts/tests/catalog_schema.test.mjs` 18/18; Rust fixture test 1/1 (same cases); real catalog revalidated: `npm run catalog:validate` → "catalog: valid v2 (158 models, 1417 files) · shared contract 0 drops"; duplicate-id/duplicate-filename fatals preserved on both sides.
+- Mutations: OV1 (duplicate-repository drop removed) and OV2 (reserved device names allowed) each failed the shared fixture test and passed after restore.
+- Commands: `cargo fmt --check` PASS; clippy `-D warnings` 0 errors; `cargo test` 543 passed / 0 failed / 2 ignored (542 + the S-05 fixture test); `npm run check` PASS (337.96 kB; Vitest 93; node tests 18 + release gates).

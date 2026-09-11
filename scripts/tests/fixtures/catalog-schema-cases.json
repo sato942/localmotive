@@ -1,0 +1,433 @@
+{
+  "comment": "Shared catalog schema fixtures (audit S-05). Both the JavaScript validator (scripts/lib/catalog_schema.mjs) and the Rust validator (src-tauri/src/catalog.rs::parse_catalog) read these cases. api accepts extra notes for maintainers.",
+  "cases": [
+    {
+      "name": "valid single row",
+      "models": [
+        {
+          "id": "fixture/alpha",
+          "repo": "fixture/alpha-GGUF",
+          "files": [
+            {
+              "filename": "alpha-Q4_K_M.gguf",
+              "revision": "main",
+              "sizeBytes": 123,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "quant": "Q4_K_M"
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "result": "ok",
+        "acceptedIds": [
+          "fixture/alpha"
+        ],
+        "dropped": 0
+      }
+    },
+    {
+      "name": "missing id",
+      "models": [
+        {
+          "id": "",
+          "repo": "fixture/alpha-GGUF",
+          "files": [
+            {
+              "filename": "a.gguf",
+              "revision": "main",
+              "sizeBytes": 1,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "quant": "Q4_K_M"
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "result": "error",
+        "errorContains": "missing model id"
+      }
+    },
+    {
+      "name": "invalid repository",
+      "models": [
+        {
+          "id": "x",
+          "repo": "not-a-repo",
+          "files": [
+            {
+              "filename": "a.gguf",
+              "revision": "main",
+              "sizeBytes": 1,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "quant": "Q4_K_M"
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "result": "error",
+        "errorContains": "invalid repository"
+      }
+    },
+    {
+      "name": "no files",
+      "models": [
+        {
+          "id": "x",
+          "repo": "fixture/repo",
+          "files": []
+        }
+      ],
+      "expect": {
+        "result": "error",
+        "errorContains": "no files"
+      }
+    },
+    {
+      "name": "unsafe filename traversal",
+      "models": [
+        {
+          "id": "x",
+          "repo": "fixture/repo",
+          "files": [
+            {
+              "filename": "../escape.gguf",
+              "revision": "main",
+              "sizeBytes": 1,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "quant": "Q4_K_M"
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "result": "error",
+        "errorContains": "unsafe filename"
+      }
+    },
+    {
+      "name": "unsafe filename ADS",
+      "models": [
+        {
+          "id": "x",
+          "repo": "fixture/repo",
+          "files": [
+            {
+              "filename": "model.gguf:zone",
+              "revision": "main",
+              "sizeBytes": 1,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "quant": "Q4_K_M"
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "result": "error",
+        "errorContains": "unsafe filename"
+      }
+    },
+    {
+      "name": "unsafe revision traversal",
+      "models": [
+        {
+          "id": "x",
+          "repo": "fixture/repo",
+          "files": [
+            {
+              "filename": "a.gguf",
+              "revision": "../../refs/heads/main",
+              "sizeBytes": 1,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "quant": "Q4_K_M"
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "result": "error",
+        "errorContains": "unsafe revision"
+      }
+    },
+    {
+      "name": "invalid sha256",
+      "models": [
+        {
+          "id": "x",
+          "repo": "fixture/repo",
+          "files": [
+            {
+              "filename": "a.gguf",
+              "revision": "main",
+              "sizeBytes": 1,
+              "sha256": "zz",
+              "quant": "Q4_K_M"
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "result": "error",
+        "errorContains": "invalid sha256"
+      }
+    },
+    {
+      "name": "duplicate repository row is dropped not unreachable",
+      "models": [
+        {
+          "id": "fixture/alpha",
+          "repo": "fixture/alpha-GGUF",
+          "files": [
+            {
+              "filename": "alpha-Q4_K_M.gguf",
+              "revision": "main",
+              "sizeBytes": 5,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "quant": "Q4_K_M"
+            }
+          ]
+        },
+        {
+          "id": "fixture/alpha-second",
+          "repo": "fixture/alpha-GGUF",
+          "files": [
+            {
+              "filename": "alpha-Q5_K_M.gguf",
+              "revision": "main",
+              "sizeBytes": 6,
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "quant": "Q4_K_M"
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "result": "ok",
+        "acceptedIds": [
+          "fixture/alpha"
+        ],
+        "dropped": 1,
+        "reasonsContain": [
+          "duplicate repository row"
+        ]
+      }
+    },
+    {
+      "name": "duplicate model id is fatal",
+      "models": [
+        {
+          "id": "dup",
+          "repo": "fixture/one",
+          "files": [
+            {
+              "filename": "one.gguf",
+              "revision": "main",
+              "sizeBytes": 5,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "quant": "Q4_K_M"
+            }
+          ]
+        },
+        {
+          "id": "dup",
+          "repo": "fixture/two",
+          "files": [
+            {
+              "filename": "two.gguf",
+              "revision": "main",
+              "sizeBytes": 5,
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "quant": "Q4_K_M"
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "result": "error",
+        "errorContains": "duplicate model id"
+      }
+    },
+    {
+      "name": "duplicate filename is fatal",
+      "models": [
+        {
+          "id": "one",
+          "repo": "fixture/one",
+          "files": [
+            {
+              "filename": "same.gguf",
+              "revision": "main",
+              "sizeBytes": 5,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "quant": "Q4_K_M"
+            }
+          ]
+        },
+        {
+          "id": "two",
+          "repo": "fixture/two",
+          "files": [
+            {
+              "filename": "same.gguf",
+              "revision": "main",
+              "sizeBytes": 5,
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "quant": "Q4_K_M"
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "result": "error",
+        "errorContains": "duplicate file"
+      }
+    },
+    {
+      "name": "all rows dropped is an empty catalog error",
+      "models": [
+        {
+          "id": "",
+          "repo": "",
+          "files": []
+        }
+      ],
+      "expect": {
+        "result": "error",
+        "errorContains": "no usable models"
+      }
+    },
+    {
+      "name": "missing quant label",
+      "models": [
+        {
+          "id": "x",
+          "repo": "fixture/repo",
+          "files": [
+            {
+              "filename": "a.gguf",
+              "sizeBytes": 1,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "revision": "main"
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "result": "error",
+        "errorContains": "missing quant label"
+      }
+    },
+    {
+      "name": "invalid date is dropped",
+      "models": [
+        {
+          "id": "x",
+          "repo": "fixture/repo",
+          "files": [
+            {
+              "filename": "a.gguf",
+              "quant": "Q4_K_M",
+              "sizeBytes": 1,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "lastModified": "not-a-date",
+              "revision": "main"
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "result": "error",
+        "errorContains": "invalid date"
+      }
+    },
+    {
+      "name": "oversize beyond safe integers is dropped",
+      "models": [
+        {
+          "id": "x",
+          "repo": "fixture/repo",
+          "files": [
+            {
+              "filename": "a.gguf",
+              "quant": "Q4_K_M",
+              "sizeBytes": 9007199254740993,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "revision": "main"
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "result": "error",
+        "errorContains": "invalid size"
+      }
+    },
+    {
+      "name": "absent revision defaults to main",
+      "models": [
+        {
+          "id": "fixture/default-rev",
+          "repo": "fixture/repo",
+          "files": [
+            {
+              "filename": "a.gguf",
+              "quant": "Q4_K_M",
+              "sizeBytes": 1,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "result": "ok",
+        "acceptedIds": [
+          "fixture/default-rev"
+        ],
+        "dropped": 0
+      }
+    },
+    {
+      "name": "Windows reserved device name is refused",
+      "models": [
+        {
+          "id": "x",
+          "repo": "fixture/repo",
+          "files": [
+            {
+              "filename": "CON.gguf",
+              "quant": "Q4_K_M",
+              "sizeBytes": 1,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "result": "error",
+        "errorContains": "unsafe filename"
+      }
+    },
+    {
+      "name": "trailing dot filename is refused",
+      "models": [
+        {
+          "id": "x",
+          "repo": "fixture/repo",
+          "files": [
+            {
+              "filename": "model.gguf.",
+              "quant": "Q4_K_M",
+              "sizeBytes": 1,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "result": "error",
+        "errorContains": "unsafe filename"
+      }
+    }
+  ]
+}

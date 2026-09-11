@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
 import { createPublicKey, verify } from "node:crypto";
+import { validateCatalogRows } from "./lib/catalog_schema.mjs";
 
 const path = process.argv[2] ?? "catalog/catalog.json";
 // The build job writes an unsigned candidate; the sign job signs it right
@@ -75,4 +76,12 @@ for (const [index, model] of (catalog.models ?? []).entries()) {
   }
 }
 
-if (!process.exitCode) console.log(`catalog: valid v2 (${catalog.models.length} models, ${targets.size} files)`);
+// The shared contract (audit S-05) must accept every curated row: a drop at
+// validation time would make that row's files unreachable in the app.
+const shared = validateCatalogRows(catalog.models ?? []);
+if (shared.error) fail(`shared schema contract: ${shared.error}`);
+if (shared.dropped.length > 0) {
+  fail(`shared schema contract drops ${shared.dropped.length} row(s): ${JSON.stringify(shared.dropped.slice(0, 3))}`);
+}
+
+if (!process.exitCode) console.log(`catalog: valid v2 (${catalog.models.length} models, ${targets.size} files) · shared contract 0 drops`);

@@ -132,6 +132,10 @@ const MIN_SUPPORTED_SCHEMA: u32 = 2;
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CatalogFile {
+    /// Quantization label. Defaults to empty so an absent key becomes a
+    /// visible row drop with the shared reason, not a whole-catalog error
+    /// (audit S-05: the same rule the JavaScript validator applies).
+    #[serde(default)]
     pub quant: String,
     pub filename: String,
     pub size_bytes: u64,
@@ -246,6 +250,19 @@ pub struct Catalog {
     pub note: String,
     #[serde(default)]
     pub models: Vec<CatalogModel>,
+    /// Rows removed by validation, with user-visible reasons (audit S-05).
+    /// Never silent: the refresh snapshot surfaces the count and reasons.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dropped: Vec<CatalogDrop>,
+}
+
+/// One catalog row that validation removed, and why (audit S-05.I2).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogDrop {
+    pub id: String,
+    pub repo: String,
+    pub reason: String,
 }
 
 /// Parse and validate a catalog document. Rejects a schema this build cannot
@@ -298,17 +315,35 @@ pub fn parse_catalog(text: &str) -> Result<Catalog, String> {
             catalog.schema_version
         ));
     }
-    catalog.models.retain(|model| {
-        !model.id.is_empty()
-            && is_valid_repo(&model.repo)
-            && !model.files.is_empty()
-            && model.files.iter().all(|file| {
-                is_safe_filename(&file.filename)
-                    && file.size_bytes > 0
-                    && is_safe_revision(&file.revision)
-                    && is_sha256(&file.sha256)
-            })
-    });
+    // Row-level validation with visible reasons (audit S-05), mirroring the
+    // shared JavaScript contract in scripts/lib/catalog_schema.mjs.
+    let mut kept = Vec::new();
+    let mut dropped: Vec<CatalogDrop> = Vec::new();
+    let mut seen_repos = std::collections::BTreeSet::new();
+    for model in std::mem::take(&mut catalog.models) {
+        if let Some(reason) = catalog_row_problem(&model) {
+            dropped.push(CatalogDrop {
+                id: model.id.clone(),
+                repo: model.repo.clone(),
+                reason,
+            });
+            continue;
+        }
+        // One row per repository: a second row for the same repository would
+        // leave the later row's files unreachable behind the first, so the
+        // duplicate is dropped with a visible reason instead.
+        if !seen_repos.insert(model.repo.clone()) {
+            dropped.push(CatalogDrop {
+                id: model.id.clone(),
+                repo: model.repo.clone(),
+                reason: "duplicate repository row (first row stays authoritative)".into(),
+            });
+            continue;
+        }
+        kept.push(model);
+    }
+    dropped.truncate(64);
+    catalog.models = kept;
     let mut ids = std::collections::BTreeSet::new();
     let mut files = std::collections::BTreeSet::new();
     for model in &catalog.models {
@@ -325,9 +360,67 @@ pub fn parse_catalog(text: &str) -> Result<Catalog, String> {
         }
     }
     if catalog.models.is_empty() {
-        return Err("Catalog contains no usable models.".into());
+        let summary = dropped
+            .iter()
+            .take(3)
+            .map(|drop| drop.reason.as_str())
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(format!(
+            "Catalog contains no usable models. Dropped rows: {summary}"
+        ));
     }
+    catalog.dropped = dropped;
     Ok(catalog)
+}
+
+/// The exact rejection reasons shared with the JavaScript validator.
+fn catalog_row_problem(model: &CatalogModel) -> Option<String> {
+    if model.id.is_empty() {
+        return Some("missing model id".into());
+    }
+    if !is_valid_repo(&model.repo) {
+        return Some("invalid repository".into());
+    }
+    if model.files.is_empty() {
+        return Some("no files".into());
+    }
+    for file in &model.files {
+        if !is_safe_filename(&file.filename) {
+            return Some(format!("unsafe filename: {}", file.filename));
+        }
+        if file.size_bytes == 0 || file.size_bytes > (1u64 << 53) {
+            // Beyond 2^53 a JSON number is no longer exact in the JavaScript
+            // contract either, so both validators refuse it (audit S-05).
+            return Some(format!("invalid size for {}", file.filename));
+        }
+        if !is_safe_revision(&file.revision) {
+            return Some(format!("unsafe revision for {}", file.filename));
+        }
+        if !is_sha256(&file.sha256) {
+            return Some(format!("invalid sha256 for {}", file.filename));
+        }
+        if file.quant.is_empty() {
+            return Some(format!("missing quant label for {}", file.filename));
+        }
+        for value in [&file.last_modified, &file.created_at] {
+            if !value.is_empty() && !starts_with_iso_date(value) {
+                return Some(format!("invalid date for {}", file.filename));
+            }
+        }
+    }
+    None
+}
+
+/// The shared date contract: an observed date starts with YYYY-MM-DD.
+fn starts_with_iso_date(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() >= 10
+        && bytes[..4].iter().all(u8::is_ascii_digit)
+        && bytes[4] == b'-'
+        && bytes[5..7].iter().all(u8::is_ascii_digit)
+        && bytes[7] == b'-'
+        && bytes[8..10].iter().all(u8::is_ascii_digit)
 }
 
 pub fn bundled_catalog() -> Result<Catalog, String> {
@@ -414,6 +507,9 @@ fn verify_catalog_signature(body: &[u8], encoded: &str) -> bool {
 /// `owner/name`, the only shape Hugging Face uses. Rejecting anything else
 /// keeps a malformed or hostile catalog from producing surprising URLs.
 pub fn is_valid_repo(repo: &str) -> bool {
+    if repo.len() > 200 {
+        return false;
+    }
     let mut parts = repo.split('/');
     let (Some(owner), Some(name), None) = (parts.next(), parts.next(), parts.next()) else {
         return false;
@@ -443,7 +539,27 @@ fn is_safe_filename(name: &str) -> bool {
     {
         return false;
     }
-    name != "." && name != ".." && name.len() <= 255
+    if name != "."
+        && name != ".."
+        && name.len() <= 255
+        && name == name.trim()
+        && !name.ends_with('.')
+        && !name.ends_with(' ')
+        && !name.chars().any(|c| c.is_control())
+    {
+        // Windows reserved device names (also with extensions) are refused
+        // with the same policy as the JavaScript validator (audit S-05/S-06).
+        let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
+        let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+            || (stem.len() == 4
+                && (stem.starts_with("COM") || stem.starts_with("LPT"))
+                && stem.as_bytes()[3].is_ascii_digit()
+                && stem.as_bytes()[3] != b'0');
+        if !reserved {
+            return true;
+        }
+    }
+    false
 }
 
 /// Validate the untrusted arguments received by the Tauri download command.
@@ -1483,6 +1599,69 @@ pub fn clear_hf_token() -> Result<TokenStatus, String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn s05_shared_fixture_cases_agree_with_the_javascript_validator() {
+        let raw = include_str!("../../scripts/tests/fixtures/catalog-schema-cases.json");
+        let fixture: serde_json::Value = serde_json::from_str(raw).unwrap();
+        let cases = fixture["cases"].as_array().unwrap();
+        assert!(
+            cases.len() >= 10,
+            "the shared fixture set must stay populated"
+        );
+        for case in cases {
+            let name = case["name"].as_str().unwrap();
+            let expect = &case["expect"];
+            let body = serde_json::json!({
+                "schemaVersion": 2,
+                "updated": "2026-09-11",
+                "models": case["models"],
+            })
+            .to_string();
+            let outcome = parse_catalog(&body);
+            match expect["result"].as_str().unwrap() {
+                "error" => {
+                    let error = outcome
+                        .err()
+                        .unwrap_or_else(|| panic!("{name}: expected an error"));
+                    let needle = expect["errorContains"].as_str().unwrap();
+                    assert!(error.contains(needle), "{name}: {error}");
+                }
+                "ok" => {
+                    let catalog = outcome.unwrap_or_else(|error| panic!("{name}: {error}"));
+                    let ids: Vec<&str> = catalog.models.iter().map(|m| m.id.as_str()).collect();
+                    let expected: Vec<&str> = expect["acceptedIds"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|value| value.as_str().unwrap())
+                        .collect();
+                    assert_eq!(ids, expected, "{name}");
+                    assert_eq!(
+                        catalog.dropped.len() as u64,
+                        expect["dropped"].as_u64().unwrap(),
+                        "{name}"
+                    );
+                    for needle in expect["reasonsContain"]
+                        .as_array()
+                        .cloned()
+                        .unwrap_or_default()
+                    {
+                        let needle = needle.as_str().unwrap();
+                        assert!(
+                            catalog
+                                .dropped
+                                .iter()
+                                .any(|drop| drop.reason.contains(needle)),
+                            "{name}: {needle} not in {:?}",
+                            catalog.dropped
+                        );
+                    }
+                }
+                other => panic!("{name}: unknown expectation {other}"),
+            }
+        }
+    }
 
     #[test]
     fn gh05_verify_source_overrides_require_the_isolated_verifier_root() {

@@ -638,11 +638,19 @@ function App() {
       setHfToken(token);
       const userCount = localModels.filter((model) => model.userSourced).length;
       const userNote = userCount > 0 ? ` (includes ${userCount} USER ADDED local row${userCount === 1 ? "" : "s"})` : "";
+      const droppedRows = snapshot.catalog.dropped ?? [];
+      const droppedNote =
+        droppedRows.length > 0
+          ? ` ${droppedRows.length} catalog row${droppedRows.length === 1 ? "" : "s"} dropped by validation: ${droppedRows
+              .slice(0, 2)
+              .map((drop) => drop.reason)
+              .join("; ")}.`
+          : "";
       const warningNote = [snapshot.refreshError, snapshot.persistenceNotice]
         .filter(Boolean)
         .join(" ");
       setNotice(
-        `${localModels.length} curated Hugging Face models loaded from ${snapshot.origin}${userNote}.${refreshNote}${warningNote ? ` ${warningNote}` : ""}`,
+        `${localModels.length} curated Hugging Face models loaded from ${snapshot.origin}${userNote}.${refreshNote}${warningNote ? ` ${warningNote}` : ""}${droppedNote}`,
       );
     } catch (error) {
       if (keepLatestRequest(sequence, catalogLoadSeq.current)) setNotice(String(error));
