@@ -1472,6 +1472,20 @@ test("FE-16 status polling is single-flight with sequence guards", async () => {
   assert.doesNotMatch(dashboard, /Start this props\./);
 });
 
+test("the cancellable local client never re-issues a slow-but-healthy response (MT-06)", async () => {
+  const source = await readFile(join(process.cwd(), "src-tauri", "src", "local_client.rs"), "utf8");
+  // Regression pinned after the 0.6.0 re-bind probes: the cancellable path
+  // once bounded every attempt to CANCEL_ATTEMPT_SLICE and re-issued it,
+  // which livelocked the v2 benchmark on the managed runtime (~560 ms per
+  // completion). The request must run on a worker with the full deadline
+  // while the caller observes the cancel flag in slices.
+  assert.doesNotMatch(source, /remaining\.min\(CANCEL_ATTEMPT_SLICE\)/);
+  assert.doesNotMatch(source, /is_timeout\(\) && cancelled\.is_some\(\)/);
+  assert.match(source, /recv_timeout\(CANCEL_ATTEMPT_SLICE\)/);
+  assert.match(source, /a_cancellable_response_that_outlives_the_cancel_slice_still_completes/);
+  assert.match(source, /fn run_local_request\(/);
+});
+
 test("FE-16 and FE-05.V3 packaged walks drive the real routes", async () => {
   const fe16 = await readFile(join(process.cwd(), "scripts", "g05_fe16.mjs"), "utf8");
   assert.match(fe16, /fe16\.v1\.v2-survives-overlap/);

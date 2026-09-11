@@ -11,12 +11,17 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 pub const MAX_LOCAL_REQUEST_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_LOCAL_RESPONSE_BYTES: u64 = 16 * 1024 * 1024;
-/// Cancellable calls retry in short slices so a cancel flag is observed
-/// during connection and response waits rather than only between them.
+/// Cancellable calls run the request on a worker thread and observe the
+/// cancel flag in short slices, so a cancel is noticed during connection and
+/// response waits. The slice never bounds the response itself: a healthy
+/// completion can legitimately outlive one slice (a ~560 ms completion on the
+/// approved managed runtime livelocked the v2 benchmark when the slice
+/// re-issued it), so the worker keeps the whole-operation deadline and a
+/// cancelled call abandons it.
 pub const CANCEL_ATTEMPT_SLICE: Duration = Duration::from_millis(500);
 const MAX_KEY_FILE_BYTES: u64 = 64 * 1024;
 const MAX_CERT_FILE_BYTES: u64 = 1024 * 1024;
@@ -310,83 +315,129 @@ impl LocalHttpClient {
             ));
         }
         let url = self.url(path);
-        let started = Instant::now();
-        loop {
-            if let Some(flag) = cancelled {
+        match cancelled {
+            None => run_local_request(
+                &self.inner,
+                method,
+                &url,
+                &body_bytes,
+                body.is_some(),
+                budget,
+            ),
+            Some(flag) => {
+                // Cancellable requests run on a worker thread with the full
+                // deadline; this thread observes the cancel flag in short
+                // slices. The slice must never discard a response that
+                // legitimately outlives it: the old slice-retry killed every
+                // completion slower than 500 ms and re-issued it until the
+                // deadline, which livelocked the v2 benchmark on the approved
+                // managed runtime (~476 tok/s, ~560 ms per completion) with
+                // 500+ duplicate generations. A cancelled call abandons the
+                // worker, which exits by itself at the deadline.
                 if flag.load(Ordering::Relaxed) {
                     return Err("The local request was cancelled".into());
                 }
+                let (sender, receiver) = std::sync::mpsc::channel();
+                let inner = Arc::clone(&self.inner);
+                let worker_method = method.to_string();
+                let worker_url = url.clone();
+                let worker_body = body_bytes.clone();
+                let has_body = body.is_some();
+                std::thread::Builder::new()
+                    .name("localmotive-local-request".into())
+                    .spawn(move || {
+                        let _ = sender.send(run_local_request(
+                            &inner,
+                            &worker_method,
+                            &worker_url,
+                            &worker_body,
+                            has_body,
+                            budget,
+                        ));
+                    })
+                    .map_err(|error| {
+                        format!("The local request worker could not start: {error}")
+                    })?;
+                loop {
+                    match receiver.recv_timeout(CANCEL_ATTEMPT_SLICE) {
+                        Ok(result) => return result,
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                            if flag.load(Ordering::Relaxed) {
+                                return Err("The local request was cancelled".into());
+                            }
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                            return Err("The local request worker stopped unexpectedly".into());
+                        }
+                    }
+                }
             }
-            let remaining = budget.saturating_sub(started.elapsed());
-            if remaining.is_zero() {
+        }
+    }
+}
+
+/// One bounded attempt of a local request: connect, write and read inside the
+/// whole-operation deadline. Shared by the plain path and the cancellable
+/// worker thread.
+fn run_local_request(
+    inner: &Inner,
+    method: &str,
+    url: &str,
+    body_bytes: &[u8],
+    has_body: bool,
+    budget: Duration,
+) -> Result<(u16, Vec<u8>), String> {
+    let mut request = inner
+        .client
+        .request(
+            reqwest::Method::from_bytes(method.as_bytes()).map_err(|error| error.to_string())?,
+            url,
+        )
+        .timeout(budget);
+    if has_body {
+        request = request
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(body_bytes.to_vec());
+    }
+    if let Some(key) = inner.api_key.as_deref() {
+        // The key travels only here: never into logs or events.
+        request = request.header(reqwest::header::AUTHORIZATION, format!("Bearer {key}"));
+    }
+    match request.send() {
+        Ok(response) => {
+            let status = response.status().as_u16();
+            if response
+                .content_length()
+                .is_some_and(|length| length > MAX_LOCAL_RESPONSE_BYTES)
+            {
+                return Err(format!(
+                    "The local response exceeds the {MAX_LOCAL_RESPONSE_BYTES}-byte limit"
+                ));
+            }
+            use std::io::Read;
+            let mut bytes = Vec::new();
+            let mut reader = response.take(MAX_LOCAL_RESPONSE_BYTES + 1);
+            reader
+                .read_to_end(&mut bytes)
+                .map_err(|error| format!("The local response could not be read: {error}"))?;
+            if bytes.len() as u64 > MAX_LOCAL_RESPONSE_BYTES {
+                return Err(format!(
+                    "The local response exceeds the {MAX_LOCAL_RESPONSE_BYTES}-byte limit"
+                ));
+            }
+            Ok((status, bytes))
+        }
+        Err(error) => {
+            if error.is_timeout() {
                 return Err(format!(
                     "llama-server did not answer within {} seconds",
                     budget.as_secs().max(1)
                 ));
             }
-            let attempt_budget = if cancelled.is_some() {
-                remaining.min(CANCEL_ATTEMPT_SLICE)
-            } else {
-                remaining
-            };
-            let mut request = self
-                .inner
-                .client
-                .request(
-                    reqwest::Method::from_bytes(method.as_bytes())
-                        .map_err(|error| error.to_string())?,
-                    &url,
-                )
-                .timeout(attempt_budget);
-            if body.is_some() {
-                request = request
-                    .header(reqwest::header::CONTENT_TYPE, "application/json")
-                    .body(body_bytes.clone());
-            }
-            if let Some(key) = self.inner.api_key.as_deref() {
-                // The key travels only here: never into logs or events.
-                request = request.header(reqwest::header::AUTHORIZATION, format!("Bearer {key}"));
-            }
-            match request.send() {
-                Ok(response) => {
-                    let status = response.status().as_u16();
-                    if response
-                        .content_length()
-                        .is_some_and(|length| length > MAX_LOCAL_RESPONSE_BYTES)
-                    {
-                        return Err(format!(
-                            "The local response exceeds the {MAX_LOCAL_RESPONSE_BYTES}-byte limit"
-                        ));
-                    }
-                    use std::io::Read;
-                    let mut bytes = Vec::new();
-                    let mut reader = response.take(MAX_LOCAL_RESPONSE_BYTES + 1);
-                    reader.read_to_end(&mut bytes).map_err(|error| {
-                        format!("The local response could not be read: {error}")
-                    })?;
-                    if bytes.len() as u64 > MAX_LOCAL_RESPONSE_BYTES {
-                        return Err(format!(
-                            "The local response exceeds the {MAX_LOCAL_RESPONSE_BYTES}-byte limit"
-                        ));
-                    }
-                    return Ok((status, bytes));
-                }
-                Err(error) => {
-                    if error.is_timeout() && cancelled.is_some() && started.elapsed() < budget {
-                        continue;
-                    }
-                    if error.is_timeout() {
-                        return Err(format!(
-                            "llama-server did not answer within {} seconds",
-                            budget.as_secs().max(1)
-                        ));
-                    }
-                    return Err(format!(
-                        "The local request failed: {error}{}",
-                        error_chain(&error)
-                    ));
-                }
-            }
+            Err(format!(
+                "The local request failed: {error}{}",
+                error_chain(&error)
+            ))
         }
     }
 }
@@ -706,6 +757,31 @@ ab1VTmVlluUDakDfjhwCcnE=
         (port, seen)
     }
 
+    /// HTTP fixture that answers every request after `delay` and counts the
+    /// requests it saw. Used by the cancellable-slice regression below: a
+    /// healthy completion can legitimately take longer than one cancel slice.
+    pub(crate) fn serve_delayed(delay: Duration) -> (u16, Arc<std::sync::atomic::AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = requests.clone();
+        thread::spawn(move || {
+            for incoming in listener.incoming() {
+                let Ok(mut stream) = incoming else { break };
+                counter.fetch_add(1, Ordering::Relaxed);
+                stream
+                    .set_read_timeout(Some(Duration::from_millis(500)))
+                    .ok();
+                let mut buffer = [0u8; 8192];
+                let _ = stream.read(&mut buffer);
+                thread::sleep(delay);
+                let _ = stream.write_all(&ok_response("{\"content\":\"delayed\"}"));
+                let _ = stream.flush();
+            }
+        });
+        (port, requests)
+    }
+
     /// One-shot TLS fixture speaking HTTP/1.1 through rustls.
     pub(crate) fn serve_tls(cert: &str, key: &str, response: Vec<u8>) -> u16 {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -986,6 +1062,73 @@ ab1VTmVlluUDakDfjhwCcnE=
         assert!(error.contains("cancelled"), "{error}");
         assert!(
             started.elapsed() < Duration::from_secs(3),
+            "cancel was not observed promptly"
+        );
+    }
+
+    #[test]
+    fn a_cancellable_response_that_outlives_the_cancel_slice_still_completes() {
+        // Regression from the 0.6.0 re-bind probes: the approved managed CUDA
+        // runtime serves the default v2 workload at ~476 tok/s, so one
+        // completion takes ~560 ms — longer than CANCEL_ATTEMPT_SLICE. The
+        // old slice-retry killed that healthy response and re-issued the
+        // request every 500 ms until the whole-operation deadline: the
+        // benchmark livelocked and the server generated 500+ duplicate
+        // completions. A response slower than the slice must be observed
+        // exactly once, on the caller's own thread budget.
+        let (port, requests) = serve_delayed(Duration::from_millis(900));
+        let client = LocalHttpClient::plain("127.0.0.1", port).unwrap();
+        let cancelled = AtomicBool::new(false);
+        let started = std::time::Instant::now();
+        let (status, bytes) = client
+            .post_json_cancellable(
+                "/completion",
+                &serde_json::json!({"prompt": [1], "n_predict": 4}),
+                Duration::from_secs(6),
+                &cancelled,
+            )
+            .expect("a response slower than the cancel slice must complete");
+        assert_eq!(status, 200);
+        assert!(String::from_utf8(bytes).unwrap().contains("delayed"));
+        assert!(started.elapsed() < Duration::from_secs(6));
+        assert_eq!(
+            requests.load(Ordering::Relaxed),
+            1,
+            "the request must reach the server exactly once"
+        );
+        thread::sleep(Duration::from_millis(600));
+        assert_eq!(
+            requests.load(Ordering::Relaxed),
+            1,
+            "no duplicate request may follow the completed response"
+        );
+    }
+
+    #[test]
+    fn a_cancellable_request_is_still_cancelled_during_a_long_slow_response() {
+        // The cancel slice exists for responsiveness: a request whose server
+        // will not answer for 10 s must still return cancelled within about a
+        // second, even though the worker keeps the full deadline.
+        let (port, _requests) = serve_delayed(Duration::from_secs(10));
+        let client = LocalHttpClient::plain("127.0.0.1", port).unwrap();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let flag = cancelled.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(250));
+            flag.store(true, Ordering::Relaxed);
+        });
+        let started = std::time::Instant::now();
+        let error = client
+            .post_json_cancellable(
+                "/completion",
+                &serde_json::json!({}),
+                Duration::from_secs(30),
+                &cancelled,
+            )
+            .unwrap_err();
+        assert!(error.contains("cancelled"), "{error}");
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
             "cancel was not observed promptly"
         );
     }
