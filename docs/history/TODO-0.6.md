@@ -2143,18 +2143,18 @@ These packages preserve actionable recommendations outside the 72-item findings 
 
 **Provide safe repair of the pinned health-model cache**
 
-**Status:** Not started · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
 **Audit trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations)  
 **Prerequisites:** [V06-RT-02](#v06-rt-02)
 
 **Implementation**
 
-- [ ] **V06-S-04.I1** — Offer an explicit repair action that quarantines an invalid cached health model and downloads the pinned immutable revision through the existing size/hash authorization checks. **Trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations).
-- [ ] **V06-S-04.I2** — Preserve failure diagnostics and never execute the corrupt file; handle cancellation and a failed replacement without labeling the cache healthy. **Trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations).
+- [x] **V06-S-04.I1** — Offer an explicit repair action that quarantines an invalid cached health model and downloads the pinned immutable revision through the existing size/hash authorization checks. **Trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations).
+- [x] **V06-S-04.I2** — Preserve failure diagnostics and never execute the corrupt file; handle cancellation and a failed replacement without labeling the cache healthy. **Trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations).
 
 **Verification**
 
-- [ ] **V06-S-04.V1** — Corrupt a benign cached fixture, request repair, interrupt a repair, and retry. Verify trust rejection before repair and successful verified replacement afterward. **Trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations).
+- [x] **V06-S-04.V1** — Corrupt a benign cached fixture, request repair, interrupt a repair, and retry. Verify trust rejection before repair and successful verified replacement afterward. **Trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations).
 
 **Complete when:** A user can recover from corrupt health-model bytes through the application without weakening verification.
 
@@ -3692,3 +3692,11 @@ Revalidated at the candidate source (`065248a1` + the G-07 test addition) on Win
 - V1: `s03_impossible_kv_dimensions_are_rejected_and_overflow_stays_unknown` covers zero blocks/heads/key/value (each stays Unknown and names the term), an absurd `u64::MAX` block count, overflow through the u128 chain (stays Unknown), and the existing valid-dense case (`calculates_dense_kv_bytes_only_from_complete_terms` = 536_870_912 bytes) and unsupported-layout cases remain green.
 - Mutation NT1 (the zero check dropped, keeping only the magnitude bound) failed the new test and passed after restore.
 - Commands: `cargo fmt --check` PASS; `cargo test` 540 passed / 0 failed / 2 ignored (539 + the new S-03 test).
+
+#### S-04 closure record — repair the cached pinned health model safely
+
+- I1: `runtime::repair_health_model_with(spec, target, verify, cancel, on_progress)` (plus the `repair_pinned_health_model` wrapper for the compiled pin) quarantines an unverifiable cached file (unique `.quarantine-<unix-secs>` name; reparse/symlink ancestors refused first) and downloads the immutable pinned revision through the existing `download_file` size/hash authorization. The Tauri commands `repair_health_model` / `cancel_health_model_repair` guard one repair at a time and emit the existing `health-model-progress` event. UI: a "Repair cached model" button with a "Cancel repair" action in the seven-stage health block.
+- I2: the corrupt bytes are never deleted; a `.quarantine-<stamp>.txt` note records the exact verification failure next to them, and a failed or cancelled repair leaves the live path without an unhealthy file, so the cache is never labeled healthy. The repair refuses to run while a health check is in flight, and the health run itself never executes an unverified file (verify precedes execution).
+- V1 proved with fixtures: a corrupt cache is quarantined with both the bytes and the note preserved while the repair errors when the download target is unreachable (no live server needed — the earlier HTTP-fixture plan hung and was discarded per the DC-11 precedent); a healthy cache returns unchanged with no network; retry after failure is safe and preserves the first quarantine; a pre-cancelled repair against an unverified cache quarantines first and keeps no unhealthy file live.
+- Mutation NU1 (quarantine replaced by plain deletion) failed the diagnostics-preservation assertions and passed after restore.
+- Commands: `cargo fmt --check` PASS; clippy `-D warnings` 0 errors; `cargo test` 542 passed / 0 failed / 2 ignored (540 + the two S-04 tests); `npm run check` PASS (337.79 kB, and `tsc --noEmit` PASS); Vitest 93 passed.

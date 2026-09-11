@@ -4657,6 +4657,98 @@ pub(crate) fn ensure_pinned_health_model(
     )
 }
 
+/// The immutable description of the pinned health model, split out so the
+/// repair path can be exercised against fixtures (audit S-04).
+pub(crate) struct HealthModelSpec<'a> {
+    pub url: &'a str,
+    pub repository: &'a str,
+    pub bytes: u64,
+    pub sha256: &'a str,
+    pub name: &'a str,
+}
+
+/// Quarantine an invalid cached health model and download the pinned
+/// immutable revision through the existing size/hash authorization checks
+/// (audit S-04). The corrupt bytes are preserved beside the live path with a
+/// diagnostics note; the cache is never labeled healthy after a failed or
+/// cancelled repair.
+pub(crate) fn repair_health_model_with(
+    spec: &HealthModelSpec<'_>,
+    target: PathBuf,
+    verify: impl Fn(&Path, &AtomicBool) -> Result<(), (crate::health::HealthFailureReason, String)>,
+    cancel: Arc<AtomicBool>,
+    on_progress: impl FnMut(u64, u64) + Send,
+) -> Result<PathBuf, String> {
+    let parent = target
+        .parent()
+        .ok_or_else(|| "The health model target has no parent directory".to_string())?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("Could not create the health model directory: {error}"))?;
+    validate_no_reparse_ancestors("Health model directory", parent)?;
+    let metadata = fs::symlink_metadata(parent)
+        .map_err(|error| format!("Could not inspect the health model directory: {error}"))?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
+        return Err("The health model directory is a link or reparse point".into());
+    }
+    if target.exists() {
+        match verify(&target, cancel.as_ref()) {
+            Ok(()) => return Ok(target),
+            Err((_, detail)) => {
+                // Preserve the corrupt bytes and the exact diagnostic; never
+                // delete evidence and never execute the file.
+                let stamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|duration| duration.as_secs())
+                    .unwrap_or(0);
+                let quarantine = parent.join(format!("{}.quarantine-{stamp}", spec.name));
+                fs::rename(&target, &quarantine).map_err(|error| {
+                    format!("The invalid cached health model could not be quarantined: {error}")
+                })?;
+                let note = format!("Quarantined {}\nReason: {}\n", stamp, detail);
+                let _ = fs::write(
+                    parent.join(format!("{}.quarantine-{stamp}.txt", spec.name)),
+                    note,
+                );
+            }
+        }
+    }
+    crate::download::download_file(
+        spec.url,
+        &target,
+        spec.repository,
+        spec.bytes,
+        spec.sha256,
+        None,
+        4,
+        cancel,
+        Arc::new(AtomicU64::new(0)),
+        on_progress,
+    )
+}
+
+/// [`repair_health_model_with`] for the compiled pin.
+pub(crate) fn repair_pinned_health_model(
+    cancel: Arc<AtomicBool>,
+    on_progress: impl FnMut(u64, u64) + Send,
+) -> Result<PathBuf, String> {
+    let pin = crate::core::pinned_model_load_pin();
+    let spec = HealthModelSpec {
+        url: &pin.url,
+        repository: &pin.repository,
+        bytes: pin.bytes,
+        sha256: &pin.sha256,
+        name: &pin.name,
+    };
+    let target = pinned_health_model_path()?;
+    repair_health_model_with(
+        &spec,
+        target,
+        crate::health::verify_pinned_model,
+        cancel,
+        on_progress,
+    )
+}
+
 pub(crate) fn managed_health_context(
     request: &crate::health::ManagedHealthRequest,
 ) -> Result<crate::health::ManagedHealthContext, String> {
@@ -5951,6 +6043,146 @@ mod tests {
     /// request carries only the GitHub API accept header and the public
     /// product user-agent, so no credential can leak through catalog
     /// refresh on a shared machine or in captured traffic.
+
+    #[test]
+    fn s04_repair_quarantines_a_corrupt_cache_and_records_diagnostics() {
+        let root = std::env::temp_dir().join(format!(
+            "localmotive-s04-repair-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let target = root.join("fixture-model.gguf");
+        std::fs::write(&target, b"corrupt cached bytes").unwrap();
+        let verify = |_path: &Path, _cancel: &AtomicBool| {
+            Err((
+                crate::health::HealthFailureReason::Mismatch,
+                "fixture digest mismatch".to_string(),
+            ))
+        };
+        // The download target is unreachable by construction, so the repair
+        // fails fast after the quarantine step and no live server is needed.
+        let spec = HealthModelSpec {
+            url: "http://127.0.0.1:9/fixture-model.gguf",
+            repository: "fixture/health",
+            bytes: 4096,
+            sha256: "0000000000000000000000000000000000000000000000000000000000000000",
+            name: "fixture-model.gguf",
+        };
+        let result = repair_health_model_with(
+            &spec,
+            target.clone(),
+            verify,
+            Arc::new(AtomicBool::new(false)),
+            |_, _| {},
+        );
+        assert!(result.is_err(), "repair must fail when the download fails");
+        assert!(
+            !target.exists(),
+            "the live path must not keep the corrupt file"
+        );
+        let entries: Vec<String> = std::fs::read_dir(&root)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .collect();
+        let quarantined: Vec<&String> = entries
+            .iter()
+            .filter(|name| name.contains(".quarantine-") && !name.ends_with(".txt"))
+            .collect();
+        let notes: Vec<&String> = entries
+            .iter()
+            .filter(|name| !name.ends_with(".quarantine-") && name.ends_with(".txt"))
+            .collect();
+        assert_eq!(quarantined.len(), 1, "corrupt bytes preserved: {entries:?}");
+        assert_eq!(notes.len(), 1, "diagnostics note preserved: {entries:?}");
+        let quarantined_bytes = std::fs::read(root.join(quarantined[0])).unwrap();
+        assert_eq!(quarantined_bytes, b"corrupt cached bytes");
+        let note_text = std::fs::read_to_string(root.join(notes[0])).unwrap();
+        assert!(note_text.contains("fixture digest mismatch"), "{note_text}");
+        // Retry semantics: a second repair attempt is safe and preserves the
+        // first quarantine record.
+        let retry = repair_health_model_with(
+            &spec,
+            target.clone(),
+            |_path: &Path, _cancel: &AtomicBool| {
+                Err((
+                    crate::health::HealthFailureReason::Mismatch,
+                    "still corrupt".to_string(),
+                ))
+            },
+            Arc::new(AtomicBool::new(true)),
+            |_, _| {},
+        );
+        assert!(retry.is_err());
+        assert!(!target.exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn s04_a_healthy_cache_needs_no_repair_and_no_network() {
+        let root = std::env::temp_dir().join(format!(
+            "localmotive-s04-healthy-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let target = root.join("fixture-model.gguf");
+        std::fs::write(&target, b"verified bytes").unwrap();
+        let verify = |_path: &Path, _cancel: &AtomicBool| Ok(());
+        let spec = HealthModelSpec {
+            url: "http://127.0.0.1:9/fixture-model.gguf",
+            repository: "fixture/health",
+            bytes: 14,
+            sha256: "0000000000000000000000000000000000000000000000000000000000000000",
+            name: "fixture-model.gguf",
+        };
+        let repaired = repair_health_model_with(
+            &spec,
+            target.clone(),
+            verify,
+            Arc::new(AtomicBool::new(false)),
+            |_, _| {},
+        )
+        .expect("a verified cache is returned unchanged and offline");
+        assert_eq!(repaired, target);
+        assert_eq!(std::fs::read(&target).unwrap(), b"verified bytes");
+        // A cancelled repair against an unverified cache quarantines first
+        // and leaves no unhealthy file at the live path.
+        let corrupt = root.join("corrupt-model.gguf");
+        std::fs::write(&corrupt, b"bad").unwrap();
+        let cancelled = repair_health_model_with(
+            &HealthModelSpec {
+                name: "corrupt-model.gguf",
+                ..HealthModelSpec {
+                    url: "http://127.0.0.1:9/x",
+                    repository: "fixture/health",
+                    bytes: 1,
+                    sha256: "00",
+                    name: "corrupt-model.gguf",
+                }
+            },
+            corrupt.clone(),
+            |_path: &Path, _cancel: &AtomicBool| {
+                Err((
+                    crate::health::HealthFailureReason::Mismatch,
+                    "fixture mismatch".to_string(),
+                ))
+            },
+            Arc::new(AtomicBool::new(true)),
+            |_, _| {},
+        );
+        assert!(cancelled.is_err());
+        assert!(!corrupt.exists(), "no unhealthy file may remain live");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn catalog_client_sends_no_secret_header() {
         use std::io::{Read, Write};

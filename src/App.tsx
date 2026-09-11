@@ -34,6 +34,7 @@ import {
   TriangleAlert,
   Trophy,
   Unplug,
+  Wrench,
 } from "lucide-react";
 import "./App.css";
 import {
@@ -181,6 +182,8 @@ function App() {
   const [healthRunning, setHealthRunning] = useState("");
   const [healthCancelling, setHealthCancelling] = useState(false);
   const [healthModelProgress, setHealthModelProgress] = useState<HealthModelProgress | null>(null);
+  const [healthRepairing, setHealthRepairing] = useState(false);
+  const [healthRepairNotice, setHealthRepairNotice] = useState<string | null>(null);
   const [healthResult, setHealthResult] = useState<ManagedHealthResult | null>(null);
   const [models, setModels] = useState<LogicalModel[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -545,6 +548,32 @@ function App() {
       setNotice("Stopping the managed-runtime health run and cleaning up its process.");
     } else {
       setHealthCancelling(false);
+    }
+  }
+
+  // Repair the cached pinned health model (audit S-04): a corrupt or
+  // truncated cache is quarantined with its diagnostics preserved, and the
+  // immutable pinned revision is downloaded again through the size/hash
+  // checks. A healthy cache returns immediately without touching the network.
+  async function repairHealthModel() {
+    if (healthRepairing) return;
+    setHealthRepairNotice(null);
+    setHealthRepairing(true);
+    try {
+      await invoke("repair_health_model");
+      setHealthRepairNotice("Cached health model is verified.");
+    } catch (error) {
+      setHealthRepairNotice(String(error));
+    } finally {
+      setHealthRepairing(false);
+    }
+  }
+
+  async function cancelHealthRepair() {
+    try {
+      await invoke("cancel_health_model_repair");
+    } catch (error) {
+      setHealthRepairNotice(String(error));
     }
   }
 
@@ -1942,6 +1971,17 @@ function App() {
                       </ol>
                     </div>
                   )}
+                  <div className="health-repair">
+                    <button className="button secondary" onClick={repairHealthModel} disabled={healthRepairing || Boolean(healthRunning)}>
+                      <Wrench size={15} /> {healthRepairing ? "Repairing…" : "Repair cached model"}
+                    </button>
+                    {healthRepairing && (
+                      <button className="button danger" onClick={cancelHealthRepair}>
+                        <CircleStop size={15} /> Cancel repair
+                      </button>
+                    )}
+                    {healthRepairNotice && <small role="status">{healthRepairNotice}</small>}
+                  </div>
                 </div>
                 <dl className="runtime-facts">
                   <div><dt>Managed folder</dt><dd>{runtimeRoot || "Resolving…"}</dd></div>

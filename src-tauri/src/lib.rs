@@ -112,6 +112,8 @@ struct AppState {
     /// IPC-01), and only the worker that owns this operation ID may commit
     /// the server slot.
     starting: Mutex<Option<StartingServer>>,
+    /// One pinned health-model repair may execute at a time (audit S-04).
+    health_repair: Mutex<Option<Arc<AtomicBool>>>,
     /// One managed-runtime seven-stage health run may execute at a time.
     runtime_health: Mutex<Option<Arc<AtomicBool>>>,
     /// One managed-inference operation at a time, with process generations
@@ -3155,6 +3157,57 @@ async fn check_managed_runtime_health(
 }
 
 #[tauri::command]
+async fn repair_health_model(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let cancel = {
+        let mut slot = state
+            .health_repair
+            .lock()
+            .map_err(|_| "The health model repair lock is poisoned".to_string())?;
+        if slot.is_some() {
+            return Err("A health model repair is already running.".into());
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        *slot = Some(Arc::clone(&cancel));
+        cancel
+    };
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        runtime::repair_pinned_health_model(Arc::clone(&cancel), |downloaded, total| {
+            let _ = app.emit(
+                "health-model-progress",
+                health::HealthModelProgress {
+                    install_key: "repair".into(),
+                    downloaded,
+                    total,
+                },
+            );
+        })
+    })
+    .await
+    .map_err(|error| format!("The health model repair task failed: {error}"))?;
+    if let Ok(mut slot) = state.health_repair.lock() {
+        *slot = None;
+    }
+    result.map(|_| ())
+}
+
+#[tauri::command]
+fn cancel_health_model_repair(state: tauri::State<'_, AppState>) -> bool {
+    let Ok(slot) = state.health_repair.lock() else {
+        return false;
+    };
+    match slot.as_ref() {
+        Some(flag) => {
+            flag.store(true, Ordering::Relaxed);
+            true
+        }
+        None => false,
+    }
+}
+
+#[tauri::command]
 fn cancel_managed_runtime_health(state: tauri::State<'_, AppState>) -> bool {
     let active = state.runtime_health.lock().unwrap();
     if let Some(cancel) = active.as_ref() {
@@ -4166,6 +4219,8 @@ pub fn run() {
             cancel_managed_runtime_install,
             check_managed_runtime_health,
             cancel_managed_runtime_health,
+            repair_health_model,
+            cancel_health_model_repair,
             cloud_providers,
             cloud_credential_status,
             cloud_save_credential,
