@@ -3383,6 +3383,59 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "DC-12.I4 measurement: shared write-mutex/seek throughput"]
+    fn dc12_shared_write_mutex_throughput() {
+        // Mirror the downloader's serialized disk path: four parallel range
+        // workers each seek and write 64 KiB chunks through one Mutex<File>.
+        // Measure the aggregate throughput the write path can sustain, to
+        // decide whether positional writes need optimizing (DC-12.I4).
+        use std::io::{Seek, SeekFrom, Write};
+        use std::sync::{Arc, Mutex};
+        use std::time::Instant;
+
+        let dir =
+            std::env::temp_dir().join(format!("localmotive-dc12-write-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sink.bin");
+        let file = Arc::new(Mutex::new(std::fs::File::create(&path).unwrap()));
+        const CHUNK: usize = 64 * 1024;
+        const PER_WORKER: usize = 16 * 1024 * 1024; // 16 MiB per worker
+        let payload = vec![0xA5_u8; CHUNK];
+        let started = Instant::now();
+        let mut handles = Vec::new();
+        for worker in 0..4_u64 {
+            let file = file.clone();
+            let payload = payload.clone();
+            handles.push(std::thread::spawn(move || {
+                let mut cursor = worker * PER_WORKER as u64;
+                let mut written = 0usize;
+                while written < PER_WORKER {
+                    let mut handle = file.lock().unwrap();
+                    handle.seek(SeekFrom::Start(cursor)).unwrap();
+                    handle.write_all(&payload).unwrap();
+                    drop(handle);
+                    cursor += CHUNK as u64;
+                    written += CHUNK;
+                }
+            }));
+        }
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        let elapsed = started.elapsed();
+        let bytes = 4 * PER_WORKER;
+        let mb_per_s = (bytes as f64 / 1_048_576.0) / elapsed.as_secs_f64();
+        let _ = std::fs::remove_dir_all(&dir);
+        eprintln!(
+            "DC12_SHARED_WRITE bytes={} chunks={} workers=4 elapsed_ms={} aggregate_MBps={:.1}",
+            bytes,
+            bytes / CHUNK,
+            elapsed.as_millis(),
+            mb_per_s
+        );
+    }
+
+    #[test]
     fn dc02_a_range_ignoring_server_completes_files_larger_than_the_request_span() {
         // The audited defect: HTTP 200 to every Range request for a file
         // larger than 8 MiB was rejected because the response length was

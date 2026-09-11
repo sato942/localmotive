@@ -1633,9 +1633,25 @@ pub fn parse_capabilities(version: &str, help: &str) -> RuntimeCapabilities {
         .split(',')
         .map(str::to_string)
         .collect();
+    // The identity must be control-character-free bounded text: a real
+    // `--version` prints several CRLF lines, and the benchmark manifest and
+    // calibration snapshots reject control characters in `runtime.version`
+    // (the raw text previously made every packaged v2 evidence run fail even
+    // though the runtime was healthy).
+    let version = version
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(|line| {
+            line.chars()
+                .filter(|character| !character.is_control())
+                .take(1_024)
+                .collect::<String>()
+        })
+        .unwrap_or_default();
     RuntimeCapabilities {
         path: String::new(),
-        version: version.trim().to_string(),
+        version,
         build: extract("build "),
         commit: extract("commit "),
         help_sha256: hex::encode(Sha256::digest(help.as_bytes())),
@@ -3658,6 +3674,28 @@ fn main() {
         assert!(caps.metrics);
         assert!(caps.multimodal);
         assert!(!caps.spec_types.iter().any(|x| x == "draft-dspark2"));
+    }
+
+    #[test]
+    fn parse_capabilities_strips_control_characters_from_real_version_output() {
+        // Regression: a real `--version` prints several lines with CRLF
+        // ("version: 0.4.0-dev (build 10816, commit 427291b5b)\r\nbuilt with
+        // Clang ..."). The raw text was stored as the identity version, and the
+        // benchmark manifest rejects control characters in `runtime.version`,
+        // so every packaged v2 evidence run failed with "runtime.version: Text
+        // must contain 1 to 1024 bytes without control characters" although the
+        // runtime was healthy and running.
+        let version_output = "version: 0.4.0-dev (build 10816, commit 427291b5b)\r\nbuilt with Clang 20.1.8 for Windows x86_64\r\n";
+        let capabilities = parse_capabilities(version_output, "--spec-type draft-simple");
+        assert_eq!(
+            capabilities.version,
+            "version: 0.4.0-dev (build 10816, commit 427291b5b)"
+        );
+        assert!(
+            !capabilities.version.chars().any(char::is_control),
+            "version identity must not contain control characters: {:?}",
+            capabilities.version
+        );
     }
 
     #[test]

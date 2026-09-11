@@ -1052,6 +1052,28 @@ mod tests {
     }
 
     #[test]
+    fn runtime_fact_from_a_real_version_output_validates() {
+        // End-to-end contract: the identity parsed from a real multi-line
+        // `--version` (CRLF) must satisfy the manifest's runtime-fact
+        // validation, because a packaged v2 run builds its manifest from
+        // exactly this identity.
+        let capabilities = crate::core::parse_capabilities(
+            "version: 0.4.0-dev (build 10816, commit 427291b5b)\r\nbuilt with Clang 20.1.8 for Windows x86_64\r\n",
+            "--spec-type draft-simple",
+        );
+        let fact = RuntimeFact {
+            path: "C:/runtimes/b10816/cuda-13.3/llama-server.exe".into(),
+            version: capabilities.version,
+            build: capabilities.build,
+            executable_sha256: Some("0".repeat(64)),
+            help_sha256: capabilities.help_sha256,
+            backend: "cuda".into(),
+        };
+        fact.validate()
+            .expect("a real inspected identity must validate as a runtime fact");
+    }
+
+    #[test]
     fn s12_scope_notes_survive_the_manifest_round_trip_and_default_honestly() {
         let manifest = BenchmarkManifest::default();
         assert_eq!(manifest.scope_note, WORKLOAD_SCOPE_NOTE);

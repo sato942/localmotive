@@ -101,7 +101,7 @@ export const tauriEvidenceAdapter: EvidenceAdapter = {
     invoke("load_calibration_records", { compatibilityKey }),
   detectHardware: () => invoke("detect_hardware"),
   inspectModelArtifact: (args) => invoke("inspect_model_artifact", args),
-  preflightModel: (args) => invoke("preflight_model", args),
+  preflightModel: (args) => invoke("preflight_model", { request: args }),
   benchmarkV2: (workload) => invoke("benchmark_v2", { workload }),
   cancelBenchmark: () => invoke("cancel_benchmark"),
   replayBenchmarkManifest: (manifest) =>

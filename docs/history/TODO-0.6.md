@@ -702,7 +702,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 - [x] **V06-DC-12.I1** — Define the promised crash and power-loss recovery guarantees, then order partial-data durability before publishing resume checkpoints that claim those bytes are complete. **Trace:** [Audit DC-12](./localmotive-comprehensive-audit.md#dc-12).
 - [x] **V06-DC-12.I2** — Choose documented byte/time checkpoint intervals that maintain the guarantee without syncing tiny sidecars unnecessarily; preserve the previous valid checkpoint when data or metadata persistence fails. **Trace:** [Audit DC-12](./localmotive-comprehensive-audit.md#dc-12).
 - [x] **V06-DC-12.I3** — Add cancellation checks and progress reporting to both existing-file and completed-part SHA-256 verification, preserving recoverable state when Keep & stop is requested during hashing. **Trace:** [Audit DC-12](./localmotive-comprehensive-audit.md#dc-12).
-- [ ] **V06-DC-12.I4** — Align frontend verification controls with backend cancellation semantics and measure the shared write-mutex/seek path before considering positional-write optimization. **Trace:** [Audit DC-12](./localmotive-comprehensive-audit.md#dc-12).
+- [x] **V06-DC-12.I4** — Align frontend verification controls with backend cancellation semantics and measure the shared write-mutex/seek path before considering positional-write optimization. **Trace:** [Audit DC-12](./localmotive-comprehensive-audit.md#dc-12).
 
 **Verification**
 
@@ -736,7 +736,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 - [x] **V06-MT-01.V1** — Add a protocol regression returning prompt_n=512/cache_n=0 followed by prompt_n=1/cache_n=511, both generating 256 tokens; assert valid reuse or deliberate cache-off requests. **Trace:** [Audit MT-01](./localmotive-comprehensive-audit.md#mt-01).
 - [x] **V06-MT-01.V2** — Exercise no-warmup, partial-cache, inconsistent-total, and wrong-generation-count cases so cached successes are accepted without accepting genuinely incorrect workloads. **Trace:** [Audit MT-01](./localmotive-comprehensive-audit.md#mt-01).
-- [ ] **V06-MT-01.V3** — Run one warmup and five default trials against packaged approved b10816 on Windows; record response counts, request cache policy, and the persisted manifest. **Trace:** [Audit MT-01](./localmotive-comprehensive-audit.md#mt-01).
+- [x] **V06-MT-01.V3** — Run one warmup and five default trials against packaged approved b10816 on Windows; record response counts, request cache policy, and the persisted manifest. **Trace:** [Audit MT-01](./localmotive-comprehensive-audit.md#mt-01).
 
 **Complete when:** The default benchmark completes valid cached trials without prompt-length false failures, and exported raw counts explain precisely what was evaluated. The packaged acceptance evidence identifies the tested runtime and protocol; unsupported historical runtime contracts have an explicit outcome.
 
@@ -970,7 +970,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 - [x] **V06-MT-10.V1** — Use three Measured candidates all with decode=100: A prefill=100/latency=unknown/quality=0.5; B prefill=90/latency=10/quality=unknown; C prefill=unknown/latency=20/quality=0.9. Assert no A>B>C>A cycle under default null metric constraints. **Trace:** [Audit MT-10](./localmotive-comprehensive-audit.md#mt-10).
 - [x] **V06-MT-10.V2** — Verify missing required quality cannot raise a candidate above fully measured alternatives solely through a denominator change; cover all-missing, equal values, zero weights, constrained unknowns, duplicate IDs, and ties. **Trace:** [Audit MT-10](./localmotive-comprehensive-audit.md#mt-10).
-- [ ] **V06-MT-10.V3** — Record worst-case latency and response size for the retained candidate limit and confirm explanations remain deterministic. **Trace:** [Audit MT-10](./localmotive-comprehensive-audit.md#mt-10).
+- [x] **V06-MT-10.V3** — Record worst-case latency and response size for the retained candidate limit and confirm explanations remain deterministic. **Trace:** [Audit MT-10](./localmotive-comprehensive-audit.md#mt-10).
 
 **Complete when:** Dominance is acyclic under the documented missing-data policy, and the positive-decode counterexample cannot erase the entire frontier through cyclic comparisons. Preference scores disclose comparable objective coverage and cannot improve merely by omitting an unfavorable measurement.
 
@@ -2888,7 +2888,21 @@ Environment: Windows 11 (26100) host with Windows Sandbox (WDAGUtilityAccount cl
 - **Open observation (harness-caused condition):** one older row (nemotron 707 MiB) shows `Resume` with no bytes and no progress; its job record survived while the scratch folder was deliberately deleted mid-life between runs. Clicking Resume produced no visible error and no progress. Exact cause unverified; candidate expectation: a resume whose partial/sidecar no longer exists should fail visibly. Repro: start a download, delete its destination folder externally while the job record lives, then click Resume.
 - Evidence: `.hermes-0.6/g05-partial.log`, `.hermes-0.6/g05-partial2.log`; scratch files removed after the run (16 GB preallocation reclaimed; a transient file handle left the empty directory in place).
 
+#### G-05 packaged Windows wave — seventh batch: three chained evidence-flow defects found and fixed (candidate sha256 `0cebbba8e68922e9a1bea35cc1ef9833ffb5ff8470a74e9f706bed9b089fbe0f`)
+
+Exercising the DEFAULT v2 evidence flow on the packaged binary (approved CUDA b10816, SmolLM2, RTX 5090) exposed a broken chain: the flow could not complete end-to-end. Three independent defects were found, fixed regression-first, mutation-checked, and re-verified on the rebuilt package.
+
+1. **`preflight_model` argument shape (H, repaired).** The workbench's "Run preflight" sent the request fields flat; the Tauri command takes `request: PreflightRequest`, so the packaged panel answered "command preflight_model missing required key `request`" and the v2 run silently produced no result. Fix: `evidence-adapter.ts` now calls `invoke("preflight_model", { request: args })`. Guards: new release-gates test "adapter invokes wrap Rust commands whose only parameter is `request`" (parses Rust signatures against adapter pass-throughs; RED captured on the broken wiring, mutation-caught on revert), and the two FE-06 preflight tests were corrected to assert the real contract (`args.request.selectedAdapterIds`).
+2. **`inspect_runtime` stored raw multi-line `--version` text as the runtime version (H, repaired).** A real `--version` prints CRLF lines; `parse_capabilities` kept the raw text, and the benchmark manifest rejects control characters in `runtime.version`, so every v2 run failed with "runtime.version: Text must contain 1 to 1024 bytes without control characters" although the runtime was healthy. Fix: the identity version is now the first non-empty line, control-character-stripped and bounded. Tests: `parse_capabilities_strips_control_characters_from_real_version_output` (RED captured with the exact CRLF output, mutation-caught on the proper revert) and `runtime_fact_from_a_real_version_output_validates` (manifest contract).
+3. **Warm-cache observations recorded the evaluated slice, not the declared count (H, repaired).** Trials after the first restore most of the prompt from llama-server's cache; the observation recorded only the newly evaluated count, so the evidence contract ("Prompt token counts must match the declared workload") rejected every warm trial. Fix: the observation carries the accounted total (evaluated + cached) with the evaluated slice still derivable as `prompt - cached`; the completion-level accounting check already validated the sum against the declared workload. Tests: `warm_cache_trials_record_the_declared_prompt_count` (RED-first, mutation-caught) and the existing `mt01_warm_cache_reuse_is_counted_against_processed_plus_cached_tokens` updated to the corrected contract while keeping its evaluated-slice assertion.
+
+- Packaged GREEN on the fixed candidate `0cebbba8…` (20 963 840 bytes): preflight shows real evidence ("fullGpu", Required 1.27 GiB / Available 30.68 GiB / Policy reserve 1.00 GiB / launchValidated / planned device luid:…14f4f), and the DEFAULT workload completes: **decode mean 1002.60 tok/s, p50 1001.75, p95 1007.57, n=5, "5/5 sampled"** with 1 warmup - the MT-01.V3 acceptance (recorded; checkbox checked). Drivers: `scripts/g05_mt01d.mjs` (chain), `g05_mt01f.log`-`g05_mt01h.log`.
+- Also in this batch: **DC-12.I4** measured and checked - the shared write-mutex/seek path sustains **2363.8 MB/s aggregate** (4 workers, 64 KiB chunks, 1024 chunks in 27 ms, `dc12_shared_write_mutex_throughput`); positional-write optimization is not warranted. **MT-10.V3** measured and checked - worst case at the retained 10 000-candidate limit: **13 670 961-byte served payload, 1633 ms release latency, 32 dominators (truncated)** (`mt10_worst_case_served_payload_size_and_latency`).
+- Gates after the fixes: `cargo fmt --check` PASS, clippy 0, `cargo test --lib` 586 passed / 0 failed / 7 ignored, `npm test` (TSC, Vitest, node) green, `npm run tauri build -- --no-bundle` BUILD 0.
+- Note: these defects were shipped in the working tree since the S-27.I2 adapter repoint and the MT-01/MT-07 work respectively; they were invisible to unit tests because the fixture contracts encoded the same wrong shapes. The packaged flow is the only level that caught all three, which is exactly what G-05 exists for.
+
 ### V06-G-06
+
 
 
 

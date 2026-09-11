@@ -146,6 +146,10 @@ function preflightCalls() {
   return invokeCalls.filter((call) => call.command === "preflight_model");
 }
 
+function preflightRequest(call: { args: unknown }): { selectedAdapterIds: string[] } {
+  return (call.args as { request: { selectedAdapterIds: string[] } }).request;
+}
+
 beforeEach(() => {
   invokeCalls.length = 0;
   handlers.clear();
@@ -296,7 +300,7 @@ describe("preflight staleness and adapter selection (FE-06)", () => {
     act(() => clickByText("Run preflight"));
     await flush();
     expect(preflightCalls()).toHaveLength(1);
-    expect(preflightCalls()[0].args.selectedAdapterIds).toEqual(["gpu-A"]);
+    expect(preflightRequest(preflightCalls()[0]).selectedAdapterIds).toEqual(["gpu-A"]);
     expect(container.textContent).toContain("Preflight class");
     expect(container.textContent).not.toContain("Stale:");
 
@@ -309,7 +313,7 @@ describe("preflight staleness and adapter selection (FE-06)", () => {
     act(() => clickByText("Run preflight"));
     await flush();
     expect(preflightCalls()).toHaveLength(2);
-    expect(preflightCalls()[1].args.selectedAdapterIds).toEqual(["gpu-A", "gpu-B"]);
+    expect(preflightRequest(preflightCalls()[1]).selectedAdapterIds).toEqual(["gpu-A", "gpu-B"]);
     expect(container.textContent).not.toContain("Stale:");
   });
 
@@ -356,7 +360,7 @@ describe("preflight staleness and adapter selection (FE-06)", () => {
 
     act(() => clickByText("Run preflight"));
     await flush();
-    expect(preflightCalls()[0].args.selectedAdapterIds).toEqual([]);
+    expect(preflightRequest(preflightCalls()[0]).selectedAdapterIds).toEqual([]);
 
     // A hardware refresh after the deliberate clearing keeps the selection
     // empty instead of re-selecting a default.
@@ -366,7 +370,7 @@ describe("preflight staleness and adapter selection (FE-06)", () => {
     expect(adapterCheckbox("gpu-C").checked).toBe(false);
     act(() => clickByText("Run preflight"));
     await flush();
-    expect(preflightCalls()[1].args.selectedAdapterIds).toEqual([]);
+    expect(preflightRequest(preflightCalls()[1]).selectedAdapterIds).toEqual([]);
 
     // The refreshed observation still counts as a new input revision for the
     // stale marker when a result was displayed.

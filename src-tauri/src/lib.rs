@@ -2980,6 +2980,27 @@ mod release_security_tests {
         );
     }
 
+    #[test]
+    #[ignore = "manual diagnostic: print the inspected runtime identity of the approved exe"]
+    fn manual_inspect_runtime_identity() {
+        let Ok(path) = std::env::var("LOCALMOTIVE_DIAG_RUNTIME") else {
+            eprintln!("LOCALMOTIVE_DIAG_RUNTIME not set; skipping");
+            return;
+        };
+        match crate::core::inspect_runtime(std::path::Path::new(&path)) {
+            Ok(identity) => {
+                eprintln!(
+                    "INSPECT version={:?} build={:?} commit={:?} help_bytes={}",
+                    identity.version,
+                    identity.build,
+                    identity.commit,
+                    identity.help_sha256.len()
+                );
+            }
+            Err(error) => eprintln!("INSPECT ERROR: {error}"),
+        }
+    }
+
     #[cfg(windows)]
     #[test]
     fn health_wait_fails_fast_on_a_ca_certificate_with_actionable_guidance() {

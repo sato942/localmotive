@@ -1767,6 +1767,42 @@ test("S-17 imported evidence cannot leak into ranking or calibration writers", a
   }
 });
 
+test("adapter invokes wrap Rust commands whose only parameter is `request`", async () => {
+  // Regression: `preflight_model(request)` was called with the request fields
+  // passed flat, so the packaged panel answered "command preflight_model
+  // missing required key `request`" and the v2 evidence flow silently produced
+  // no result. Any adapter pass-through (`invoke("x", args)`) to a Rust command
+  // whose only non-AppHandle parameter is `request` must wrap it.
+  const adapter = await readFile(join(process.cwd(), "src", "evidence-adapter.ts"), "utf8");
+  const rustSources = [];
+  for (const module of ["lib.rs", "measurement_service.rs", "runtime_service.rs", "server_service.rs", "tune_service.rs"]) {
+    try {
+      rustSources.push(await readFile(join(process.cwd(), "src-tauri", "src", module), "utf8"));
+    } catch {
+      // module not present in this layout
+    }
+  }
+  const entries = [...adapter.matchAll(/invoke\("([a-z0-9_]+)",\s*args\)/g)].map((match) => match[1]);
+  const offenders = [];
+  for (const name of entries) {
+    for (const source of rustSources) {
+      const signature = source.match(new RegExp(`fn ${name}\\(([^)]*)`));
+      if (!signature) continue;
+      const params = signature[1]
+        .split(",")
+        .map((part) => part.trim().split(":")[0].trim())
+        .filter((part) => part && part !== "app");
+      if (params.length === 1 && params[0] === "request") offenders.push(name);
+      break;
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `commands whose only parameter is \`request\` must be invoked as { request: args }: ${offenders.join(", ")}`,
+  );
+});
+
 test("S-26: no workflow carries a literal release version and gates stay fail-fast", async () => {
   const ci = await readFile(join(process.cwd(), ".github", "workflows", "ci.yml"), "utf8");
   const release = await readFile(

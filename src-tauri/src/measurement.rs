@@ -407,7 +407,13 @@ where
                 trial,
                 started_at_ms,
                 duration_ms,
-                prompt_tokens: timing.prompt_tokens,
+                // The declared prompt count is the accounted total: warm
+                // trials restore part of the prompt from the cache, and the
+                // evidence contract requires the declared count, not just the
+                // newly evaluated slice (audit MT-01 / MT-13).
+                prompt_tokens: timing
+                    .prompt_tokens
+                    .saturating_add(timing.cached_prompt_tokens),
                 cached_prompt_tokens: timing.cached_prompt_tokens,
                 generated_tokens: timing.generated_tokens,
                 prefill_tps: Some(timing.prefill_tps),
@@ -922,6 +928,51 @@ mod tests {
         );
         assert_eq!(run.observations[1].decode_tps, Some(50.0));
         assert!(run.terminal_outcome.is_none());
+    }
+
+    #[test]
+    fn warm_cache_trials_record_the_declared_prompt_count() {
+        // Regression: warm trials after the first evaluate only the uncached
+        // part of the prompt and the rest is restored from the prompt cache.
+        // The observation recorded the evaluated count alone, so the evidence
+        // contract ("Prompt token counts must match the declared workload")
+        // rejected every packaged v2 run whose warm trials hit the cache: the
+        // run measured fine and then failed at manifest validation. The
+        // observation must carry the accounted total (evaluated + cached).
+        let workload = Workload {
+            prompt_tokens: 512,
+            generation_tokens: 16,
+            warmups: 0,
+            trials: 2,
+            ..Workload::default()
+        };
+        let cancelled = AtomicBool::new(false);
+        let mut calls = 0;
+        let run = run_workload_with(&workload, &cancelled, || {
+            calls += 1;
+            // Trial 1 evaluates the whole prompt; trial 2 restores most of it
+            // from the cache, exactly as llama-server reports it.
+            Ok(CompletionTiming {
+                prompt_tokens: if calls == 1 { 512 } else { 12 },
+                cached_prompt_tokens: if calls == 1 { 0 } else { 500 },
+                generated_tokens: 16,
+                prefill_tps: 100.0,
+                decode_tps: 50.0,
+                first_token_ms: None,
+                derived_ttft_ms: 25.0,
+                peak_process_rss_bytes: unknown_process_peak_rss_bytes(),
+            })
+        })
+        .unwrap();
+
+        assert_eq!(run.observations.len(), 2);
+        for observation in &run.observations {
+            assert_eq!(
+                observation.prompt_tokens, workload.prompt_tokens,
+                "warm-cache observations must carry the declared prompt count"
+            );
+            assert!(observation.cached_prompt_tokens <= observation.prompt_tokens);
+        }
     }
 
     #[test]
@@ -1557,8 +1608,16 @@ mod tests {
                 AttemptOutcome::Succeeded,
                 "{observation:?}"
             );
-            assert_eq!(observation.prompt_tokens, 1);
+            // The observation carries the accounted total (processed + cached)
+            // so the declared workload count holds for warm trials too; the
+            // evaluated slice stays derivable as prompt - cached (audit MT-01).
+            assert_eq!(observation.prompt_tokens, 512);
             assert_eq!(observation.cached_prompt_tokens, 511);
+            assert_eq!(
+                observation.prompt_tokens - observation.cached_prompt_tokens,
+                1,
+                "the evaluated slice must remain derivable"
+            );
             assert_eq!(observation.generated_tokens, 256);
         }
         // The protocol is genuinely warm: later requests ask for prompt reuse.

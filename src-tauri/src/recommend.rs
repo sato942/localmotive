@@ -849,6 +849,67 @@ mod tests {
         assert!(ranked.iter().all(|item| item.feasible));
     }
 
+    #[test]
+    #[ignore = "MT-10.V3 measurement: worst-case served payload size and latency"]
+    fn mt10_worst_case_served_payload_size_and_latency() {
+        // Worst case at the retained scale: ten thousand ranked candidates
+        // where one weak entry is dominated by the full reported dominator
+        // list (MAX_DOMINATORS_REPORTED) and the rest carry complete metrics.
+        // Exactly the retained candidate limit: the ranking path rejects more
+        // than 10 000 candidates ("Candidate count exceeds the limit of
+        // 10000"), so the worst-case served payload piles the dominators into
+        // the last slice of the limit.
+        let dominator_count = MAX_DOMINATORS_REPORTED + 8;
+        let regular = 10_000 - 1 - dominator_count;
+        let mut candidates = Vec::with_capacity(10_000);
+        for index in 0..regular as u32 {
+            let base = 50.0 + (index % 500) as f64 * 0.1;
+            candidates.push(mt10_candidate(
+                &format!("candidate-{index:05}"),
+                Some(base),
+                Some(base * 10.0),
+                Some(100.0 - base * 0.1),
+                Some(0.5 + (index % 5) as f64 * 0.1),
+            ));
+        }
+        candidates.push(mt10_candidate(
+            "weak-00",
+            Some(1.0),
+            Some(1.0),
+            Some(999.0),
+            Some(0.001),
+        ));
+        for index in 0..dominator_count {
+            let bump = index as f64;
+            candidates.push(mt10_candidate(
+                &format!("dom-{index:05}"),
+                Some(500.0 + bump),
+                Some(5_000.0 + bump),
+                Some(1.0),
+                Some(0.99),
+            ));
+        }
+        let started = std::time::Instant::now();
+        let ranked = rank_candidates(
+            &candidates,
+            &RecommendationConstraints::default(),
+            &ObjectiveWeights::default(),
+        )
+        .unwrap();
+        let elapsed = started.elapsed();
+        let served =
+            serde_json::to_vec(&ranked).expect("the served ranking payload must serialize");
+        let weak = ranked.iter().find(|item| item.id == "weak-00").unwrap();
+        eprintln!(
+            "MT10_WORST_CASE candidates={} dominators_reported={} truncated={} payload_bytes={} latency_ms={}",
+            candidates.len(),
+            weak.dominated_by.len(),
+            weak.dominators_truncated,
+            served.len(),
+            elapsed.as_millis()
+        );
+    }
+
     fn mt09_manifest_fixture(launch_key: Option<String>) -> crate::evidence::BenchmarkManifest {
         use crate::evidence::{
             AttemptOutcome, BenchmarkManifest, BenchmarkObservation, Evidence, EvidenceSource,
