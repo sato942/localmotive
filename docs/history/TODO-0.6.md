@@ -640,23 +640,23 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Pin catalog downloads to immutable upstream revisions**
 
-**Status:** Not started · **Priority:** Low · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Low · **Owner:** Unassigned  
 **Audit trace:** [Audit DC-10](./localmotive-comprehensive-audit.md#dc-10)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [scripts/build_catalog.mjs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/scripts/build_catalog.mjs), [src-tauri/src/catalog.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/catalog.rs), [catalog/catalog.json](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/catalog/catalog.json)
 
 **Implementation**
 
-- [ ] **V06-DC-10.I1** — Capture an immutable upstream commit identity for each offered file during catalog construction and serialize it as the file revision alongside the exact verified SHA-256 and size. **Trace:** [Audit DC-10](./localmotive-comprehensive-audit.md#dc-10).
-- [ ] **V06-DC-10.I2** — Preserve immutable revisions through catalog parsing, cached/bundled representation, and download authorization so resolution does not silently return to mutable main. **Trace:** [Audit DC-10](./localmotive-comprehensive-audit.md#dc-10).
-- [ ] **V06-DC-10.I3** — Return a clear recoverable error when an approved historical object is unavailable, retaining strict length/digest checks instead of substituting current upstream bytes. **Trace:** [Audit DC-10](./localmotive-comprehensive-audit.md#dc-10).
-- [ ] **V06-DC-10.I4** — Document whether rollback of a previously signed manifest belongs in the freshness threat model; if it does, define and implement signed sequence/expiry acceptance and recovery behavior. **Trace:** [Audit DC-10](./localmotive-comprehensive-audit.md#dc-10).
+- [x] **V06-DC-10.I1** — Capture an immutable upstream commit identity for each offered file during catalog construction and serialize it as the file revision alongside the exact verified SHA-256 and size. **Trace:** [Audit DC-10](./localmotive-comprehensive-audit.md#dc-10).
+- [x] **V06-DC-10.I2** — Preserve immutable revisions through catalog parsing, cached/bundled representation, and download authorization so resolution does not silently return to mutable main. **Trace:** [Audit DC-10](./localmotive-comprehensive-audit.md#dc-10).
+- [x] **V06-DC-10.I3** — Return a clear recoverable error when an approved historical object is unavailable, retaining strict length/digest checks instead of substituting current upstream bytes. **Trace:** [Audit DC-10](./localmotive-comprehensive-audit.md#dc-10).
+- [x] **V06-DC-10.I4** — Document whether rollback of a previously signed manifest belongs in the freshness threat model; if it does, define and implement signed sequence/expiry acceptance and recovery behavior. **Trace:** [Audit DC-10](./localmotive-comprehensive-audit.md#dc-10).
 
 **Verification**
 
-- [ ] **V06-DC-10.V1** — Add immutable revision serialization and authorization round-trip fixtures, including cache/bundle loading and an entry whose filename remains unchanged across revisions. **Trace:** [Audit DC-10](./localmotive-comprehensive-audit.md#dc-10).
-- [ ] **V06-DC-10.V2** — Use controlled upstream responses to replace main while keeping the approved revision available; require the pinned request to resolve the approved bytes and reject unintended substitution. **Trace:** [Audit DC-10](./localmotive-comprehensive-audit.md#dc-10).
-- [ ] **V06-DC-10.V3** — Test unavailable historical objects and enforce the documented old-signed-manifest replay policy, including any required expiry or rollback recovery scenario. **Trace:** [Audit DC-10](./localmotive-comprehensive-audit.md#dc-10).
+- [x] **V06-DC-10.V1** — Add immutable revision serialization and authorization round-trip fixtures, including cache/bundle loading and an entry whose filename remains unchanged across revisions. **Trace:** [Audit DC-10](./localmotive-comprehensive-audit.md#dc-10).
+- [x] **V06-DC-10.V2** — Use controlled upstream responses to replace main while keeping the approved revision available; require the pinned request to resolve the approved bytes and reject unintended substitution. **Trace:** [Audit DC-10](./localmotive-comprehensive-audit.md#dc-10).
+- [x] **V06-DC-10.V3** — Test unavailable historical objects and enforce the documented old-signed-manifest replay policy, including any required expiry or rollback recovery scenario. **Trace:** [Audit DC-10](./localmotive-comprehensive-audit.md#dc-10).
 
 **Complete when:** Newly built catalog file records name immutable upstream revisions and retain mandatory size/SHA validation throughout resolution. Historical-object failures and signed-manifest rollback behavior are explicitly defined and covered by the selected policy.
 
@@ -3524,4 +3524,14 @@ _Package 1 (RT-01, RT-02, RT-04, RT-07) implementation is complete at the unit/r
 - Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 534/0/2; `npm run check` EXIT 0; release-gates 104/104; `node scripts/validate_catalog.mjs .hermes-0.6/catalog-migrated.json --no-signature` -> `valid v2 (158 models, 1417 files)`.
 - Next action (owner): run the `Publish curated catalog` workflow (workflow_dispatch). Its rebuild now produces the corrected labels and its sign job produces the matching `catalog/catalog.json.sig`; the checked-in data file stays untouched until then because the embedded-signature tests (`shipped_signature_verifies_after_crlf_checkout_normalization`) verify the committed pair and must stay green. Until the signed candidate is published, network catalog fetches fall back to the cached or bundled copy per DC-01/DC-07 behaviour.
 - Residual: six `MTP`-suffixed rows were relabeled by token only; whether those files are standalone companions or full models containing MTP was not asserted (names are not evidence). The current served catalog keeps its signed legacy labels until the next signed publication.
+
+### V06-DC-10 — immutable revision pins and signed freshness (commit `9cee654`)
+
+- Status: Implemented; loader policy unit-verified; data-file fields land with the next signed catalog publication.
+- Regression before fix: every shipped file omitted `revision` (defaulting to `main`), so an upstream replacement under `main` could silently change the bytes a signed catalog describes, and no signed sequence/expiry existed, so a compromised serving path could replay an older signed catalog.
+- Verification after fix: the builder records the repository commit (`meta.sha`) as each file's `revision` (omitted only when the API reports none, keeping the loader default) and emits catalog-level `sequence` (build time, milliseconds) and `expires` (14 days, epoch seconds). The loader refuses a signature-valid catalog that is expired or whose sequence is older than the cached catalog's, with a named refresh error; equal sequences refresh idempotently; documents without the fields still load.
+- Regression tests: `dc10_freshness_policy_prefers_accept_only_for_fresh_non_replayed_documents` (accept/rollback/expired matrix) and `dc10_expired_and_replayed_signed_catalogs_keep_the_cache` (expired -> cache, replayed -> cache, equal -> network, newer -> network, field-less -> network; verified through the injectable-verifier seam on a local HTTP fixture). release-gates `DC-10 the builder pins immutable revisions and signed freshness fields` guards the builder source. Mutations MZ1 (always accept) / MZ2 (rollback check removed) / MZ3 (revision dropped) / MZ4 (sequence dropped) all failed their matching tests and passed after restore.
+- Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 536/0/2; `npm run check` EXIT 0; release-gates 105/105.
+- Next action (owner): the same `Publish curated catalog` run that resolves DC-09 also emits the revision/sequence/expires fields; the checked-in signed pair stays untouched until then so the embedded-signature tests remain green.
+- Residual: replay protection compares against the locally cached catalog only; a client with an empty cache accepts any signature-valid document by design. The 26-hour refresh cooldown still governs how often the policy is exercised.
 
