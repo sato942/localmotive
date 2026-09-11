@@ -72,6 +72,14 @@ for (const author of ALLOWLIST) {
     const repo = summary.id;
     try {
       const meta = await api(`https://huggingface.co/api/models/${repo}?blobs=true`, token);
+      // The repository commit this listing was read at (audit DC-10): the
+      // signed catalog then pins every file to immutable bytes.
+      const commitSha = typeof meta.sha === "string" && /^[a-f0-9]{40}$/i.test(meta.sha)
+        ? meta.sha
+        : "";
+      if (!commitSha) {
+        problems.push(`${repo}: no immutable revision reported; files stay on main`);
+      }
       const ggufs = (meta.siblings || []).filter((s) =>
         s.rfilename.toLowerCase().endsWith(".gguf"),
       );
@@ -117,6 +125,11 @@ for (const author of ALLOWLIST) {
           filename: name,
           sizeBytes: sibling.size,
           sha256,
+          // Immutable pin (audit DC-10): the repository commit this listing
+          // was read at, so a `main` replacement upstream cannot silently
+          // change the bytes the signed catalog describes. Omitted when the
+          // API reported no commit, so the loader default (main) applies.
+          ...(commitSha ? { revision: commitSha } : {}),
           lastModified: meta.lastModified ?? "",
           createdAt: meta.createdAt ?? "",
         });
@@ -213,9 +226,15 @@ for (const entry of pending.sort((a, b) => b.downloads - a.downloads)) {
   entries.push({ ...entry, files: kept });
 }
 
+const nowMs = Date.now();
 const catalog = {
   schemaVersion: 2,
   updated: new Date().toISOString().slice(0, 10),
+  // Signed freshness policy (audit DC-10): the loader refuses an expired
+  // catalog or one whose sequence is older than the cached sequence, so a
+  // compromised serving path cannot replay an old signed document.
+  sequence: nowMs,
+  expires: Math.floor(nowMs / 1000) + 14 * 24 * 60 * 60,
   source: "https://github.com/sato942/localmotive/blob/main/catalog/catalog.json",
   note: "Curated list of GGUF builds. Localmotive downloads directly from Hugging Face; this file only decides what is offered.",
   providers: {

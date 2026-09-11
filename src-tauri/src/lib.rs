@@ -3636,6 +3636,8 @@ async fn fetch_model_catalog(
                     &catalog::Catalog {
                         schema_version: catalog::SUPPORTED_SCHEMA,
                         updated: String::new(),
+                        sequence: None,
+                        expires: None,
                         source: String::new(),
                         note: String::new(),
                         models: mirror_models,

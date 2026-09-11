@@ -232,6 +232,14 @@ pub struct Catalog {
     pub schema_version: u32,
     #[serde(default)]
     pub updated: String,
+    /// Signed monotonic build sequence (audit DC-10): a served catalog older
+    /// than the cached one must not replace it (replay protection).
+    #[serde(default)]
+    pub sequence: Option<u64>,
+    /// Signed expiry deadline in epoch seconds; an expired catalog is not
+    /// accepted for refresh even when its signature is valid.
+    #[serde(default)]
+    pub expires: Option<u64>,
     #[serde(default)]
     pub source: String,
     #[serde(default)]
@@ -243,6 +251,44 @@ pub struct Catalog {
 /// Parse and validate a catalog document. Rejects a schema this build cannot
 /// read, and drops entries that are structurally unusable rather than showing a
 /// row that cannot be downloaded.
+/// Result of the signed freshness policy for a candidate catalog.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Freshness {
+    Accept,
+    Expired { expires: u64 },
+    Rollback { sequence: u64, cached: u64 },
+}
+
+/// Decide whether a signature-valid candidate may replace the cached copy
+/// (audit DC-10). An expired candidate or one whose signed sequence is older
+/// than the cached sequence is refused so a compromised serving path cannot
+/// replay an old signed catalog; equal sequences are idempotent refreshes.
+pub fn catalog_freshness(
+    sequence: Option<u64>,
+    expires: Option<u64>,
+    cached_sequence: Option<u64>,
+    now_secs: u64,
+) -> Freshness {
+    if let Some(expires) = expires {
+        if expires <= now_secs {
+            return Freshness::Expired { expires };
+        }
+    }
+    if let (Some(sequence), Some(cached)) = (sequence, cached_sequence) {
+        if sequence < cached {
+            return Freshness::Rollback { sequence, cached };
+        }
+    }
+    Freshness::Accept
+}
+
+fn epoch_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
 pub fn parse_catalog(text: &str) -> Result<Catalog, String> {
     let mut catalog: Catalog = serde_json::from_str(text)
         .map_err(|error| format!("Catalog is not valid JSON: {error}"))?;
@@ -1114,6 +1160,37 @@ fn fetch_catalog_verified(
                     )
                 }
             };
+            // Signed freshness policy (audit DC-10): refuse an expired or
+            // replayed older catalog; the cached copy stays active.
+            let cached_sequence = cached_body
+                .and_then(|body| parse_catalog(body).ok())
+                .and_then(|cached| cached.sequence);
+            match catalog_freshness(
+                catalog.sequence,
+                catalog.expires,
+                cached_sequence,
+                epoch_secs(),
+            ) {
+                Freshness::Accept => {}
+                Freshness::Expired { expires } => {
+                    return fallback(
+                        cached_body.map(str::to_string),
+                        url,
+                        format!("the served catalog expired at epoch {expires}"),
+                        cache_root,
+                    )
+                }
+                Freshness::Rollback { sequence, cached } => {
+                    return fallback(
+                        cached_body.map(str::to_string),
+                        url,
+                        format!(
+                        "the served catalog sequence {sequence} is older than the cached {cached}"
+                    ),
+                        cache_root,
+                    )
+                }
+            }
             // Only cache a signed document that parsed successfully.
             let _ = save_cache_record(cache_root, &body, etag.as_deref(), &signature);
             write_refresh_stamp(cache_root);
@@ -2372,6 +2449,158 @@ mod tests {
         assert!(!snapshot.catalog.models.is_empty());
         let _ = std::fs::remove_dir_all(root);
     }
+    fn dc10_catalog_document(sequence: Option<u64>, expires: Option<u64>) -> String {
+        // A minimal but fully valid v2 document; the freshness fields are
+        // injected so the policy can be exercised independently.
+        let mut value = serde_json::json!({
+            "schemaVersion": 2,
+            "updated": "2026-09-11",
+            "source": "fixture",
+            "note": "",
+            "models": [{
+                "id": "fixture/model",
+                "repo": "fixture/repo",
+                "family": "fixture",
+                "parameters": "7B",
+                "publisher": "fixture",
+                "summary": "",
+                "tags": [],
+                "gated": false,
+                "downloads": 0,
+                "likes": 0,
+                "files": [{
+                    "quant": "Q4_K_M",
+                    "filename": "fixture-Q4_K_M.gguf",
+                    "sizeBytes": 1024,
+                    "sha256": "a".repeat(64),
+                    "revision": "b".repeat(40),
+                    "lastModified": "",
+                    "createdAt": ""
+                }]
+            }]
+        });
+        if let Some(sequence) = sequence {
+            value["sequence"] = serde_json::json!(sequence);
+        }
+        if let Some(expires) = expires {
+            value["expires"] = serde_json::json!(expires);
+        }
+        serde_json::to_string(&value).unwrap()
+    }
+
+    #[test]
+    fn dc10_freshness_policy_prefers_accept_only_for_fresh_non_replayed_documents() {
+        assert_eq!(
+            catalog_freshness(Some(10), None, Some(10), 1_000),
+            Freshness::Accept
+        );
+        assert_eq!(
+            catalog_freshness(Some(11), None, Some(10), 1_000),
+            Freshness::Accept
+        );
+        assert_eq!(
+            catalog_freshness(None, None, Some(10), 1_000),
+            Freshness::Accept
+        );
+        assert_eq!(
+            catalog_freshness(Some(9), None, Some(10), 1_000),
+            Freshness::Rollback {
+                sequence: 9,
+                cached: 10
+            }
+        );
+        assert_eq!(
+            catalog_freshness(Some(11), Some(999), Some(10), 1_000),
+            Freshness::Expired { expires: 999 }
+        );
+    }
+
+    #[test]
+    fn dc10_expired_and_replayed_signed_catalogs_keep_the_cache() {
+        let root = unique_test_dir("localmotive-dc10");
+        let cache_body = dc10_catalog_document(Some(100), None);
+        save_cache_record(&root, &cache_body, Some("etag"), "sig").unwrap();
+        let allow = |_body: &[u8], _sig: &str| true;
+
+        // (a) A signature-valid but expired candidate is refused.
+        let fixture = serve_catalog_http(
+            dc10_catalog_document(Some(200), Some(1)).into_bytes(),
+            b"sig".to_vec(),
+            BodyFraming::DeclaredLength,
+        );
+        let snapshot =
+            fetch_catalog_verified(&format!("{}/catalog.json", fixture.base_url), &root, allow)
+                .unwrap();
+        assert_eq!(snapshot.origin, "cache");
+        assert!(
+            snapshot
+                .refresh_error
+                .as_deref()
+                .is_some_and(|error| error.contains("expired")),
+            "unexpected refresh_error: {:?}",
+            snapshot.refresh_error
+        );
+        drop(fixture);
+
+        // (b) A replayed older sequence is refused.
+        let fixture = serve_catalog_http(
+            dc10_catalog_document(Some(50), None).into_bytes(),
+            b"sig".to_vec(),
+            BodyFraming::DeclaredLength,
+        );
+        let snapshot =
+            fetch_catalog_verified(&format!("{}/catalog.json", fixture.base_url), &root, allow)
+                .unwrap();
+        assert_eq!(snapshot.origin, "cache");
+        assert!(
+            snapshot
+                .refresh_error
+                .as_deref()
+                .is_some_and(|error| error.contains("older")),
+            "unexpected refresh_error: {:?}",
+            snapshot.refresh_error
+        );
+        drop(fixture);
+
+        // (c) An equal sequence is an idempotent refresh and is accepted.
+        let fixture = serve_catalog_http(
+            dc10_catalog_document(Some(100), None).into_bytes(),
+            b"sig".to_vec(),
+            BodyFraming::DeclaredLength,
+        );
+        let snapshot =
+            fetch_catalog_verified(&format!("{}/catalog.json", fixture.base_url), &root, allow)
+                .unwrap();
+        assert_eq!(snapshot.origin, "network");
+        drop(fixture);
+
+        // (d) A newer sequence is accepted and replaces the cache.
+        let fixture = serve_catalog_http(
+            dc10_catalog_document(Some(101), None).into_bytes(),
+            b"sig".to_vec(),
+            BodyFraming::DeclaredLength,
+        );
+        let snapshot =
+            fetch_catalog_verified(&format!("{}/catalog.json", fixture.base_url), &root, allow)
+                .unwrap();
+        assert_eq!(snapshot.origin, "network");
+        drop(fixture);
+
+        // (e) A catalog without freshness fields still loads (older builds).
+        let fixture = serve_catalog_http(
+            dc10_catalog_document(None, None).into_bytes(),
+            b"sig".to_vec(),
+            BodyFraming::DeclaredLength,
+        );
+        let snapshot =
+            fetch_catalog_verified(&format!("{}/catalog.json", fixture.base_url), &root, allow)
+                .unwrap();
+        assert_eq!(snapshot.origin, "network");
+        drop(fixture);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     fn shipped_signed_pair() -> (String, String) {
         let catalog_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()

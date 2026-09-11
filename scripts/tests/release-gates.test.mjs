@@ -1539,3 +1539,16 @@ test("DC-09 quant labels come from the file's own token and stay canonical", asy
     "the suffix regex must not return",
   );
 });
+
+test("DC-10 the builder pins immutable revisions and signed freshness fields", async () => {
+  const builder = await readFile(join(process.cwd(), "scripts", "build_catalog.mjs"), "utf8");
+  assert.match(builder, /meta\.sha/, "the builder reads the repository commit");
+  assert.match(builder, /revision: commitSha/, "files carry the immutable revision");
+  assert.match(builder, /\.\.\.\(commitSha \? \{ revision: commitSha \} : \{\}\)/, "the revision is omitted rather than empty when the API reports none");
+  assert.match(builder, /sequence: nowMs/, "the catalog carries a signed sequence");
+  assert.match(
+    builder,
+    /expires: Math\.floor\(nowMs \/ 1000\) \+ 14 \* 24 \* 60 \* 60/,
+    "the catalog carries a signed expiry deadline",
+  );
+});
