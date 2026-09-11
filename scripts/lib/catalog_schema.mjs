@@ -9,6 +9,11 @@
 
 const SHA256 = /^[0-9a-fA-F]{64}$/;
 
+// Per-row nested bounds, shared with the Rust contract (audit S-05/S-06).
+export const MAX_MODEL_FILES = 64;
+export const MAX_MODEL_TAGS = 128;
+export const MAX_TAG_TEXT_LEN = 256;
+
 export function isSafeFilename(name) {
   if (typeof name !== "string" || name.length === 0 || name.length > 255) {
     return false;
@@ -59,6 +64,15 @@ function rowProblem(row) {
   if (typeof row?.id !== "string" || row.id.length === 0) return "missing model id";
   if (!isValidRepo(row.repo)) return "invalid repository";
   if (!Array.isArray(row.files) || row.files.length === 0) return "no files";
+  if (row.files.length > MAX_MODEL_FILES) {
+    return `model has too many files (maximum ${MAX_MODEL_FILES})`;
+  }
+  if (Array.isArray(row.tags) && row.tags.length > MAX_MODEL_TAGS) {
+    return `model has too many tags (maximum ${MAX_MODEL_TAGS})`;
+  }
+  if (Array.isArray(row.tags) && row.tags.some((tag) => typeof tag !== "string" || tag.length > MAX_TAG_TEXT_LEN)) {
+    return "tag is too long";
+  }
   for (const file of row.files) {
     if (!isSafeFilename(file?.filename)) return `unsafe filename: ${file?.filename}`;
     if (

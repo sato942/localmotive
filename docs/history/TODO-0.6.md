@@ -2185,18 +2185,18 @@ These packages preserve actionable recommendations outside the 72-item findings 
 
 **Bound nested catalog IPC payloads and test Windows filename aliases**
 
-**Status:** Not started · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
 **Audit trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims)  
 **Prerequisites:** [V06-DC-04](#v06-dc-04), [V06-DC-06](#v06-dc-06)
 
 **Implementation**
 
-- [ ] **V06-S-06.I1** — Bound nested file/tag arrays, field lengths and aggregate query payload work at the Rust boundary, including deserialization where feasible; prefer authoritative store IDs over caller-supplied full models. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
-- [ ] **V06-S-06.I2** — Add explicit acceptance/rejection policy for Windows reserved device names, controls, trailing-dot/space and extended-path aliases without relaxing existing separator, ADS or traversal protections. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
+- [x] **V06-S-06.I1** — Bound nested file/tag arrays, field lengths and aggregate query payload work at the Rust boundary, including deserialization where feasible; prefer authoritative store IDs over caller-supplied full models. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
+- [x] **V06-S-06.I2** — Add explicit acceptance/rejection policy for Windows reserved device names, controls, trailing-dot/space and extended-path aliases without relaxing existing separator, ADS or traversal protections. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
 
 **Verification**
 
-- [ ] **V06-S-06.V1** — Exercise one oversized nested model, many bounded models, Unicode and Windows special-name fixtures; verify deterministic rejection before large cloning/formatting or file publication. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
+- [x] **V06-S-06.V1** — Exercise one oversized nested model, many bounded models, Unicode and Windows special-name fixtures; verify deterministic rejection before large cloning/formatting or file publication. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
 
 **Complete when:** Count-only input limits are no longer represented as a complete memory bound and safe filename behavior is specified.
 
@@ -3708,3 +3708,11 @@ Revalidated at the candidate source (`065248a1` + the G-07 test addition) on Win
 - V1: `node --test scripts/tests/catalog_schema.test.mjs` 18/18; Rust fixture test 1/1 (same cases); real catalog revalidated: `npm run catalog:validate` → "catalog: valid v2 (158 models, 1417 files) · shared contract 0 drops"; duplicate-id/duplicate-filename fatals preserved on both sides.
 - Mutations: OV1 (duplicate-repository drop removed) and OV2 (reserved device names allowed) each failed the shared fixture test and passed after restore.
 - Commands: `cargo fmt --check` PASS; clippy `-D warnings` 0 errors; `cargo test` 543 passed / 0 failed / 2 ignored (542 + the S-05 fixture test); `npm run check` PASS (337.96 kB; Vitest 93; node tests 18 + release gates).
+
+#### S-06 closure record — bounded nested catalog payloads and filename aliases
+
+- I1: the three catalog IPC commands (`filter_catalog`, `catalog_facets`, `catalog_rich_facets`) now take `catalog::IpcCatalogModels`, whose manual `Deserialize` refuses more than 2000 rows WHILE the JSON is still being read (not after a full allocation). `validate_catalog_payload` then bounds every nested field with the shared row contract plus aggregate limits (`MAX_IPC_FILES_TOTAL` 8192, `MAX_IPC_TAGS_TOTAL` 8192, `MAX_MODEL_FILES` 64, `MAX_MODEL_TAGS` 128, `MAX_TAG_TEXT_LEN` 256) before any cloning, aggregation or formatting; the mirror read refuses more than 5000 rows (`MAX_CATALOG_MIRROR_ROWS`), which routes into the existing recovery rebuild. The caps accommodate the real curated catalog (observed maxima: 99 tags, 34 files, 31 tag bytes — raised from an initial 64-tag bound that the two bitnet rows exposed, fixing a real regression caught by `catalog:validate`).
+- I2: the Windows filename policy is now explicit and identical in both validators (from S-05): traversal separators, ADS colons, reserved device names with or without extensions, control characters, trailing dot/space, non-.gguf names, over-long names and over-255-byte names are refused; "." and ".." are refused; extended-path aliases cannot occur because `\` and `/` are already refused. `catalog_row_problem` reasons are the single source for both languages.
+- V1: `s06_ipc_payload_bounds_reject_oversized_before_aggregation` exercises one oversized row (257 files), too many tags (129) and an overlong tag, the aggregate total (130 rows x 64 files), 150 bounded rows with facets still available, a 2001-row deserialization refusal, and a legal Unicode filename; `s06_the_mirror_read_refuses_an_oversized_row_set` mirrors 5001 rows through the app path and asserts the refusal; the JS test file adds the generated too-many-files/too-many-tags/overlong-tag/many-bounded-rows/Unicode cases (21/21). `npm run catalog:validate` passes on the shipped pair.
+- Mutations: OW1 (deserialization row cap removed), OW2 (aggregate totals check removed) and OW3 (mirror read bound removed) each failed their guarding test and passed after restore.
+- Commands: `cargo fmt --check` PASS; clippy `-D warnings` 0 errors; `cargo test` 545 passed / 0 failed / 2 ignored (543 + the two S-06 tests); `npm run check` PASS (337.96 kB; node tests 21; catalog:validate 158 models / 1417 files · 0 drops).

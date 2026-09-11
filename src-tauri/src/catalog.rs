@@ -306,6 +306,59 @@ fn epoch_secs() -> u64 {
         .unwrap_or(0)
 }
 
+/// IPC payload bounds (audit S-06). The command arguments arrive as JSON and
+/// are deserialized by serde; `IpcCatalogModels` enforces the row count during
+/// deserialization, and `validate_catalog_payload` bounds every nested field
+/// before the value is cloned, aggregated or formatted further. Count-only
+/// checks are not a memory bound on their own.
+pub const MAX_IPC_CATALOG_MODELS: usize = 2000;
+/// Per-row nested bounds, shared with the JavaScript contract (audit S-05/S-06).
+pub const MAX_MODEL_FILES: usize = 64;
+pub const MAX_MODEL_TAGS: usize = 128;
+pub const MAX_TAG_TEXT_LEN: usize = 256;
+pub const MAX_IPC_FILES_TOTAL: usize = 8192;
+pub const MAX_IPC_TAGS_TOTAL: usize = 8192;
+
+/// Catalog rows received from the interface. Deserialization refuses more
+/// than [`MAX_IPC_CATALOG_MODELS`] rows up front, so the cap applies while the
+/// JSON is still being read rather than after a full allocation.
+#[derive(Clone, Debug, Serialize)]
+#[serde(transparent)]
+pub struct IpcCatalogModels(pub Vec<CatalogModel>);
+
+impl<'de> Deserialize<'de> for IpcCatalogModels {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct RowVisitor;
+        impl<'de> serde::de::Visitor<'de> for RowVisitor {
+            type Value = IpcCatalogModels;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a bounded list of catalog rows")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let mut models =
+                    Vec::with_capacity(seq.size_hint().unwrap_or(0).min(MAX_IPC_CATALOG_MODELS));
+                while let Some(model) = seq.next_element::<CatalogModel>()? {
+                    if models.len() >= MAX_IPC_CATALOG_MODELS {
+                        return Err(serde::de::Error::custom(format!(
+                            "too many catalog rows (maximum {MAX_IPC_CATALOG_MODELS})"
+                        )));
+                    }
+                    models.push(model);
+                }
+                Ok(IpcCatalogModels(models))
+            }
+        }
+        deserializer.deserialize_seq(RowVisitor)
+    }
+}
 pub fn parse_catalog(text: &str) -> Result<Catalog, String> {
     let mut catalog: Catalog = serde_json::from_str(text)
         .map_err(|error| format!("Catalog is not valid JSON: {error}"))?;
@@ -385,6 +438,19 @@ fn catalog_row_problem(model: &CatalogModel) -> Option<String> {
     if model.files.is_empty() {
         return Some("no files".into());
     }
+    if model.files.len() > MAX_MODEL_FILES {
+        return Some(format!(
+            "model has too many files (maximum {MAX_MODEL_FILES})"
+        ));
+    }
+    if model.tags.len() > MAX_MODEL_TAGS {
+        return Some(format!(
+            "model has too many tags (maximum {MAX_MODEL_TAGS})"
+        ));
+    }
+    if model.tags.iter().any(|tag| tag.len() > MAX_TAG_TEXT_LEN) {
+        return Some("tag is too long".into());
+    }
     for file in &model.files {
         if !is_safe_filename(&file.filename) {
             return Some(format!("unsafe filename: {}", file.filename));
@@ -410,6 +476,38 @@ fn catalog_row_problem(model: &CatalogModel) -> Option<String> {
         }
     }
     None
+}
+
+/// Validate a full interface-supplied catalog payload (audit S-06): every row
+/// passes the shared row contract, and the aggregate nested counts stay
+/// bounded so no command clones, formats or aggregates unbounded input.
+pub fn validate_catalog_payload(models: &[CatalogModel]) -> Result<(), String> {
+    if models.len() > MAX_IPC_CATALOG_MODELS {
+        return Err(format!(
+            "Too many catalog rows: {} (maximum {MAX_IPC_CATALOG_MODELS}).",
+            models.len()
+        ));
+    }
+    let mut files_total = 0usize;
+    let mut tags_total = 0usize;
+    for (index, model) in models.iter().enumerate() {
+        if let Some(reason) = catalog_row_problem(model) {
+            return Err(format!("Catalog row {index} was refused: {reason}."));
+        }
+        files_total += model.files.len();
+        tags_total += model.tags.len();
+        if files_total > MAX_IPC_FILES_TOTAL {
+            return Err(format!(
+                "Catalog payload carries too many files in total (maximum {MAX_IPC_FILES_TOTAL})."
+            ));
+        }
+        if tags_total > MAX_IPC_TAGS_TOTAL {
+            return Err(format!(
+                "Catalog payload carries too many tags in total (maximum {MAX_IPC_TAGS_TOTAL})."
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The shared date contract: an observed date starts with YYYY-MM-DD.
@@ -1599,6 +1697,129 @@ pub fn clear_hf_token() -> Result<TokenStatus, String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn s06_ipc_payload_bounds_reject_oversized_before_aggregation() {
+        let file = |index: usize| CatalogFile {
+            quant: "Q4_K_M".into(),
+            filename: format!("file-{index}.gguf"),
+            size_bytes: 100,
+            sha256: "a".repeat(64),
+            revision: "main".into(),
+            last_modified: String::new(),
+            created_at: String::new(),
+            user_sourced: false,
+        };
+        let row = |id: &str, files: Vec<CatalogFile>, tags: Vec<String>| CatalogModel {
+            id: id.into(),
+            repo: format!("fixture/{id}"),
+            files,
+            tags,
+            ..Default::default()
+        };
+
+        // One row with too many files is refused with the shared reason.
+        let oversized = row("big", (0..257).map(file).collect(), Vec::new());
+        let error = validate_catalog_payload(&[oversized]).unwrap_err();
+        assert!(error.contains("too many files"), "{error}");
+
+        // Too many tags, and an overlong tag, are refused too.
+        let many_tags = row(
+            "tagged",
+            vec![file(0)],
+            (0..129).map(|index| format!("tag-{index}")).collect(),
+        );
+        let error = validate_catalog_payload(&[many_tags]).unwrap_err();
+        assert!(error.contains("too many tags"), "{error}");
+        let long_tag = row("longtag", vec![file(0)], vec!["x".repeat(257)]);
+        let error = validate_catalog_payload(&[long_tag]).unwrap_err();
+        assert!(error.contains("tag is too long"), "{error}");
+
+        // Aggregate file work is bounded across rows, not just per row.
+        let heavy: Vec<CatalogModel> = (0..130)
+            .map(|index| {
+                row(
+                    &format!("heavy-{index}"),
+                    (0..64).map(file).collect(),
+                    Vec::new(),
+                )
+            })
+            .collect();
+        let error = validate_catalog_payload(&heavy).unwrap_err();
+        assert!(error.contains("too many files in total"), "{error}");
+
+        // Many bounded rows pass and aggregation stays available.
+        let bounded: Vec<CatalogModel> = (0..150)
+            .map(|index| row(&format!("row-{index}"), vec![file(index)], Vec::new()))
+            .collect();
+        validate_catalog_payload(&bounded).unwrap();
+        let (tags, quants) = facets(&bounded);
+        assert!(tags.is_empty());
+        assert_eq!(quants, vec!["Q4_K_M".to_string()]);
+
+        // Deserialization refuses more than the row cap up front.
+        let huge = serde_json::to_string(
+            &(0..2001)
+                .map(|index| {
+                    serde_json::json!({
+                        "id": format!("row-{index}"),
+                        "repo": "fixture/repo",
+                        "files": [{
+                            "quant": "Q4_K_M",
+                            "filename": format!("file-{index}.gguf"),
+                            "sizeBytes": 100,
+                            "sha256": "a".repeat(64),
+                        }],
+                    })
+                })
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        let outcome: Result<IpcCatalogModels, _> = serde_json::from_str(&huge);
+        let error = outcome.expect_err("2001 rows must not deserialize");
+        assert!(
+            error.to_string().contains("too many catalog rows"),
+            "{error}"
+        );
+
+        // A Unicode filename is legal under the shared contract.
+        let unicode = row(
+            "unicode",
+            vec![CatalogFile {
+                filename: "模型-Q4_K_M.gguf".into(),
+                ..file(0)
+            }],
+            Vec::new(),
+        );
+        validate_catalog_payload(&[unicode]).unwrap();
+    }
+
+    #[test]
+    fn s06_the_mirror_read_refuses_an_oversized_row_set() {
+        let mut connection = rusqlite::Connection::open_in_memory().unwrap();
+        crate::catalog_db::migrate_catalog_db(&connection).unwrap();
+        // Mirror one past the read bound through the same path the app uses.
+        let models: Vec<CatalogModel> = (0..(crate::catalog_db::MAX_CATALOG_MIRROR_ROWS + 1))
+            .map(|index| CatalogModel {
+                id: format!("row-{index}"),
+                repo: format!("fixture/repo-{index}"),
+                files: vec![CatalogFile {
+                    quant: "Q4_K_M".into(),
+                    filename: format!("file-{index}.gguf"),
+                    size_bytes: 100,
+                    sha256: "a".repeat(64),
+                    revision: "main".into(),
+                    last_modified: String::new(),
+                    created_at: String::new(),
+                    user_sourced: false,
+                }],
+                ..Default::default()
+            })
+            .collect();
+        crate::catalog_db::mirror_verified_catalog(&mut connection, &models).unwrap();
+        let error = crate::catalog_db::read_catalog_db_models(&connection).unwrap_err();
+        assert!(error.contains("too many rows"), "{error}");
+    }
 
     #[test]
     fn s05_shared_fixture_cases_agree_with_the_javascript_validator() {

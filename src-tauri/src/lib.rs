@@ -3790,25 +3790,29 @@ fn remove_user_catalog_override(
 
 #[tauri::command]
 fn filter_catalog(
-    models: Vec<catalog::CatalogModel>,
+    models: catalog::IpcCatalogModels,
     query: catalog::CatalogQuery,
 ) -> Result<Vec<catalog::CatalogModel>, String> {
+    let models = models.0;
+    catalog::validate_catalog_payload(&models)?;
     catalog::validate_catalog_query(&query, models.len())?;
     Ok(catalog::filter_models(&models, &query))
 }
 
 #[tauri::command]
-fn catalog_facets(
-    models: Vec<catalog::CatalogModel>,
-) -> Result<(Vec<String>, Vec<String>), String> {
+fn catalog_facets(models: catalog::IpcCatalogModels) -> Result<(Vec<String>, Vec<String>), String> {
+    let models = models.0;
+    catalog::validate_catalog_payload(&models)?;
     catalog::validate_facet_models(models.len())?;
     Ok(catalog::facets(&models))
 }
 
 #[tauri::command]
 fn catalog_rich_facets(
-    models: Vec<catalog::CatalogModel>,
+    models: catalog::IpcCatalogModels,
 ) -> Result<catalog::CatalogFacets, String> {
+    let models = models.0;
+    catalog::validate_catalog_payload(&models)?;
     catalog::validate_facet_models(models.len())?;
     Ok(catalog::rich_facets(&models))
 }

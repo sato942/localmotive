@@ -34,3 +34,45 @@ for (const testCase of fixtures.cases) {
     }
   });
 }
+
+const goodFile = (index) => ({
+  filename: `file-${index}.gguf`,
+  quant: "Q4_K_M",
+  sizeBytes: 100 + index,
+  revision: "main",
+  sha256: "a".repeat(64),
+});
+const goodRow = (id, files = [goodFile(0)], tags = []) => ({
+  id,
+  repo: `fixture/${id}`,
+  files,
+  tags,
+});
+
+test("catalog schema: too many files in one row is dropped", () => {
+  const files = Array.from({ length: 257 }, (_, index) => goodFile(index));
+  const outcome = validateCatalogRows([goodRow("big", files)]);
+  assert.ok(
+    outcome.error?.includes("too many files"),
+    `expected a too-many-files error, got: ${outcome.error}`,
+  );
+});
+
+test("catalog schema: too many tags or an overlong tag is dropped", () => {
+  const manyTags = Array.from({ length: 129 }, (_, index) => `tag-${index}`);
+  const many = validateCatalogRows([goodRow("tagged", [goodFile(0)], manyTags)]);
+  assert.ok(many.error?.includes("too many tags"), many.error);
+  const long = validateCatalogRows([goodRow("longtag", [goodFile(0)], ["x".repeat(257)])]);
+  assert.ok(long.error?.includes("tag is too long"), long.error);
+});
+
+test("catalog schema: many bounded rows are accepted, Unicode names are legal", () => {
+  const rows = Array.from({ length: 150 }, (_, index) =>
+    goodRow(`row-${index}`, [goodFile(index)]),
+  );
+  rows[0].files = [{ ...goodFile(1), filename: "模型-Q4_K_M.gguf" }];
+  const outcome = validateCatalogRows(rows);
+  assert.equal(outcome.error, null);
+  assert.equal(outcome.accepted.length, 150);
+  assert.equal(outcome.dropped.length, 0);
+});

@@ -26,6 +26,9 @@ pub const CATALOG_DB_SCHEMA_VERSION: u32 = 1;
 /// sent to the network, and never pass signature verification: downloads of
 /// user rows still require the exact SHA-256 the user supplied.
 pub const MAX_USER_OVERRIDE_MODELS: usize = 200;
+/// Upper bound for rows read from the mirror database (audit S-06): beyond
+/// this the file is treated as corrupt and the recovery path rebuilds it.
+pub const MAX_CATALOG_MIRROR_ROWS: usize = 5000;
 pub const MAX_USER_OVERRIDE_TEXT_LEN: usize = 512;
 pub const MAX_USER_OVERRIDE_TAGS: usize = 32;
 pub const MAX_USER_OVERRIDE_TAG_TEXT_LEN: usize = 256;
@@ -389,6 +392,15 @@ pub fn read_catalog_db_models(connection: &Connection) -> Result<Vec<CatalogMode
             files,
             user_sourced: user_sourced != 0,
         });
+    }
+    // Bound the mirror read (audit S-06): a tampered or corrupted database
+    // must not feed an unbounded row set into the app. Exceeding the bound is
+    // a corruption signal, so the caller's recovery path rebuilds the mirror.
+    if models.len() > MAX_CATALOG_MIRROR_ROWS {
+        return Err(format!(
+            "The local catalog database contains too many rows ({}).",
+            models.len()
+        ));
     }
     Ok(models)
 }
