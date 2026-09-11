@@ -3362,7 +3362,7 @@ _Package 1 (RT-01, RT-02, RT-04, RT-07) implementation is complete at the unit/r
 - Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 505 pass / 0 fail / 2 ignored; `npm run check` EXIT 0; `npx tsc --noEmit` EXIT 0; release-profile measurement `cargo test --release --lib mt10_ranking_scales -- --nocapture` → `ranked 10000 candidates in 1.8770413s`.
 - Residual: 10,000-candidate ranking stays O(n^2) by design (bounded detail, measured runtime); the panel shows evidence coverage per candidate, so a low-coverage candidate is visible even when it ranks high.
 
-### V06-MT-15 — discovery reuses artifact shard analysis (commit `pending`)
+### V06-MT-15 — discovery reuses artifact shard analysis (commit `cf52adc`)
 
 - Status: Implemented; V1 verified.
 - Regression before fix: the scanner judged completeness from its own index set, tolerating duplicate indices (an unsplit `foo.gguf` beside `foo-00001-of-00001.gguf` could report complete) and silently dropping parse failures, while the artifact module rejected the same folders.
