@@ -3336,7 +3336,7 @@ _Package 1 (RT-01, RT-02, RT-04, RT-07) implementation is complete at the unit/r
 - Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 497 pass / 0 fail / 2 ignored; `npm run check` EXIT 0; `npx tsc --noEmit` EXIT 0.
 - Residual: the retained harness still measures a short fixed prompt; the V2 long-prompt workload path is not wired into tuning, and the objective label states this explicitly. `specType` winner changes are reported, not quality-gated in-session (the quality suite stays user-run).
 
-### V06-FE-06 — preflight staleness and adapter-selection intent (commit `f1e0c9d`)
+### V06-FE-06 — preflight staleness and adapter-selection intent (commit `6e3659d`)
 
 - Status: Implemented I1-I5; V1/V2 component-verified.
 - Regression before fix: the displayed preflight result stayed "current" after adapter/capacity/hardware/profile changes, the fingerprint omitted draft/projector, speculation, KV offload, fitting, device and attention fields, unchecking the final adapter was silently undone by the auto-select effect, and a slow preflight response could land after its inputs changed.
