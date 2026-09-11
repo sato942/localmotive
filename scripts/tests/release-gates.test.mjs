@@ -1355,9 +1355,18 @@ test("FE-04 previews compose provisionally and launch trust stays authoritative"
   // Validation and launch keep the authoritative checks.
   const validate = lib.split("fn validate_launch_profile(")[1].split("#[tauri::command]")[0];
   assert.match(validate, /prepare_launch/);
-  const start = lib.split("async fn start_server(")[1].split("fn start_server_worker(")[0];
+  // The server lifecycle commands moved to server_service.rs (S-27 slice 3a).
+  const serverSource = await readFile(
+    join(process.cwd(), "src-tauri", "src", "server_service.rs"),
+    "utf8",
+  );
+  const start = serverSource
+    .split("async fn start_server(")[1]
+    .split("fn start_server_worker(")[0];
   assert.match(start, /start_server_worker/);
-  const worker = lib.split("fn start_server_worker(")[1].split("#[tauri::command]")[0];
+  const worker = serverSource
+    .split("fn start_server_worker(")[1]
+    .split("#[tauri::command]")[0];
   assert.match(worker, /spawn_server/);
   // The UI describes the provisional state honestly.
   assert.match(app, /Provisional command/);

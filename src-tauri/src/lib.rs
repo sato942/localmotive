@@ -19,6 +19,8 @@ mod property_tests;
 pub mod recommend;
 mod runtime;
 mod runtime_service;
+mod server_service;
+use server_service::{validated_server_snapshot, ValidatedServerSnapshot};
 pub mod sharing;
 #[cfg(test)]
 mod test_support;
@@ -37,7 +39,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{Emitter, Manager};
 
-struct ManagedServer {
+pub(crate) struct ManagedServer {
     child: proc::ContainedProcess,
     profile: LaunchProfile,
     command: String,
@@ -135,7 +137,7 @@ pub(crate) struct AppState {
 /// here first, so two owners can never run concurrently and every finalizer
 /// can detect that its server identity was replaced (audit MT-05).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum OperationOwner {
+pub(crate) enum OperationOwner {
     Server,
     Benchmark,
     ColdBenchmark,
@@ -219,7 +221,9 @@ pub(crate) fn reserve_operation(
     })
 }
 
-fn active_operation_owner(coordinator: &Mutex<OperationCoordinator>) -> Option<OperationOwner> {
+pub(crate) fn active_operation_owner(
+    coordinator: &Mutex<OperationCoordinator>,
+) -> Option<OperationOwner> {
     coordinator
         .lock()
         .ok()
@@ -229,7 +233,7 @@ fn active_operation_owner(coordinator: &Mutex<OperationCoordinator>) -> Option<O
 /// A Stop request may only act on the ordinary server owner: anything else
 /// owns the machine right now, and its own cancel control must run first
 /// (audit MT-05 I3).
-fn stop_owner_conflict(active: Option<OperationOwner>) -> Option<String> {
+pub(crate) fn stop_owner_conflict(active: Option<OperationOwner>) -> Option<String> {
     match active {
         Some(OperationOwner::Server) | None => None,
         Some(owner) => Some(format!(
@@ -242,14 +246,14 @@ fn stop_owner_conflict(active: Option<OperationOwner>) -> Option<String> {
 /// A managed-server start in flight (audit IPC-01). The cancellation signal
 /// is the handle Stop uses while readiness is pending; the worker that owns
 /// `operation_id` is the only writer allowed to publish the running server.
-struct StartingServer {
+pub(crate) struct StartingServer {
     operation_id: u64,
     cancel: Arc<AtomicBool>,
 }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ServerStatus {
+pub(crate) struct ServerStatus {
     running: bool,
     /// Explicit lifecycle phase: idle, starting, running, or stopping
     /// (audit IPC-01 I1).
@@ -293,7 +297,7 @@ impl Default for ServerStatus {
     }
 }
 
-fn status_from(slot: &mut Option<ManagedServer>) -> ServerStatus {
+pub(crate) fn status_from(slot: &mut Option<ManagedServer>) -> ServerStatus {
     if let Some(server) = slot.as_mut() {
         match server.child.try_wait() {
             Ok(Some(code)) => {
@@ -534,7 +538,7 @@ fn artifact_metadata_u64(artifact: &artifact::ArtifactInspection, key: &str) -> 
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct LaunchValidation {
+pub(crate) struct LaunchValidation {
     runtime: RuntimeCapabilities,
     artifacts: Vec<artifact::ArtifactInspection>,
     arguments: core::LaunchArgumentValidation,
@@ -696,7 +700,7 @@ fn validate_profile_paths(profile: &LaunchProfile) -> Result<(), String> {
 
 /// One spawned server run: the contained child, its validation, the bounded
 /// log path, the optional execution lease, and the log drain threads.
-type SpawnedServer = (
+pub(crate) type SpawnedServer = (
     proc::ContainedProcess,
     LaunchValidation,
     String,
@@ -704,7 +708,10 @@ type SpawnedServer = (
     Vec<std::thread::JoinHandle<()>>,
 );
 
-fn spawn_server(profile: &LaunchProfile, log_name: &str) -> Result<SpawnedServer, String> {
+pub(crate) fn spawn_server(
+    profile: &LaunchProfile,
+    log_name: &str,
+) -> Result<SpawnedServer, String> {
     let validation = prepare_launch(profile)
         .map_err(|message| launch_failure("validation", message, "", None, false))?;
     // Acquire the execution-identity lease after verification and before the
@@ -1082,7 +1089,7 @@ fn unobserved_effective_context(observed_at_ms: u64) -> evidence::Evidence<u32> 
     }
 }
 
-fn update_launch_effective_context(
+pub(crate) fn update_launch_effective_context(
     validation: &mut LaunchValidation,
     host: &str,
     port: u16,
@@ -1098,7 +1105,7 @@ fn update_launch_effective_context(
     );
 }
 
-fn bounded_log_tail(log_path: &str) -> String {
+pub(crate) fn bounded_log_tail(log_path: &str) -> String {
     use std::io::{Read, Seek, SeekFrom};
 
     const MAX_TAIL_BYTES: u64 = 16 * 1024;
@@ -1185,7 +1192,7 @@ fn wait_until_healthy(
     wait_until_healthy_inner(child, client, log_path, timeout, None)
 }
 
-fn wait_until_healthy_cancellable(
+pub(crate) fn wait_until_healthy_cancellable(
     child: &mut impl HealthProcess,
     client: &crate::local_client::LocalHttpClient,
     log_path: &str,
@@ -1757,292 +1764,6 @@ fn validate_launch_profile(profile: LaunchProfile) -> Result<LaunchValidation, S
 /// hundred milliseconds, then terminates and reaps the contained tree; this
 /// deadline bounds how long Stop waits for that terminal state.
 pub(crate) const STARTUP_STOP_DEADLINE_SECS: u64 = 10;
-
-#[tauri::command]
-
-/// The lifecycle phase observable while a start is pending (audit IPC-01).
-fn server_phase(state: &AppState) -> &'static str {
-    if state
-        .starting
-        .lock()
-        .map(|starting| starting.is_some())
-        .unwrap_or(false)
-    {
-        return "starting";
-    }
-    "idle"
-}
-
-#[tauri::command]
-async fn start_server(
-    app: tauri::AppHandle,
-    profile: LaunchProfile,
-    state: tauri::State<'_, AppState>,
-) -> Result<ServerStatus, String> {
-    // One owner at a time: a running server, benchmark, tuning session, or
-    // quality suite all hold the reservation (audit MT-05).
-    let reservation = reserve_operation(&state.operations, OperationOwner::Server)?;
-    let operation_id = reservation.generation;
-    let cancel = Arc::new(AtomicBool::new(false));
-    {
-        // One short lock claims the operation and publishes the starting
-        // state; the readiness wait runs on a blocking worker without any
-        // server lock held (audit IPC-01 I1/I2).
-        let mut slot = state
-            .server
-            .lock()
-            .map_err(|_| "Server state is unavailable".to_string())?;
-        if status_from(&mut slot).running {
-            return Err("Stop the running server before starting another profile".into());
-        }
-        let mut starting = state
-            .starting
-            .lock()
-            .map_err(|_| "Server startup state is unavailable".to_string())?;
-        if starting.is_some() {
-            return Err("A server start is already in progress; Stop it first".into());
-        }
-        *starting = Some(StartingServer {
-            operation_id,
-            cancel: cancel.clone(),
-        });
-    }
-    let worker_app = app.clone();
-    let worker_cancel = cancel.clone();
-    let outcome = tauri::async_runtime::spawn_blocking(move || {
-        start_server_worker(&worker_app, profile, operation_id, worker_cancel)
-    })
-    .await
-    .map_err(|error| format!("Server startup task failed: {error}"))?;
-    outcome
-}
-
-/// True when the given startup operation may still publish: the server
-/// reservation is still held, no cancellation arrived, and the starting slot
-/// still names this operation (audit IPC-01 I3). A late completion from an
-/// older operation can never publish or clear a newer operation's state.
-fn startup_is_current(state: &AppState, operation_id: u64, cancel: &AtomicBool) -> bool {
-    !cancel.load(Ordering::Relaxed)
-        && active_operation_owner(&state.operations) == Some(OperationOwner::Server)
-        && state
-            .starting
-            .lock()
-            .ok()
-            .and_then(|starting| starting.as_ref().map(|entry| entry.operation_id))
-            == Some(operation_id)
-}
-
-/// The blocking half of `start_server`: launch, wait for readiness without
-/// holding any lock, and commit the server slot only while this operation
-/// still owns it; otherwise terminate and reap before returning
-/// (audit IPC-01 I2/I3).
-fn start_server_worker(
-    app: &tauri::AppHandle,
-    profile: LaunchProfile,
-    operation_id: u64,
-    cancel: Arc<AtomicBool>,
-) -> Result<ServerStatus, String> {
-    let state = app.state::<AppState>();
-    let clear_starting = |state: &AppState| {
-        if let Ok(mut starting) = state.starting.lock() {
-            if starting
-                .as_ref()
-                .is_some_and(|entry| entry.operation_id == operation_id)
-            {
-                *starting = None;
-            }
-        }
-    };
-    let (mut child, mut validation, log_path, execution_lease, mut log_drains) =
-        match spawn_server(&profile, &format!("server-{}", profile.port)) {
-            Ok(spawned) => spawned,
-            Err(error) => {
-                clear_starting(&state);
-                return Err(error);
-            }
-        };
-    let health = wait_until_healthy_cancellable(
-        &mut child,
-        &local_client(&profile)?,
-        &log_path,
-        Duration::from_secs(600),
-        &cancel,
-    );
-    if let Err(error) = health {
-        let _ = child.terminate_and_wait();
-        clear_starting(&state);
-        return Err(error);
-    }
-    let observed_at_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .and_then(|duration| duration.as_millis().try_into().ok())
-        .unwrap_or(validation.effective_context.observed_at_ms);
-    update_launch_effective_context(
-        &mut validation,
-        &profile.host,
-        profile.port,
-        Duration::from_secs(5),
-        observed_at_ms,
-    );
-    let command = validation.arguments.command.clone();
-    let started_at = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
-        .as_secs();
-    let mut slot = state
-        .server
-        .lock()
-        .map_err(|_| "Server state is unavailable".to_string())?;
-    let owns = startup_is_current(&state, operation_id, &cancel);
-    if !owns {
-        drop(slot);
-        let _ = child.terminate_and_wait();
-        clear_starting(&state);
-        return Err(
-            "Server startup was cancelled or replaced; the contained process tree was stopped."
-                .into(),
-        );
-    }
-    *slot = Some(ManagedServer {
-        child,
-        profile,
-        command,
-        validation,
-        log_path,
-        started_at,
-        runtime_lease: execution_lease,
-        log_drains: std::mem::take(&mut log_drains),
-    });
-    clear_starting(&state);
-    Ok(status_from(&mut slot))
-}
-
-#[tauri::command]
-async fn stop_server(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-) -> Result<ServerStatus, String> {
-    if let Some(conflict) = stop_owner_conflict(active_operation_owner(&state.operations)) {
-        return Err(conflict);
-    }
-    // A pending start is cancelled through its signal; its own worker
-    // terminates and reaps the tree before clearing the starting slot, and
-    // Stop waits a bounded time for that terminal state (audit IPC-01 I2/I3).
-    let pending = state
-        .starting
-        .lock()
-        .map_err(|_| "Server startup state is unavailable".to_string())?
-        .as_ref()
-        .map(|entry| entry.cancel.clone());
-    let worker_app = app.clone();
-    let outcome = tauri::async_runtime::spawn_blocking(move || {
-        let state = worker_app.state::<AppState>();
-        if let Some(cancel) = pending {
-            cancel.store(true, Ordering::Relaxed);
-            let deadline = Instant::now() + Duration::from_secs(STARTUP_STOP_DEADLINE_SECS);
-            loop {
-                let cleared = state
-                    .starting
-                    .lock()
-                    .map(|starting| starting.is_none())
-                    .unwrap_or(false);
-                if cleared {
-                    break;
-                }
-                if Instant::now() >= deadline {
-                    return Err(format!(
-                        "The starting server did not stop within {STARTUP_STOP_DEADLINE_SECS} seconds; its contained process tree is still being reaped."
-                    ));
-                }
-                std::thread::sleep(Duration::from_millis(25));
-            }
-        }
-        let mut slot = state
-            .server
-            .lock()
-            .map_err(|_| "Server state is unavailable".to_string())?;
-        if let Some(server) = slot.as_mut() {
-            if !server.child.terminate_and_wait() {
-                return Err("The contained llama-server process tree did not stop".into());
-            }
-            // The child holds no more output: join the bounded-log drains so
-            // the retained file is complete (audit OPS-01). A drain that
-            // somehow lingers is detached rather than blocking Stop.
-            let deadline = Instant::now() + Duration::from_secs(2);
-            for drain in server.log_drains.drain(..) {
-                while !drain.is_finished() && Instant::now() < deadline {
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-                if drain.is_finished() {
-                    let _ = drain.join();
-                }
-            }
-        }
-        *slot = None;
-        Ok(status_from(&mut slot))
-    })
-    .await
-    .map_err(|error| format!("Server stop task failed: {error}"))?;
-    outcome
-}
-
-#[tauri::command]
-fn server_status(state: tauri::State<AppState>) -> Result<ServerStatus, String> {
-    let mut slot = state
-        .server
-        .lock()
-        .map_err(|_| "Server state is unavailable")?;
-    let mut status = status_from(&mut slot);
-    if !status.running && server_phase(&state) == "starting" {
-        status.phase = "starting".to_string();
-    }
-    Ok(status)
-}
-
-#[derive(Clone)]
-struct ValidatedServerSnapshot {
-    pid: u32,
-    profile: LaunchProfile,
-    validation: LaunchValidation,
-}
-
-fn validated_server_snapshot(
-    slot: &mut Option<ManagedServer>,
-    action: &str,
-) -> Result<ValidatedServerSnapshot, String> {
-    let status = status_from(slot);
-    if !status.running {
-        return Err(format!(
-            "Start and validate a Localmotive server before {action}"
-        ));
-    }
-    if status.result_class != evidence::FitClass::LaunchValidated {
-        return Err(format!(
-            "{action} requires a successful launch health proof"
-        ));
-    }
-    let server = slot
-        .as_ref()
-        .ok_or("Validated server state is unavailable")?;
-    Ok(ValidatedServerSnapshot {
-        pid: server.child.id(),
-        profile: server.profile.clone(),
-        validation: server.validation.clone(),
-    })
-}
-
-#[tauri::command]
-fn read_server_log(state: tauri::State<AppState>) -> Result<String, String> {
-    let slot = state
-        .server
-        .lock()
-        .map_err(|_| "Server state is unavailable")?;
-    let Some(server) = slot.as_ref() else {
-        return Ok("No server is running.".into());
-    };
-    Ok(bounded_log_tail(&server.log_path))
-}
 
 #[tauri::command]
 async fn benchmark_server(
@@ -3766,10 +3487,10 @@ pub fn run() {
             preflight_model,
             preview_command,
             validate_launch_profile,
-            start_server,
-            stop_server,
-            server_status,
-            read_server_log,
+            server_service::start_server,
+            server_service::stop_server,
+            server_service::server_status,
+            server_service::read_server_log,
             benchmark_server,
             benchmark_v2,
             cancel_benchmark,
@@ -4916,6 +4637,7 @@ mod release_security_tests {
 #[cfg(test)]
 mod ipc01_startup_tests {
     use super::*;
+    use crate::server_service::startup_is_current;
 
     #[test]
     fn ipc01_startup_commit_requires_the_operation_to_still_own_the_slot() {
@@ -4956,7 +4678,9 @@ mod ipc01_startup_tests {
         // health wait, freezing every other command (audit IPC-01). The
         // worker must reach the cancellable wait before any server lock,
         // and the commit must check ownership before publishing.
-        let source = include_str!("lib.rs");
+        // The server lifecycle commands moved to server_service.rs (S-27
+        // slice 3a); the guard follows the code.
+        let source = include_str!("server_service.rs");
         let worker = source
             .split("fn start_server_worker(")
             .nth(1)
@@ -5612,7 +5336,15 @@ mod operation_coordinator_tests {
         // Source guard: each managed-inference entry point reserves its owner
         // kind, Stop consults the ownership gate, and both benchmark paths
         // discard results whose server identity was replaced (audit MT-05).
-        let source = include_str!("lib.rs");
+        // The launching commands span lib.rs and the extracted service modules
+        // (S-27); concatenating the sources keeps every pair visible to the
+        // guard without weakening it.
+        let source = format!(
+            "{}{}{}",
+            include_str!("server_service.rs"),
+            include_str!("runtime_service.rs"),
+            include_str!("lib.rs")
+        );
         for (start, end, expected) in [
             (
                 "fn start_server(",
