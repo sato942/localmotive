@@ -55,6 +55,19 @@ vi.mock("@tauri-apps/api/core", () => ({
       return Promise.resolve({ authors: [], licenses: [], pipeline_tags: [], architectures: [] });
     }
     if (command === "catalog_fit_budget") return Promise.resolve({ budgetBytes: 0, source: "unknown" });
+    // The app path uses the bounded report command (audit S-15); the legacy
+    // array handlers stay the source for tests.
+    if (command === "scan_models_report") {
+      const legacy = handlers.get("scan_models");
+      if (legacy) {
+        return Promise.resolve(legacy(args)).then((models) => ({
+          models,
+          problems: [],
+          truncated: false,
+        }));
+      }
+      return Promise.resolve({ models: [], problems: [], truncated: false });
+    }
     return Promise.resolve(null);
   },
 }));
@@ -530,10 +543,18 @@ describe("Raw extra arguments field (audit FE-08)", () => {
       ),
       "the Rescan action must exist",
     );
-    for (let attempt = 0; attempt < 10 && !text().includes("fixture"); attempt += 1) {
+    // The consequence of a successful scan is the loaded selection, not the
+    // transient notice string: a concurrent port probe owns the single notice
+    // line and may win the last write (the scan promise gained one hop with
+    // the S-15 report shape).
+    for (let attempt = 0; attempt < 10 && !text().includes("Launch profile"); attempt += 1) {
       await settle();
     }
-    expect(text(), "the scanned model must appear in the inventory").toContain("fixture");
+    expect(text(), "the scan must load the profile for the scanned model").toContain("Launch profile");
+    const nameField = [...container.querySelectorAll("input")].find(
+      (input) => (input as HTMLInputElement).value.includes("fixture"),
+    );
+    expect(nameField, "the scanned model must be selected and loaded").toBeTruthy();
     await click(navButton("Profile"), "the Profile navigation must exist");
     expect(text(), "the Profile screen must render after a selection").toContain("Start");
     const label = [...container.querySelectorAll("label")].find((candidate) =>
@@ -981,5 +1002,68 @@ describe("capability and status words stay honest (audit FE-15)", () => {
     await click(navButton("Runtime"), "Runtime navigation");
     expect(text()).toContain("Path selected");
     expect(text()).toContain("Ready to validate");
+  });
+});
+
+describe("Bounded discovery diagnostics (audit S-15)", () => {
+  it("renders bounded scan diagnostics while keeping discovered models", async () => {
+    const fixtureScan = [
+      {
+        id: "fixture/model",
+        name: "fixture",
+        directory: "C:/models/fixture",
+        firstShard: "C:/models/fixture/model-Q4_K_M.gguf",
+        sizeBytes: 4_000_000_000,
+        shardCount: 1,
+        expectedShards: 1,
+        complete: true,
+        quant: "Q4_K_M",
+        shards: [],
+        companions: [],
+      },
+    ];
+    handlers.set("scan_models", () => fixtureScan);
+    handlers.set("scan_models_report", () => ({
+      models: fixtureScan,
+      problems: [
+        { path: "C:/models/locked", reason: "Could not read this directory: access denied" },
+        { path: "C:/models/deep", reason: "depth limit 8 reached" },
+      ],
+      truncated: true,
+    }));
+
+    await mount();
+    const nav = [...container.querySelectorAll("button")].find(
+      (button) => (button.textContent ?? "").trim() === "Inventory",
+    );
+    await act(async () => {
+      nav!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await settle();
+    const rootInput = container.querySelector(
+      'input[aria-label="Model root"]',
+    ) as HTMLInputElement | null;
+    await act(async () => {
+      const proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!;
+      proto.set!.call(rootInput, "C:/models/fixture-root");
+      rootInput!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const rescan = [...container.querySelectorAll("button")].find((button) =>
+      (button.textContent ?? "").includes("Rescan"),
+    );
+    await act(async () => {
+      rescan!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    for (let attempt = 0; attempt < 10 && !text().includes("scan diagnostics"); attempt += 1) {
+      await settle();
+    }
+    const diagnostics = container.querySelector(".scan-diagnostics");
+    expect(diagnostics, "bounded scan diagnostics must render").toBeTruthy();
+    const rendered = diagnostics!.textContent ?? "";
+    expect(rendered).toContain("stopped early");
+    expect(rendered).toContain("access denied");
+    expect(rendered).toContain("depth limit 8 reached");
+    // Valid discovered models survive alongside the diagnostics.
+    expect(text()).toContain("fixture");
   });
 });

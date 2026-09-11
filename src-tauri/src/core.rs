@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 /// User-facing launch-profile input bounds. The Tauri boundary owns truth:
@@ -227,16 +228,142 @@ fn shard_key(name: &str) -> (String, usize) {
     (stem.to_string(), 1)
 }
 
-fn collect_gguf(root: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
-    for entry in fs::read_dir(root).map_err(|e| e.to_string())? {
-        let path = entry.map_err(|e| e.to_string())?.path();
-        let metadata = fs::symlink_metadata(&path)
-            .map_err(|error| format!("Could not inspect {}: {error}", path.display()))?;
+/// Bounds for a recursive model scan (audit S-15): depth, visited entries and
+/// retained diagnostics are all capped so a pathological tree can neither
+/// monopolize discovery nor flood the result.
+#[derive(Clone, Debug)]
+pub struct ScanLimits {
+    pub max_depth: usize,
+    pub max_entries: usize,
+    pub max_problems: usize,
+}
+
+impl Default for ScanLimits {
+    fn default() -> Self {
+        Self {
+            max_depth: 8,
+            max_entries: 200_000,
+            max_problems: 64,
+        }
+    }
+}
+
+/// One directory that could not be read, or a limit that was reached
+/// (audit S-15.I2). Diagnostics are bounded; valid discovered models are
+/// preserved regardless.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanProblem {
+    pub path: String,
+    pub reason: String,
+}
+
+/// The full outcome of a bounded scan (audit S-15).
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanReport {
+    pub models: Vec<LogicalModel>,
+    pub problems: Vec<ScanProblem>,
+    /// True when a limit or a cancellation stopped the traversal early.
+    pub truncated: bool,
+}
+
+/// Append a bounded diagnostic (audit S-15.I2). When the retained list is
+/// full the newest entry collapses into a single suppression notice, so the
+/// reason stays visible without unbounded growth.
+fn push_problem(problems: &mut Vec<ScanProblem>, limits: &ScanLimits, path: &Path, reason: String) {
+    if problems.len() < limits.max_problems {
+        problems.push(ScanProblem {
+            path: path.to_string_lossy().to_string(),
+            reason,
+        });
+    } else if let Some(last) = problems.last_mut() {
+        last.reason = "further diagnostics were suppressed (limit reached)".into();
+        last.path = path.to_string_lossy().to_string();
+    }
+}
+
+/// Recursive GGUF collection with depth, work, diagnostic and cancellation
+/// bounds (audit S-15). Symlinks and reparse points are still skipped. An
+/// unreadable directory becomes a bounded diagnostic and the remaining tree
+/// is still scanned, so valid models are never erased by one bad subtree.
+fn collect_gguf(
+    root: &Path,
+    out: &mut Vec<PathBuf>,
+    problems: &mut Vec<ScanProblem>,
+    limits: &ScanLimits,
+    cancel: &AtomicBool,
+    depth: usize,
+    entries: &mut usize,
+) {
+    if cancel.load(Ordering::Relaxed) {
+        return;
+    }
+    if depth > limits.max_depth {
+        push_problem(
+            problems,
+            limits,
+            root,
+            format!("depth limit {} reached", limits.max_depth),
+        );
+        return;
+    }
+    let directory = match fs::read_dir(root) {
+        Ok(directory) => directory,
+        Err(error) => {
+            push_problem(
+                problems,
+                limits,
+                root,
+                format!("Could not read this directory: {error}"),
+            );
+            return;
+        }
+    };
+    for entry in directory {
+        if cancel.load(Ordering::Relaxed) {
+            return;
+        }
+        if *entries >= limits.max_entries {
+            push_problem(
+                problems,
+                limits,
+                root,
+                format!("entry limit {} reached", limits.max_entries),
+            );
+            return;
+        }
+        *entries += 1;
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                push_problem(
+                    problems,
+                    limits,
+                    root,
+                    format!("Could not read an entry: {error}"),
+                );
+                continue;
+            }
+        };
+        let path = entry.path();
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                push_problem(
+                    problems,
+                    limits,
+                    &path,
+                    format!("Could not inspect this entry: {error}"),
+                );
+                continue;
+            }
+        };
         if metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
             continue;
         }
         if metadata.is_dir() {
-            collect_gguf(&path, out)?;
+            collect_gguf(&path, out, problems, limits, cancel, depth + 1, entries);
         } else if metadata.is_file()
             && path
                 .extension()
@@ -245,10 +372,16 @@ fn collect_gguf(root: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
             out.push(path);
         }
     }
-    Ok(())
 }
 
-pub fn scan_models(root: &Path) -> Result<Vec<LogicalModel>, String> {
+/// [`scan_models`] with explicit bounds and a cancellation flag (audit
+/// S-15). The caller keeps the partial result: problems are diagnostics, not
+/// failures, and a cancelled scan still returns everything found so far.
+pub fn scan_models_with_cancel(
+    root: &Path,
+    cancel: &AtomicBool,
+    limits: &ScanLimits,
+) -> Result<ScanReport, String> {
     let root_metadata = fs::symlink_metadata(root)
         .map_err(|error| format!("Could not inspect model root {}: {error}", root.display()))?;
     if root_metadata.file_type().is_symlink()
@@ -257,8 +390,44 @@ pub fn scan_models(root: &Path) -> Result<Vec<LogicalModel>, String> {
     {
         return Err(format!("Model root does not exist: {}", root.display()));
     }
+    let mut problems = Vec::new();
     let mut files = Vec::new();
-    collect_gguf(root, &mut files)?;
+    let mut entries = 0usize;
+    collect_gguf(
+        root,
+        &mut files,
+        &mut problems,
+        limits,
+        cancel,
+        0,
+        &mut entries,
+    );
+    let cancelled = cancel.load(Ordering::Relaxed);
+    if cancelled {
+        problems.push(ScanProblem {
+            path: root.to_string_lossy().to_string(),
+            reason: format!("Scan cancelled after {entries} entries; the partial result is shown."),
+        });
+    }
+    let truncated = cancelled
+        || problems
+            .iter()
+            .any(|problem| problem.reason.contains("limit"));
+    let models = assemble_models(root, files)?;
+    Ok(ScanReport {
+        models,
+        problems,
+        truncated,
+    })
+}
+
+pub fn scan_models(root: &Path) -> Result<Vec<LogicalModel>, String> {
+    scan_models_with_cancel(root, &AtomicBool::new(false), &ScanLimits::default())
+        .map(|report| report.models)
+}
+
+/// Build logical models from the collected shard/companion paths.
+fn assemble_models(root: &Path, files: Vec<PathBuf>) -> Result<Vec<LogicalModel>, String> {
     let mut targets: BTreeMap<(PathBuf, String), Vec<PathBuf>> = BTreeMap::new();
     let mut companions: BTreeMap<PathBuf, Vec<Companion>> = BTreeMap::new();
 
@@ -3876,6 +4045,133 @@ fn main() {
         let parsed: Vec<String> = serde_json::from_str(&argv).unwrap();
         assert_eq!(parsed, expected);
         assert!(argv.contains("percent%value"), "{argv}");
+    }
+
+    #[test]
+    fn s15_deep_wide_unreadable_and_cancelled_scans_stay_bounded_and_partial() {
+        let root = std::env::temp_dir().join(format!(
+            "localmotive-s15-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("shallow-Q4_K_M.gguf"), b"gguf").unwrap();
+        // A deep chain beyond the depth limit with a model at the bottom.
+        let mut deep = root.clone();
+        for level in 1..=10 {
+            deep = deep.join(format!("d{level}"));
+        }
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(deep.join("deep-Q4_K_M.gguf"), b"gguf").unwrap();
+        // Unicode and spaces in directory and file names.
+        let unicode_dir = root.join("mo dels 模型");
+        std::fs::create_dir_all(&unicode_dir).unwrap();
+        std::fs::write(unicode_dir.join("ü-model-Q4_K_M.gguf"), b"gguf").unwrap();
+
+        let cancel = AtomicBool::new(false);
+        let report = scan_models_with_cancel(&root, &cancel, &ScanLimits::default()).unwrap();
+        let names: Vec<&str> = report
+            .models
+            .iter()
+            .map(|model| model.name.as_str())
+            .collect();
+        assert!(
+            names.iter().any(|name| name.contains("shallow")),
+            "{names:?}"
+        );
+        assert!(
+            names
+                .iter()
+                .any(|name| name.contains("ü-model") || name.contains("mo dels")),
+            "unicode and spaced paths must be discovered: {names:?}"
+        );
+        assert!(
+            !names.iter().any(|name| name.contains("deep")),
+            "the depth limit must stop the deep chain: {names:?}"
+        );
+        assert!(
+            report
+                .problems
+                .iter()
+                .any(|problem| problem.reason.contains("depth limit")),
+            "{:?}",
+            report.problems
+        );
+        assert!(report.truncated, "a depth-limited scan is truncated");
+
+        // A small entry budget stops the traversal early with a diagnostic and
+        // keeps whatever was found before the limit.
+        let tight = ScanLimits {
+            max_depth: 8,
+            max_entries: 2,
+            max_problems: 4,
+        };
+        let report = scan_models_with_cancel(&root, &AtomicBool::new(false), &tight).unwrap();
+        assert!(report.truncated);
+        assert!(
+            report
+                .problems
+                .iter()
+                .any(|problem| problem.reason.contains("entry limit")),
+            "{:?}",
+            report.problems
+        );
+
+        // An unreadable directory is a bounded diagnostic, not a failure, and
+        // the rest of the tree still yields models.
+        let mut problems = Vec::new();
+        let mut entries = 0usize;
+        collect_gguf(
+            &root.join("shallow-Q4_K_M.gguf"),
+            &mut Vec::new(),
+            &mut problems,
+            &ScanLimits::default(),
+            &AtomicBool::new(false),
+            0,
+            &mut entries,
+        );
+        assert_eq!(problems.len(), 1);
+        assert!(
+            problems[0].reason.contains("Could not read this directory"),
+            "{:?}",
+            problems
+        );
+
+        // Cancellation returns the partial outcome with an explicit note.
+        let cancelled = AtomicBool::new(true);
+        let report = scan_models_with_cancel(&root, &cancelled, &ScanLimits::default()).unwrap();
+        assert!(report.truncated);
+        assert!(report.models.is_empty());
+        assert!(
+            report
+                .problems
+                .iter()
+                .any(|problem| problem.reason.contains("cancelled")),
+            "{:?}",
+            report.problems
+        );
+
+        // Diagnostic retention is bounded.
+        let mut problems = Vec::new();
+        for index in 0..10 {
+            push_problem(
+                &mut problems,
+                &ScanLimits {
+                    max_depth: 1,
+                    max_entries: 1,
+                    max_problems: 3,
+                },
+                Path::new(&format!("C:/p/{index}")),
+                format!("reason {index}"),
+            );
+        }
+        assert_eq!(problems.len(), 3);
+        assert!(problems[2].reason.contains("suppressed"));
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     /// Split a PowerShell single-quoted token list back into raw values

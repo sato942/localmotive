@@ -2375,18 +2375,18 @@ These packages preserve actionable recommendations outside the 72-item findings 
 
 **Bound and cancel recursive model discovery**
 
-**Status:** Not started · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
 **Audit trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities)  
 **Prerequisites:** [V06-IPC-01](#v06-ipc-01), [V06-MT-15](#v06-mt-15)
 
 **Implementation**
 
-- [ ] **V06-S-15.I1** — Set depth, visited-entry/work and diagnostic bounds for scans; check cancellation throughout traversal and offload scanning from the UI thread. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
-- [ ] **V06-S-15.I2** — Return bounded per-path diagnostics for unreadable subdirectories while preserving valid discovered models, and retain symlink/reparse-point skipping. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
+- [x] **V06-S-15.I1** — Set depth, visited-entry/work and diagnostic bounds for scans; check cancellation throughout traversal and offload scanning from the UI thread. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
+- [x] **V06-S-15.I2** — Return bounded per-path diagnostics for unreadable subdirectories while preserving valid discovered models, and retain symlink/reparse-point skipping. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
 
 **Verification**
 
-- [ ] **V06-S-15.V1** — Scan deep/wide fixture trees, inaccessible subdirectories and paths with Unicode/spaces; cancel mid-scan and verify responsive UI, bounded work and usable partial diagnostics. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
+- [x] **V06-S-15.V1** — Scan deep/wide fixture trees, inaccessible subdirectories and paths with Unicode/spaces; cancel mid-scan and verify responsive UI, bounded work and usable partial diagnostics. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
 
 **Complete when:** A problematic subtree cannot indefinitely monopolize discovery or silently erase valid inventory.
 
@@ -3781,3 +3781,12 @@ Revalidated at the candidate source (`065248a1` + the G-07 test addition) on Win
 - V1: `s14_quoted_commands_and_argv_round_trip_every_hazard` round-trips an 8-token hazard set (spaces, single and double quotes, shell metacharacters, `%`, Unicode, a trailing-backslash path) through the PowerShell form with a reversible tokenizer, asserts the cmd.exe refusal for `%` and deterministic quoting otherwise, and parses the argv JSON back to an exact array. `s14_sanitizer_covers_every_path_bearing_flag_with_canaries` places a distinct canary path after each of eleven path-bearing flags and asserts none survives while `--port 8080` does.
 - Mutations: PE1 (PowerShell quoting reverted to space-only), PE2 (cmd `%` refusal removed) and PE3 (draft-flag sanitization removed) each failed their guarding test and passed after restore.
 - Commands: `cargo fmt --check` PASS; clippy `-D warnings` 0 errors; `cargo test` 557 passed / 0 failed / 2 ignored (555 + the two S-14 tests); `npm run check` PASS (340.99 kB); Vitest 103; node tests 140 (the FE-04 gate updated to the new preview API).
+
+#### S-15 closure record — bounded, cancellable discovery
+
+- I1: `scan_models_with_cancel(root, cancel, ScanLimits)` walks the tree with a depth cap (8), a visited-entry cap (200 000), a diagnostic cap (64) and cancellable recursion checked at entry and per directory entry; the wrapper `scan_models` keeps the old unbounded-by-signature behavior for existing callers. Discovery already ran off the interface thread (`spawn_blocking`); the new `scan_models_report` command adds one-at-a-time ownership (`A scan is already running.`) plus `cancel_scan`, and the legacy `scan_models` command stays for verifier scripts that expect the array shape.
+- I2: an unreadable directory (or entry, or metadata failure) becomes a bounded `ScanProblem {path, reason}` and the traversal continues, so valid models from other subtrees are preserved; symlink and reparse-point skipping is retained. `ScanReport {models, problems, truncated}` distinguishes "bounded stop" from "found everything". The interface renders the diagnostics under the status line (visible from every view) with the first three reasons and a count.
+- V1: `s15_deep_wide_unreadable_and_cancelled_scans_stay_bounded_and_partial` builds a real tree (shallow model, a 10-deep chain with a model at the bottom, a Unicode/space directory) and asserts: shallow + Unicode found, deep refused with the depth diagnostic, truncated set; a 2-entry budget stops early with the entry-limit diagnostic; a direct `collect_gguf` on a file path yields exactly one "Could not read this directory" diagnostic instead of an abort; a pre-cancelled scan returns an empty model list with a "cancelled" note; the retention cap collapses extra diagnostics into one suppression notice. The component test "renders bounded scan diagnostics while keeping discovered models" drives the real panel: with two problems and `truncated: true` the diagnostics element shows "stopped early" + both reasons AND the discovered model remains listed.
+- Test-integrity notes (recorded, not hidden): the FE-08 prologue originally asserted on the transient notice string, which a concurrent port probe can overwrite once the scan promise gained one hop with the report shape — the prologue now asserts the durable consequence (the profile loads for the scanned model); the first PF2/PF3 mutation attempts were behaviour-preserving no-ops and were replaced with real mutations before counting them.
+- Mutations: PF1 (depth limit removed), PF2 (unreadable-directory diagnostic dropped), PF3 (both cancellation checks removed) each failed their guarding test and passed after restore.
+- Commands: `cargo fmt --check` PASS; clippy `-D warnings` 0 errors; `cargo test` 558 passed / 0 failed / 2 ignored (557 + the S-15 test); `npm run check` PASS (341.82 kB); Vitest 104; node tests 140; impeccable detector unchanged at the four pre-existing advisories.

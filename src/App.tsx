@@ -42,6 +42,7 @@ import {
   catalogBuildFit,
   catalogRevision,
   type CommandPreview,
+  type ScanReport,
   reconcileDraftCompanion,
   conflictingCapacityMetrics,
   contextChoices,
@@ -194,6 +195,7 @@ function App() {
   const [runtime, setRuntime] = useState<RuntimeCapabilities | null>(null);
   const [status, setStatus] = useState<ServerStatus>(idleStatus);
   const [command, setCommand] = useState<CommandPreview | null>(null);
+  const [lastScan, setLastScan] = useState<ScanReport | null>(null);
   // FE-03: per-resource request sequences and live identity mirrors, so a
   // deferred response can never commit against a newer resource state.
   const cloudSeq = useRef(0);
@@ -301,7 +303,9 @@ function App() {
     }
     setBusy("scan");
     try {
-      const result = await invoke<LogicalModel[]>("scan_models", { root: modelRoot });
+      const report = await invoke<ScanReport>("scan_models_report", { root: modelRoot });
+      setLastScan(report);
+      const result = report.models;
       // FE-01: a rescan preserves the committed selection while the model
       // still exists; otherwise the replacement is loaded together with its
       // profile. An empty inventory clears both together.
@@ -314,7 +318,14 @@ function App() {
         if (replacement) loadProfile(replacement);
       }
       localStorage.setItem("localmotive:model-root", modelRoot);
-      setNotice(`${result.length} logical targets indexed from ${modelRoot}`);
+      const problemNote =
+        report.problems.length > 0 || report.truncated
+          ? ` · ${report.problems.length} scan diagnostic${report.problems.length === 1 ? "" : "s"}${report.truncated ? " (bounded scan stopped early)" : ""}: ${report.problems
+              .slice(0, 2)
+              .map((problem) => problem.reason)
+              .join("; ")}`
+          : "";
+      setNotice(`${result.length} logical targets indexed from ${modelRoot}${problemNote}`);
     } catch (error) {
       // A failed scan clears the selection and its editable profile as one
       // transition, so a stale draft can never masquerade as current.
@@ -1383,6 +1394,17 @@ function App() {
           <span className="notice-code">SYS</span>
           <span>{notice}</span>
         </div>
+        {lastScan && (lastScan.problems.length > 0 || lastScan.truncated) && (
+          <p className="scan-diagnostics" role="status">
+            {lastScan.truncated
+              ? `Bounded scan stopped early after reporting ${lastScan.problems.length} diagnostic${lastScan.problems.length === 1 ? "" : "s"}. `
+              : `${lastScan.problems.length} scan diagnostic${lastScan.problems.length === 1 ? "" : "s"}. `}
+            {lastScan.problems
+              .slice(0, 3)
+              .map((problem) => `${problem.path}: ${problem.reason}`)
+              .join(" · ")}
+          </p>
+        )}
 
         {view === "dashboard" && (
           <section className="screen dashboard-screen">
@@ -1481,6 +1503,11 @@ function App() {
               <button className="button secondary" onClick={scan} disabled={busy === "scan"}>
                 <RefreshCw size={16} className={busy === "scan" ? "spin" : ""} /> Rescan
               </button>
+              {busy === "scan" && (
+                <button className="button danger" onClick={() => void invoke("cancel_scan")}>
+                  <CircleStop size={15} /> Cancel scan
+                </button>
+              )}
             </div>
             <div className="path-bar">
               <HardDrive size={16} />

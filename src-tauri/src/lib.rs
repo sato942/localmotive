@@ -114,6 +114,8 @@ struct AppState {
     starting: Mutex<Option<StartingServer>>,
     /// One pinned health-model repair may execute at a time (audit S-04).
     health_repair: Mutex<Option<Arc<AtomicBool>>>,
+    /// One bounded model discovery scan may run at a time (audit S-15).
+    scan: Mutex<Option<Arc<AtomicBool>>>,
     /// One managed-runtime seven-stage health run may execute at a time.
     runtime_health: Mutex<Option<Arc<AtomicBool>>>,
     /// One managed-inference operation at a time, with process generations
@@ -1337,6 +1339,51 @@ async fn scan_models(root: String) -> Result<Vec<LogicalModel>, String> {
     tauri::async_runtime::spawn_blocking(move || core::scan_models(Path::new(&root)))
         .await
         .map_err(|error| format!("Model scan task failed: {error}"))?
+}
+
+/// Bounded, cancellable discovery for the application path (audit S-15).
+/// Runs off the interface thread and returns bounded diagnostics alongside
+/// the models; the legacy `scan_models` command stays for verifier scripts.
+#[tauri::command]
+async fn scan_models_report(
+    state: tauri::State<'_, AppState>,
+    root: String,
+) -> Result<core::ScanReport, String> {
+    let cancel = {
+        let mut slot = state
+            .scan
+            .lock()
+            .map_err(|_| "The scan lock is poisoned".to_string())?;
+        if slot.is_some() {
+            return Err("A model scan is already running.".into());
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        *slot = Some(Arc::clone(&cancel));
+        cancel
+    };
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        core::scan_models_with_cancel(Path::new(&root), &cancel, &core::ScanLimits::default())
+    })
+    .await
+    .map_err(|error| format!("Model scan task failed: {error}"))?;
+    if let Ok(mut slot) = state.scan.lock() {
+        *slot = None;
+    }
+    result
+}
+
+#[tauri::command]
+fn cancel_scan(state: tauri::State<'_, AppState>) -> bool {
+    let Ok(slot) = state.scan.lock() else {
+        return false;
+    };
+    match slot.as_ref() {
+        Some(flag) => {
+            flag.store(true, Ordering::Relaxed);
+            true
+        }
+        None => false,
+    }
 }
 
 #[tauri::command]
@@ -4253,6 +4300,8 @@ pub fn run() {
             cancel_managed_runtime_health,
             repair_health_model,
             cancel_health_model_repair,
+            scan_models_report,
+            cancel_scan,
             cloud_providers,
             cloud_credential_status,
             cloud_save_credential,

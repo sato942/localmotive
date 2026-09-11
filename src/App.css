@@ -545,3 +545,12 @@ label input:disabled { color: #8d9491; }
   letter-spacing: 0.04em;
   color: var(--muted);
 }
+
+/* Bounded scan diagnostics (audit S-15): words carry the state. */
+.scan-diagnostics {
+  margin: 4px 0 8px;
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}

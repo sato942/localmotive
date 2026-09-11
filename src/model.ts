@@ -2010,6 +2010,18 @@ export type CatalogSnapshot = {
   persistenceNotice?: string;
 };
 
+export type ScanProblem = {
+  path: string;
+  reason: string;
+};
+
+/** Bounded discovery outcome (audit S-15): diagnostics never replace models. */
+export type ScanReport = {
+  models: LogicalModel[];
+  problems: ScanProblem[];
+  truncated: boolean;
+};
+
 export type CommandPreview = {
   /** The launch line quoted for PowerShell (paste-ready). */
   powerShell: string;
