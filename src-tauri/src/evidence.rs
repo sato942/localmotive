@@ -611,11 +611,24 @@ impl Default for BenchmarkObservation {
     }
 }
 
+/// What the v2 benchmark actually measures (audit S-12): a controlled
+/// greedy microbenchmark, not a workload-class guarantee. Exported manifests
+/// carry this so a caveat survives the round trip.
+pub const WORKLOAD_SCOPE_NOTE: &str = "Controlled greedy microbenchmark: one fixed prompt, temperature 0, one request at a time on a warm server. It does not represent every workload class; speculative-decoding gains measured here do not generalize to other prompts.";
+
+/// What `peakProcessRssBytes` is (audit S-12): process-lifetime CPU working
+/// set, not an isolated request allocation and not GPU memory.
+pub const WORKING_SET_SCOPE_NOTE: &str = "Peak working set is the server process lifetime CPU working-set evidence. It excludes dedicated GPU memory and is not an isolated request allocation.";
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct BenchmarkManifest {
     pub schema: u32,
     pub harness_version: String,
+    /// The workload-scope caveat for this harness (audit S-12). Defaulted so
+    /// manifests written before the caveat existed still deserialize.
+    #[serde(default)]
+    pub scope_note: String,
     pub compatibility_key: Option<String>,
     /// The launch-scope execution-snapshot key of the same configuration: the
     /// identity quality evidence must match to attach to this run (audit
@@ -645,6 +658,7 @@ impl Default for BenchmarkManifest {
         Self {
             schema: BENCHMARK_SCHEMA_VERSION,
             harness_version: env!("CARGO_PKG_VERSION").into(),
+            scope_note: WORKLOAD_SCOPE_NOTE.into(),
             compatibility_key: None,
             launch_compatibility_key: None,
             execution_snapshot_schema: String::new(),
@@ -1035,6 +1049,24 @@ mod tests {
             kind,
             detail: "fixture".into(),
         }
+    }
+
+    #[test]
+    fn s12_scope_notes_survive_the_manifest_round_trip_and_default_honestly() {
+        let manifest = BenchmarkManifest::default();
+        assert_eq!(manifest.scope_note, WORKLOAD_SCOPE_NOTE);
+        let serialized = serde_json::to_string(&manifest).unwrap();
+        let parsed: BenchmarkManifest = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(parsed.scope_note, WORKLOAD_SCOPE_NOTE);
+        // A manifest written before the caveat existed still deserializes and
+        // carries an empty note, never an invented one.
+        let legacy = serialized.replace(
+            &format!("\"scopeNote\":{:?}", WORKLOAD_SCOPE_NOTE),
+            "\"scopeNote\":\"\"",
+        );
+        let parsed: BenchmarkManifest = serde_json::from_str(&legacy).unwrap();
+        assert!(parsed.scope_note.is_empty());
+        assert!(WORKING_SET_SCOPE_NOTE.contains("excludes dedicated GPU memory"));
     }
 
     #[test]

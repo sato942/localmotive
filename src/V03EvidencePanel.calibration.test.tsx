@@ -242,4 +242,37 @@ describe("calibration anchors (MT-08)", () => {
     const sent = (buildCall?.args.anchors ?? []) as CalibrationAnchor[];
     expect(sent.map((anchor) => anchor.sourceRunId)).toEqual(["run-1", "run-1", "run-2", "run-3"]);
   });
+
+  it("labels sample counts, derived TTFT and working-set scope honestly (S-12)", async () => {
+    // A five-trial-style fixture: nearest-rank p95 with a small sample base
+    // is the sample maximum, derived TTFT is not a streamed observation, and
+    // the working set is process-lifetime CPU evidence.
+    handlers.set("benchmark_v2", () => ({
+      ...benchmarkResult,
+      manifest: {
+        ...(benchmarkResult.manifest as Record<string, unknown>),
+        scopeNote: "Controlled greedy microbenchmark: one fixed prompt.",
+        observations: [
+          { peakProcessRssBytes: { value: 1_200_000_000 } },
+          { peakProcessRssBytes: { value: 1_400_000_000 } },
+        ],
+      } as never,
+      summary: {
+        ...benchmarkResult.summary,
+        decodeTps: { count: 5, mean: 50, median: 50, p50: 49, p95: 51, min: 49, max: 51, standardDeviation: 1 },
+        firstTokenMs: { count: 5, mean: 120, median: 120, p50: 120, p95: 130, min: 110, max: 130, standardDeviation: 5 },
+        derivedTtftMs: { count: 5, mean: 92, median: 92, p50: 92, p95: 95, min: 90, max: 95, standardDeviation: 2 },
+      },
+    }));
+    await runMeasuredBenchmark();
+
+    const rendered = container.textContent ?? "";
+    // Decode throughput AND first-token latency each carry the sample line.
+    expect(rendered.match(/n=5 · nearest-rank p95 is the sample maximum/g) ?? []).toHaveLength(2);
+    expect(rendered).toContain("not an observed first token");
+    expect(rendered).toContain("CPU peak working set (process lifetime, excludes GPU)");
+    expect(rendered).toContain("2/2 sampled");
+    expect(rendered).toContain("Controlled greedy microbenchmark: one fixed prompt.");
+    expect(rendered).toContain("excludes dedicated GPU memory");
+  });
 });

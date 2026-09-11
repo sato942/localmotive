@@ -11,6 +11,7 @@ import {
   artifactReadyForLaunch,
   calibrationState,
   catalogBuildFit,
+  describeSamples,
   catalogRevision,
   conflictingCapacityMetrics,
   defaultWorkload,
@@ -1047,5 +1048,21 @@ describe("catalogBuildFit", () => {
     const fit = catalogBuildFit(large, large, 2000, budget);
     expect(fit.thresholdBytes).toBe(budget);
     expect(fit.selectedPasses).toBe(true);
+  });
+});
+
+describe("describeSamples", () => {
+  it("names the sample base and the nearest-rank caveat", () => {
+    expect(describeSamples({ count: 5 })).toBe("n=5 · nearest-rank p95 is the sample maximum");
+    expect(describeSamples({ count: 19 })).toContain("sample maximum");
+    expect(describeSamples({ count: 20 })).toBe("n=20 · nearest-rank percentiles");
+    expect(describeSamples({ count: 100 })).toBe("n=100 · nearest-rank percentiles");
+  });
+
+  it("keeps missing sample metadata unknown instead of guessing", () => {
+    expect(describeSamples(null)).toBe("sample count unknown");
+    expect(describeSamples(undefined)).toBe("sample count unknown");
+    expect(describeSamples({ count: 0 })).toBe("sample count unknown");
+    expect(describeSamples({ count: Number.NaN })).toBe("sample count unknown");
   });
 });

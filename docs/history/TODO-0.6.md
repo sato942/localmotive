@@ -2311,19 +2311,19 @@ These packages preserve actionable recommendations outside the 72-item findings 
 
 **Describe benchmark workload, statistics, timing and memory precisely**
 
-**Status:** Not started · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
 **Audit trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities)  
 **Prerequisites:** [V06-MT-01](#v06-mt-01), [V06-MT-13](#v06-mt-13)
 
 **Implementation**
 
-- [ ] **V06-S-12.I1** — Label the repetitive greedy workload as a controlled microbenchmark and state unsupported workload classes; do not generalize speculative-decoding gains to every prompt. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
-- [ ] **V06-S-12.I2** — Display sample count and explain that a five-trial nearest-rank p95 is the sample maximum. Keep derived TTFT distinct from directly observed first-token latency. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
-- [ ] **V06-S-12.I3** — Label warm-server peak working set as process-lifetime CPU working-set evidence, excluding dedicated GPU memory; do not present it as isolated request allocation or combined CPU/GPU footprint. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
+- [x] **V06-S-12.I1** — Label the repetitive greedy workload as a controlled microbenchmark and state unsupported workload classes; do not generalize speculative-decoding gains to every prompt. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
+- [x] **V06-S-12.I2** — Display sample count and explain that a five-trial nearest-rank p95 is the sample maximum. Keep derived TTFT distinct from directly observed first-token latency. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
+- [x] **V06-S-12.I3** — Label warm-server peak working set as process-lifetime CPU working-set evidence, excluding dedicated GPU memory; do not present it as isolated request allocation or combined CPU/GPU footprint. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
 
 **Verification**
 
-- [ ] **V06-S-12.V1** — Check UI and exported labels against five-trial, warm-process and missing-direct-TTFT fixtures; ensure sample count, units, provenance and caveats survive round trips. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
+- [x] **V06-S-12.V1** — Check UI and exported labels against five-trial, warm-process and missing-direct-TTFT fixtures; ensure sample count, units, provenance and caveats survive round trips. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
 
 **Complete when:** Every performance number is presented within the scope actually measured.
 
@@ -3756,3 +3756,12 @@ Revalidated at the candidate source (`065248a1` + the G-07 test addition) on Win
 - V1: `catalogBuildFit` unit cases (small passes / large fails with the row kept / unknown nulls / fraction clamp) and the component test "labels the fit of the selected build, never the smallest variant (S-11)": fixture model with a 2 GB Q4_K_M build and an 8 GB Q8_0 build under a 10 GB dedicated budget (5 GB threshold); default small build passes, switching the selector to the large build shows the failure and the row-survival explanation, and the passing claim disappears.
 - Mutations: PB1 (selectedPasses computed from the smallest build — the original defect) failed both the unit and component tests; PB2 (the row-survival explanation removed) failed the component test; both restored green.
 - Commands: `tsc --noEmit` PASS; Vitest 97 passed (93 + 4); node tests 140 passed; `npm run build` PASS (339.01 kB); `npm run check` PASS; impeccable detector shows the same four pre-existing advisories as at HEAD (font-size 7px, side-tab, two palette colors), none from `.catalog-fit-note`.
+
+#### S-12 closure record — every performance number within its measured scope
+
+- I1: `evidence::WORKLOAD_SCOPE_NOTE` (mirrored as `WORKLOAD_SCOPE_NOTE` in `model.ts`) labels the workload a controlled greedy microbenchmark (one fixed prompt, temperature 0, one request at a time, warm server) and states that it does not represent every workload class and that speculative-decoding gains measured here do not generalize. The note is written into every new `BenchmarkManifest.scopeNote`, so exports carry the caveat; the panel renders the manifest note (or the constant for older runs) under the benchmark card.
+- I2: each metric card shows `describeSamples` — `n=<count> · nearest-rank p95 is the sample maximum` for fewer than 20 samples, `n=… · nearest-rank percentiles` otherwise, and "sample count unknown" when absent. The derived TTFT line now reads "Derived TTFT p50 … ms (prefill + per-token decode; not an observed first token)", keeping it distinct from the observed first-token metric which carries its own sample line.
+- I3: the memory line now reads "CPU peak working set (process lifetime, excludes GPU): … (k/n sampled)" and `evidence::WORKING_SET_SCOPE_NOTE` / `WORKING_SET_SCOPE_NOTE` states it is process-lifetime CPU working-set evidence, excludes dedicated GPU memory and is not an isolated request allocation.
+- V1: Rust `s12_scope_notes_survive_the_manifest_round_trip_and_default_honestly` (default carries the note; serialize→parse keeps it; a legacy empty note still parses and is never invented; the working-set wording asserted); `model.test.ts` `describeSamples` cases (5/19/20/100/0/NaN/null); component test "labels sample counts, derived TTFT and working-set scope honestly (S-12)" with a five-trial, warm-process, missing-direct-observation fixture (both sample lines counted exactly, derived TTFT caveat, working-set wording, `2/2 sampled`, and the manifest scope note rendered).
+- Mutations: PC1 (the decode sample-count line removed) and PC2 (working-set wording reverted) failed the component test; both restored green.
+- Commands: `cargo fmt --check` PASS; clippy `-D warnings` 0 errors; `cargo test` 554 passed / 0 failed / 2 ignored (553 + the S-12 test); `npm run check` PASS (340.01 kB); Vitest 100 passed; node tests 140 passed.

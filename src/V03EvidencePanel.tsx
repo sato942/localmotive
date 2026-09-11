@@ -13,6 +13,9 @@ import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
   evidenceTone,
   calibrationState,
+  describeSamples,
+  WORKLOAD_SCOPE_NOTE,
+  WORKING_SET_SCOPE_NOTE,
   defaultWorkload,
   errorText,
   manualGpuOverride,
@@ -912,13 +915,19 @@ export function V03EvidencePanel({
               <strong className={`tone-${evidenceTone(benchmark?.summary?.decodeTps ? "measured" : "Unknown")}`}>{benchmark?.summary?.decodeTps ? `${benchmark.summary.decodeTps.mean.toFixed(2)} tok/s` : "Unknown"}</strong>
               <span>{benchmark?.summary?.decodeTps ? `p50 ${benchmark.summary.decodeTps.p50.toFixed(2)} · p95 ${benchmark.summary.decodeTps.p95.toFixed(2)}` : "No measured statistic"}</span>
               {benchmark?.summary?.decodeTps && (
+                <span>{describeSamples(benchmark.summary.decodeTps)}</span>
+              )}
+              {benchmark?.summary?.decodeTps && (
                 <span>Median {benchmark.summary.decodeTps.median.toFixed(2)} tok/s</span>
               )}
             </div>
             <div className="evidence-status-card">
               <span className="muted">First-token latency</span>
               <strong className={`tone-${evidenceTone(benchmark?.summary?.firstTokenMs ? "measured" : "Unknown")}`}>{benchmark?.summary?.firstTokenMs ? `${benchmark.summary.firstTokenMs.p50.toFixed(1)} ms p50` : "Unknown"}</strong>
-              <span>{benchmark?.summary?.derivedTtftMs ? `Derived TTFT p50 ${benchmark.summary.derivedTtftMs.p50.toFixed(1)} ms` : "Derived TTFT unavailable"}</span>
+              <span>{benchmark?.summary?.derivedTtftMs ? `Derived TTFT p50 ${benchmark.summary.derivedTtftMs.p50.toFixed(1)} ms (prefill + per-token decode; not an observed first token)` : "Derived TTFT unavailable"}</span>
+              {benchmark?.summary?.firstTokenMs && (
+                <span>{describeSamples(benchmark.summary.firstTokenMs)}</span>
+              )}
             </div>
           </div>
 
@@ -933,7 +942,7 @@ export function V03EvidencePanel({
               {benchmark.manifest.terminalOutcome
                 ? ` · terminal ${benchmark.manifest.terminalOutcome}`
                 : ""}
-              {" "}· peak process memory: {formatBytes(
+              {" "}· CPU peak working set (process lifetime, excludes GPU): {formatBytes(
                 benchmark.manifest.observations
                   .map((item) => item.peakProcessRssBytes.value ?? null)
                   .filter((value): value is number => value !== null)
@@ -946,6 +955,10 @@ export function V03EvidencePanel({
               {benchmark.manifest.observations.length} sampled)
             </p>
           )}
+          <p className="muted evidence-scope-note">
+            {benchmark?.manifest.scopeNote || WORKLOAD_SCOPE_NOTE}
+          </p>
+          <p className="muted evidence-scope-note">{WORKING_SET_SCOPE_NOTE}</p>
           {benchmark?.failure && <p className="danger-text">{benchmark.failure}</p>}
         </section>
 

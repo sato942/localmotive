@@ -166,6 +166,9 @@ export type WarmupObservation = {
 export type BenchmarkManifest = {
   schema: number;
   harnessVersion: string;
+  /** Workload-scope caveat carried by the manifest (audit S-12). Absent on
+   * manifests written before the caveat existed. */
+  scopeNote?: string;
   compatibilityKey: string | null;
   runtime: RuntimeFact | null;
   hardware: HardwareFact[];
@@ -1914,6 +1917,33 @@ export function modelHiddenByFitRule(
  * fields are null when the rule is off or no budget was observed: the
  * interface must say unknown instead of implying a fit.
  */
+/**
+ * What the v2 benchmark measures (audit S-12): a controlled greedy
+ * microbenchmark, not a workload-class guarantee. Mirrors the Rust constant
+ * carried by exported manifests.
+ */
+export const WORKLOAD_SCOPE_NOTE =
+  "Controlled greedy microbenchmark: one fixed prompt, temperature 0, one request at a time on a warm server. It does not represent every workload class; speculative-decoding gains measured here do not generalize to other prompts.";
+
+/** What peak working set is (audit S-12): process-lifetime CPU evidence. */
+export const WORKING_SET_SCOPE_NOTE =
+  "Peak working set is the server process lifetime CPU working-set evidence. It excludes dedicated GPU memory and is not an isolated request allocation.";
+
+/**
+ * Describe a metric's sample base (audit S-12.I2). The percentiles are
+ * nearest-rank, so with fewer than 20 samples the p95 is simply the sample
+ * maximum; the label must say so instead of implying a tail estimate.
+ */
+export function describeSamples(stats: { count: number } | null | undefined): string {
+  if (!stats || !Number.isFinite(stats.count) || stats.count <= 0) {
+    return "sample count unknown";
+  }
+  const count = Math.floor(stats.count);
+  return count < 20
+    ? `n=${count} · nearest-rank p95 is the sample maximum`
+    : `n=${count} · nearest-rank percentiles`;
+}
+
 export type BuildFit = {
   thresholdBytes: number | null;
   selectedPasses: boolean | null;

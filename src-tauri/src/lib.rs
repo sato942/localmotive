@@ -2329,6 +2329,7 @@ fn run_benchmark_snapshot(
     let mut manifest = evidence::BenchmarkManifest {
         schema: evidence::BENCHMARK_SCHEMA_VERSION,
         harness_version,
+        scope_note: evidence::WORKLOAD_SCOPE_NOTE.into(),
         compatibility_key: Some(compatibility_key.clone()),
         launch_compatibility_key: Some(launch_compatibility_key),
         execution_snapshot_schema: snapshot_outcome.schema_version.clone(),
