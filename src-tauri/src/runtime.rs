@@ -83,6 +83,9 @@ pub fn process_peak_working_set(process_id: u32) -> Evidence<u64> {
             size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
         )
     };
+    // Capture the failure status before `CloseHandle` can clobber the
+    // thread's last error (audit RT-08).
+    let failure = (measured == 0).then(io::Error::last_os_error);
     // SAFETY: `process` is an owned handle returned by `OpenProcess`.
     unsafe { CloseHandle(process) };
     if measured != 0 {
@@ -100,7 +103,9 @@ pub fn process_peak_working_set(process_id: u32) -> Evidence<u64> {
             "GetProcessMemoryInfo(PeakWorkingSetSize)",
             format!(
                 "GetProcessMemoryInfo failed for PID {process_id}: {}",
-                io::Error::last_os_error()
+                failure
+                    .map(|error| error.to_string())
+                    .unwrap_or_else(|| std::io::Error::from_raw_os_error(0).to_string())
             ),
             observed_at_ms,
         )
@@ -3539,13 +3544,15 @@ fn reject_managed_file_alternate_streams(path: &Path) -> Result<(), String> {
     // SAFETY: `handle` is valid and `second` points to writable storage.
     let has_second =
         unsafe { FindNextStreamW(handle, (&mut second as *mut WIN32_FIND_STREAM_DATA).cast()) };
+    // Capture the terminating status before any other call can clobber the
+    // thread's last error (audit RT-08): `FindClose` is an API call too.
+    let last_error = unsafe { GetLastError() };
     // SAFETY: `handle` came from `FindFirstStreamW` and is closed exactly once.
     unsafe { FindClose(handle) };
     if first != "::$DATA" || has_second != 0 {
         return Err("Managed file contains an alternate data stream".into());
     }
-    // SAFETY: `FindNextStreamW` returned false, so `GetLastError` describes termination.
-    let last_error = unsafe { GetLastError() };
+    // SAFETY: `FindNextStreamW` returned false, so the captured value describes termination.
     if last_error != ERROR_HANDLE_EOF {
         return Err(format!(
             "Managed file stream enumeration failed: {}",
@@ -4992,6 +4999,44 @@ mod tests {
             uuid: uuid.into(),
             pci_bus_id: format!("00000000:0{}:00.0", used_mib % 9),
         }
+    }
+
+    #[test]
+    fn rt08_last_error_is_captured_before_cleanup_calls() {
+        // Windows only guarantees the last-error value immediately after the
+        // failing call; `FindClose` and `CloseHandle` are API calls too, so a
+        // behavioral test cannot force them to clobber the value. This guard
+        // pins the capture order in the source instead (audit RT-08).
+        let source = include_str!("runtime.rs");
+        let stream_fn = source
+            .find("fn reject_managed_file_alternate_streams(path: &Path) -> Result<(), String> {")
+            .expect("stream enumeration function present");
+        let body = &source[stream_fn..stream_fn + 2_600];
+        let capture = body
+            .find("let last_error = unsafe { GetLastError() };")
+            .expect("the terminating status is captured");
+        let close = body
+            .find("unsafe { FindClose(handle) }")
+            .expect("the enumeration handle is closed");
+        assert!(
+            capture < close,
+            "GetLastError must be read before FindClose (mutation MR1 must fail here)"
+        );
+
+        let memory_call = source
+            .find("GetProcessMemoryInfo(")
+            .expect("memory observation present");
+        let tail = &source[memory_call..memory_call + 1_600];
+        let failure = tail
+            .find("let failure = (measured == 0).then(io::Error::last_os_error);")
+            .expect("the failure status is captured");
+        let close = tail
+            .find("unsafe { CloseHandle(process) }")
+            .expect("the process handle is closed");
+        assert!(
+            failure < close,
+            "last_os_error must be read before CloseHandle"
+        );
     }
 
     #[test]
