@@ -1463,6 +1463,27 @@ test("FE-16 status polling is single-flight with sequence guards", async () => {
   const bumps = (app.match(/statusPollSeq\.current \+= 1;/g) ?? []).length;
   assert.ok(bumps >= 2, `expected start and stop bumps, saw ${bumps}`);
   assert.match(app, /(?:props\.)?status\.running \? (?:props\.)?status\.specType : (?:props\.)?profile\?\.specType/);
+  // FE-16.V3: the log well retains the last bounded output after a stop or an
+  // unexpected exit, and no refactor placeholder may leak into user copy.
+  const dashboard = await readFile(join(process.cwd(), "src", "screens", "DashboardScreen.tsx"), "utf8");
+  assert.match(dashboard, /className="log-retained"/);
+  assert.match(dashboard, /The last bounded output remains visible until the next start\./);
+  assert.match(dashboard, /Start this profile to stream llama-server output here\./);
+  assert.doesNotMatch(dashboard, /Start this props\./);
+});
+
+test("FE-16 and FE-05.V3 packaged walks drive the real routes", async () => {
+  const fe16 = await readFile(join(process.cwd(), "scripts", "g05_fe16.mjs"), "utf8");
+  assert.match(fe16, /fe16\.v1\.v2-survives-overlap/);
+  assert.match(fe16, /fe16\.v1\.legacy-guarded-during-v2/);
+  assert.match(fe16, /fe16\.v3\.running-identity-unchanged-by-edit/);
+  assert.match(fe16, /fe16\.v3\.final-log-visible/);
+  const fe05 = await readFile(join(process.cwd(), "scripts", "g05_fe05v3.mjs"), "utf8");
+  assert.match(fe05, /Add anchor/);
+  assert.match(fe05, /Replay manifest/);
+  assert.match(fe05, /load_calibration_records/);
+  assert.match(fe05, /fe05v3\.records-distinct-provenance/);
+  assert.match(fe05, /fe05v3\.records-distinct-paths/);
 });
 
 test("FE-05 evidence history and active runs survive navigation", async () => {

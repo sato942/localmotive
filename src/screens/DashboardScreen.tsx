@@ -121,7 +121,19 @@ export function DashboardScreen(props: DashboardScreenProps) {
             <h2>Server log</h2>
             <span className="log-path">{props.status.logPath ?? "buffer offline"}</span>
           </div>
-          {props.status.running ? <pre>{props.log}</pre> : <div className="log-empty"><SquareTerminal size={26} /><strong>Server is stopped</strong><span>Start this props.profile to stream llama-server output here.</span></div>}
+          {props.status.running ? (
+            <pre>{props.log}</pre>
+          ) : props.log ? (
+            /* FE-16: after a stop or an unexpected exit the well keeps the
+               last bounded output — evidence must not disappear with the
+               process that produced it. */
+            <div className="log-retained">
+              <p className="log-retained-note"><strong>Server is stopped.</strong> The last bounded output remains visible until the next start.</p>
+              <pre>{props.log}</pre>
+            </div>
+          ) : (
+            <div className="log-empty"><SquareTerminal size={26} /><strong>Server is stopped</strong><span>Start this profile to stream llama-server output here.</span></div>
+          )}
         </article>
       </div>
     </section>

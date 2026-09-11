@@ -518,7 +518,7 @@ The signature component. A single bordered strip is divided by 1 px rules into f
 
 ### Terminal Wells
 
-Log and exact-command surfaces share one treatment: `#111514` ground, `#b8eaa0` text for logs and `#d8d8cd` for commands, 11 px/1.55 mono, 16 px padding, `white-space: pre-wrap` with `overflow-wrap: anywhere`. The log well flexes to fill its panel; the command well is capped at 360–390 px and scrolls. The empty state is a centered two-line block — a bold reason plus a 10 px recovery action — never a blank rectangle.
+Log and exact-command surfaces share one treatment: `#111514` ground, `#b8eaa0` text for logs and `#d8d8cd` for commands, 11 px/1.55 mono, 16 px padding, `white-space: pre-wrap` with `overflow-wrap: anywhere`. The log well flexes to fill its panel; the command well is capped at 360–390 px and scrolls. The empty state is a centered two-line block — a bold reason plus a 10 px recovery action — never a blank rectangle. When the server stops (cleanly or unexpectedly), the well retains the last bounded output under a two-line stopped note instead of erasing it (`FE-16`).
 
 ### Disclosure Groups
 
