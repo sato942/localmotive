@@ -954,22 +954,22 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Make Pareto dominance and preference scores consistent under missing metrics**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit MT-10](./localmotive-comprehensive-audit.md#mt-10)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src-tauri/src/recommend.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/recommend.rs), [src/V03EvidencePanel.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/V03EvidencePanel.tsx)
 
 **Implementation**
 
-- [ ] **V06-MT-10.I1** — Define one objective set and completeness policy before comparison; treat missing required evidence as ineligible or incomparable instead of dropping a different set of dimensions for each pair. **Trace:** [Audit MT-10](./localmotive-comprehensive-audit.md#mt-10).
-- [ ] **V06-MT-10.I2** — Expose evidence coverage and prevent direct score comparison over candidate-specific weight denominators that reward omitted weak measurements. **Trace:** [Audit MT-10](./localmotive-comprehensive-audit.md#mt-10).
-- [ ] **V06-MT-10.I3** — Precompute each objective range once, preserve explanations of constraint violations/dominators/components, and define duplicate-ID and deterministic-tie behavior. **Trace:** [Audit MT-10](./localmotive-comprehensive-audit.md#mt-10).
-- [ ] **V06-MT-10.I4** — If 10,000-candidate support remains, bound the returned dominance detail and measure worst-case runtime rather than repeatedly allocating per-candidate range vectors. **Trace:** [Audit MT-10](./localmotive-comprehensive-audit.md#mt-10).
+- [x] **V06-MT-10.I1** — Define one objective set and completeness policy before comparison; treat missing required evidence as ineligible or incomparable instead of dropping a different set of dimensions for each pair. **Trace:** [Audit MT-10](./localmotive-comprehensive-audit.md#mt-10).
+- [x] **V06-MT-10.I2** — Expose evidence coverage and prevent direct score comparison over candidate-specific weight denominators that reward omitted weak measurements. **Trace:** [Audit MT-10](./localmotive-comprehensive-audit.md#mt-10).
+- [x] **V06-MT-10.I3** — Precompute each objective range once, preserve explanations of constraint violations/dominators/components, and define duplicate-ID and deterministic-tie behavior. **Trace:** [Audit MT-10](./localmotive-comprehensive-audit.md#mt-10).
+- [x] **V06-MT-10.I4** — If 10,000-candidate support remains, bound the returned dominance detail and measure worst-case runtime rather than repeatedly allocating per-candidate range vectors. **Trace:** [Audit MT-10](./localmotive-comprehensive-audit.md#mt-10).
 
 **Verification**
 
-- [ ] **V06-MT-10.V1** — Use three Measured candidates all with decode=100: A prefill=100/latency=unknown/quality=0.5; B prefill=90/latency=10/quality=unknown; C prefill=unknown/latency=20/quality=0.9. Assert no A>B>C>A cycle under default null metric constraints. **Trace:** [Audit MT-10](./localmotive-comprehensive-audit.md#mt-10).
-- [ ] **V06-MT-10.V2** — Verify missing required quality cannot raise a candidate above fully measured alternatives solely through a denominator change; cover all-missing, equal values, zero weights, constrained unknowns, duplicate IDs, and ties. **Trace:** [Audit MT-10](./localmotive-comprehensive-audit.md#mt-10).
+- [x] **V06-MT-10.V1** — Use three Measured candidates all with decode=100: A prefill=100/latency=unknown/quality=0.5; B prefill=90/latency=10/quality=unknown; C prefill=unknown/latency=20/quality=0.9. Assert no A>B>C>A cycle under default null metric constraints. **Trace:** [Audit MT-10](./localmotive-comprehensive-audit.md#mt-10).
+- [x] **V06-MT-10.V2** — Verify missing required quality cannot raise a candidate above fully measured alternatives solely through a denominator change; cover all-missing, equal values, zero weights, constrained unknowns, duplicate IDs, and ties. **Trace:** [Audit MT-10](./localmotive-comprehensive-audit.md#mt-10).
 - [ ] **V06-MT-10.V3** — Record worst-case latency and response size for the retained candidate limit and confirm explanations remain deterministic. **Trace:** [Audit MT-10](./localmotive-comprehensive-audit.md#mt-10).
 
 **Complete when:** Dominance is acyclic under the documented missing-data policy, and the positive-decode counterexample cannot erase the entire frontier through cyclic comparisons. Preference scores disclose comparable objective coverage and cannot improve merely by omitting an unfavorable measurement.
@@ -3352,4 +3352,13 @@ _Package 1 (RT-01, RT-02, RT-04, RT-07) implementation is complete at the unit/r
 - Regression tests: `mt09_quality_joins_only_with_matching_identity` (matching attach; different launch key / changed tensor bytes / other runtime / anonymous suite all refused with distinct messages), `mt09_manifests_without_a_launch_identity_refuse_quality`, `mt09_suite_is_labelled_as_structural_smoke`, `mt09_share_export_requires_full_quality_identity`. Mutations MH1 (launch-key comparison skipped) / MH2 (content comparison skipped) / MH3 (anonymous suite accepted in export) each failed their matching test and passed after restore.
 - Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 501 pass / 0 fail / 2 ignored; `npm run check` EXIT 0; `npx tsc --noEmit` EXIT 0.
 - Residual: the MT-05 operation-generation check covers stop/restart between quality cases; a stopped-and-restarted server between cases still discards results at the reservation boundary (existing MT-05 behavior, re-verified by its tests). The suite remains two structural cases; the label now says so everywhere it is scored.
+
+### V06-MT-10 — consistent dominance and honest scores (commit `d1d718b`)
+
+- Status: Implemented I1-I4; V1 verified; V2 (deterministic ties) covered in the same test.
+- Regression before fix: pairwise dominance skipped objectives missing on either side, so different pairs compared different objective sets (the audit's A/B/C example gave A>B>C>A with no frontier member), and the preference score divided by only the weights a candidate filled in, rewarding omitted weak measurements. Ranges were rebuilt per candidate.
+- Verification after fix: `dominates` requires every objective to have a value on both sides (a missing value makes the pair incomparable) and then applies strict Pareto dominance over that complete set — a partial order, so cycles cannot occur. Ranges are computed once from the feasible set. The score divides by the FULL configured weight sum and reports `evidenceCoverage`; dominator lists are capped at `MAX_DOMINATORS_REPORTED` (32) with a `dominatorsTruncated` flag; duplicate candidate ids are rejected.
+- Regression tests: `mt10_missing_metrics_make_pairs_incomparable_not_cyclic` (the exact audit counterexample; all three candidates frontier members with empty dominator lists; a fully measured pair still dominates; deterministic re-run), `mt10_partial_coverage_cannot_inflate_a_score`, `mt10_duplicate_ids_are_rejected_and_dominators_are_bounded`, `mt10_ranking_scales_to_ten_thousand_candidates` (10,000 candidates: debug 12.8 s, release 1.88 s — recorded here as the measured worst-case bound). Mutations MI1 (skip-missing dominance restored) / MI2 (available-only denominator) / MI3 (dominator cap removed) each failed their matching test and passed after restore.
+- Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 505 pass / 0 fail / 2 ignored; `npm run check` EXIT 0; `npx tsc --noEmit` EXIT 0; release-profile measurement `cargo test --release --lib mt10_ranking_scales -- --nocapture` → `ranked 10000 candidates in 1.8770413s`.
+- Residual: 10,000-candidate ranking stays O(n^2) by design (bounded detail, measured runtime); the panel shows evidence coverage per candidate, so a low-coverage candidate is visible even when it ranks high.
 
