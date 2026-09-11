@@ -682,10 +682,14 @@ export function V03EvidencePanel({
       setMessage("Review the omissions and confirm the local export first.");
       return;
     }
-    const target = await saveDialog({
-      defaultPath: `localmotive-evidence-${benchmark.compatibilityKey.slice(0, 12)}.json`,
-      filters: [{ name: "JSON evidence", extensions: ["json"] }],
-    });
+    // S-22: a failed save dialog must not throw, and the measured result
+    // stays exactly where it was — only the export is retried.
+    const target = await runAction("share-target", () =>
+      saveDialog({
+        defaultPath: `localmotive-evidence-${benchmark.compatibilityKey.slice(0, 12)}.json`,
+        filters: [{ name: "JSON evidence", extensions: ["json"] }],
+      }),
+    );
     if (!target) return;
 
     const bundle = await runAction("share-build", () =>
@@ -709,6 +713,13 @@ export function V03EvidencePanel({
     );
     if (written) {
       setMessage("The privacy-reviewed evidence bundle was written locally.");
+    } else {
+      // The built bundle is kept in memory; only the file write failed.
+      setMessage((current) =>
+        current
+          ? `${current} The built bundle is kept in memory — choose a different location and export again.`
+          : "The export could not be written. The built bundle is kept in memory — choose a different location and export again.",
+      );
     }
   }
 

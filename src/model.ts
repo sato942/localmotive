@@ -1395,10 +1395,28 @@ export function errorText(error: unknown): string {
   const value = error instanceof Error ? error.message : error;
   const structured = structuredFailureText(value);
   if (structured !== null) return structured;
+  // S-22: Tauri command rejections arrive as plain objects, plugin rejections
+  // as strings or Error instances. Prefer a `message` field, fall back to
+  // serializing the object, and never render "[object Object]".
+  if (value !== null && typeof value === "object") {
+    const message = (value as { message?: unknown }).message;
+    if (typeof message === "string" && message.length > 0) return message;
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
   const text = String(value);
   try {
     const parsed: unknown = JSON.parse(text);
-    return structuredFailureText(parsed) ?? text;
+    const structured = structuredFailureText(parsed);
+    if (structured !== null) return structured;
+    if (parsed !== null && typeof parsed === "object") {
+      const message = (parsed as { message?: unknown }).message;
+      if (typeof message === "string" && message.length > 0) return message;
+    }
+    return text;
   } catch {
     // Preserve non-structured Tauri and JavaScript errors.
   }

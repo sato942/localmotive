@@ -15,6 +15,12 @@ type Handler = (args: unknown) => unknown | Promise<unknown>;
 const invokeCalls: Array<{ command: string; args: Record<string, unknown> }> = [];
 const handlers = new Map<string, Handler>();
 
+const saveBehavior = { save: () => Promise.resolve(null as unknown) };
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  save: () => saveBehavior.save(),
+}));
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: () => Promise.resolve() }));
+
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (command: string, args?: unknown) => {
     invokeCalls.push({ command, args: (args ?? {}) as Record<string, unknown> });
@@ -351,5 +357,36 @@ describe("calibration anchors (MT-08)", () => {
     expect(rendered).toContain("Provenance: importedExternal");
     expect(rendered).toContain("not a local rerun");
     expect(rendered).toContain("stays out of ranking and calibration");
+  });
+
+  it("a failed export save keeps the measured result and offers recovery (S-22)", async () => {
+    saveBehavior.save = () =>
+      Promise.reject({ code: "dialog-failed", message: "no dialog service" });
+    await runMeasuredBenchmark();
+    // Confirm the omissions so the export path is enabled.
+    const confirm = container.querySelector<HTMLInputElement>(
+      'input[type="checkbox"]',
+    );
+    if (confirm && !confirm.checked) {
+      await act(async () => {
+        confirm.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      await flush();
+    }
+    const exportButton = [...container.querySelectorAll("button")].find((button) =>
+      (button.textContent ?? "").toLowerCase().includes("export"),
+    );
+    expect(exportButton, "the export action must exist once a result is measured").toBeTruthy();
+    await act(async () => {
+      exportButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+    const after = container.textContent ?? "";
+    // The rejection is presented as its actionable message, and the measured
+    // result is still on screen — only the export can be retried.
+    expect(after).toContain("no dialog service");
+    expect(after, "the measured result survives a failed secondary save").toContain(
+      "Decode throughput",
+    );
   });
 });

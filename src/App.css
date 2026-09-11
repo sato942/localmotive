@@ -588,3 +588,33 @@ label input:disabled { color: #8d9491; }
   color: var(--muted);
   font-size: 13px;
 }
+
+/* S-22: secondary-action diagnostics — a copy affordance plus an explicit
+   disclosure, never raw JSON spilled into the notice line. */
+.notice-diagnostic {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: 10px;
+}
+
+.notice-diagnostic details {
+  display: inline-block;
+}
+
+.notice-diagnostic summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.notice-diagnostic pre {
+  margin: 6px 0 0;
+  padding: 8px;
+  max-width: 72ch;
+  max-height: 40vh;
+  overflow: auto;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  white-space: pre-wrap;
+  word-break: break-word;
+}

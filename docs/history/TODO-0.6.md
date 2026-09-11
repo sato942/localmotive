@@ -2523,18 +2523,18 @@ These packages preserve actionable recommendations outside the 72-item findings 
 
 **Unify actionable frontend error handling**
 
-**Status:** Not started · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
 **Audit trace:** [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations)  
 **Prerequisites:** [V06-FE-09](#v06-fe-09)
 
 **Implementation**
 
-- [ ] **V06-S-22.I1** — Catch and present dialog, openUrl and cancellation rejections; use the existing structured error formatter consistently instead of displaying raw JSON through String(error). **Trace:** [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations).
-- [ ] **V06-S-22.I2** — Keep concise recovery text with an explicit diagnostic disclosure/copy affordance, while preserving successful operation results when only a secondary UI or save action fails. **Trace:** [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations).
+- [x] **V06-S-22.I1** — Catch and present dialog, openUrl and cancellation rejections; use the existing structured error formatter consistently instead of displaying raw JSON through String(error). **Trace:** [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations).
+- [x] **V06-S-22.I2** — Keep concise recovery text with an explicit diagnostic disclosure/copy affordance, while preserving successful operation results when only a secondary UI or save action fails. **Trace:** [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations).
 
 **Verification**
 
-- [ ] **V06-S-22.V1** — Reject each dialog/opener/cancel promise and return structured/native string errors; verify actionable messages, no unhandled rejection and retained valid results. **Trace:** [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations).
+- [x] **V06-S-22.V1** — Reject each dialog/opener/cancel promise and return structured/native string errors; verify actionable messages, no unhandled rejection and retained valid results. **Trace:** [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations).
 
 **Complete when:** Secondary action failures are visible, recoverable and do not misstate the primary operation outcome.
 
@@ -3839,3 +3839,11 @@ Revalidated at the candidate source (`065248a1` + the G-07 test addition) on Win
 - V1: `s21_oversized_response_terminates_with_the_cap_error` (2 MiB + 1 byte body against a local fixture server fails with the cap named), `s21_one_bounded_retry_after_a_429_then_success` (exactly one retry after the documented 1 s wait, request count 2), `s21_a_hung_request_ends_at_the_deadline` (a hung response ends within the deadline, and the key never appears in the error text). No credentials are retained anywhere in fixtures or logs (`sk-canary-secret-value` is a canary and asserted absent from errors).
 - Mutations: PT1 (byte cap removed) CAUGHT; PT2 (the documented wait skipped) CAUGHT; PT3 (Retry-After detail dropped) first MISSED because the fixture stored the header as a JSON string and the test's `as_u64` read None — the test now parses both forms, after which PT3 is CAUGHT.
 - Commands: `cargo fmt --check` PASS; clippy `-D warnings` 0 errors; `cargo test` 576 passed / 0 failed / 2 ignored; Vitest 108; node tests 143.
+
+#### S-22 closure record — unified actionable frontend error handling
+
+- I1: `errorText` now unwraps object rejections (preferring a `message` field, serializing otherwise) on top of the existing structured-string and `Error` handling, and all 27 `String(error)` call sites in `App.tsx` use it. The folder/file pickers wrap `openDialog` in a recoverable catch; all twelve external-link actions route through `openExternal`, which catches opener rejections; the evidence export wraps `saveDialog` in `runAction`.
+- I2: `reportFailure` sets a concise recovery notice plus a `diagnostic` state; the notice line renders a "Copy diagnostic" action (clipboard) and an explicit `<details>` disclosure with the raw diagnostic instead of spilling JSON into the status text. A failed export write keeps the built bundle in memory and says so ("choose a different location and export again"); the measured result itself is never cleared by a secondary failure.
+- V1: `src/model.test.ts` covers `errorText` for Error/string/structured-string/object-with-message/object-without-message/null; the App component test rejects both the dialog and the opener, asserting recovery text, the unchanged model root, the disclosed diagnostic, and that the screen survives; the panel test rejects the save dialog and asserts the rejection message plus the surviving "Decode throughput" result.
+- Mutations: PU1 (dialog catch removed) CAUGHT; PU2 (diagnostic disclosure removed) CAUGHT; PU3 (panel save un-wrapped from `runAction`) CAUGHT.
+- Commands: `npx tsc --noEmit` PASS; `npm run check` PASS (344.5 kB); Vitest 109; node tests 143.

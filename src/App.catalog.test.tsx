@@ -72,8 +72,15 @@ vi.mock("@tauri-apps/api/core", () => ({
   },
 }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: () => Promise.resolve(() => {}) }));
-vi.mock("@tauri-apps/plugin-dialog", () => ({ open: () => Promise.resolve(null) }));
-vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: () => Promise.resolve() }));
+const dialogBehavior = { open: () => Promise.resolve(null as unknown) };
+const openerBehavior = { openUrl: (_url: string) => Promise.resolve() };
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  open: () => dialogBehavior.open(),
+  save: () => Promise.resolve(null),
+}));
+vi.mock("@tauri-apps/plugin-opener", () => ({
+  openUrl: (url: string) => openerBehavior.openUrl(url),
+}));
 
 import App from "./App";
 import { ErrorBoundary } from "./ErrorBoundary";
@@ -1123,5 +1130,58 @@ describe("Bounded discovery diagnostics (audit S-15)", () => {
       ...container.querySelectorAll('input[name="tune-disclosure"]'),
     ][1] as HTMLInputElement;
     expect(minimalRadio.checked, "the chosen mode must stay selected").toBe(true);
+  });
+
+  it("presents dialog and opener rejections with recovery text and a copyable diagnostic (S-22)", async () => {
+    dialogBehavior.open = () => Promise.reject("dialog backend unavailable");
+    openerBehavior.openUrl = () => Promise.reject({ code: "no-handler", message: "no browser registered" });
+    await mount();
+
+    // The folder picker rejects: the current root stands, the failure is
+    // visible with recovery text, and a diagnostic affordance appears.
+    const inventoryNav = [...container.querySelectorAll("button")].find(
+      (button) => (button.textContent ?? "").trim() === "Inventory",
+    );
+    await act(async () => {
+      inventoryNav!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await settle();
+    const before = (
+      container.querySelector('input[aria-label="Model root"]') as HTMLInputElement | null
+    )?.value;
+    const chooseButton = [...container.querySelectorAll("button")].find((button) =>
+      (button.textContent ?? "").toLowerCase().includes("choose"),
+    );
+    await act(async () => {
+      chooseButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await settle();
+    const notice = container.querySelector(".notice-line");
+    expect(notice!.textContent).toContain("Could not open the folder picker");
+    expect(notice!.textContent).toContain("dialog backend unavailable");
+    expect(notice!.textContent).toContain("unchanged");
+    const rootField = container.querySelector(
+      'input[aria-label="Model root"]',
+    ) as HTMLInputElement | null;
+    if (rootField) expect(rootField.value).toBe(before);
+    const details = container.querySelector(".notice-diagnostic details pre");
+    expect(details, "the raw diagnostic must be disclosed, not spilled into the notice").toBeTruthy();
+    expect(details!.textContent).toContain("dialog backend unavailable");
+
+    // The browser opener rejects on a link: same contract, no unhandled
+    // rejection and no loss of the current screen.
+    const link = [...container.querySelectorAll("button")].find((button) =>
+      (button.textContent ?? "").includes("GitHub releases"),
+    ) ?? [...container.querySelectorAll("button")].find((button) =>
+      (button.textContent ?? "").includes("Project on GitHub"),
+    );
+    if (link) {
+      await act(async () => {
+        link.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      await settle();
+      const after = container.querySelector(".notice-line")!.textContent ?? "";
+      expect(after).toContain("Could not open the browser");
+    }
   });
 });

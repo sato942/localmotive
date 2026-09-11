@@ -39,6 +39,7 @@ import {
 import "./App.css";
 import {
   bytesLabel,
+  errorText,
   catalogBuildFit,
   catalogRevision,
   type CommandPreview,
@@ -205,6 +206,45 @@ function App() {
   const previewSeq = useRef(0);
   const [log, setLog] = useState("Waiting for a managed server.");
   const [notice, setNotice] = useState("Inventory not scanned yet.");
+  // S-22: secondary-action failures (dialogs, browser opener, local saves)
+  // get a concise recovery line plus a copyable diagnostic, and never
+  // replace a successful primary result.
+  const [diagnostic, setDiagnostic] = useState<{ message: string; detail: string } | null>(null);
+
+  function reportFailure(recovery: string, error: unknown) {
+    const message = errorText(error);
+    setNotice(`${recovery} ${message}`);
+    let detail = message;
+    if (error !== null && typeof error === "object") {
+      try {
+        detail = JSON.stringify(error);
+      } catch {
+        detail = message;
+      }
+    }
+    setDiagnostic({ message, detail });
+  }
+
+  async function openExternal(url: string) {
+    try {
+      await openUrl(url);
+    } catch (error) {
+      reportFailure(
+        `Could not open the browser. Copy this link instead: ${url}.`,
+        error,
+      );
+    }
+  }
+
+  async function copyDiagnostic() {
+    if (!diagnostic) return;
+    try {
+      await navigator.clipboard.writeText(diagnostic.detail);
+      setNotice("Diagnostic copied to the clipboard.");
+    } catch (error) {
+      setNotice(`Copy failed; select the text manually. ${errorText(error)}`);
+    }
+  }
   const [busy, setBusy] = useState("");
   const [benchmark, setBenchmark] = useState<BenchmarkSummary | null>(null);
   const [tokens, setTokens] = useState(512);
@@ -340,7 +380,7 @@ function App() {
       // transition, so a stale draft can never masquerade as current.
       setModels([]);
       clearCommittedSelection();
-      setNotice(inTauri() ? String(error) : "Browser preview cannot scan local model files. Use the packaged app.");
+      setNotice(inTauri() ? errorText(error) : "Browser preview cannot scan local model files. Use the packaged app.");
     } finally {
       setBusy("");
     }
@@ -378,7 +418,7 @@ function App() {
       if (!keepLatestRequest(sequence, runtimeInspectSeq.current)) return;
       setRuntime(null);
       setRuntimeIdentity(null);
-      setNotice(inTauri() ? String(error) : "Browser preview cannot inspect local runtime files. Use the packaged app.");
+      setNotice(inTauri() ? errorText(error) : "Browser preview cannot inspect local runtime files. Use the packaged app.");
     } finally {
       if (keepLatestRequest(sequence, runtimeInspectSeq.current)) setBusy("");
     }
@@ -518,7 +558,7 @@ function App() {
       await activateRuntime(installed.runtimePath);
       setNotice(`${option.label} ${installed.reused ? "was already installed and is now active" : "installed, verified, and active"}.`);
     } catch (error) {
-      setNotice(String(error));
+      setNotice(errorText(error));
     } finally {
       installingRef.current = "";
       setRuntimeInstallCancelling(false);
@@ -555,7 +595,7 @@ function App() {
           ? `${option.label} health verification was cancelled and cleaned up.`
           : `${option.label} failed managed-runtime health verification.`);
     } catch (error) {
-      setNotice(String(error));
+      setNotice(errorText(error));
     } finally {
       healthRunningRef.current = "";
       setHealthCancelling(false);
@@ -586,7 +626,7 @@ function App() {
       await invoke("repair_health_model");
       setHealthRepairNotice("Cached health model is verified.");
     } catch (error) {
-      setHealthRepairNotice(String(error));
+      setHealthRepairNotice(errorText(error));
     } finally {
       setHealthRepairing(false);
     }
@@ -596,12 +636,19 @@ function App() {
     try {
       await invoke("cancel_health_model_repair");
     } catch (error) {
-      setHealthRepairNotice(String(error));
+      setHealthRepairNotice(errorText(error));
     }
   }
 
   async function chooseModelFolder() {
-    const selected = await openDialog({ directory: true, multiple: false, title: "Choose your GGUF model folder" });
+    // S-22: a rejected or cancelled dialog keeps the previous selection and
+    // reports a recoverable failure instead of an unhandled rejection.
+    const selected = await openDialog({ directory: true, multiple: false, title: "Choose your GGUF model folder" }).catch(
+      (error) => {
+        reportFailure("Could not open the folder picker. The current root is unchanged.", error);
+        return null;
+      },
+    );
     if (typeof selected === "string") {
       setModelRoot(selected);
       localStorage.setItem("localmotive:model-root", selected);
@@ -629,7 +676,7 @@ function App() {
         if (!keepLatestRequest(sequence, catalogLoadSeq.current)) return;
         setCatalogSnapshot(snapshot);
       } catch (error) {
-        refreshNote = ` Refresh pending: ${String(error)}`;
+        refreshNote = ` Refresh pending: ${errorText(error)}`;
       }
       // Local mirror: verified rows plus marked user rows. Falls back to the
       // snapshot when the mirror is unavailable, so the tab never goes empty
@@ -676,7 +723,7 @@ function App() {
         `${localModels.length} curated Hugging Face models loaded from ${snapshot.origin}${userNote}.${refreshNote}${warningNote ? ` ${warningNote}` : ""}${droppedNote}`,
       );
     } catch (error) {
-      if (keepLatestRequest(sequence, catalogLoadSeq.current)) setNotice(String(error));
+      if (keepLatestRequest(sequence, catalogLoadSeq.current)) setNotice(errorText(error));
     } finally {
       if (keepLatestRequest(sequence, catalogLoadSeq.current)) setCatalogBusy(false);
     }
@@ -691,7 +738,7 @@ function App() {
       setHfToken(status);
       setNotice(`Hugging Face token ${status.masked} stored in Windows Credential Manager.`);
     } catch (error) {
-      setNotice(String(error));
+      setNotice(errorText(error));
     } finally {
       setCatalogBusy(false);
     }
@@ -704,7 +751,7 @@ function App() {
       setHfTokenDraft("");
       setNotice("Hugging Face token removed from Windows Credential Manager.");
     } catch (error) {
-      setNotice(String(error));
+      setNotice(errorText(error));
     } finally {
       setCatalogBusy(false);
     }
@@ -761,10 +808,10 @@ function App() {
             path: "",
           }),
           state: "error",
-          message: String(error),
+          message: errorText(error),
         },
       }));
-      setNotice(String(error));
+      setNotice(errorText(error));
     }
   }
 
@@ -780,7 +827,7 @@ function App() {
           : `${job.filename} is not being downloaded (it may have finished); nothing was stopped.`,
       );
     } catch (error) {
-      setNotice(`Could not stop ${job.filename}: ${String(error)}`);
+      setNotice(`Could not stop ${job.filename}: ${errorText(error)}`);
     }
   }
 
@@ -790,6 +837,9 @@ function App() {
       multiple: false,
       title: "Choose llama-server.exe",
       filters: [{ name: "llama-server", extensions: ["exe"] }],
+    }).catch((error) => {
+      reportFailure("Could not open the file picker. No runtime was changed.", error);
+      return null;
     });
     if (typeof selected === "string") await activateRuntime(selected);
   }
@@ -818,7 +868,7 @@ function App() {
           const chosen = stored && modelsList.some((m) => m.id === stored) ? stored : modelsList.some((m) => m.id === fallback) ? fallback : (modelsList[0]?.id ?? fallback);
           setCloudModel(chosen);
         } catch (error) {
-          if (responseIsCurrent(sequence, cloudSeq.current, nextProvider, providerIdRef.current)) setCloudCheck(String(error));
+          if (responseIsCurrent(sequence, cloudSeq.current, nextProvider, providerIdRef.current)) setCloudCheck(errorText(error));
         }
       }
     } catch (error) {
@@ -832,7 +882,7 @@ function App() {
         ]);
         setCredential({ provider: nextProvider, configured: false, masked: "" });
       } else {
-        setNotice(String(error));
+        setNotice(errorText(error));
       }
     }
   }
@@ -882,7 +932,7 @@ function App() {
       setNotice(`${providers.find((entry) => entry.id === forProvider)?.label ?? forProvider} key stored in Windows Credential Manager.`);
       await loadCloud(forProvider);
     } catch (error) {
-      if (responseIsCurrent(sequence, cloudSeq.current, forProvider, providerIdRef.current)) setNotice(String(error));
+      if (responseIsCurrent(sequence, cloudSeq.current, forProvider, providerIdRef.current)) setNotice(errorText(error));
     } finally {
       setBusy("");
     }
@@ -900,7 +950,7 @@ function App() {
       setCloudCheck("");
       setNotice(`${providers.find((entry) => entry.id === forProvider)?.label ?? forProvider} key removed from Windows Credential Manager.`);
     } catch (error) {
-      if (responseIsCurrent(sequence, cloudSeq.current, forProvider, providerIdRef.current)) setNotice(String(error));
+      if (responseIsCurrent(sequence, cloudSeq.current, forProvider, providerIdRef.current)) setNotice(errorText(error));
     } finally {
       setBusy("");
     }
@@ -918,7 +968,7 @@ function App() {
       await loadCloud("openrouter");
     } catch (error) {
       // A cancelled/timed-out sign-in must not relabel another provider's tab.
-      if (responseIsCurrent(sequence, cloudSeq.current, "openrouter", providerIdRef.current)) setNotice(String(error));
+      if (responseIsCurrent(sequence, cloudSeq.current, "openrouter", providerIdRef.current)) setNotice(errorText(error));
     } finally {
       setBusy("");
     }
@@ -935,7 +985,7 @@ function App() {
       if (!responseIsCurrent(sequence, cloudSeq.current, forProvider, providerIdRef.current)) return;
       setCloudCheck(`Connected · ${forModel} replied “${reply.trim().slice(0, 40)}”`);
     } catch (error) {
-      if (responseIsCurrent(sequence, cloudSeq.current, forProvider, providerIdRef.current)) setCloudCheck(String(error));
+      if (responseIsCurrent(sequence, cloudSeq.current, forProvider, providerIdRef.current)) setCloudCheck(errorText(error));
     } finally {
       setBusy("");
     }
@@ -1027,8 +1077,8 @@ function App() {
       const gain = report.baselineTps && report.bestTps ? ((report.bestTps / report.baselineTps - 1) * 100).toFixed(1) : null;
       setNotice(gain ? `Tuning finished: best ${report.bestTps?.toFixed(2)} tok/s (${Number(gain) >= 0 ? "+" : ""}${gain}% vs baseline). ${report.stoppedReason}.` : `Tuning finished. ${report.stoppedReason}.`);
     } catch (error) {
-      setNotice(String(error));
-      setTuneProgress({ phase: "error", message: String(error), trial: null });
+      setNotice(errorText(error));
+      setTuneProgress({ phase: "error", message: errorText(error), trial: null });
     } finally {
       setTuning(false);
       setTuneRun(null);
@@ -1040,7 +1090,7 @@ function App() {
       await invoke<boolean>("cancel_tuning");
       setNotice("Cancelling after the current measurement…");
     } catch (error) {
-      setNotice(String(error));
+      setNotice(errorText(error));
     }
   }
 
@@ -1125,7 +1175,7 @@ function App() {
       if (keepLatestRequest(sequence, previewSeq.current)) {
         setCommand(
           inTauri()
-            ? { powerShell: String(error), argv: "", cmd: null, cmdNotice: null }
+            ? { powerShell: errorText(error), argv: "", cmd: null, cmdNotice: null }
             : { powerShell: "Browser preview cannot compose the command. Use the packaged app.", argv: "", cmd: null, cmdNotice: null },
         );
       }
@@ -1142,7 +1192,7 @@ function App() {
       setNotice(`Started ${profile.alias} on port ${profile.port}`);
       setView("dashboard");
     } catch (error) {
-      setNotice(String(error));
+      setNotice(errorText(error));
     } finally {
       setBusy("");
     }
@@ -1155,7 +1205,7 @@ function App() {
       setStatus(await invoke<ServerStatus>("stop_server"));
       setNotice("Managed server stopped cleanly.");
     } catch (error) {
-      setNotice(String(error));
+      setNotice(errorText(error));
     } finally {
       setBusy("");
     }
@@ -1175,7 +1225,7 @@ function App() {
       localStorage.setItem(`localmotive:benchmark:${status.alias}`, JSON.stringify(result));
       setNotice(`Benchmark complete: ${result.meanTps.toFixed(2)} generation tok/s mean.`);
     } catch (error) {
-      setNotice(String(error));
+      setNotice(errorText(error));
     } finally {
       setBusy("");
     }
@@ -1221,7 +1271,7 @@ function App() {
         if (keepLatestRequest(sequence, catalogFilterSeq.current)) setCatalogRows(rows);
       })
       .catch((error) => {
-        if (keepLatestRequest(sequence, catalogFilterSeq.current)) setNotice(String(error));
+        if (keepLatestRequest(sequence, catalogFilterSeq.current)) setNotice(errorText(error));
       });
   }, [catalogSnapshot, catalogAllRows, catalogSearch, catalogTag, catalogQuant, catalogAuthor, catalogLicense, catalogPipeline, catalogArchitecture, catalogMaxGiB, catalogHideGated, catalogSort, catalogFitEnabled, catalogFitPerMille, catalogFitBudget]);
 
@@ -1422,6 +1472,17 @@ function App() {
         <div className="notice-line" role="status">
           <span className="notice-code">SYS</span>
           <span>{notice}</span>
+          {diagnostic ? (
+            <span className="notice-diagnostic">
+              <button className="text-link" onClick={() => void copyDiagnostic()}>
+                Copy diagnostic
+              </button>
+              <details>
+                <summary>Details</summary>
+                <pre>{diagnostic.detail}</pre>
+              </details>
+            </span>
+          ) : null}
         </div>
         {lastScan && (lastScan.problems.length > 0 || lastScan.truncated) && (
           <p className="scan-diagnostics" role="status">
@@ -1446,7 +1507,7 @@ function App() {
                 {status.running || status.phase === "starting" ? (
                   <>
                     {status.running && (
-                      <button className="button secondary" onClick={() => openUrl(`http://127.0.0.1:${status.port}`)}>
+                      <button className="button secondary" onClick={() => openExternal(`http://127.0.0.1:${status.port}`)}>
                         <SquareTerminal size={16} /> Open chat
                       </button>
                     )}
@@ -1675,7 +1736,7 @@ function App() {
                     <article className="machine-panel catalog-model" key={model.id}>
                       <div className="catalog-model-head">
                         <div>
-                          <button className="catalog-repo" onClick={() => openUrl(`https://huggingface.co/${model.repo}`)}>{model.repo}<ExternalLink size={12} /></button>
+                          <button className="catalog-repo" onClick={() => openExternal(`https://huggingface.co/${model.repo}`)}>{model.repo}<ExternalLink size={12} /></button>
                           <strong>{model.family || model.repo.split("/")[1]}</strong>
                           <span>{model.parameters || "PARAMETERS UNKNOWN"} · BY {model.publisher || model.repo.split("/")[0]}</span>
                         </div>
@@ -1731,7 +1792,7 @@ function App() {
                   {hfToken.cleanupNotice && (
                     <p role="status" className="token-cleanup-notice">{hfToken.cleanupNotice}</p>
                   )}
-                  <button className="text-link" onClick={() => openUrl("https://huggingface.co/settings/tokens")}>Create a read token on Hugging Face ↗</button>
+                  <button className="text-link" onClick={() => openExternal("https://huggingface.co/settings/tokens")}>Create a read token on Hugging Face ↗</button>
                 </div>
                 <dl className="runtime-facts catalog-transfer-facts">
                   <div><dt>Data route</dt><dd>Hugging Face → this PC. Localmotive never proxies model bytes.</dd></div>
@@ -1877,7 +1938,7 @@ function App() {
                     >
                       <RefreshCw size={14} /> Refresh catalog
                     </button>
-                    <button className="text-button runtime-source" onClick={() => openUrl("https://github.com/ggml-org/llama.cpp/releases")}><Download size={14} /> GitHub releases</button>
+                    <button className="text-button runtime-source" onClick={() => openExternal("https://github.com/ggml-org/llama.cpp/releases")}><Download size={14} /> GitHub releases</button>
                   </div>
                 </div>
                 <div className="runtime-options">
@@ -1992,14 +2053,14 @@ function App() {
                             <span className="runtime-role" key={`${entry.installKey}:${jobName}`}>
                               Blocking job: <code>{jobName}</code>
                               {entry.evidenceUrls[index] && (
-                                <button className="text-button runtime-source" onClick={() => openUrl(entry.evidenceUrls[index])}>
+                                <button className="text-button runtime-source" onClick={() => openExternal(entry.evidenceUrls[index])}>
                                   <ShieldCheck size={12} /> View {jobName} evidence
                                 </button>
                               )}
                             </span>
                           ))}
                           {entry.evidenceUrls.slice(entry.blockingJobs.length).map((url) => (
-                            <button className="text-button runtime-source" key={url} onClick={() => openUrl(url)}>
+                            <button className="text-button runtime-source" key={url} onClick={() => openExternal(url)}>
                               <ShieldCheck size={12} /> View blocking evidence
                             </button>
                           ))}
@@ -2468,7 +2529,7 @@ function App() {
                         <input type="password" autoComplete="off" spellCheck={false} value={keyDraft} onChange={(e) => setKeyDraft(e.target.value)} placeholder={provider ? `${provider.keyPrefixHint}…` : ""} aria-label="API key" />
                         <button className="button secondary" onClick={saveKey} disabled={!keyDraft.trim() || busy === "cloud"}><Save size={15} /> Store</button>
                       </div>
-                      <small className="field-help">Stored under “Localmotive” in Windows Credential Manager, not in this app’s settings. {provider && <button className="text-link" onClick={() => openUrl(provider.consoleUrl)}>Get a key from {provider.label} →</button>}</small>
+                      <small className="field-help">Stored under “Localmotive” in Windows Credential Manager, not in this app’s settings. {provider && <button className="text-link" onClick={() => openExternal(provider.consoleUrl)}>Get a key from {provider.label} →</button>}</small>
                     </label>
                     {credential?.configured && (
                       <>
@@ -2573,7 +2634,7 @@ function App() {
                 <p>What this build is, where it keeps things, and what it is made of.</p>
               </div>
               <div className="actions">
-                <button className="button secondary" onClick={() => openUrl(about?.repository ?? "https://github.com/sato942/localmotive")}><Link2 size={15} /> Project on GitHub</button>
+                <button className="button secondary" onClick={() => openExternal(about?.repository ?? "https://github.com/sato942/localmotive")}><Link2 size={15} /> Project on GitHub</button>
               </div>
             </div>
 
@@ -2622,10 +2683,10 @@ function App() {
               <article className="machine-panel about-credits">
                 <div className="panel-title"><ShieldCheck size={17} /><h2>Built on</h2></div>
                 <div className="credit-list">
-                  <button className="credit" onClick={() => openUrl("https://github.com/ggml-org/llama.cpp")}><strong>llama.cpp</strong><span>ggml-org · MIT — the inference engine and every managed runtime binary</span></button>
-                  <button className="credit" onClick={() => openUrl("https://tauri.app")}><strong>Tauri {about?.tauriVersion ?? "2"}</strong><span>Apache-2.0 / MIT — desktop shell</span></button>
-                  <button className="credit" onClick={() => openUrl("https://react.dev")}><strong>React + TypeScript + Vite</strong><span>MIT — interface</span></button>
-                  <button className="credit" onClick={() => openUrl("https://lucide.dev")}><strong>Lucide</strong><span>ISC — icons</span></button>
+                  <button className="credit" onClick={() => openExternal("https://github.com/ggml-org/llama.cpp")}><strong>llama.cpp</strong><span>ggml-org · MIT — the inference engine and every managed runtime binary</span></button>
+                  <button className="credit" onClick={() => openExternal("https://tauri.app")}><strong>Tauri {about?.tauriVersion ?? "2"}</strong><span>Apache-2.0 / MIT — desktop shell</span></button>
+                  <button className="credit" onClick={() => openExternal("https://react.dev")}><strong>React + TypeScript + Vite</strong><span>MIT — interface</span></button>
+                  <button className="credit" onClick={() => openExternal("https://lucide.dev")}><strong>Lucide</strong><span>ISC — icons</span></button>
                 </div>
                 <p className="group-note about-note">Localmotive is not affiliated with ggml-org. Runtime binaries are downloaded directly from official llama.cpp GitHub releases and verified against their published size and SHA-256 before use.</p>
               </article>

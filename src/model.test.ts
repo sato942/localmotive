@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as modelModule from "./model";
 import {
+  errorText,
   evidenceTone,
   type DownloadJob,
   type LaunchProfile,
@@ -23,7 +24,6 @@ import {
   newestDownloadJob,
   downloadPercent,
   downloadReadiness,
-  errorText,
   hardwareFitBudget,
   keepLatestRequest,
   evidenceRunLabel,
@@ -1150,5 +1150,21 @@ describe("S-19 bounded property campaign (FE persistence boundary)", () => {
       expect(Array.isArray(normalized.extraArgs), `seed ${seed}`).toBe(true);
       expect(["on", "off", "auto"]).toContain(normalized.flashAttention as string);
     }
+  });
+});
+
+describe("errorText (S-22)", () => {
+  it("presents Tauri, plugin and object rejections without raw JSON or [object Object]", () => {
+    expect(errorText(new Error("boom"))).toBe("boom");
+    expect(errorText("plain failure")).toBe("plain failure");
+    // A Tauri-rejected structured string is unwrapped to its message.
+    expect(errorText(JSON.stringify({ code: "x", message: "structured failure" }))).not.toContain("{");
+    // A raw object rejection prefers its message field.
+    expect(errorText({ code: "no-handler", message: "no browser registered" })).toBe(
+      "no browser registered",
+    );
+    // An object without a message serializes instead of stringifying to junk.
+    expect(errorText({ code: "c1" })).toBe('{"code":"c1"}');
+    expect(errorText(null)).toBe("null");
   });
 });
