@@ -1328,24 +1328,24 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Recover safely from corrupt persisted state and report save failures separately**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Medium · **Owner:** Unassigned  
 **Audit trace:** [Audit FE-09](./localmotive-comprehensive-audit.md#fe-09)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx), [src/model.ts](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/model.ts), [src/main.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/main.tsx)
 
 **Implementation**
 
-- [ ] **V06-FE-09.I1** — Introduce safe versioned parsing, validation and migration for persisted profiles and tuning reports before normalization or render-time array/property access. **Trace:** [Audit FE-09](./localmotive-comprehensive-audit.md#fe-09).
-- [ ] **V06-FE-09.I2** — Quarantine or isolate invalid records and provide a per-record recovery/reset path with a default profile fallback, preserving unrelated valid user records. **Trace:** [Audit FE-09](./localmotive-comprehensive-audit.md#fe-09).
-- [ ] **V06-FE-09.I3** — Wrap every settings/profile/report write and separate persistence failure from a successfully completed native tuning or benchmark operation so valid results remain visible. **Trace:** [Audit FE-09](./localmotive-comprehensive-audit.md#fe-09).
-- [ ] **V06-FE-09.I4** — Add a root error boundary with actionable recovery/diagnostic controls and ensure it does not replace targeted storage error handling. **Trace:** [Audit FE-09](./localmotive-comprehensive-audit.md#fe-09).
-- [ ] **V06-FE-09.I5** — Define bounded report retention and explicit profile/report export or management controls so accumulated per-model records cannot exhaust browser storage without a recoverable explanation. **Trace:** [Audit FE-09](./localmotive-comprehensive-audit.md#fe-09).
+- [x] **V06-FE-09.I1** — Introduce safe versioned parsing, validation and migration for persisted profiles and tuning reports before normalization or render-time array/property access. **Trace:** [Audit FE-09](./localmotive-comprehensive-audit.md#fe-09).
+- [x] **V06-FE-09.I2** — Quarantine or isolate invalid records and provide a per-record recovery/reset path with a default profile fallback, preserving unrelated valid user records. **Trace:** [Audit FE-09](./localmotive-comprehensive-audit.md#fe-09).
+- [x] **V06-FE-09.I3** — Wrap every settings/profile/report write and separate persistence failure from a successfully completed native tuning or benchmark operation so valid results remain visible. **Trace:** [Audit FE-09](./localmotive-comprehensive-audit.md#fe-09).
+- [x] **V06-FE-09.I4** — Add a root error boundary with actionable recovery/diagnostic controls and ensure it does not replace targeted storage error handling. **Trace:** [Audit FE-09](./localmotive-comprehensive-audit.md#fe-09).
+- [x] **V06-FE-09.I5** — Define bounded report retention and explicit profile/report export or management controls so accumulated per-model records cannot exhaust browser storage without a recoverable explanation. **Trace:** [Audit FE-09](./localmotive-comprehensive-audit.md#fe-09).
 
 **Verification**
 
-- [ ] **V06-FE-09.V1** — Load malformed JSON, null, wrong extraArgs/trials types, older schemas and invalid enum values through normal selection/startup; assert the app remains usable and identifies the affected record. **Trace:** [Audit FE-09](./localmotive-comprehensive-audit.md#fe-09).
-- [ ] **V06-FE-09.V2** — Inject quota/security write failures after successful native tuning/benchmark completion and in direct profile/settings handlers; verify completion remains visible and save failure is separately explained. **Trace:** [Audit FE-09](./localmotive-comprehensive-audit.md#fe-09).
-- [ ] **V06-FE-09.V3** — Exercise blocked storage reads and recovery/reset of one corrupt record; assert other saved profiles survive and a valid migrated record still follows current-runtime normalization. **Trace:** [Audit FE-09](./localmotive-comprehensive-audit.md#fe-09).
+- [x] **V06-FE-09.V1** — Load malformed JSON, null, wrong extraArgs/trials types, older schemas and invalid enum values through normal selection/startup; assert the app remains usable and identifies the affected record. **Trace:** [Audit FE-09](./localmotive-comprehensive-audit.md#fe-09).
+- [x] **V06-FE-09.V2** — Inject quota/security write failures after successful native tuning/benchmark completion and in direct profile/settings handlers; verify completion remains visible and save failure is separately explained. **Trace:** [Audit FE-09](./localmotive-comprehensive-audit.md#fe-09).
+- [x] **V06-FE-09.V3** — Exercise blocked storage reads and recovery/reset of one corrupt record; assert other saved profiles survive and a valid migrated record still follows current-runtime normalization. **Trace:** [Audit FE-09](./localmotive-comprehensive-audit.md#fe-09).
 
 **Complete when:** Corrupt local records cannot blank the entire interface through the audited parse/render paths. Successful native results and failed persistence have distinct observable outcomes, with documented recovery and retention behavior.
 
@@ -3460,4 +3460,12 @@ _Package 1 (RT-01, RT-02, RT-04, RT-07) implementation is complete at the unit/r
 - Verification after fix: the field keeps a raw draft string while focused (typing spaces and quotes is unconstrained), and the draft commits `parseExtraArgs(draft)` on blur or Enter. `parseExtraArgs`/`formatExtraArgs` in `model.ts` give a quote-aware tokenizer that round-trips values containing spaces; the help text now states the commit-on-leave behaviour and quoting.
 - Regression tests: `parseExtraArgs (FE-08)` unit cases (separate tokens typed with spaces, quoted value with spaces, escaped quote, empty draft, round trip) and the component test `keeps typed separators while editing and commits the tokens on blur` (Inventory → Rescan with a fixture model → Profile → typing `--flash-attn ` retains the trailing space). Mutations MS1 (quotes ignored in the parser → 2 failures) and MS2 (the input tokenizes on every keystroke again → 1 failure) were caught and passed after restore.
 - Commands: `tsc --noEmit` PASS; `npm test` 80 passed; `npm run build` PASS (`fe08-build.log`).
+
+### V06-FE-09 — corrupt persisted records cannot crash the UI (commit `a6f6617`)
+
+- Status: Implemented; unit + component verified.
+- Regression before fix: `JSON.parse` on saved profiles and tuning reports was unguarded, a string `extraArgs` reached `.filter`, a non-array `trials` reached `.reduce` during render, and no React error boundary existed, so a corrupt record blanked the window.
+- Verification after fix: reads go through `safeJsonParse`; `normalizeProfile` salvages `extraArgs` from arrays or raw strings; `normalizeTuningReport` validates the report shape (non-array `trials`, non-object `bestProfile` and non-numeric indices are rejected) and coerces per-trial fields; an unreadable or wrongly-shaped record is moved to `localmotive:quarantine:<key>:<time>` with a user-visible notice; `ErrorBoundary` in `main.tsx` renders a recovery screen whose reset clears application keys (quarantine records are kept) and reloads.
+- Regression tests: `persisted record validation (FE-09)` (salvage cases, shape rejection, safe parse), `corrupt persisted records (audit FE-09)` component test (seeded `{not json` profile + `[]` tuning report → window renders, quarantine key exists, live key cleared, notice shown), `ErrorBoundary (audit FE-09)` (fallback text, reset clears `localmotive:model-root` and keeps quarantine). Mutations MT9a (quarantine skipped) / MT9b (tuning record trusted raw) / MT9c (extraArgs salvage removed) each failed their matching tests and passed after restore.
+- Commands: `npm run check` EXIT 0 (tsc + vitest + branding; branding allowlist extended for the two migration lines); `npm run build` PASS; release-gates 101/101.
 
