@@ -1754,11 +1754,11 @@ test("S-17 imported evidence cannot leak into ranking or calibration writers", a
     .trim()
     .split("\n")
     .filter(Boolean)
-    .filter((file) => !file.endsWith("calibration.rs") && !file.endsWith("lib.rs") && !file.endsWith("model.ts") && !file.endsWith("V03EvidencePanel.tsx") && !file.endsWith("release-gates.test.mjs"));
+    .filter((file) => !file.endsWith("calibration.rs") && !file.endsWith("lib.rs") && !file.endsWith("model.ts") && !file.endsWith("V03EvidencePanel.tsx") && !file.endsWith("evidence-adapter.ts") && !file.endsWith("release-gates.test.mjs"));
   assert.deepEqual(
     offenders,
     [],
-    `external evidence types may only live in calibration.rs, lib.rs, model.ts and V03EvidencePanel.tsx; found: ${offenders.join(", ")}`,
+    `external evidence types may only live in calibration.rs, lib.rs, model.ts, V03EvidencePanel.tsx and the evidence-adapter acquisition seam; found: ${offenders.join(", ")}`,
   );
   // The ranking and measurement writers never mention it.
   for (const module of ["src-tauri/src/recommend.rs", "src-tauri/src/measurement.rs", "src-tauri/src/sharing.rs"]) {

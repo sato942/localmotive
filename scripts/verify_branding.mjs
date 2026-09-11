@@ -36,6 +36,7 @@ const MIGRATION_LINES = new Map([
     `base.join(\"${LEGACY_NAMES[0]}\")`,
   ]],
   ["scripts/verify_041.mjs", [`content.text.includes(\"${LEGACY_NAMES[0]}\")`]],
+  ["scripts/verify_g05_managed_install.mjs", ["legacy " + LEGACY_NAMES[0] + " runtime"]],
 ]);
 
 const TEXT_EXTENSIONS = new Set([
@@ -57,6 +58,7 @@ const TEXT_EXTENSIONS = new Set([
 
 const SKIPPED_DIRECTORIES = new Set([
   ".git",
+  ".hermes-0.6",
   "dist",
   "node_modules",
   "research",

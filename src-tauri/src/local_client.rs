@@ -391,6 +391,37 @@ impl LocalHttpClient {
     }
 }
 
+/// Actionable guidance for certificate failures reported through reqwest.
+///
+/// A certificate marked CA:TRUE is refused as a server certificate by webpki
+/// ("CaUsedAsEndEntity"). `openssl req -x509` marks the certificate CA:TRUE
+/// unless `basicConstraints` is overridden, so this is the common accidental
+/// shape. Such a launch can never become healthy by waiting, and the raw
+/// verification text does not say what to change.
+pub(crate) fn certificate_guidance(message: &str) -> Option<&'static str> {
+    if message.contains("CaUsedAsEndEntity") {
+        return Some(
+            " The SSL certificate that llama-server presents is marked as a CA (basicConstraints CA:TRUE). llama-server must present an end-entity certificate. Regenerate the pair with a subjectAltName and -addext basicConstraints=critical,CA:FALSE, then select both files again.",
+        );
+    }
+    if message.contains("NotValidForName") || message.contains("InvalidServerName") {
+        return Some(
+            " The SSL certificate does not cover the host that llama-server listens on. Regenerate it with a subjectAltName for that host (for loopback: -addext subjectAltName=IP:127.0.0.1,DNS:localhost).",
+        );
+    }
+    if message.contains("UnknownIssuer") {
+        return Some(
+            " The certificate llama-server presented is not the certificate configured in the profile. Select the certificate file that matches the server's --ssl-cert-file.",
+        );
+    }
+    if message.contains("invalid peer certificate") {
+        return Some(
+            " The SSL certificate could not be verified. Check that the certificate file matches the key file and covers the configured host.",
+        );
+    }
+    None
+}
+
 fn error_chain(error: &dyn std::error::Error) -> String {
     let mut parts = Vec::new();
     let mut current = error.source();
@@ -418,7 +449,47 @@ fn read_bounded_file(path: &str, limit: u64, label: &str) -> Result<Vec<u8>, Str
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
+
+    // Manual diagnostic (ignored): probe a live packaged TLS server with the
+    // profile's own certificate as the trust root. Set LOCALMOTIVE_DIAG_CERT,
+    // LOCALMOTIVE_DIAG_KEY_FILE and optionally LOCALMOTIVE_DIAG_URL_PORT.
+    #[test]
+    #[ignore = "manual packaged TLS probe against a live local server"]
+    fn manual_tls_probe() {
+        let Ok(cert) = std::env::var("LOCALMOTIVE_DIAG_CERT") else {
+            eprintln!("LOCALMOTIVE_DIAG_CERT not set; skipping");
+            return;
+        };
+        let key_file = std::env::var("LOCALMOTIVE_DIAG_KEY_FILE").unwrap_or_default();
+        let port = std::env::var("LOCALMOTIVE_DIAG_URL_PORT")
+            .ok()
+            .and_then(|value| value.parse::<u16>().ok())
+            .unwrap_or(8080);
+        let profile = crate::core::LaunchProfile {
+            host: "127.0.0.1".into(),
+            port,
+            ssl_cert_file: cert,
+            api_key_file: key_file,
+            ..Default::default()
+        };
+        let client = match LocalHttpClient::from_profile(&profile) {
+            Ok(client) => client,
+            Err(error) => {
+                eprintln!("BUILD ERROR: {error}");
+                return;
+            }
+        };
+        match client.get_bytes("/health", Duration::from_secs(6)) {
+            Ok((status, body)) => {
+                eprintln!(
+                    "PROBE OK: status {status} body {}",
+                    String::from_utf8_lossy(&body[..body.len().min(80)])
+                );
+            }
+            Err(error) => eprintln!("PROBE ERROR: {error}"),
+        }
+    }
     use super::*;
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -477,6 +548,60 @@ cz5Z4j60sHk98Ux/xJ9gLEulOoxue3ZvAJWt8k2IoOW/Wa02Q+JPmrwbMt9pLch/
 1VtDm/IeXHVYQADh/8npODrQiA77otLYSx4U2BOzK2IPSg4NJDNtNHWCB9+U06Ga
 d4VIuUiHXUqjCSUi+0E=
 -----END PRIVATE KEY-----"##;
+
+    // A certificate exactly as `openssl req -x509` produces it by default: a
+    // self-signed CA-marked certificate (basicConstraints critical CA:TRUE)
+    // with a subjectAltName. webpki refuses it as a server certificate
+    // ("CaUsedAsEndEntity"), which is why the health wait must fail fast with
+    // actionable guidance instead of timing out after ten minutes.
+    pub(crate) const CA_TRUE_CERT: &str = r##"-----BEGIN CERTIFICATE-----
+MIIDGjCCAgKgAwIBAgIUYlcPXMKGRtkz63lXu+dcd52xjUwwDQYJKoZIhvcNAQEL
+BQAwFDESMBAGA1UEAwwJMTI3LjAuMC4xMB4XDTI2MDkxMTE1NDU0MVoXDTM2MDkw
+ODE1NDU0MVowFDESMBAGA1UEAwwJMTI3LjAuMC4xMIIBIjANBgkqhkiG9w0BAQEF
+AAOCAQ8AMIIBCgKCAQEAtKbvlfhyWioCef6wP1cOahkjU8ISerg6aUgok8cg8Co4
+Az85WuD/fN4rSaWa5BTl4cdU/i8hVvzkdeKeQwnYybl2oZgFAp8FH8x0u3uiBrc7
+DKG9ESRrtuBZcmJcM6cJYThS/6y66tLLlYx5jAyujdw3Ea+ArI+2CSOErdnKVIwZ
+DifbhVin7L6VI2sqff61NLBhgdxIiEeH2xhg03jA0UIibi+6H+nnjPLYz5o1LLio
+uDDIgNM2X7Lw6w18/IDsGq+PwqUmGnEnk0Jfour9MuEwI3W0QqwFBmN6kdSKTVcU
+kYYPKkUWQkoPLf59FDiw3lah+sYrik0hyh8HjOddEwIDAQABo2QwYjAdBgNVHQ4E
+FgQUOmOt8v081fr8F4ltUvXRfDAdKz8wHwYDVR0jBBgwFoAUOmOt8v081fr8F4lt
+UvXRfDAdKz8wDwYDVR0TAQH/BAUwAwEB/zAPBgNVHREECDAGhwR/AAABMA0GCSqG
+SIb3DQEBCwUAA4IBAQCOt/0kalctL2FIOZJ2LbOAMuDA0XB7CGZq2P2/a3yvNdoV
+IriuAkrDKBTU77l0DxNLzQZ30NTiqzytoQujmsNgYLpcJ7Al97bbZGPR0a1e3F/Z
+XdAwn4lMc0Q1ZPCuv90HBd37ERw7UdU/sG4tPiLMTMzoStu6SyA44AROXDpnkQQT
+SYxZa1gdvXvvEGVB0lbR5crfmqzCycM4Yd1rxBUHeG4QqojP8XUdG3nLIeqk0qYl
+3dCUMVF42UjKKOqqfCs8bcMl6M50Y3vAJ4wQCIUV49Y4gYKueTHCctLkNTbJ7DxE
+Lm4OI42L8fBHU9OjG+mhIUL1ib8EJrxSIIuN32RM
+-----END CERTIFICATE-----"##;
+    pub(crate) const CA_TRUE_KEY: &str = r##"-----BEGIN PRIVATE KEY-----
+MIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQC0pu+V+HJaKgJ5
+/rA/Vw5qGSNTwhJ6uDppSCiTxyDwKjgDPzla4P983itJpZrkFOXhx1T+LyFW/OR1
+4p5DCdjJuXahmAUCnwUfzHS7e6IGtzsMob0RJGu24FlyYlwzpwlhOFL/rLrq0suV
+jHmMDK6N3DcRr4Csj7YJI4St2cpUjBkOJ9uFWKfsvpUjayp9/rU0sGGB3EiIR4fb
+GGDTeMDRQiJuL7of6eeM8tjPmjUsuKi4MMiA0zZfsvDrDXz8gOwar4/CpSYacSeT
+Ql+i6v0y4TAjdbRCrAUGY3qR1IpNVxSRhg8qRRZCSg8t/n0UOLDeVqH6xiuKTSHK
+HweM510TAgMBAAECggEADKCinKQKMj0/gRGJdlP6gPYS3xbwvb1E7/kIRRQlPERn
+N+ricnTJxwuskPBPfGPtkbOiQEZBGViCC690ipEUoz0girkamI1PCWL8QeKpd7i1
+GvPvSFR4ZwcVmYZAlae2YyJRwudrBWEItAJmuKBmTyo2ezj+UJGXEtp1usU/fFtU
+PFsFTqPlFLKtAfGiKyK4/f53GqBCKcFXLN5uSiTbbf5xPQiycwitBZ1/aIe3ui+Q
+XgBiPEEfo/4zPBr6J0h+rT68DFcSH/leHmaOQLfGInvaBQKYDPlgzbpd0WwjusAd
+xZhuqRFicQnCnZvHqAaUYWvkpDpQXwEHM44nLtUvWQKBgQD5TK1NX9L7sizqQjMQ
+mVjlNOaTOLOxirmjNVfnF44iwbi13iZIXJgc18DqrNuFkN6mM31n/HZ/RguVU8RS
+r4izbKoop5/te4XU6/8uPDC5o9HppDQIGQ0YRTeSquCt9ayFsJE78BItoeYBX7jS
+OlvOp2rCF7/qGsaLGoHm19uxFQKBgQC5gezpJJ3ivMo8z79xh9UGx8Saa9d1oKYJ
+2pVTMtPI/LYeE4h+zHoxLlIBeD0ignbl/IcavUlxBDQdQ6xJhlNBzaC9uFMKSpBz
+sXONFwl1Vg9NmhoanIxUBTo8vo0x9hpoHK8RnuXC/l/wHHx5Sy4rs1uGd56rw2JA
+0S39uanPhwKBgQDtJGAyGvXykPGiwOgcYRKrrZ+r6aMdPs4Jj2OXotOFAmv3LGOU
+L+hOf3m2gkmrizwQMyiWsxPxS6sXGADHesx5iONwGsvJttd+zCMIUx8yZ7/1FUqd
+bV8EeEs9zCg/slOzNFti/aH9IGVPZ0PDTtooAR9PlBHt2hyFE+j/stP7ZQKBgQCw
+ZhLQ9AfKprkssGQcYgy4wNd7+9ZLPTMGJbte/PMUqPHIkcx2vpvnDmPej+aaXTMQ
+qVwTmjEu7c9ckJBQ7hFXfmA+Z/tWyuanjPMTE/fjgq1Unpf5/CkYcEwbnRsIijw8
+CiKTf+R90oOKAJyAfnPuDESZDkBsloNknUS9g4ItGwKBgQCU/0IxUY0otQBvQ6VW
+o9Ebz1y4NVZJXyDte8SEpw4Ftd3invM3SbnpO/C+LC4tJV+PHH8EEX1pxDFv0Ukv
+TYlofGTiQ3pg+Fn/YZY7kvsZeNWrXpsPtKQD1rooPWuApyimkX+G8/2P6d9hCAdY
+y/xLb7CbIroYVJeLpVZRb5cajw==
+-----END PRIVATE KEY-----"##;
+
     const OTHER_CERT: &str = r##"-----BEGIN CERTIFICATE-----
 MIIDSTCCAjGgAwIBAgIUag6z61lhNaiiCPtmQOLi4yzH1/cwDQYJKoZIhvcNAQEL
 BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTI2MDkxMTAwMTk1M1oXDTM2MDkw
@@ -550,7 +675,7 @@ ab1VTmVlluUDakDfjhwCcnE=
     }
 
     /// One-shot plain HTTP fixture; returns the port and the captured request.
-    fn serve_plain(response: Vec<u8>, capture: bool) -> (u16, Arc<Mutex<String>>) {
+    pub(crate) fn serve_plain(response: Vec<u8>, capture: bool) -> (u16, Arc<Mutex<String>>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let seen = Arc::new(Mutex::new(String::new()));
@@ -582,7 +707,7 @@ ab1VTmVlluUDakDfjhwCcnE=
     }
 
     /// One-shot TLS fixture speaking HTTP/1.1 through rustls.
-    fn serve_tls(cert: &str, key: &str, response: Vec<u8>) -> u16 {
+    pub(crate) fn serve_tls(cert: &str, key: &str, response: Vec<u8>) -> u16 {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let (certs, private_key) = tls_pair(cert, key);
