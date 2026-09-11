@@ -31,6 +31,24 @@ async function versionFixture(overrides = {}) {
   return root;
 }
 
+/// Concatenated frontend source: every screen module FIRST, then App.tsx.
+/// The S-27.I2 extraction moves JSX into src/screens/*.tsx; guards that read
+/// App.tsx alone silently stop matching. Splits find real component bodies
+/// before any test-text mention because the screens come first.
+async function frontendSources() {
+  const screens = ["AboutScreen.tsx", "RuntimeScreen.tsx"];
+  const parts = [];
+  for (const name of screens) {
+    try {
+      parts.push(await readFile(join(process.cwd(), "src", "screens", name), "utf8"));
+    } catch {
+      // A screen module that does not exist yet contributes nothing.
+    }
+  }
+  parts.push(await readFile(join(process.cwd(), "src", "App.tsx"), "utf8"));
+  return parts.join("\n");
+}
+
 test("version gate checks every release version field", async () => {
   const root = await versionFixture();
   const result = await verifyVersions(root, "0.4.1");
@@ -291,7 +309,7 @@ test("catalog refresh honors cooldown, lock, and last-success display", async ()
   // owns the cooldown/guard machinery it delegates to.
   const lib = await readFile(join(process.cwd(), "src-tauri", "src", "catalog_service.rs"), "utf8");
   const model = await readFile(join(process.cwd(), "src", "model.ts"), "utf8");
-  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const app = await frontendSources();
   // Seen live: fetch_catalog had no cooldown, so every Refresh click hit the
   // network, and two clicks started two fetches. The backend now owns a 1560
   // min cooldown, an in-flight guard, and a last-success stamp; the UI shows
@@ -310,7 +328,7 @@ test("catalog refresh honors cooldown, lock, and last-success display", async ()
 });
 
 test("model catalog exposes rich filters with hardware auto-fit defaults", async () => {
-  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const app = await frontendSources();
   const model = await readFile(join(process.cwd(), "src", "model.ts"), "utf8");
   const backend = await readFile(join(process.cwd(), "src-tauri", "src", "lib.rs"), "utf8");
   // Rich adjustable filters come from the signed v2 artifact via backend
@@ -337,7 +355,7 @@ test("model catalog exposes rich filters with hardware auto-fit defaults", async
 });
 
 test("runtime catalog exposes an accessible refresh action in every terminal state", async () => {
-  const source = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const source = await frontendSources();
   assert.match(source, /aria-label="Refresh approved runtime catalog"/);
   assert.match(source, /className="runtime-role runtime-scope"/);
   assert.match(source, /entry\.blockingJobs\.map/);
@@ -347,7 +365,7 @@ test("runtime catalog exposes an accessible refresh action in every terminal sta
 });
 
 test("production frontend never fabricates model or runtime inspection results", async () => {
-  const source = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const source = await frontendSources();
   assert.doesNotMatch(source, /previewModels/);
   assert.doesNotMatch(source, /Example-8B-Instruct-Q4_K_M/);
   assert.doesNotMatch(source, /build: "10679"/);
@@ -358,20 +376,20 @@ test("production frontend never fabricates model or runtime inspection results",
 });
 
 test("frontend renders backend-owned managed runtime trust", async () => {
-  const source = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const source = await frontendSources();
   assert.doesNotMatch(source, /runtimePath\.startsWith\(runtimeRoot\)/);
   assert.match(source, /runtimeIdentity\?\.managedVerified/);
 });
 
 test("runtime inspection commits one latest atomic result", async () => {
-  const source = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const source = await frontendSources();
   assert.match(source, /const runtimeInspectSeq = useRef\(0\)/);
   assert.match(source, /Promise\.all\(\[/);
   assert.match(source, /keepLatestRequest\(sequence, runtimeInspectSeq\.current\)/);
 });
 
 test("runtime setup refresh preserves the selected adapter recommendation", async () => {
-  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const app = await frontendSources();
   // The runtime command family moved to runtime_service.rs (S-27 I1/I2).
   const backend = await readFile(join(process.cwd(), "src-tauri", "src", "runtime_service.rs"), "utf8");
   assert.match(app, /load_runtime_setup",\s*\{\s*adapterId: selectedRuntimeAdapterId \|\| null/);
@@ -386,7 +404,7 @@ test("runtime catalog text actions meet the 44 pixel target minimum", async () =
 });
 
 test("a rejected catalog invocation removes the spinner", async () => {
-  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const app = await frontendSources();
   const errorAt = app.indexOf('runtime-catalog-message error');
   assert.ok(errorAt > 0, "the catalog error block is missing");
   const errorBlock = app.slice(errorAt, errorAt + 2000);
@@ -400,7 +418,7 @@ test("a rejected catalog invocation removes the spinner", async () => {
 });
 
 test("error state never renders a spinner", async () => {
-  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const app = await frontendSources();
   const errorAt = app.indexOf('runtime-catalog-message error');
   assert.ok(errorAt > 0, "the catalog error block is missing");
   const errorBlock = app.slice(errorAt, errorAt + 2000);
@@ -409,24 +427,24 @@ test("error state never renders a spinner", async () => {
 });
 
 test("loading state has an accessible status label", async () => {
-  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const app = await frontendSources();
   assert.match(app, /className="runtime-loading" role="status" aria-label="Loading approved runtime catalog"/);
 });
 
 test("blocked CUDA shows job server-cuda and its evidence URL", async () => {
-  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const app = await frontendSources();
   assert.match(app, /entry\.blockingJobs\.map/);
   assert.match(app, /View \{jobName\} evidence/);
 });
 
 test("L2 rows render DIRECT RUNTIME · L2", async () => {
-  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const app = await frontendSources();
   assert.match(app, /DIRECT RUNTIME · L2/);
   assert.match(app, /L2 EVIDENCE CEILING/);
 });
 
 test("no row renders SUPPORTED without the required evidence", async () => {
-  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const app = await frontendSources();
   const model = await readFile(join(process.cwd(), "src", "model.ts"), "utf8");
   assert.doesNotMatch(app, /SUPPORTED/);
   assert.doesNotMatch(model, /SUPPORTED/);
@@ -440,7 +458,7 @@ test("public 0.4.1 documentation states the L2 evidence ceiling", async () => {
 });
 
 test("public links resolve without a gitignored local path", async () => {
-  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const app = await frontendSources();
   assert.doesNotMatch(app, /research\//);
   assert.doesNotMatch(app, /LOCALAPPDATA/);
   assert.doesNotMatch(app, /AppData/);
@@ -542,7 +560,7 @@ test("the packaged NSIS installer and uninstaller use the LM icon", async () => 
 });
 
 test("frontend renders backend catalog facts without owning support classification", async () => {
-  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const app = await frontendSources();
   const model = await readFile(join(process.cwd(), "src", "model.ts"), "utf8");
   assert.doesNotMatch(app, /supportStatusForOption/);
   assert.doesNotMatch(model, /supportStatusForOption/);
@@ -551,21 +569,21 @@ test("frontend renders backend catalog facts without owning support classificati
 });
 
 test("hardware panel does not present heuristic hardware advice as the catalog recommendation", async () => {
-  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const app = await frontendSources();
   assert.doesNotMatch(app, /hardware\?\.recommendation/);
   assert.match(app, /runtimeCatalog\?\.recommendationReason/);
 });
 
 test("runtime setup ignores stale responses and owns a separate loading state", async () => {
-  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const app = await frontendSources();
   assert.match(app, /\[runtimeCatalogLoading, setRuntimeCatalogLoading\]/);
   assert.match(app, /async function loadRuntimeSetup\(\)[\s\S]*?const sequence = \+\+runtimeCatalogSeq\.current/);
   assert.match(app, /if \(!keepLatestRequest\(sequence, runtimeCatalogSeq\.current\)\) return;/);
-  assert.match(app, /disabled=\{runtimeCatalogLoading\}/);
+  assert.match(app, /disabled=\{(?:props\.)?runtimeCatalogLoading\}/);
 });
 
 test("runtime setup invalidates pending responses during unmount", async () => {
-  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const app = await frontendSources();
   assert.match(
     app,
     /loadRuntimeSetup\(\);[\s\S]*?return \(\) => \{\s*runtimeCatalogSeq\.current \+= 1;/,
@@ -573,15 +591,15 @@ test("runtime setup invalidates pending responses during unmount", async () => {
 });
 
 test("runtime install cancellation is available before progress and ignores stale events", async () => {
-  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const app = await frontendSources();
   assert.match(app, /const installingRef = useRef\(""\)/);
   assert.match(app, /event\.payload\.installKey === installingRef\.current/);
-  assert.match(app, /\{installing && \(/);
+  assert.match(app, /\{(?:props\.)?installing && \(/);
   assert.doesNotMatch(app, /\{installing && runtimeInstallProgress && \(/);
 });
 
 test("managed health progress is correlated to the active install key", async () => {
-  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const app = await frontendSources();
   const model = await readFile(join(process.cwd(), "src", "model.ts"), "utf8");
   const backend = await readFile(join(process.cwd(), "src-tauri", "src", "runtime_service.rs"), "utf8");
   assert.match(model, /export type HealthModelProgress = \{\s*installKey: string;/);
@@ -590,7 +608,7 @@ test("managed health progress is correlated to the active install key", async ()
 });
 
 test("runtime and health cancellation expose a pending UI state", async () => {
-  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const app = await frontendSources();
   assert.match(app, /\[runtimeInstallCancelling, setRuntimeInstallCancelling\]/);
   assert.match(app, /\[healthCancelling, setHealthCancelling\]/);
   assert.match(app, /runtimeInstallCancelling \? "Stopping…"/);
@@ -910,7 +928,7 @@ test("release package job runs the catalog/SQLite packaged matrix (GH-05)", asyn
 });
 
 test("rich catalog facets keep the backend camelCase contract (GH-05)", async () => {
-  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const app = await frontendSources();
   const model = await readFile(join(process.cwd(), "src", "model.ts"), "utf8");
   const catalog = await readFile(join(process.cwd(), "src-tauri", "src", "catalog.rs"), "utf8");
   // The Rust struct serializes with rename_all = "camelCase"; a snake_case
@@ -1183,7 +1201,7 @@ test("local catalog SQLite mirror stores verified models with migrations and con
 });
 
 test("catalog browse uses one merged collection and never the snapshot alone", async () => {
-  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const app = await frontendSources();
   // Audit DC-04: rows and facets are filtered from the merged local
   // collection, so user rows survive filtering and facets stay truthful.
   assert.match(app, /models: catalogAllRows/);
@@ -1202,7 +1220,7 @@ test("override saves reject mixed-origin collisions inside an immediate transact
 });
 
 test("FE-01 selection and runtime commit as coordinated transitions", async () => {
-  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const app = await frontendSources();
   // No silent fallback to another model, rescan preserves the committed
   // selection (or loads the replacement), failures clear together, and one
   // committed-runtime transition keeps profile.runtime in sync only after a
@@ -1219,7 +1237,7 @@ test("FE-01 selection and runtime commit as coordinated transitions", async () =
 });
 
 test("FE-02 tuning adoption binds to the originating run", async () => {
-  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const app = await frontendSources();
   // The dispatch record captures provider/advisor/context; the report keeps
   // its origin; adoption writes the origin's profile key and only updates
   // the editable profile when the origin is the selected model (audit
@@ -1342,7 +1360,7 @@ test("GH-02 release jobs share one resolved immutable revision", async () => {
 
 test("FE-04 previews compose provisionally and launch trust stays authoritative", async () => {
   const lib = await readFile(join(process.cwd(), "src-tauri", "src", "lib.rs"), "utf8");
-  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const app = await frontendSources();
   // The preview command is cheap composition only: no probing or trust work
   // on the profile-edit path (audit FE-04).
   const preview = lib.split("fn preview_command(")[1].split("#[tauri::command]")[0];
@@ -1374,7 +1392,7 @@ test("FE-04 previews compose provisionally and launch trust stays authoritative"
 });
 
 test("FE-16 status polling is single-flight with sequence guards", async () => {
-  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const app = await frontendSources();
   // Slow native polls cannot pile up, and a poll that started before a
   // start/stop transition can never overwrite the newer snapshot; the
   // running strategy renders from that snapshot, not the editable draft
@@ -1388,7 +1406,7 @@ test("FE-16 status polling is single-flight with sequence guards", async () => {
 });
 
 test("FE-05 evidence history and active runs survive navigation", async () => {
-  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const app = await frontendSources();
   const panel = await readFile(join(process.cwd(), "src", "V03EvidencePanel.tsx"), "utf8");
   // The evidence panel is always mounted (hidden by style), never gated on
   // the benchmark view, so navigation cannot erase its state (audit FE-05).
@@ -1407,7 +1425,7 @@ test("FE-05 evidence history and active runs survive navigation", async () => {
 });
 
 test("FE-03 stale responses are guarded before they can commit", async () => {
-  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const app = await frontendSources();
   // Audit FE-03: every deferred commit checks its request sequence and the
   // current resource identity, provider switches clear the previous
   // provider's presentation first, GGUF metadata clears with its selection,
@@ -1426,7 +1444,7 @@ test("FE-03 stale responses are guarded before they can commit", async () => {
 test("user catalog overrides stay local, marked, and outside network verification", async () => {
   const mirror = await readFile(join(process.cwd(), "src-tauri", "src", "catalog_db.rs"), "utf8");
   const lib = await readFile(join(process.cwd(), "src-tauri", "src", "lib.rs"), "utf8");
-  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  const app = await frontendSources();
   assert.match(mirror, /user_sourced/);
   assert.match(mirror, /validate_user_override/);
   assert.match(lib, /save_user_catalog_override/);

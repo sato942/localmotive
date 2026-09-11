@@ -3,9 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Activity, ArrowUp, BadgeCheck, Box, Braces, CircleStop, Cpu, Database, Download, ExternalLink, FolderOpen, Gauge, HardDrive, Info, KeyRound, LogIn, MonitorCog, Play, RefreshCw, Save, Settings2, ShieldCheck, Sparkles, Square, SquareTerminal, TestTube2, TriangleAlert, Trophy, Unplug, Wrench } from "lucide-react";
+import { Activity, BadgeCheck, Box, Braces, CircleStop, Cpu, Database, Download, ExternalLink, FolderOpen, Gauge, HardDrive, Info, KeyRound, LogIn, MonitorCog, Play, RefreshCw, Save, Settings2, Sparkles, Square, SquareTerminal, TestTube2, TriangleAlert, Trophy, Unplug } from "lucide-react";
 import "./App.css";
 import {
+  managedHealthOutcome,
   bytesLabel,
   errorText,
   catalogBuildFit,
@@ -13,7 +14,6 @@ import {
   type CommandPreview,
   type ScanReport,
   reconcileDraftCompanion,
-  conflictingCapacityMetrics,
   contextChoices,
   DEFAULT_FIT_PER_MILLE,
   describeChanges,
@@ -35,7 +35,6 @@ import {
   applySuggestedPort,
   responseIsCurrent,
   managedHealthRequest,
-  managedHealthOutcome,
   normalizeProfile,
   normalizeTuningReport,
   safeJsonParse,
@@ -45,7 +44,6 @@ import {
   runtimeCatalogErrorFromUnknown,
   runtimeCatalogViewState,
   runtimeInstallRequest,
-  runtimeOptionState,
   suggestedProfile,
   type BenchmarkSummary,
   type CloudModel,
@@ -84,6 +82,7 @@ import {
   type BriefDisclosure,
 } from "./model";
 import { AboutScreen } from "./screens/AboutScreen";
+import { RuntimeScreen } from "./screens/RuntimeScreen";
 import { V03EvidencePanel } from "./V03EvidencePanel";
 
 type View = "dashboard" | "models" | "catalog" | "runtime" | "profile" | "tune" | "benchmark" | "about";
@@ -363,7 +362,6 @@ function App() {
   const invalidCount = models.filter((model) => !model.complete).length;
   const provider = providers.find((entry) => entry.id === providerId) ?? null;
   const isManagedPath = runtimeIdentity?.managedVerified === true;
-  const healthOutcome = healthResult ? managedHealthOutcome(healthResult) : null;
 
   async function scan() {
     if (!modelRoot.trim()) {
@@ -1858,345 +1856,45 @@ function App() {
         )}
 
         {view === "runtime" && (
-          <section className="screen runtime-screen">
-            <div className="section-heading">
-              <div>
-                <h1>Runtime manager</h1>
-                <p>Detect this Windows PC, choose the right backend, and keep llama.cpp updateable.</p>
-              </div>
-              <button className="button secondary" onClick={loadRuntimeSetup} disabled={runtimeCatalogLoading}>
-                <RefreshCw size={16} className={runtimeCatalogLoading ? "spin" : ""} /> Check latest release
-              </button>
-            </div>
-
-            <div className="setup-steps" aria-label="First-run setup">
-              <div className={runtimePath ? "setup-step done" : "setup-step active"}><span>1</span><strong>Runtime</strong><small>{runtimePath ? "Path selected" : "Install or choose"}</small></div>
-              <div className={modelRoot ? "setup-step done" : "setup-step"}><span>2</span><strong>Models</strong><small>{modelRoot ? "Folder selected" : "Choose in Inventory"}</small></div>
-              <div className={runtimePath && modelRoot ? "setup-step done" : "setup-step"}><span>3</span><strong>Serve</strong><small>{runtimePath && modelRoot ? "Ready to validate" : "Complete setup"}</small></div>
-            </div>
-
-            <div className="hardware-panel">
-              <div className="hardware-icon"><MonitorCog size={26} /></div>
-              <div>
-                <span className="instrument-label">DETECTED WINDOWS HARDWARE</span>
-                <strong>{hardware?.gpuNames.length ? hardware.gpuNames.join(" · ") : "CPU / GPU detection pending"}</strong>
-                <p>{runtimeCatalog?.recommendationReason ?? "Waiting for the approved catalog to evaluate exact product evidence…"}</p>
-                <small className="hardware-source">{hardware?.detectionStatus}</small>
-              </div>
-              <div className="hardware-meta"><span>{hardware?.architecture ?? "—"}</span><span>{hardware?.vendor.toUpperCase() ?? "—"}</span>{hardware?.cudaMajor && <span>CUDA {hardware.cudaMajor}</span>}{hardware?.driverVersion && <span>Driver {hardware.driverVersion}</span>}</div>
-            </div>
-
-            {hardware && (
-              <div className="hardware-evidence-grid" aria-label="Hardware evidence">
-                <article className="hardware-evidence-card">
-                  <span className="instrument-label">SYSTEM MEMORY</span>
-                  <strong>{hardware.systemMemory.totalPhysicalBytes.value === null ? "UNKNOWN" : bytesLabel(hardware.systemMemory.totalPhysicalBytes.value)}</strong>
-                  <dl>
-                    <div><dt>Available</dt><dd>{hardware.systemMemory.availablePhysicalBytes.value === null ? "Unknown" : bytesLabel(hardware.systemMemory.availablePhysicalBytes.value)}<small>{hardware.systemMemory.availablePhysicalBytes.source.detail} · {hardware.systemMemory.availablePhysicalBytes.observedAtMs ? new Date(hardware.systemMemory.availablePhysicalBytes.observedAtMs).toISOString() : "not observed"}</small></dd></div>
-                    <div><dt>Load</dt><dd>{hardware.systemMemory.memoryLoadPercent.value === null ? "Unknown" : `${hardware.systemMemory.memoryLoadPercent.value}%`}<small>{hardware.systemMemory.memoryLoadPercent.source.detail} · {hardware.systemMemory.memoryLoadPercent.observedAtMs ? new Date(hardware.systemMemory.memoryLoadPercent.observedAtMs).toISOString() : "not observed"}</small></dd></div>
-                  </dl>
-                  <small>{hardware.systemMemory.totalPhysicalBytes.source.detail} · {hardware.systemMemory.totalPhysicalBytes.observedAtMs ? new Date(hardware.systemMemory.totalPhysicalBytes.observedAtMs).toISOString() : "not observed"}</small>
-                </article>
-                {hardware.adapters.map((adapter) => {
-                  const conflicts = conflictingCapacityMetrics(adapter);
-                  return (
-                    <article className="hardware-evidence-card" key={adapter.adapterId}>
-                      <span className="instrument-label">GPU ADAPTER · {adapter.adapterId}</span>
-                      <strong>{adapter.name}</strong>
-                      <dl>
-                        <div><dt>Compatibility ID</dt><dd><code>{adapter.compatibilityId}</code></dd></div>
-                        <div><dt>Driver</dt><dd>{adapter.driver.value ?? "Unknown"} ({adapter.driver.level})</dd></div>
-                        <div><dt>Dedicated</dt><dd>{adapter.dedicatedBytes.value === null ? "Unknown" : bytesLabel(adapter.dedicatedBytes.value)}<small>{adapter.dedicatedBytes.source.detail} · {adapter.dedicatedBytes.observedAtMs ? new Date(adapter.dedicatedBytes.observedAtMs).toISOString() : "not observed"}</small></dd></div>
-                        <div><dt>Shared</dt><dd>{adapter.sharedBytes.value === null ? "Unknown" : bytesLabel(adapter.sharedBytes.value)}<small>{adapter.sharedBytes.source.detail} · {adapter.sharedBytes.observedAtMs ? new Date(adapter.sharedBytes.observedAtMs).toISOString() : "not observed"}</small></dd></div>
-                        <div><dt>Budget</dt><dd>{adapter.budgetBytes.value === null ? "Unknown" : bytesLabel(adapter.budgetBytes.value)}<small>{adapter.budgetBytes.source.detail} · {adapter.budgetBytes.observedAtMs ? new Date(adapter.budgetBytes.observedAtMs).toISOString() : "not observed"}</small></dd></div>
-                        <div><dt>Current use</dt><dd>{adapter.currentUsageBytes.value === null ? "Unknown" : bytesLabel(adapter.currentUsageBytes.value)}<small>{adapter.currentUsageBytes.source.detail} · {adapter.currentUsageBytes.observedAtMs ? new Date(adapter.currentUsageBytes.observedAtMs).toISOString() : "not observed"}</small></dd></div>
-                        <div><dt>Available budget</dt><dd>{adapter.availableBudgetBytes.value === null ? "Unknown" : bytesLabel(adapter.availableBudgetBytes.value)}<small>{adapter.availableBudgetBytes.source.detail} · {adapter.availableBudgetBytes.observedAtMs ? new Date(adapter.availableBudgetBytes.observedAtMs).toISOString() : "not observed"}</small></dd></div>
-                        <div><dt>Backend</dt><dd>{adapter.backend.value?.toUpperCase() ?? "Unknown"} ({adapter.backend.level})</dd></div>
-                      </dl>
-                      <small>{adapter.budgetBytes.source.detail} · {adapter.budgetBytes.observedAtMs ? new Date(adapter.budgetBytes.observedAtMs).toISOString() : "not observed"}</small>
-                      {conflicts.length > 0 && <p className="hardware-conflict">Conflicting probes: {conflicts.join(", ")}</p>}
-                    </article>
-                  );
-                })}
-                {hardware.manualOverrides.map((override) => (
-                  <article className="hardware-evidence-card hardware-override" key={`override-${override.adapterId}`}>
-                    <span className="instrument-label">MANUAL OVERRIDE · {override.adapterId}</span>
-                    <strong>User supplied</strong>
-                    <p>{override.note || "No note supplied."}</p>
-                  </article>
-                ))}
-              </div>
-            )}
-
-            {hardware && hardware.adapters.length > 0 && (
-              <label className="runtime-adapter-picker">
-                GPU adapter for managed runtime installation
-                <select
-                  value={selectedRuntimeAdapterId}
-                  onChange={(event) => void selectRuntimeAdapter(event.target.value)}
-                  disabled={runtimeCatalogLoading}
-                >
-                  {hardware.adapters.length > 1 && <option value="">Select one detected adapter</option>}
-                  {hardware.adapters.map((adapter) => (
-                    <option value={adapter.adapterId} key={adapter.adapterId}>
-                      {adapter.name} · {adapter.adapterId}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-
-            {installing && (
-              <div className="download-progress downloading" role="status" aria-live="polite">
-                {runtimeInstallProgress ? (
-                  <>
-                    <div><b style={{ width: `${downloadPercent(runtimeInstallProgress.downloaded, runtimeInstallProgress.total)}%` }} /></div>
-                    <span>
-                      {runtimeInstallProgress.assetName} · {bytesLabel(runtimeInstallProgress.downloaded)} / {bytesLabel(runtimeInstallProgress.total)}
-                    </span>
-                  </>
-                ) : (
-                  <span>Validating hardware and preparing the approved runtime download…</span>
-                )}
-                <button className="button danger" onClick={cancelRuntimeInstall} disabled={runtimeInstallCancelling}>
-                  <CircleStop size={15} /> {runtimeInstallCancelling ? "Stopping…" : "Keep partial download and stop"}
-                </button>
-              </div>
-            )}
-
-            <div className="runtime-layout">
-              <div className="runtime-main">
-                <div className="runtime-section-title">
-                  <div>
-                    <span className="instrument-label">DIRECT RUNTIME · L2 EVIDENCE CEILING</span>
-                    <h2>Official Windows builds</h2>
-                    <p>
-                      {runtimeCatalogState.kind === "ready" || runtimeCatalogState.kind === "empty"
-                        ? `Approved binary release ${runtimeCatalogState.catalog.tag}${runtimeCatalogState.catalog.publishedAt ? ` · ${runtimeCatalogState.catalog.publishedAt.slice(0, 10)}` : ""}`
-                        : runtimeCatalogState.kind === "loading"
-                          ? "Loading the approved release from ggml-org/llama.cpp"
-                          : runtimeCatalogState.kind === "error"
-                            ? `Could not load the approved release: ${runtimeCatalogState.error.message}`
-                            : "Runtime catalog not loaded"}
-                    </p>
-                  </div>
-                  <div className="runtime-section-actions">
-                    <button
-                      className="text-button runtime-source"
-                      aria-label="Refresh approved runtime catalog"
-                      disabled={runtimeCatalogState.kind === "loading"}
-                      onClick={loadRuntimeSetup}
-                    >
-                      <RefreshCw size={14} /> Refresh catalog
-                    </button>
-                    <button className="text-button runtime-source" onClick={() => openExternal("https://github.com/ggml-org/llama.cpp/releases")}><Download size={14} /> GitHub releases</button>
-                  </div>
-                </div>
-                <div className="runtime-options">
-                  {(runtimeCatalogState.kind === "ready" || runtimeCatalogState.kind === "empty") && (
-                    <p className="runtime-recommendation-reason" role="status">
-                      {runtimeCatalogState.catalog.recommendationReason}
-                    </p>
-                  )}
-                  {runtimeCatalogState.kind === "loading" && (
-                    <div className="runtime-loading" role="status" aria-label="Loading approved runtime catalog">
-                      <RefreshCw size={22} className="spin" aria-hidden="true" />
-                      <span>Reading official release assets…</span>
-                    </div>
-                  )}
-                  {runtimeCatalogState.kind === "error" && (
-                    <div className="runtime-catalog-message error" role="alert">
-                      <strong>Runtime catalog unavailable</strong>
-                      <span>{runtimeCatalogState.error.message}</span>
-                      {runtimeCatalogState.error.retryAfterSeconds !== null && (
-                        <span>Retry after {runtimeCatalogState.error.retryAfterSeconds} seconds.</span>
-                      )}
-                      <button className="button secondary" onClick={loadRuntimeSetup}>Retry</button>
-                    </div>
-                  )}
-                  {runtimeCatalogState.kind === "idle" && (
-                    <div className="runtime-catalog-message">
-                      <span>The runtime catalog is not loaded.</span>
-                      <button className="button secondary" onClick={loadRuntimeSetup}>Load catalog</button>
-                    </div>
-                  )}
-                  {runtimeCatalogState.kind === "empty" && (
-                    <div className="runtime-catalog-message" role="status">
-                      <strong>No approved runtime matches this system.</strong>
-                      <span>Review the blocked backend evidence or retry catalog retrieval.</span>
-                      <button className="button secondary" onClick={loadRuntimeSetup}>Retry</button>
-                    </div>
-                  )}
-                  {runtimeCatalogState.kind === "ready" && runtimeCatalogState.catalog.options.map((option) => {
-                    const state = runtimeOptionState(option, runtimeCatalogState.catalog.tag, managedRuntimes, runtimeIdentity, runtime?.build ?? null);
-                    const downloading = installing === option.id;
-                    const adapterRequired = option.backend !== "cpu" && !selectedRuntimeAdapterId;
-                    const managedInstalled = managedRuntimes.some((record) => record.installKey === option.installKey);
-                    const supportLabel = `DIRECT RUNTIME · UPSTREAM EVIDENCE ONLY · ${hardware?.architecture ?? "unknown architecture"} · ${option.backend} · ${runtimeCatalogState.catalog.tag}`;
-                    return (
-                    <article className={`runtime-option${option.recommended ? " recommended" : ""}${state.kind === "active" ? " is-active" : ""}`} key={`${option.id}:${option.asset.name}`} aria-label={`${option.label} runtime option, ${option.recommended ? "recommended" : "not recommended"}, ${state.kind}`}>
-                      <div className="runtime-option-main">
-                        <div className="runtime-option-title"><strong>{option.label}</strong>{state.kind === "active" && <span className="state-tag good"><BadgeCheck size={10} /> ACTIVE · b{runtime?.build}</span>}{state.kind === "update" && <span className="state-tag warning"><ArrowUp size={10} /> UPDATE FROM {state.from.toUpperCase()}</span>}{state.kind === "mismatch" && <span className="state-tag warning">MISMATCH · REINSTALL</span>}<span className="state-tag warning" title="Product support requires an exact L4 compatibility record">PRODUCT SUPPORT NOT VALIDATED</span>{state.kind !== "active" && state.kind !== "update" && state.kind !== "mismatch" && option.recommended && <span className="state-tag good">RECOMMENDED</span>}</div>
-                        <span
-                          className="runtime-role runtime-scope"
-                          data-support-architecture={hardware?.architecture ?? "unknown"}
-                          data-support-backend={option.backend}
-                          data-runtime-revision={runtimeCatalogState.catalog.tag}
-                        >
-                          {supportLabel} · exact product configuration untested
-                        </span>
-                        <span className="runtime-role">{state.kind === "active" ? (isManagedPath ? "This is the runtime in use" : "Your existing executable matches this package") : state.kind === "update" ? `Newer official build available for the runtime in use` : state.kind === "mismatch" ? "Installed files disagree with the install record · reinstall before launch" : state.kind === "use" ? "Already downloaded · not the active runtime" : option.recommended ? "Recommended for this PC" : option.backend === "cpu" ? "CPU fallback" : option.backend === "vulkan" ? "Compatibility fallback" : option.backend === "cuda" ? "Alternative CUDA package" : "Optional backend"}</span>
-                        <p>{option.description}</p>
-                        <small>{option.compatibility}</small>
-                        <code>{option.asset.name}</code>
-                        <small className="runtime-provenance"><ShieldCheck size={12} /> Official ggml-org asset · {runtimeCatalogState.catalog.tag} · {option.asset.digest ? "digest available" : "size metadata available"}</small>
-                        <details className="asset-proof"><summary>Artifact verification</summary><code>{option.asset.digest ?? "No digest published for this asset"}</code><span>Localmotive verifies published size and SHA-256 before extraction. GitHub release metadata does not provide a Windows code-signing result.</span></details>
-                      </div>
-                      <div className="runtime-option-action">
-                        <span>{bytesLabel(option.asset.size + (option.companionAsset?.size ?? 0))}</span>
-                        {state.kind === "active" && (
-                          <button className="button secondary is-current" disabled aria-disabled="true"><BadgeCheck size={15} /> Up to date</button>
-                        )}
-                        {state.kind === "update" && (
-                          <button className="button primary" onClick={() => installRuntime(option)} disabled={Boolean(installing) || adapterRequired}>
-                            <ArrowUp size={15} /> {downloading ? "Downloading…" : `Update to ${runtimeCatalogState.catalog.tag}`}
-                          </button>
-                        )}
-                        {state.kind === "use" && (
-                          <button className="button secondary" onClick={() => activateRuntime(state.runtimePath)} disabled={Boolean(installing) || busy === "runtime"}>
-                            <Play size={15} /> Use this build
-                          </button>
-                        )}
-                        {state.kind === "install" && (
-                          <button className={option.recommended ? "button primary" : "button secondary"} onClick={() => installRuntime(option)} disabled={Boolean(installing) || adapterRequired}>
-                            <Download size={15} /> {downloading ? "Downloading…" : "Install"}
-                          </button>
-                        )}
-                        {state.kind === "mismatch" && (
-                          <button className="button primary" onClick={() => installRuntime(option)} disabled={Boolean(installing) || adapterRequired}>
-                            <Download size={15} /> {downloading ? "Downloading…" : "Reinstall"}
-                          </button>
-                        )}
-                        {managedInstalled && (
-                          <button
-                            className="button secondary"
-                            onClick={() => runManagedHealth(option)}
-                            disabled={Boolean(installing) || Boolean(healthRunning) || adapterRequired}
-                          >
-                            <ShieldCheck size={15} /> {healthRunning === option.installKey ? "Checking…" : "Run 7-stage health"}
-                          </button>
-                        )}
-                      </div>
-                    </article>
-                    );
-                  })}
-                  {(runtimeCatalogState.kind === "ready" || runtimeCatalogState.kind === "empty") && runtimeCatalogState.catalog.availability
-                    .filter((entry) => entry.status === "blocked")
-                    .map((entry) => (
-                      <article className="runtime-option blocked" key={`blocked:${entry.installKey}`} aria-label={`${entry.backend} runtime blocked`}>
-                        <div className="runtime-option-main">
-                          <div className="runtime-option-title">
-                            <strong>{entry.backend.toUpperCase()}</strong>
-                            <span className="state-tag warning">BLOCKED</span>
-                          </div>
-                          <p>{entry.reason}</p>
-                          {entry.blockingJobs.map((jobName, index) => (
-                            <span className="runtime-role" key={`${entry.installKey}:${jobName}`}>
-                              Blocking job: <code>{jobName}</code>
-                              {entry.evidenceUrls[index] && (
-                                <button className="text-button runtime-source" onClick={() => openExternal(entry.evidenceUrls[index])}>
-                                  <ShieldCheck size={12} /> View {jobName} evidence
-                                </button>
-                              )}
-                            </span>
-                          ))}
-                          {entry.evidenceUrls.slice(entry.blockingJobs.length).map((url) => (
-                            <button className="text-button runtime-source" key={url} onClick={() => openExternal(url)}>
-                              <ShieldCheck size={12} /> View blocking evidence
-                            </button>
-                          ))}
-                        </div>
-                      </article>
-                    ))}
-                </div>
-              </div>
-
-              <aside className="runtime-sidebar">
-                <div className="panel-title"><ShieldCheck size={17} /><h2>Managed runtime</h2></div>
-                <div className="managed-status">
-                  <span className={runtime ? "plate-light ok" : "plate-light"} />
-                  <div><strong>{runtime ? `llama.cpp b${runtime.build}` : "Not configured"}</strong>{runtime && <span className={isManagedPath ? "runtime-trust managed" : "runtime-trust supplied"}>{isManagedPath ? "MANAGED · VERIFIED DOWNLOAD" : "USER-SUPPLIED · VERSION INSPECTED"}</span>}{runtimeIdentity && runtimeIdentity.backend !== "unknown" && <span className="runtime-trust neutral">{runtimeIdentity.backend.toUpperCase()}{runtimeIdentity.cudaMajor ? ` ${runtimeIdentity.cudaMajor}` : ""} · {runtimeIdentity.source === "manifest" ? "FROM MANIFEST" : "FROM DLLS"}</span>}<small>{runtimePath || "Install a recommended build or choose an existing executable."}</small></div>
-                </div>
-                <label>Existing llama-server.exe<input value={runtimePath} onChange={(event) => {
-                  // The inspected identity belongs to the old path (FE-15):
-                  // clear stale capabilities until this path is inspected.
-                  if (event.target.value !== runtimePath) setRuntime(null);
-                  setRuntimePath(event.target.value);
-                }} placeholder="Path to llama-server.exe" /></label>
-                <div className="runtime-side-actions">
-                  <button className="button secondary" onClick={chooseExistingRuntime}><FolderOpen size={15} /> Browse</button>
-                  <button className="button secondary" onClick={() => inspect()} disabled={!runtimePath}><Cpu size={15} /> Inspect</button>
-                </div>
-                {managedRuntimes.length > 0 && (
-                  <dl className="runtime-facts managed-list">
-                    <div><dt>Installed managed builds</dt><dd>{managedRuntimes.map((record) => <button key={record.runtimePath} className={`managed-entry${record.runtimePath === runtimePath ? " current" : ""}`} onClick={() => activateRuntime(record.runtimePath)} disabled={record.runtimePath === runtimePath}>{record.tag} · {record.installKey}{record.runtimePath === runtimePath ? " · active" : ""}</button>)}</dd></div>
-                  </dl>
-                )}
-                <div className="managed-health" aria-live="polite">
-                  <span className="instrument-label">SEVEN-STAGE HEALTH CONTRACT</span>
-                  <p>Localmotive retrieves and verifies the immutable pinned SmolLM2 health model before each run.</p>
-                  {healthRunning && (
-                    <>
-                      {healthModelProgress && (
-                        <div className="download-progress downloading" role="status">
-                          <div><b style={{ width: `${downloadPercent(healthModelProgress.downloaded, healthModelProgress.total)}%` }} /></div>
-                          <span>Pinned health model · {bytesLabel(healthModelProgress.downloaded)} / {bytesLabel(healthModelProgress.total)}</span>
-                        </div>
-                      )}
-                      <button className="button danger" onClick={cancelManagedHealth} disabled={healthCancelling}>
-                        <CircleStop size={15} /> {healthCancelling ? "Stopping…" : "Cancel and clean up"}
-                      </button>
-                    </>
-                  )}
-                  {healthResult && (
-                    <div className={`health-result ${healthOutcome}`}>
-                      <strong>{healthOutcome?.toUpperCase()}</strong>
-                      <small>Runtime {healthResult.runtimeId} · model SHA-256 {healthResult.modelSha256}</small>
-                      <ol>
-                        {healthResult.stages.map((stage) => (
-                          <li key={stage.stage} className={stage.status.toLowerCase()}>
-                            <span>{stage.stage.replace(/_/g, " ")}</span>
-                            <b>{stage.status}</b>
-                            <small>{stage.detail}{stage.failureReason ? ` · ${stage.failureReason}` : ""}</small>
-                          </li>
-                        ))}
-                      </ol>
-                    </div>
-                  )}
-                  <div className="health-repair">
-                    <button className="button secondary" onClick={repairHealthModel} disabled={healthRepairing || Boolean(healthRunning)}>
-                      <Wrench size={15} /> {healthRepairing ? "Repairing…" : "Repair cached model"}
-                    </button>
-                    {healthRepairing && (
-                      <button className="button danger" onClick={cancelHealthRepair}>
-                        <CircleStop size={15} /> Cancel repair
-                      </button>
-                    )}
-                    {healthRepairNotice && <small role="status">{healthRepairNotice}</small>}
-                  </div>
-                </div>
-                <dl className="runtime-facts">
-                  <div><dt>Managed folder</dt><dd>{runtimeRoot || "Resolving…"}</dd></div>
-                  <div><dt>Verification</dt><dd>Size always; SHA-256 before activation when published</dd></div>
-                  <div><dt>CUDA packages</dt><dd>Binary + matching cudart DLLs</dd></div>
-                  <div><dt>Existing files</dt><dd>User-supplied; version/help inspected, not download-verified</dd></div>
-                  <div><dt>Updates</dt><dd>Versioned; existing installs preserved</dd></div>
-                </dl>
-              </aside>
-            </div>
-          </section>
+          <RuntimeScreen
+            activateRuntime={activateRuntime}
+            busy={busy}
+            cancelHealthRepair={cancelHealthRepair}
+            cancelManagedHealth={cancelManagedHealth}
+            cancelRuntimeInstall={cancelRuntimeInstall}
+            chooseExistingRuntime={chooseExistingRuntime}
+            hardware={hardware}
+            healthCancelling={healthCancelling}
+            healthModelProgress={healthModelProgress}
+            healthRepairNotice={healthRepairNotice}
+            healthRepairing={healthRepairing}
+            healthResult={healthResult}
+            healthRunning={healthRunning}
+            inspect={inspect}
+            installRuntime={installRuntime}
+            installing={installing}
+            isManagedPath={isManagedPath}
+            loadRuntimeSetup={loadRuntimeSetup}
+            managedRuntimes={managedRuntimes}
+            modelRoot={modelRoot}
+            openExternal={openExternal}
+            repairHealthModel={repairHealthModel}
+            runManagedHealth={runManagedHealth}
+            runtime={runtime}
+            runtimeCatalog={runtimeCatalog}
+            runtimeCatalogLoading={runtimeCatalogLoading}
+            runtimeCatalogState={runtimeCatalogState}
+            runtimeIdentity={runtimeIdentity}
+            runtimeInstallCancelling={runtimeInstallCancelling}
+            runtimeInstallProgress={runtimeInstallProgress}
+            runtimePath={runtimePath}
+            runtimeRoot={runtimeRoot}
+            selectRuntimeAdapter={selectRuntimeAdapter}
+            selectedRuntimeAdapterId={selectedRuntimeAdapterId}
+            setRuntime={setRuntime}
+            setRuntimePath={setRuntimePath}
+          />
         )}
-
         {view === "profile" && !profile && (
           <section className="screen profile-screen">
             <div className="section-heading">
