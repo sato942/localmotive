@@ -8,7 +8,7 @@
 **Audit file SHA-256:** `fb87c9df9fd4cffa3768b81ddd40fd55363e718456a182b4237c1bfc9054b647`  
 **Implementation start SHA:** `e530371b056cd8e049c2246dbb151aa407bf359f` (equals the audited snapshot)  
 **Candidate SHA / release date:** Final candidate re-cut in progress at `a0ed2470f2e4d571e4c2a48f0a58f90c0e77771` (supersedes the `1a9ab98` lineage that G-06 lifecycle evidence binds to); release date pending the G-09 authorization.
-**Current checkpoint (2026-09-11, HEAD `8a919e4`):** full gates green (TSC 0; npm 146/146; fmt 0; clippy 0; cargo 586 passed / 0 failed / 7 ignored). Final candidate re-cut and RE-BOUND: lifecycle PASS on both baselines (`a4d14496…` setup / `2dd036c6…` msi), portable `075daa54…` passed supervision, seven-stage health, default v2 (984.76 tok/s, 5/5), and the tamper negative. G-08.I1 review complete with all deferrals recorded in `docs/RELEASE-REVIEW-0.6.md`; G-08.I2/I3 published (`docs/SUPPORT-MATRIX.md`); wrong-candidate negative control FAIL-with-identity; host attestation MATCH. Remaining: G-08.V1 final reconciliation, then the owner-gated G-09/G-10 (rulesets, authorized PR runs, tag + publication, readback) - the exact owner package is prepared in the review document.
+**Current checkpoint (2026-09-11, HEAD `bfea215` + G-08.V1 reconciliation):** full gates green (TSC 0; npm 146/146; fmt 0; clippy 0; cargo 586 passed / 0 failed / 7 ignored). Final candidate re-cut and RE-BOUND: lifecycle PASS on both baselines (`a4d14496…` setup / `2dd036c6…` msi), portable `075daa54…` passed supervision, seven-stage health, default v2 (984.76 tok/s, 5/5), and the tamper negative. G-08.I1 review complete with all deferrals recorded in `docs/RELEASE-REVIEW-0.6.md`; G-08.I2/I3 published (`docs/SUPPORT-MATRIX.md`); wrong-candidate negative control FAIL-with-identity; host attestation MATCH. G-08.I1/I2/I3/V1 all closed. The High-finding packaged campaign executed the remaining verifiable items (FE-01.V3, FE-02.V2, FE-05.V1/V2, IPC-01.V2, MT-04.V2, MT-05.V3) with recorded evidence; FE-05.V3 and the GH-01/GH-02/GH-03 items are deferred with six-field rows, the latter being the owner-gated release prerequisites. Gates at this checkpoint: npm 146/146, fmt/clippy clean, cargo 590 passed / 0 failed / 7 ignored. Remaining: ONLY the owner-gated G-09/G-10 (apply rulesets, authorize the PR runs, tag + publish + readback, closeout) - the exact owner package is prepared in `docs/RELEASE-REVIEW-0.6.md`.
 
 This tracker translates the complete audit into implementation and acceptance work. It contains **72 finding packages** (19 High, 43 Medium, 10 Low), **29 supplemental packages** for unnumbered audit recommendations, and **10 verification/release gates**. Every checkbox carries a stable task ID and a direct link to its supporting audit finding or section. No task is pre-completed, and no implementation, test, GitHub setting or release change is claimed by this document.
 
@@ -2889,6 +2889,14 @@ Environment: Windows 11 (26100) host with Windows Sandbox (WDAGUtilityAccount cl
 - **Open observation (harness-caused condition):** one older row (nemotron 707 MiB) shows `Resume` with no bytes and no progress; its job record survived while the scratch folder was deliberately deleted mid-life between runs. Clicking Resume produced no visible error and no progress. Exact cause unverified; candidate expectation: a resume whose partial/sidecar no longer exists should fail visibly. Repro: start a download, delete its destination folder externally while the job record lives, then click Resume.
 - Evidence: `.hermes-0.6/g05-partial.log`, `.hermes-0.6/g05-partial2.log`; scratch files removed after the run (16 GB preallocation reclaimed; a transient file handle left the empty directory in place).
 
+#### G-08.V1 reconciliation (2026-09-11)
+
+- **Task status**: every one of the 72 findings has its implementation complete; the open verification boxes on High findings are exactly FE-05.V3 (deferred with a six-field row) and the owner-gated GH-01.I3/V1-V3, GH-02.I3/V3, GH-03.V1/V3 (rulesets, authorized PR runs, release-run observation - all rowed in `RELEASE-REVIEW-0.6.md` with the owner package). No High finding hides an unresolved item without a visible disposition.
+- **Required checks**: TSC, Vitest, node, `cargo fmt --check`, clippy `-D warnings`, and `cargo test --lib` all green at the checkpoint; logs in `.hermes-0.6/final-check.log` and successors.
+- **Lifecycle results and immutable identity**: the lifecycle PASS for both baselines and the critical packaged probes are bound to sourceRevision + candidate digests (portable `075daa54…`, msi `2dd036c6…`, setup `a4d14496…`); the wrong-candidate negative is retained as FAIL-with-identity evidence.
+- **Public claims**: README, `docs/SUPPORT-MATRIX.md`, `CHANGELOG.md` state only observed behavior; untested classes stay unclaimed; the unsigned policy is disclosed and retained.
+- **Conclusion**: the aggregate summary cannot hide missing evidence because every skip, deferral and owner-gated item is enumerated; the remaining release prerequisites are the owner actions in the G-09 package.
+
 #### High-finding verification campaign on the final candidate (2026-09-11, portable `075daa54…`, CDP 10070)
 
 The remaining open verification items on High findings were executed against the packaged portable binary. Evidence logs: `.hermes-0.6/final-vitems-*.log`, drivers `scripts/g05_vitems_*.mjs` / `g05_inflight_*.mjs`.
@@ -2997,7 +3005,7 @@ Exercising the DEFAULT v2 evidence flow on the packaged binary (approved CUDA b1
 
 **Verification**
 
-- [ ] **V06-G-08.V1** — Reconcile task status, required checks, lifecycle results, immutable source/digests and public claims; a green aggregate summary must not hide an unresolved High finding or missing required evidence. **Trace:** [Stabilization release exit criteria](./localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release); [Audit priorities](./localmotive-comprehensive-audit.md#priority-scale).
+- [x] **V06-G-08.V1** — Reconcile task status, required checks, lifecycle results, immutable source/digests and public claims; a green aggregate summary must not hide an unresolved High finding or missing required evidence. **Trace:** [Stabilization release exit criteria](./localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release); [Audit priorities](./localmotive-comprehensive-audit.md#priority-scale).
 
 **Complete when:** The release decision is explicit and reviewable, with no silent omission of an audit finding.
 
