@@ -305,4 +305,51 @@ describe("calibration anchors (MT-08)", () => {
     const reloads = invokeCalls.filter((entry) => entry.command === "load_calibration_records");
     expect(reloads.length).toBeGreaterThanOrEqual(2);
   });
+
+  it("an imported bundle arrives pending and labelled as imported (S-17)", async () => {
+    // The backend forces state=pending and provenance=importedExternal; the
+    // mock mirrors that contract so the interface wording is exercised.
+    handlers.set("import_external_evidence", (args: unknown) => {
+      const bundle = (args as { bundle: Record<string, unknown> }).bundle;
+      return {
+        ...bundle,
+        state: "pending",
+        provenance: "importedExternal",
+      };
+    });
+
+    await runMeasuredBenchmark();
+    const textarea = container.querySelector<HTMLTextAreaElement>(".evidence-json-input");
+    expect(textarea, "the external evidence input must render").toBeTruthy();
+    await act(async () => {
+      const proto = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!;
+      proto.set!.call(
+        textarea,
+        JSON.stringify({
+          schema: 1,
+          source: "synthetic",
+          compatibilityKey: KEY,
+          state: "verified",
+          records: [
+            { metric: "decodeTps", value: 42, unit: "tokensPerSecond", observedAtMs: 42 },
+          ],
+        }),
+      );
+      textarea!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const validate = [...container.querySelectorAll("button")].find((candidate) =>
+      (candidate.textContent ?? "").includes("Validate import"),
+    );
+    expect(validate).toBeTruthy();
+    await act(async () => {
+      validate!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    const rendered = container.textContent ?? "";
+    expect(rendered).toContain("Imported state: pending");
+    expect(rendered).toContain("Provenance: importedExternal");
+    expect(rendered).toContain("not a local rerun");
+    expect(rendered).toContain("stays out of ranking and calibration");
+  });
 });

@@ -1692,3 +1692,25 @@ test("GH-09 governance files exist and dependency updates are configured", async
     assert.ok(dependabot.includes(`package-ecosystem: ${ecosystem}`), `dependabot covers ${ecosystem}`);
   }
 });
+
+test("S-17 imported evidence cannot leak into ranking or calibration writers", async () => {
+  const { execSync } = await import("node:child_process");
+  const offenders = execSync(
+    "git grep -l ExternalEvidenceBundle -- src-tauri/src src scripts",
+    { cwd: process.cwd(), encoding: "utf8" },
+  )
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .filter((file) => !file.endsWith("calibration.rs") && !file.endsWith("lib.rs") && !file.endsWith("model.ts") && !file.endsWith("V03EvidencePanel.tsx") && !file.endsWith("release-gates.test.mjs"));
+  assert.deepEqual(
+    offenders,
+    [],
+    `external evidence types may only live in calibration.rs, lib.rs, model.ts and V03EvidencePanel.tsx; found: ${offenders.join(", ")}`,
+  );
+  // The ranking and measurement writers never mention it.
+  for (const module of ["src-tauri/src/recommend.rs", "src-tauri/src/measurement.rs", "src-tauri/src/sharing.rs"]) {
+    const source = await readFile(join(process.cwd(), module), "utf8");
+    assert.doesNotMatch(source, /ExternalEvidence/, `${module} must not consume imported evidence`);
+  }
+});

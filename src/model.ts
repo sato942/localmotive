@@ -339,10 +339,17 @@ export type ExternalObservation = {
   observedAtMs: number;
 };
 
+/** The only provenance an external bundle can carry (audit S-17): fixed on
+ * import, so a reloaded file can never claim to be a locally measured run. */
+export type ExternalProvenance = "importedExternal";
+
 export type ExternalEvidenceBundle = {
   schema: number;
   source: string;
   compatibilityKey: string;
+  provenance?: ExternalProvenance;
+  /** Review state: "verified" records a USER REVIEW of this file — not a
+   * local rerun, not an origin signature, and not cryptographic proof. */
   state: ExternalEvidenceState;
   records: ExternalObservation[];
 };

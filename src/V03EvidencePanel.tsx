@@ -1073,7 +1073,13 @@ export function V03EvidencePanel({
             <Button variant="ghost" onClick={() => void reviewExternal("verified")} disabled={externalEvidence?.state !== "pending" || busy !== null}>Mark verified</Button>
             <Button variant="ghost" onClick={() => void reviewExternal("flagged")} disabled={externalEvidence?.state !== "pending" || busy !== null}>Flag</Button>
             <Button variant="ghost" onClick={() => void reviewExternal("rejected")} disabled={externalEvidence?.state !== "pending" || busy !== null}>Reject</Button>
-            <span className="muted">Imported state: {externalEvidence?.state ?? "none"}. Imported evidence never upgrades automatically.</span>
+            <span className="muted">
+              Imported state: {externalEvidence?.state ?? "none"}. Provenance:{" "}
+              {externalEvidence?.provenance ?? "importedExternal"} — "verified" means you reviewed this
+              file; it is not a local rerun, carries no origin signature, and is not cryptographic proof
+              of measurement. Imported evidence never upgrades automatically and stays out of ranking
+              and calibration.
+            </span>
           </div>
         </details>
 

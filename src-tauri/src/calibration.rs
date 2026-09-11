@@ -641,12 +641,29 @@ pub struct ExternalObservation {
     pub observed_at_ms: u64,
 }
 
+/// The only provenance an external bundle can carry (audit S-17). It is a
+/// fixed label, forced on every import: a reloaded or hand-edited file can
+/// never claim to be a locally measured run, and the review state (a user's
+/// judgment) is a separate field.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ExternalProvenance {
+    #[default]
+    ImportedExternal,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ExternalEvidenceBundle {
     pub schema: u32,
     pub source: String,
     pub compatibility_key: String,
+    /// Fixed on import; see [`ExternalProvenance`].
+    #[serde(default)]
+    pub provenance: ExternalProvenance,
+    /// Review state. `Verified` records a user review of this file — not a
+    /// local rerun, not an origin signature, and not cryptographic proof of
+    /// measurement (audit S-17.I1).
     pub state: ExternalEvidenceState,
     pub records: Vec<ExternalObservation>,
 }
@@ -711,7 +728,10 @@ pub fn validate_external_evidence(
             ));
         }
     }
+    // Import is always Pending and always labelled as imported (audit S-17):
+    // neither the review state nor the provenance can be self-declared.
     bundle.state = ExternalEvidenceState::Pending;
+    bundle.provenance = ExternalProvenance::ImportedExternal;
     Ok(bundle)
 }
 
@@ -1181,6 +1201,7 @@ mod tests {
     fn external_evidence_import_stays_pending_after_schema_validation() {
         let bundle = ExternalEvidenceBundle {
             schema: 1,
+            provenance: ExternalProvenance::ImportedExternal,
             source: "community-fixture".into(),
             compatibility_key: "c".repeat(64),
             state: ExternalEvidenceState::Verified,
@@ -1202,6 +1223,7 @@ mod tests {
     fn external_evidence_enforces_metric_ranges_and_string_limits() {
         let mut bundle = ExternalEvidenceBundle {
             schema: 1,
+            provenance: ExternalProvenance::ImportedExternal,
             source: "community-fixture".into(),
             compatibility_key: "c".repeat(64),
             state: ExternalEvidenceState::Pending,
@@ -1227,6 +1249,7 @@ mod tests {
     fn external_evidence_review_requires_confirmation_and_a_terminal_state() {
         let bundle = ExternalEvidenceBundle {
             schema: 1,
+            provenance: ExternalProvenance::ImportedExternal,
             source: "community-fixture".into(),
             compatibility_key: "c".repeat(64),
             state: ExternalEvidenceState::Pending,
@@ -1388,7 +1411,11 @@ mod tests {
         let loaded = load_calibration_models(&root, &key).unwrap();
         assert!(loaded.records.is_empty());
         assert_eq!(loaded.problems.len(), 1, "{:?}", loaded.problems);
-        assert!(loaded.problems[0].contains("quarantine"), "{:?}", loaded.problems);
+        assert!(
+            loaded.problems[0].contains("quarantine"),
+            "{:?}",
+            loaded.problems
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1980,5 +2007,51 @@ mod tests {
         // No-op below the bound.
         assert_eq!(prune_records_with(&root, "anchors", 10).unwrap(), 0);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn s17_imported_evidence_cannot_claim_provenance_or_review_state() {
+        // A file that self-declares "verified" imports as Pending, and the
+        // provenance label is forced on import (audit S-17).
+        let candidate = serde_json::json!({
+            "schema": 1,
+            "source": "synthetic-community-file",
+            "compatibilityKey": "c".repeat(64),
+            "state": "verified",
+            "records": [
+                {"metric": "decodeTps", "value": 42.0, "unit": "tokensPerSecond", "observedAtMs": 42}
+            ],
+        });
+        let bundle: ExternalEvidenceBundle = serde_json::from_value(candidate).unwrap();
+        let imported = validate_external_evidence(bundle).unwrap();
+        assert_eq!(imported.state, ExternalEvidenceState::Pending);
+        assert_eq!(imported.provenance, ExternalProvenance::ImportedExternal);
+
+        // A review is explicit and terminal; Pending is never a review result.
+        assert!(
+            review_external_evidence(imported.clone(), ExternalEvidenceState::Verified, false)
+                .is_err()
+        );
+        assert!(
+            review_external_evidence(imported.clone(), ExternalEvidenceState::Pending, true)
+                .is_err()
+        );
+        let reviewed =
+            review_external_evidence(imported, ExternalEvidenceState::Verified, true).unwrap();
+        assert_eq!(reviewed.state, ExternalEvidenceState::Verified);
+        assert_eq!(reviewed.provenance, ExternalProvenance::ImportedExternal);
+
+        // Export and reload: the serialized reviewed bundle re-imports as
+        // Pending again, and a foreign provenance claim is rejected outright.
+        let exported = serde_json::to_string(&reviewed).unwrap();
+        let reloaded: ExternalEvidenceBundle = serde_json::from_str(&exported).unwrap();
+        let reimported = validate_external_evidence(reloaded).unwrap();
+        assert_eq!(reimported.state, ExternalEvidenceState::Pending);
+        assert_eq!(reimported.provenance, ExternalProvenance::ImportedExternal);
+        let forged = exported.replace("importedExternal", "localRun");
+        assert!(
+            serde_json::from_str::<ExternalEvidenceBundle>(&forged).is_err(),
+            "a bundle cannot claim a locally measured provenance"
+        );
     }
 }

@@ -2417,18 +2417,18 @@ These packages preserve actionable recommendations outside the 72-item findings 
 
 **Keep user-reviewed imports distinct from locally measured evidence**
 
-**Status:** Not started · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
 **Audit trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities)  
 **Prerequisites:** [V06-MT-09](#v06-mt-09), [V06-MT-13](#v06-mt-13)
 
 **Implementation**
 
-- [ ] **V06-S-17.I1** — Explain that Verified import status records a user review, not local rerun, origin signature or cryptographic proof of measurement. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
-- [ ] **V06-S-17.I2** — Retain Pending-on-import and explicit review transitions; keep imported evidence separately labeled and prevent future ranking/calibration integration from silently promoting its provenance. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
+- [x] **V06-S-17.I1** — Explain that Verified import status records a user review, not local rerun, origin signature or cryptographic proof of measurement. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
+- [x] **V06-S-17.I2** — Retain Pending-on-import and explicit review transitions; keep imported evidence separately labeled and prevent future ranking/calibration integration from silently promoting its provenance. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
 
 **Verification**
 
-- [ ] **V06-S-17.V1** — Import, review, export and reload synthetic external evidence; assert provenance labels remain stable and it cannot impersonate a local run through state changes alone. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
+- [x] **V06-S-17.V1** — Import, review, export and reload synthetic external evidence; assert provenance labels remain stable and it cannot impersonate a local run through state changes alone. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
 
 **Complete when:** Review state and measurement origin remain independent in schemas and presentation.
 
@@ -3799,3 +3799,11 @@ Revalidated at the candidate source (`065248a1` + the G-07 test addition) on Win
 - Acceptance update (recorded): `mt14_one_validator_rejects_bad_models_at_every_entry_point` asserted the OLD all-or-nothing load (`is_err()`); per S-16.I2 it now asserts the quarantine-and-continue contract (empty records + one quarantine problem). No other test encoded the old behaviour.
 - Mutations: PG1 (corrupt anchor fails the whole load again), PG2 (quarantine deletes the record) and PG3 (retention prunes the newest) each failed their guarding test and passed after restore.
 - Commands: `cargo fmt --check` PASS; clippy `-D warnings` 0 errors; `cargo test` 560 passed / 0 failed / 2 ignored (558 + the two S-16 tests); `npm run check` PASS (342.64 kB); Vitest 105; node tests 140.
+
+#### S-17 closure record — imported evidence stays imported
+
+- I1: `ExternalProvenance` (single variant `importedExternal`, serde-forced) is a new bundle field, and the interface states plainly that "verified" records a user review of the file — not a local rerun, not an origin signature, and not cryptographic proof of measurement. The panel label now reads "Provenance: importedExternal — verified means you reviewed this file; … not a local rerun …".
+- I2: `validate_external_evidence` forces BOTH state=Pending and provenance=importedExternal on every import, so neither can be self-declared; `review_external_evidence` still requires explicit confirmation, rejects Pending as a review outcome, and returns a terminal state only. A forged provenance string (`localRun`) fails deserialization outright because the enum has exactly one accepted variant. The release-gates source guard asserts `ExternalEvidence*` may only be referenced by `calibration.rs`, `lib.rs`, `model.ts`, `V03EvidencePanel.tsx` (and the guard itself) and that `recommend.rs`, `measurement.rs` and `sharing.rs` never mention it — ranking and calibration writers cannot consume imported evidence.
+- V1: `s17_imported_evidence_cannot_claim_provenance_or_review_state` imports a synthetic bundle that self-declares "verified" (imports Pending), proves review requires confirmation and a terminal state, round-trips the reviewed bundle through serialize → reload → re-import (Pending again, provenance still importedExternal), and shows a forged provenance claim is rejected at parse time. The component test "an imported bundle arrives pending and labelled as imported (S-17)" drives the real panel: the textarea import shows "Imported state: pending", "Provenance: importedExternal", "not a local rerun" and "stays out of ranking and calibration".
+- Mutations: PH1 (import no longer forces Pending), PH2 (provenance wording removed), PH3 (an external-evidence reference added to recommend.rs) each failed their guarding test/gate and passed after restore. (PH3's first run was mis-scored by a detector bug — the node reporter prints "fail 1", not "1 fail"; re-run with the corrected detector: CAUGHT.)
+- Commands: `cargo fmt --check` PASS; clippy `-D warnings` 0 errors; `cargo test` 561 passed / 0 failed / 2 ignored (560 + the S-17 test); `npm run check` PASS (342.88 kB); Vitest 106; node tests 114 gates + 140 total.
