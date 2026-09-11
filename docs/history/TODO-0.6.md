@@ -2875,7 +2875,14 @@ Environment: Windows 11 (26100) host with Windows Sandbox (WDAGUtilityAccount cl
 - The harness changes are proven by their own negative paths during development: the host-digest assertion first failed on the real mismatch (`70d2fee2…` vs the host binary), then the cross-path assertion failed on the same difference, before the final NSIS-family/per-path formulation; runs 1, 1b-1e and 2, 2b-2e artifacts are retained under `.hermes-0.6/g06-sandbox*.log`. Earlier `sandbox-clean-account-lifecycle*.json` attestations (v0.4.0/v0.5.0 baselines, legacy format without source/digest binding) are retained as historical records and superseded by these two bound runs.
 - G-06.I2 checked on this evidence; the identical-GPU mapping row remains untested per policy (single GPU host) and stays visible in G-05.
 
+#### G-05 packaged Windows wave — fifth batch: NTFS hard-link policy and high-contrast signals (candidate `1a9ab98`, packaged exe rebuilt from the 0.6.0 tree)
+
+- **NTFS hard-link cell (G-05.I1) observed on the packaged binary.** A hard link to the approved managed `llama-server.exe` was created outside the runtime root (`ln`; both names hashed identically). Writing one byte through the LINK changed the original file's bytes (hashes diverged), proving the shared-content property. The app then refused to launch and showed "Managed file llama-server.exe has multiple hard links" - the link-count policy in `runtime.rs` (`managed_file_link_count`, "multiple hard links" at `runtime.rs:3598`, unit test `managed_runtime_verification_rejects_hard_linked_files` at `runtime.rs:8403`; `download.rs:578`/`:1142` refuse writes through multiply-linked files). After restoring the original bytes but KEEPING the alias link, the refusal persisted (policy is link-count based); removing the alias link produced LIVE. Driver: `scripts/g05_hardlink_drive.mjs`.
+- **High-contrast signals checked at the engine level (G-05.I3 partial).** With `Emulation.setEmulatedMedia` forcing `forced-colors: active` and, separately, `prefers-contrast: more`, the packaged app renders with 113 visible text nodes and zero transparent text, 30 visible buttons and zero collapsed controls, and zero horizontal overflow; screenshots retained (`.hermes-0.6/g05-hc/`). Driver: `scripts/verify_high_contrast.mjs`. Honest limitation: this is engine-level media emulation, not a Windows High Contrast Mode session (Win+U), which remains a separate manual check; Narrator/NVDA remains NOT RUN (no screen reader on this host).
+- Remaining OPEN G-05 cells after this batch: partial-byte ("keep partial") download retention, the orphan-supervision reproducer, OS-level high-contrast, screen-reader, and live cloud/HF credential scenarios.
+
 ### V06-G-06
+
 
 
 **Verify clean install, separate upgrade baselines and strict uninstall**
