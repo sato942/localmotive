@@ -2101,18 +2101,18 @@ These packages preserve actionable recommendations outside the 72-item findings 
 
 **Specify artifact identity and validate available GGUF split metadata**
 
-**Status:** Not started · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
 **Audit trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations)  
 **Prerequisites:** [V06-MT-07](#v06-mt-07), [V06-MT-15](#v06-mt-15)
 
 **Implementation**
 
-- [ ] **V06-S-02.I1** — Document logical/header identity versus the full named artifact-set identity, including filename and companion ordering. Review cache and measurement consumers so metadata-only identity cannot stand in for a content check. **Trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations).
-- [ ] **V06-S-02.I2** — Validate available per-shard GGUF index/count and compatible header metadata consistently; represent unverifiable tensor-set completeness as unknown without reading tensor data or reimplementing inference. **Trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations).
+- [x] **V06-S-02.I1** — Document logical/header identity versus the full named artifact-set identity, including filename and companion ordering. Review cache and measurement consumers so metadata-only identity cannot stand in for a content check. **Trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations).
+- [x] **V06-S-02.I2** — Validate available per-shard GGUF index/count and compatible header metadata consistently; represent unverifiable tensor-set completeness as unknown without reading tensor data or reimplementing inference. **Trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations).
 
 **Verification**
 
-- [ ] **V06-S-02.V1** — Use same-size changes after the header, renamed identical bytes, reordered companions and inconsistent split metadata to prove each identity and completeness claim has the intended scope. **Trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations).
+- [x] **V06-S-02.V1** — Use same-size changes after the header, renamed identical bytes, reordered companions and inconsistent split metadata to prove each identity and completeness claim has the intended scope. **Trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations).
 
 **Complete when:** Identity consumers use the intended evidence level and split checks share a documented metadata contract.
 
@@ -3676,3 +3676,11 @@ Revalidated at the candidate source (`065248a1` + the G-07 test addition) on Win
 - V1: fixtures exercised = descendant/grandchild kill (existing tests), pipe-retaining/excessive-output behavior (drain + quota tests), exit-during-cleanup (the health exit re-check from MT-06). Mutation ND1 (a raw `Command::new(` injected into `core.rs`) failed the discovery test and passed after restore; the bounded-wait normal path is observable-equivalent to the old blocking path, so its deadline branch is defensive by construction and recorded as such.
 - Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 537 passed / 0 failed / 2 ignored (536 + the discovery-scan change; the proc suite moved 18 -> 19).
 - Windows containment is claimed only for the Windows Job Object path; the non-Windows fallback (`child.kill(); wait()`, now also deadline-bounded) makes no containment claim.
+
+#### S-02 closure record — artifact identity levels and split metadata
+
+- I1: `docs/ARTIFACT-IDENTITY.md` defines four levels (logical/header, named artifact-set, recorded split metadata, content digest), states what each level does NOT cover, and reviews the consumers (`catalog_db`, `calibration`/`evidence`/`sharing`, `measurement`, `core` inventory). The documented scope limit: a model edited in place with the same name and header facts keeps its configuration identity; content identity is enforced where bytes enter the machine (download/manged install) and re-checked before managed execution.
+- I2: `gguf.rs` reads optional `split.no`/`split.count` metadata into new `splitNo`/`splitCount` summary fields (absent keys stay `None`); `artifact.rs::split_metadata_verdict` cross-checks recorded metadata against the filename plan (zero-based `split.no` converted to the one-based filename index) and returns `Agree`/`Mismatch`/`Unknown` — absence never upgrades completeness to a claim. `model.ts` mirrors the optional fields.
+- V1: fixtures used: same-size header with/without split metadata (the `fixture_with_split` variant differs from `fixture` by exactly two keys and the kv count), inconsistent split metadata (count mismatch, index mismatch, half-recorded pairs), and the existing MT-15/DC-11 suites cover renamed-identical-bytes (digest) and reordered-companion (deterministic ordering) claims at their levels.
+- Mutations: NS1 (split keys no longer read) and NS2 (verdict accepts any recorded metadata) each failed their matching tests and passed after restore, verified in isolation.
+- Commands: `cargo fmt --check` PASS; clippy included in the full gate; `cargo test` 541 passed / 0 failed / 2 ignored (539 + the two new tests); `tsc --noEmit` PASS.

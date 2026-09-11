@@ -37,6 +37,43 @@ pub struct ArtifactProblem {
     pub message: String,
 }
 
+/// How a shard's own header metadata relates to the filename plan (S-02).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SplitVerdict {
+    /// The header records the same index and count as the filename plan.
+    Agree { no: u64, count: u64 },
+    /// The header contradicts the plan; the set is not trustworthy.
+    Mismatch {
+        recorded: (u64, u64),
+        planned: (u64, u64),
+    },
+    /// No split metadata: completeness stays unknowable from headers alone.
+    Unknown,
+}
+
+/// Compare a shard's optional header metadata against the filename plan.
+/// `split.no` metadata is zero-based while filename indices are one-based;
+/// the conversion happens here.
+pub fn split_metadata_verdict(
+    shard_index: u64,
+    shard_count: u64,
+    recorded_no: Option<u64>,
+    recorded_count: Option<u64>,
+) -> SplitVerdict {
+    match (recorded_no, recorded_count) {
+        (Some(no), Some(count)) => {
+            let planned = (shard_index, shard_count);
+            let recorded = (no + 1, count);
+            if planned == recorded {
+                SplitVerdict::Agree { no, count }
+            } else {
+                SplitVerdict::Mismatch { recorded, planned }
+            }
+        }
+        _ => SplitVerdict::Unknown,
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ShardSet {
@@ -487,6 +524,45 @@ fn sum_file_bytes(files: &[ArtifactFileFact], label: &str) -> Result<u64, String
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn s02_split_verdict_agrees_or_reports_mismatch_and_unknown() {
+        // Agree: filename says shard 3 of 4; the header records no=2, count=4
+        // (split.no is zero-based).
+        assert_eq!(
+            split_metadata_verdict(3, 4, Some(2), Some(4)),
+            SplitVerdict::Agree { no: 2, count: 4 }
+        );
+        // Mismatch: the same filename with an inconsistent header count is
+        // not a trustworthy tensor set.
+        assert_eq!(
+            split_metadata_verdict(3, 4, Some(2), Some(2)),
+            SplitVerdict::Mismatch {
+                recorded: (3, 2),
+                planned: (3, 4)
+            }
+        );
+        assert_eq!(
+            split_metadata_verdict(1, 4, Some(9), Some(4)),
+            SplitVerdict::Mismatch {
+                recorded: (10, 4),
+                planned: (1, 4)
+            }
+        );
+        // Unknown: no metadata (or only half of it) never upgrades to a claim.
+        assert_eq!(
+            split_metadata_verdict(1, 4, None, None),
+            SplitVerdict::Unknown
+        );
+        assert_eq!(
+            split_metadata_verdict(1, 4, Some(0), None),
+            SplitVerdict::Unknown
+        );
+        assert_eq!(
+            split_metadata_verdict(1, 4, None, Some(4)),
+            SplitVerdict::Unknown
+        );
+    }
     use super::*;
     use std::fs;
 

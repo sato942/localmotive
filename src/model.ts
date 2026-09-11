@@ -1270,6 +1270,11 @@ export type GgufSummary = {
   ropeFreqBase: number | null;
   tensorCount: number;
   kvCount: number;
+  // Optional shard metadata recorded by the producing tooling (audit S-02):
+  // absent values mean the tensor-set completeness is unknown, never that
+  // it is complete.
+  splitNo?: number | null;
+  splitCount?: number | null;
   metadataFacts: MetadataFact[];
   tensorDescriptors: TensorDescriptor[];
   tensorDescriptorsTruncated: boolean;

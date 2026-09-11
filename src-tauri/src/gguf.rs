@@ -120,6 +120,12 @@ pub struct GgufSummary {
     pub rope_freq_base: Option<f64>,
     pub tensor_count: u64,
     pub kv_count: u64,
+    /// Optional split metadata written by tooling that produced a shard set
+    /// (audit S-02). Absent keys stay `None`: the completeness of the tensor
+    /// set is then unknowable from metadata alone, and callers must not
+    /// upgrade it to a claim.
+    pub split_no: Option<u64>,
+    pub split_count: Option<u64>,
     pub metadata_facts: Vec<MetadataFact>,
     pub tensor_descriptors: Vec<TensorDescriptor>,
     pub tensor_descriptors_truncated: bool,
@@ -582,6 +588,11 @@ fn parse_inner<R: Read>(
     summary.expert_used_count = get("expert_used_count").and_then(Value::as_u64);
     summary.vocab_size = get("vocab_size").and_then(Value::as_u64);
     summary.rope_freq_base = get("rope.freq_base").and_then(Value::as_f64);
+    // Split metadata is optional (audit S-02): tooling that writes shard sets
+    // may record the shard's own index and the total count; when the keys are
+    // absent the values stay unknown instead of being guessed from names.
+    summary.split_no = general("split.no").and_then(Value::as_u64);
+    summary.split_count = general("split.count").and_then(Value::as_u64);
     summary.metadata_facts = pairs
         .iter()
         .filter(|(key, _)| relevant_metadata_key(key))
@@ -724,6 +735,51 @@ mod tests {
         }
         out.extend(b"TENSOR DATA THAT MUST NEVER BE READ");
         out
+    }
+
+    /// The same header with `split.no`/`split.count` recorded, as shard
+    /// tooling writes them (audit S-02).
+    fn fixture_with_split(no: u32, count: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend(GGUF_MAGIC);
+        out.extend(3_u32.to_le_bytes());
+        out.extend(266_u64.to_le_bytes());
+        out.extend(14_u64.to_le_bytes());
+        kv_str(&mut out, "general.architecture", "lfm2");
+        kv_str(&mut out, "general.name", "LFM Fixture");
+        kv_str(&mut out, "general.size_label", "2.7B");
+        kv_u32(&mut out, "general.file_type", 7);
+        kv_u32(&mut out, "lfm2.block_count", 30);
+        kv_u32(&mut out, "lfm2.context_length", 131072);
+        kv_u32(&mut out, "lfm2.embedding_length", 2048);
+        kv_u32(&mut out, "lfm2.attention.key_length", 128);
+        kv_u32(&mut out, "lfm2.attention.value_length", 64);
+        kv_i32_array(&mut out, "lfm2.attention.head_count_kv", &[8; 30]);
+        kv_u32(&mut out, "lfm2.recurrent.state_size", 16);
+        kv_f32(&mut out, "lfm2.rope.freq_base", 10_000_000.0);
+        kv_u32(&mut out, "split.no", no);
+        kv_u32(&mut out, "split.count", count);
+        for index in 0..266 {
+            tensor_descriptor(
+                &mut out,
+                &format!("blk.{index}.weight"),
+                &[2048, 2048],
+                12,
+                index * 4096,
+            );
+        }
+        out.extend(b"TENSOR DATA THAT MUST NEVER BE READ");
+        out
+    }
+
+    #[test]
+    fn s02_split_metadata_is_read_when_present_and_stays_unknown_when_absent() {
+        let plain = parse(fixture().as_slice()).unwrap();
+        assert_eq!(plain.split_no, None);
+        assert_eq!(plain.split_count, None);
+        let shard = parse(fixture_with_split(2, 4).as_slice()).unwrap();
+        assert_eq!(shard.split_no, Some(2));
+        assert_eq!(shard.split_count, Some(4));
     }
 
     fn gguf_header(tensor_count: u64, kv_count: u64) -> Vec<u8> {
