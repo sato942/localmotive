@@ -614,23 +614,23 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Derive canonical quantization labels from verified model evidence**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Medium · **Owner:** Unassigned  
 **Audit trace:** [Audit DC-09](./localmotive-comprehensive-audit.md#dc-09)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [scripts/build_catalog.mjs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/scripts/build_catalog.mjs), [scripts/validate_catalog.mjs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/scripts/validate_catalog.mjs), [catalog/catalog.json](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/catalog/catalog.json), [catalog/providers.json](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/catalog/providers.json), [src-tauri/src/catalog.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/catalog.rs)
 
 **Implementation**
 
-- [ ] **V06-DC-09.I1** — Replace the arbitrary final-filename-suffix extraction with parsing of actual recognized quant tokens in the full basename, preserving provenance or variant suffixes separately and returning unknown when evidence is ambiguous. **Trace:** [Audit DC-09](./localmotive-comprehensive-audit.md#dc-09).
-- [ ] **V06-DC-09.I2** — Prefer verified structured upstream quant metadata when available, normalize canonical casing, and make facet deduplication agree with filter comparison semantics. **Trace:** [Audit DC-09](./localmotive-comprehensive-audit.md#dc-09).
-- [ ] **V06-DC-09.I3** — Extend curation validation and shared fixtures to reject unsupported provenance/date/instruction labels masquerading as quants; rebuild corrected candidate metadata through the existing signature-validation process. **Trace:** [Audit DC-09](./localmotive-comprehensive-audit.md#dc-09).
-- [ ] **V06-DC-09.I4** — Review MTP-related candidates using upstream or header evidence to distinguish integrated-MTP main models from companion-only files before changing exclusion rules. **Trace:** [Audit DC-09](./localmotive-comprehensive-audit.md#dc-09).
+- [x] **V06-DC-09.I1** — Replace the arbitrary final-filename-suffix extraction with parsing of actual recognized quant tokens in the full basename, preserving provenance or variant suffixes separately and returning unknown when evidence is ambiguous. **Trace:** [Audit DC-09](./localmotive-comprehensive-audit.md#dc-09).
+- [x] **V06-DC-09.I2** — Prefer verified structured upstream quant metadata when available, normalize canonical casing, and make facet deduplication agree with filter comparison semantics. **Trace:** [Audit DC-09](./localmotive-comprehensive-audit.md#dc-09).
+- [x] **V06-DC-09.I3** — Extend curation validation and shared fixtures to reject unsupported provenance/date/instruction labels masquerading as quants; rebuild corrected candidate metadata through the existing signature-validation process. **Trace:** [Audit DC-09](./localmotive-comprehensive-audit.md#dc-09).
+- [x] **V06-DC-09.I4** — Review MTP-related candidates using upstream or header evidence to distinguish integrated-MTP main models from companion-only files before changing exclusion rules. **Trace:** [Audit DC-09](./localmotive-comprehensive-audit.md#dc-09).
 
 **Verification**
 
-- [ ] **V06-DC-09.V1** — Add fixtures covering IQ2_S-MTP, Q4_K_M-imatrix, dates, instruction-tuning suffixes, lowercase labels, combined base/draft quants, unknown formats, and quant-looking model names. **Trace:** [Audit DC-09](./localmotive-comprehensive-audit.md#dc-09).
-- [ ] **V06-DC-09.V2** — Use the audit's 46 suffix-label rows as a correction checklist, preserving unknown where underlying quant evidence is insufficient rather than guessing. **Trace:** [Audit DC-09](./localmotive-comprehensive-audit.md#dc-09).
-- [ ] **V06-DC-09.V3** — Verify one semantic facet per normalized quant and confirm selecting a quant finds corrected builds; run catalog validation on the resulting signed candidate. **Trace:** [Audit DC-09](./localmotive-comprehensive-audit.md#dc-09).
+- [x] **V06-DC-09.V1** — Add fixtures covering IQ2_S-MTP, Q4_K_M-imatrix, dates, instruction-tuning suffixes, lowercase labels, combined base/draft quants, unknown formats, and quant-looking model names. **Trace:** [Audit DC-09](./localmotive-comprehensive-audit.md#dc-09).
+- [x] **V06-DC-09.V2** — Use the audit's 46 suffix-label rows as a correction checklist, preserving unknown where underlying quant evidence is insufficient rather than guessing. **Trace:** [Audit DC-09](./localmotive-comprehensive-audit.md#dc-09).
+- [x] **V06-DC-09.V3** — Verify one semantic facet per normalized quant and confirm selecting a quant finds corrected builds; run catalog validation on the resulting signed candidate. **Trace:** [Audit DC-09](./localmotive-comprehensive-audit.md#dc-09).
 
 **Complete when:** Catalog Build and Quant controls show evidence-backed canonical quants or explicit unknown values instead of arbitrary trailing labels. The audited suffix cases are resolved with recorded evidence, and filters/facets agree on normalization.
 
@@ -3514,3 +3514,14 @@ _Package 1 (RT-01, RT-02, RT-04, RT-07) implementation is complete at the unit/r
 - Regression tests: `evidence tone (FE-15)` unit cases, panel test `does not paint unknown results green`, and the App test `says shards complete, path selected and not inspected instead of overstating` (scan → Control shows SHARDS COMPLETE and never `VALID`; Profile shows the provisional note; inspection removes it; editing the Profile path and the Runtime path each restore it; Runtime shows `Path selected` + `Ready to validate`). Mutations MW1 (all tones green) / MW2 (`VALID` restored) / MW4 (`Ready` restored) / MW5 (profile edit keeps stale capabilities) / MW6 (Runtime edit keeps stale capabilities) each failed their matching tests and passed after restore.
 - Commands: `tsc --noEmit` PASS; `npm test` 93 passed; `npm run check` EXIT 0; `npm run build` PASS.
 - Residual: the capability-gated availability of individual profile controls (offered vs flag-supported) was not reworked beyond the provisional marker; the Rust preview/start validation remains the enforcement point.
+
+### V06-DC-09 — quant labels come from the file's own token (commit `7349a27`)
+
+- Status: Implemented; extractor, builder, rendering and gates verified. The shipped data file's corrected labels land with the next signed catalog publication (see next action).
+- Regression before fix: the builder took the last `-([A-Za-z0-9_]+).gguf` suffix as the quant, shipping 46+ rows labeled `MTP`/`mtp`/`imatrix`/`imat`/`it`/`0731`/`optimized`/`coding`, mixed case (`BF16`/`bf16`), and case-sensitive facet dedupe.
+- Verification after fix: `scripts/lib/quant_label.mjs` extracts the file's own quantisation token (leftmost canonical token, `UD-` marker and `id_quant` glue handled, '.'/'-'/whitespace separators, canonical casing) and returns UNKNOWN when the name carries none. `build_catalog.mjs` labels through it and rejects unrecognised labels as curation problems. `catalog::facets` dedupes quant labels case-insensitively in canonical casing. `scripts/fix_catalog_quants.mjs` performs the one-time migration; on a copy of the shipped catalog it rewrote 175 of 1417 labels (evidence `.hermes-0.6/dc09-migration.txt`).
+- Regression tests: release-gates `DC-09 quant labels come from the file's own token and stay canonical` (extractor cases: `IQ2_S-MTP`, `Q4_K_M-imatrix`, date suffix, `-it`, lowercase, dotted, `UD-` dynamic, combined base/draft, `E4B_q4_0` glue, unknown, quant-looking model name; builder must call the extractor and the suffix regex must not return) and the Rust test `dc09_quant_facets_dedupe_case_insensitively_and_keep_canonical_casing`. Mutations MY1 (suffix regex returns) / MY2 (last-token selection) / MY3 (case-sensitive dedupe) all failed their matching tests and passed after restore.
+- Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 534/0/2; `npm run check` EXIT 0; release-gates 104/104; `node scripts/validate_catalog.mjs .hermes-0.6/catalog-migrated.json --no-signature` -> `valid v2 (158 models, 1417 files)`.
+- Next action (owner): run the `Publish curated catalog` workflow (workflow_dispatch). Its rebuild now produces the corrected labels and its sign job produces the matching `catalog/catalog.json.sig`; the checked-in data file stays untouched until then because the embedded-signature tests (`shipped_signature_verifies_after_crlf_checkout_normalization`) verify the committed pair and must stay green. Until the signed candidate is published, network catalog fetches fall back to the cached or bundled copy per DC-01/DC-07 behaviour.
+- Residual: six `MTP`-suffixed rows were relabeled by token only; whether those files are standalone companions or full models containing MTP was not asserted (names are not evidence). The current served catalog keeps its signed legacy labels until the next signed publication.
+
