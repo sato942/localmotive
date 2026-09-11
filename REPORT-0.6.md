@@ -252,6 +252,7 @@ Final candidate (re-cut and re-bound at the 2026-09-12 freeze):
 - MSI `Localmotive_0.6.0_x64.msi` sha256 `01b62b7646850d4c86d92e5d05cc6f0b5b492d28a9a3ebc228851c927535b124`
 - NSIS `Localmotive_0.6.0_x64-setup.exe` sha256 `255bfdd24d13905cb58f4d210c700b0c8facc1b8fbef1e56d3ebd4feb8e9c13f`
 - source code state `57bde64e`; this re-cut supersedes `075daa54...` (which went stale when `06cfa99` changed shipped code after its build) and includes the MT-06 cancellation-livelock fix found by the re-bind probes
+- packaged `verify_041` on the clean tree: `overall_status: PASS`, 25/25 checks (`release-evidence/0.6.0/attestations/packaged-verification-0.6.0.json`); lifecycle re-bind (v0.4.0 / v0.5.0 upgrades and both preservation baselines) all PASS bound to the new digests
 - lifecycle evidence re-run and bound to the new digests (see `docs/history/TODO-0.6.md`, "Re-bind campaign...")
 - host attestation: Zen 5 / RTX 5090 / driver 610.74 / Windows 11 build 26100, verdict MATCH
 

@@ -147,6 +147,8 @@ The FE-16/FE-05 closure work changed shipped frontend code, and the re-bind prob
 - New candidate: portable `79615950...` (20 997 632 bytes), MSI `01b62b76...`, NSIS `255bfdd2...`; candidate inventory PASS at source `57bde64e`.
 - Re-verified on the rebuilt candidate: supervision; seven-stage health 7/7; default v2 completes (486.51 tok/s, p50 490.02, p95 491.62, n=5, 5/5); tamper negative; FE-16.V1/V3 ALL-PASS; FE-05.V3 ALL-PASS; IPC-01.V2 legs; MT-05 reservation cycle; GH-06.V2 witnesses re-bound; churn reproducer still finds no orphan.
 - The `075daa54...` lineage is now history; all evidence binds to the new digests (lifecycle results in the tracker).
+- Packaged `verify_041` on the clean tree: `overall_status: PASS`, 25/25 checks (record `release-evidence/0.6.0/attestations/packaged-verification-0.6.0.json`).
+- Lifecycle re-bind: the upgrade runs from v0.4.0 and v0.5.0 and both preservation-baseline runs all PASS, each bound to `sourceRevision 57bde64e` and the new digests; the wrong-candidate negative control still fails with identity (`expected 0.6.0 but found '0.5.0'`).
 
 ## Owner package for G-09 (authorization required)
 
