@@ -1,0 +1,16 @@
+﻿{
+    "schema":  "localmotive.sandbox-lifecycle.v0",
+    "status":  "FAIL",
+    "stage":  "sandbox-run",
+    "error":  "Invalid object passed in, \u0027:\u0027 or \u0027}\u0027 expected. (8): { this is not json\r\n",
+    "tag":  "v0.6.0",
+    "version":  "0.6.0",
+    "previousTag":  "v0.4.1",
+    "sourceRevision":  "b953e8456a1be7198e9b9df73fa929d6476f3878",
+    "startedAtUtc":  "2026-09-11T21:11:27.2639914Z",
+    "finishedAtUtc":  "2026-09-11T21:11:29.6880704Z",
+    "candidateDigests":  {
+                             "currentSetup":  "a4d14496d14a4f98ffcd1e9c9ae5d78f36dab74d309d86ed6e2dfdb38eb2b7de",
+                             "currentMsi":  "2dd036c6a9397e0491e8ebb276af187bf0c9701c8f176c56cba42e6f4bd0512d"
+                         }
+}

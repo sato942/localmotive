@@ -905,13 +905,32 @@ test("packaged verifier contains no private React-state injection (QD-03)", asyn
   assert.match(source, /ui\.runtime-cards/);
 });
 
-test("packaged cancellation check cancels on a backend progress phase, not a fixed sleep (QD-03)", async () => {
+test("packaged cancellation check observes progress, records completion or a bounded diagnostic (QD-03)", async () => {
   const source = await readFile(join(process.cwd(), "scripts", "verify_041.mjs"), "utf8");
   assert.match(source, /health-model-progress/);
-  assert.match(source, /sawPhase/);
   assert.match(source, /plugin:event\|listen/);
   const cancellation = source.split("health.cancellation")[1].split("health.restart")[0];
   assert.doesNotMatch(cancellation, /setTimeout\(resolvePromise, 250\)/);
+  // The semantic trigger waits for an observed progress phase; fast progress
+  // records completion instead of failing; a bounded wait is a diagnostic
+  // failure (audit QD-03 V3), and one shared classifier owns the acceptance
+  // rules for every observed outcome.
+  assert.match(cancellation, /phaseSeen\.then/);
+  assert.match(cancellation, /"completed-before-cancel"/);
+  assert.match(cancellation, /"bounded-timeout"/);
+  assert.match(cancellation, /classifyHealthCancellation\(outcome\)/);
+  const classifier = await readFile(
+    join(process.cwd(), "scripts", "lib", "health_cancel.mjs"),
+    "utf8",
+  );
+  assert.match(classifier, /completed-before-cancel/);
+  assert.match(classifier, /Bounded diagnostic/);
+  // The fast/slow fixture legs are wired into the test suite.
+  const pkg = JSON.parse(await readFile(join(process.cwd(), "package.json"), "utf8"));
+  assert.ok(
+    pkg.scripts.test.includes("scripts/tests/health_cancel.test.mjs"),
+    "npm test must run the health-cancel fixture legs",
+  );
 });
 
 test("release package job runs the catalog/SQLite packaged matrix (GH-05)", async () => {
@@ -1258,7 +1277,10 @@ test("FE-02 tuning adoption binds to the originating run", async () => {
   const adopt = app
     .split("function adoptTunedProfile()")[1]
     .split("function loadProfile(")[0];
-  assert.match(adopt, /localStorage\.setItem\(`localmotive:profile:\$\{origin\.modelId\}`/);
+  // Adoption persists through the guarded writer and reports a storage
+  // failure without relabelling the adoption (audit FE-02 + FE-09 I3).
+  assert.match(adopt, /persistRecord\(`profile:\$\{origin\.modelId\}`, JSON\.stringify\(adopted\)\)/);
+  assert.match(adopt, /persistenceFailureNote\("The tuned profile"\)/);
   assert.match(adopt, /if \(selectedId === origin\.modelId\)/);
   assert.doesNotMatch(adopt, /selected\.id/);
 });
@@ -1336,6 +1358,21 @@ test("GH-06 lifecycle evidence survives every terminal outcome", async () => {
   // control showed the retained FAIL document carried no host identity.
   assert.match(host, /\$failDoc \| Add-Member -NotePropertyName sourceRevision/);
   assert.match(host, /\$failDoc \| Add-Member -NotePropertyName candidateDigests/);
+  // GH-06.V2: every terminal-outcome witness leg is driven through the
+  // default-off fault simulations and asserted by the witness runner:
+  // timeout, malformed result, early installer failure, and cancellation
+  // (a killed run leaves no PASS artifact).
+  for (const mode of ["timeout", "malformed-result", "missing-assets", "stall"]) {
+    assert.ok(host.includes(`"${mode}"`), `host harness is missing the ${mode} fault mode`);
+  }
+  const witness = await readFile(
+    join(process.cwd(), "scripts", "sandbox", "test-fault-evidence.ps1"),
+    "utf8",
+  );
+  assert.match(witness, /Assert-Witness "witness-missing-assets" "FAIL" "resolve-installers"/);
+  assert.match(witness, /Assert-Witness "witness-timeout" "TIMEOUT" "sandbox-timeout"/);
+  assert.match(witness, /Assert-Witness "witness-malformed-result" "FAIL" "sandbox-run"/);
+  assert.match(witness, /a killed run must not leave PASS evidence/);
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
   const upload = release.split("Upload lifecycle evidence")[1] ?? "";
   assert.match(upload, /if: always\(\)/);

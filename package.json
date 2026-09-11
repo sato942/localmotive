@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "vitest run && node --test scripts/tests/release-gates.test.mjs scripts/tests/catalog_schema.test.mjs scripts/tests/http_retry.test.mjs scripts/tests/ipc_contract.test.mjs",
+    "test": "vitest run && node --test scripts/tests/release-gates.test.mjs scripts/tests/catalog_schema.test.mjs scripts/tests/http_retry.test.mjs scripts/tests/ipc_contract.test.mjs scripts/tests/health_cancel.test.mjs",
     "catalog:validate": "node scripts/validate_catalog.mjs catalog/catalog.json",
     "catalog:refresh": "node scripts/build_catalog.mjs --write",
     "icon:generate": "tauri icon assets/app-icon.svg",

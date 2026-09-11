@@ -8352,6 +8352,93 @@ Connection: close
 
     #[cfg(windows)]
     #[test]
+    fn rt07_path_and_reparse_replacement_leave_the_protected_handle_authoritative() {
+        // RT-07.V2: attempt a symlink/reparse replacement and a path change
+        // after the archive is opened; the protected original handle must
+        // remain authoritative for the verified bytes, or the attempt must
+        // fail safely. The installer verifies and extracts through one
+        // handle (extract_zip_with_limits_and_identity_and_cancel), so a
+        // successful path change above the file must not change what the
+        // extraction reads.
+        use std::io::Write;
+
+        let root = scratch("archive-path-replacement");
+        let native_dir = root.join("native");
+        let moved_dir = root.join("moved");
+        let link_target = root.join("elsewhere");
+        fs::create_dir_all(&native_dir).unwrap();
+        fs::create_dir_all(&link_target).unwrap();
+        let archive_path = native_dir.join("runtime.zip");
+        {
+            let file = File::create(&archive_path).unwrap();
+            let mut archive = zip::ZipWriter::new(file);
+            archive
+                .start_file("runtime.dll", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            archive.write_all(b"approved archive bytes").unwrap();
+            archive.finish().unwrap();
+        }
+        let approved = fs::read(&archive_path).unwrap();
+
+        // The handle the installer holds across verification and extraction.
+        let mut handle = open_managed_file_for_verification(&archive_path).unwrap();
+
+        // In-place replacement attempts fail safely while the handle is open:
+        // overwrite, delete, rename, and therefore also a reparse-point
+        // (junction) put in the archive's place cannot be created.
+        assert!(
+            File::create(&archive_path).is_err(),
+            "an overwrite must fail while the protected handle is open"
+        );
+        assert!(
+            fs::remove_file(&archive_path).is_err(),
+            "a delete must fail while the protected handle is open"
+        );
+        assert!(
+            fs::rename(&archive_path, native_dir.join("renamed.zip")).is_err(),
+            "a rename of the pinned archive must fail while the handle is open"
+        );
+        let junction = crate::proc::hidden_command("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&archive_path)
+            .arg(&link_target)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(
+            !junction.success(),
+            "a junction cannot replace the archive while the handle pins the path"
+        );
+
+        // A path change above the file: rename the containing directory. The
+        // outcome is an OS policy detail (renaming the file entry itself is
+        // already blocked above); either way the original handle stays
+        // authoritative for the verified bytes.
+        let moved = fs::rename(&native_dir, &moved_dir).is_ok();
+        handle.seek(SeekFrom::Start(0)).unwrap();
+        let mut read_back = Vec::new();
+        handle.read_to_end(&mut read_back).unwrap();
+        assert_eq!(
+            read_back, approved,
+            "the protected handle must keep serving the approved bytes after a path change"
+        );
+        drop(handle);
+        if moved {
+            assert!(
+                fs::metadata(&archive_path).is_err(),
+                "the old path must stop resolving after the directory move"
+            );
+            assert_eq!(fs::read(moved_dir.join("runtime.zip")).unwrap(), approved);
+        } else {
+            assert_eq!(fs::read(&archive_path).unwrap(), approved);
+        }
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn archive_extraction_rejects_ntfs_alternate_stream_entries() {
         use std::io::Write;
 

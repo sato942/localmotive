@@ -9,7 +9,13 @@ param(
   [string]$CandidateDir = "",
   [int]$ReleaseWaitMinutes = 5,
   [int]$TimeoutMinutes = 45,
-  [string]$EvidenceName = "sandbox-clean-account-lifecycle"
+  [string]$EvidenceName = "sandbox-clean-account-lifecycle",
+  # Fault simulation for the GH-06.V2 witness legs (default: a real run).
+  # none | timeout | malformed-result | missing-assets | stall
+  # Each simulated failure must leave a bounded structured outcome with its
+  # stage and, where known, the candidate identity.
+  [ValidateSet("none", "timeout", "malformed-result", "missing-assets", "stall")]
+  [string]$FaultSimulation = "none"
 )
 $ErrorActionPreference = "Stop"
 
@@ -73,6 +79,11 @@ function Download-Asset([string]$RelTag, [string]$Name, [string]$OutPath) {
 
 try {
   $stage = "resolve-installers"
+  if ($FaultSimulation -eq "missing-assets") {
+    # GH-06.V2 witness: an early installer-asset failure must leave a bounded
+    # structured outcome at this stage, before any sandbox work.
+    throw "installer assets are unavailable (fault simulation)"
+  }
   $currentSetup = "Localmotive_${Version}_x64-setup.exe"
   $currentMsi = "Localmotive_${Version}_x64.msi"
   $prevVersion = $PreviousTag.TrimStart("v")
@@ -120,7 +131,13 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
     currentMsi = (Get-FileSha256 (Join-Path $Shared $currentMsi))
   }
 
-  Download-Asset $PreviousTag $previousSetup (Join-Path $Shared $previousSetup)
+  if ($FaultSimulation -eq "none") {
+    Download-Asset $PreviousTag $previousSetup (Join-Path $Shared $previousSetup)
+  } else {
+    # The witness legs exercise terminal-outcome handling; the published
+    # baseline download is not part of those paths.
+    Write-Host "Fault simulation '$FaultSimulation': skipping the baseline download"
+  }
 
   $stage = "stage-canaries"
   $fixtureDir = Join-Path $PWD "scripts\sandbox"
@@ -170,8 +187,22 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
 
   # Networking=Enable so WebView2 bootstrapper can download in Sandbox (Disable caused NSIS exit 2).
   $stage = "sandbox-run"
-  Write-Host "Launching Windows Sandbox..."
-  $sandbox = Start-Process -FilePath "$env:WINDIR\System32\WindowsSandbox.exe" -ArgumentList "`"$wsbPath`"" -PassThru
+  if ($FaultSimulation -eq "malformed-result") {
+    # GH-06.V2 witness: a malformed in-sandbox result must become a bounded
+    # FAIL outcome with this stage instead of a hang or a false pass.
+    Set-Content -Path $resultPath -Value "{ this is not json" -Encoding UTF8
+  } elseif ($FaultSimulation -eq "timeout") {
+    # GH-06.V2 witness: force the bounded wait to expire immediately.
+    $TimeoutMinutes = 0
+  } elseif ($FaultSimulation -eq "stall") {
+    # GH-06.V2 witness: a cancellable long stage. The cancellation leg kills
+    # this process and asserts that a killed run leaves no PASS artifact.
+    Write-Host "Fault simulation 'stall': waiting for cancellation..."
+    Start-Sleep -Seconds 600
+  } else {
+    Write-Host "Launching Windows Sandbox..."
+    $sandbox = Start-Process -FilePath "$env:WINDIR\System32\WindowsSandbox.exe" -ArgumentList "`"$wsbPath`"" -PassThru
+  }
 
   $waitUntil = (Get-Date).AddMinutes($TimeoutMinutes)
   while ((Get-Date) -lt $waitUntil) {

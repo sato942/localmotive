@@ -1,0 +1,15 @@
+﻿{
+    "schema":  "localmotive.sandbox-lifecycle.v0",
+    "status":  "FAIL",
+    "stage":  "resolve-installers",
+    "error":  "installer assets are unavailable (fault simulation)",
+    "tag":  "v0.6.0",
+    "version":  "0.6.0",
+    "previousTag":  "v0.4.0",
+    "sourceRevision":  "b953e8456a1be7198e9b9df73fa929d6476f3878",
+    "startedAtUtc":  "2026-09-11T21:11:26.6975102Z",
+    "finishedAtUtc":  "2026-09-11T21:11:26.7085996Z",
+    "candidateDigests":  {
+
+                         }
+}

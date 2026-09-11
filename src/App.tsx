@@ -104,6 +104,24 @@ function quarantineRecord(key: string, raw: string) {
   }
 }
 
+/// Persist a record without letting a storage failure masquerade as an
+/// operation failure (audit FE-09 I3): the operation's own result stays
+/// visible and the caller reports the persistence problem separately.
+function persistRecord(key: string, value: string): boolean {
+  try {
+    localStorage.setItem(`localmotive:${key}`, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/// The persistence-failure sentence a caller appends to its own notice so a
+/// completed operation is never relabelled as failed (audit FE-09 I3).
+function persistenceFailureNote(thing: string): string {
+  return `${thing} could not be saved to browser storage (unavailable or full) and will not survive a restart.`;
+}
+
 const readSetting = (key: string): string => readRecord(key) ?? "";
 
 const MODEL_ROOT = readSetting("model-root");
@@ -297,8 +315,9 @@ function App() {
   // leaves the machine. Local inference and local exports are unaffected.
   const [disclosureSections, setDisclosureSections] = useState<DisclosureSection[]>([]);
   const [briefDisclosure, setBriefDisclosure] = useState<BriefDisclosure>(() => {
-    const stored = localStorage.getItem("localmotive:tune-disclosure");
-    return stored === "minimal" ? "minimal" : "full";
+    // Guarded read (audit FE-09 I3): a denied-storage read must not crash the
+    // first render; the disclosure falls back to the transparent default.
+    return readRecord("tune-disclosure") === "minimal" ? "minimal" : "full";
   });
   const [tuneProgress, setTuneProgress] = useState<TuningProgress | null>(null);
   const [tuneLive, setTuneLive] = useState<TuningTrial[]>([]);
@@ -349,7 +368,7 @@ function App() {
         const replacement = result.find((model) => model.id === nextId);
         if (replacement) loadProfile(replacement);
       }
-      localStorage.setItem("localmotive:model-root", modelRoot);
+      const rootSaved = persistRecord("model-root", modelRoot);
       const problemNote =
         report.problems.length > 0 || report.truncated
           ? ` · ${report.problems.length} scan diagnostic${report.problems.length === 1 ? "" : "s"}${report.truncated ? " (bounded scan stopped early)" : ""}: ${report.problems
@@ -357,7 +376,9 @@ function App() {
               .map((problem) => problem.reason)
               .join("; ")}`
           : "";
-      setNotice(`${result.length} logical targets indexed from ${modelRoot}${problemNote}`);
+      setNotice(
+        `${result.length} logical targets indexed from ${modelRoot}${problemNote}${rootSaved ? "" : ` · ${persistenceFailureNote("The model folder")}`}`,
+      );
     } catch (error) {
       // A failed scan clears the selection and its editable profile as one
       // transition, so a stale draft can never masquerade as current.
@@ -395,9 +416,11 @@ function App() {
         invoke<ManagedRuntimeRecord[]>("list_managed_runtimes"),
       ]);
       if (!keepLatestRequest(sequence, runtimeInspectSeq.current)) return;
-      commitRuntime(path, caps, identity);
+      const runtimeSaved = commitRuntime(path, caps, identity);
       setManagedRuntimes(managed);
-      setNotice(`Runtime build ${caps.build} inspected; ${caps.specTypes.length} speculation modes exposed.`);
+      setNotice(
+        `Runtime build ${caps.build} inspected; ${caps.specTypes.length} speculation modes exposed.${runtimeSaved ? "" : ` ${persistenceFailureNote("The runtime selection")}`}`,
+      );
     } catch (error) {
       if (!keepLatestRequest(sequence, runtimeInspectSeq.current)) return;
       setRuntime(null);
@@ -413,12 +436,15 @@ function App() {
   /// the runtime only after its inspection succeeded; a failed inspection
   /// leaves the previous committed identity and the draft untouched, and the
   /// typed path stays uncommitted input.
-  function commitRuntime(path: string, caps: RuntimeCapabilities, identity: RuntimeIdentity) {
+  /// Returns whether the runtime selection was persisted (audit FE-09 I3):
+  /// the caller reports a storage failure without relabelling the inspection.
+  function commitRuntime(path: string, caps: RuntimeCapabilities, identity: RuntimeIdentity): boolean {
     setRuntimePath(path);
     setRuntime(caps);
     setRuntimeIdentity(identity);
-    localStorage.setItem("localmotive:runtime", path);
+    const saved = persistRecord("runtime", path);
     setProfile((current) => (current ? { ...current, runtime: path } : current));
+    return saved;
   }
 
   async function activateRuntime(path: string) {
@@ -635,7 +661,9 @@ function App() {
     );
     if (typeof selected === "string") {
       setModelRoot(selected);
-      localStorage.setItem("localmotive:model-root", selected);
+      if (!persistRecord("model-root", selected)) {
+        setNotice(persistenceFailureNote("The model folder"));
+      }
     }
   }
 
@@ -873,7 +901,9 @@ function App() {
 
   async function switchProvider(next: string) {
     setProviderId(next);
-    localStorage.setItem("localmotive:cloud-provider", next);
+    if (!persistRecord("cloud-provider", next)) {
+      setNotice(persistenceFailureNote("The provider choice"));
+    }
     setKeyDraft("");
     // FE-03: clear provider-specific presentation at switch start; a slow
     // previous provider can never relabel the new tab while it loads.
@@ -977,8 +1007,11 @@ function App() {
 
   function chooseCloudModel(id: string) {
     setCloudModel(id);
-    localStorage.setItem("localmotive:cloud-model", id);
-    localStorage.setItem(`localmotive:cloud-model:${providerId}`, id);
+    const savedGlobally = persistRecord("cloud-model", id);
+    const savedForProvider = persistRecord(`cloud-model:${providerId}`, id);
+    if (!savedGlobally || !savedForProvider) {
+      setNotice(persistenceFailureNote("The advisor model choice"));
+    }
   }
 
   // ---- AI tuning -------------------------------------------------------------
@@ -1020,7 +1053,9 @@ function App() {
 
   function changeDisclosure(mode: BriefDisclosure) {
     setBriefDisclosure(mode);
-    localStorage.setItem("localmotive:tune-disclosure", mode);
+    if (!persistRecord("tune-disclosure", mode)) {
+      setNotice(persistenceFailureNote("The disclosure choice"));
+    }
   }
 
   async function startTuning() {
@@ -1057,9 +1092,14 @@ function App() {
       });
       setTuneReport(report);
       setTuneReportOrigin(run);
-      localStorage.setItem(`localmotive:tuning:${run.modelId}`, JSON.stringify(report));
+      // Audit FE-09 I3: a failed report write must not relabel the finished
+      // tuning run; the report stays visible and the notice says what could
+      // not be saved for later sessions.
+      const reportSaved = persistRecord(`tuning:${run.modelId}`, JSON.stringify(report));
       const gain = report.baselineTps && report.bestTps ? ((report.bestTps / report.baselineTps - 1) * 100).toFixed(1) : null;
-      setNotice(gain ? `Tuning finished: best ${report.bestTps?.toFixed(2)} tok/s (${Number(gain) >= 0 ? "+" : ""}${gain}% vs baseline). ${report.stoppedReason}.` : `Tuning finished. ${report.stoppedReason}.`);
+      setNotice(
+        `${gain ? `Tuning finished: best ${report.bestTps?.toFixed(2)} tok/s (${Number(gain) >= 0 ? "+" : ""}${gain}% vs baseline). ${report.stoppedReason}.` : `Tuning finished. ${report.stoppedReason}.`}${reportSaved ? "" : ` ${persistenceFailureNote("The tuning report")}`}`,
+      );
     } catch (error) {
       setNotice(errorText(error));
       setTuneProgress({ phase: "error", message: errorText(error), trial: null });
@@ -1086,13 +1126,14 @@ function App() {
     if (!tuneReport || !tuneReportOrigin) return;
     const origin = tuneReportOrigin;
     const adopted = { ...tuneReport.bestProfile, name: `${origin.modelName} / AI-tuned @${origin.context.toLocaleString()}` };
-    localStorage.setItem(`localmotive:profile:${origin.modelId}`, JSON.stringify(adopted));
+    const adoptedSaved = persistRecord(`profile:${origin.modelId}`, JSON.stringify(adopted));
+    const savedNote = adoptedSaved ? "" : ` ${persistenceFailureNote("The tuned profile")}`;
     if (selectedId === origin.modelId) {
       setProfile(adopted);
-      setNotice(`Adopted the best configuration as the saved profile for ${origin.modelName}.`);
+      setNotice(`Adopted the best configuration as the saved profile for ${origin.modelName}.${savedNote}`);
       setView("profile");
     } else {
-      setNotice(`Saved the tuned profile for ${origin.modelName}; it applies when that model is selected.`);
+      setNotice(`Saved the tuned profile for ${origin.modelName}; it applies when that model is selected.${savedNote}`);
     }
   }
 
@@ -1140,8 +1181,11 @@ function App() {
 
   function saveProfile() {
     if (!profile || !selected) return;
-    localStorage.setItem(`localmotive:profile:${selected.id}`, JSON.stringify(profile));
-    setNotice(`Saved ${profile.name}`);
+    if (persistRecord(`profile:${selected.id}`, JSON.stringify(profile))) {
+      setNotice(`Saved ${profile.name}`);
+    } else {
+      setNotice(`Could not save ${profile.name}. ${persistenceFailureNote("The profile")}`);
+    }
   }
 
   async function preview() {
@@ -1206,8 +1250,10 @@ function App() {
         repeats,
       });
       setBenchmark(result);
-      localStorage.setItem(`localmotive:benchmark:${status.alias}`, JSON.stringify(result));
-      setNotice(`Benchmark complete: ${result.meanTps.toFixed(2)} generation tok/s mean.`);
+      const resultSaved = persistRecord(`benchmark:${status.alias}`, JSON.stringify(result));
+      setNotice(
+        `Benchmark complete: ${result.meanTps.toFixed(2)} generation tok/s mean.${resultSaved ? "" : ` ${persistenceFailureNote("The benchmark result")}`}`,
+      );
     } catch (error) {
       setNotice(errorText(error));
     } finally {

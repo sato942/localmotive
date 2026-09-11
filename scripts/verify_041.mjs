@@ -11,6 +11,7 @@ import os from "node:os";
 import process from "node:process";
 import Ajv from "ajv";
 import WebSocket from "ws";
+import { classifyHealthCancellation } from "./lib/health_cancel.mjs";
 
 const port = Number.parseInt(process.argv[2] ?? "", 10);
 const artifactPath = process.argv[3] ? resolve(process.argv[3]) : "";
@@ -718,7 +719,9 @@ try {
                   // listener BEFORE starting the run and cancel only after
                   // the backend emits its first health progress phase, so a
                   // slow start cannot race an early cancel the way a fixed
-                  // sleep could.
+                  // sleep could. Fast progress is also a valid observation:
+                  // if the run completes before a cancellation can land, the
+                  // outcome records completion instead of failing (QD-03.V3).
                   let firstPhase = null;
                   const phaseSeen = new Promise((resolvePromise) => {
                     const callbackId = window.__TAURI_INTERNALS__.transformCallback((event) => {
@@ -740,30 +743,45 @@ try {
                     "check_managed_runtime_health",
                     { request: { installKey: "cpu", adapterId: null } }
                   );
-                  const sawPhase = await Promise.race([
-                    phaseSeen,
-                    running.then(() => false),
-                    new Promise((resolvePromise) => setTimeout(() => resolvePromise(false), 120_000)),
+                  const trigger = await Promise.race([
+                    phaseSeen.then((seen) => (seen ? "phase" : "no-listener")),
+                    running.then(() => "completed-before-cancel"),
+                    new Promise((resolvePromise) => setTimeout(() => resolvePromise("bounded-timeout"), 120_000)),
                   ]);
-                  const accepted = await window.__TAURI_INTERNALS__.invoke(
-                    "cancel_managed_runtime_health",
-                    {}
-                  );
-                  return { ok: true, accepted, sawPhase, firstPhase, health: await running };
+                  if (trigger === "completed-before-cancel") {
+                    return { trigger, health: await running };
+                  }
+                  if (trigger === "bounded-timeout") {
+                    return { trigger, bound_seconds: 120 };
+                  }
+                  if (trigger === "no-listener") {
+                    return { trigger: "bounded-timeout", bound_seconds: 120, error: "the health progress listener could not be registered" };
+                  }
+                  // Slow progress: an active operation was observable; cancel it
+                  // and attribute the outcome.
+                  let accepted = null;
+                  try {
+                    accepted = await window.__TAURI_INTERNALS__.invoke(
+                      "cancel_managed_runtime_health",
+                      {}
+                    );
+                  } catch (error) {
+                    const health = await running;
+                    if (health && health.passed === true) {
+                      return { trigger: "completed-before-cancel", health };
+                    }
+                    return { trigger: "cancel-refused", error: String(error), health };
+                  }
+                  return { trigger: "cancelled-after-phase", accepted, firstPhase, health: await running };
                 } catch (error) {
-                  return { ok: false, error: String(error) };
+                  return { trigger: "invocation-failed", error: String(error) };
                 }
               })()`, 600_000);
-              requireCondition(outcome?.ok, outcome?.error ?? "Cancelled health invocation failed");
-              requireCondition(outcome.sawPhase === true, "The health run never emitted a progress phase to cancel against");
-              requireCondition(outcome.accepted === true, "The backend did not accept health cancellation");
-              requireCondition(outcome.health?.passed === false, "The cancelled health run reported success");
-              requireCondition(outcome.health?.stages?.length === 7, "The cancelled health run lost the seven-stage contract");
-              const cancelledStages = outcome.health.stages
-                .filter((stage) => stage.failureReason === "cancelled")
-                .map((stage) => stage.stage);
-              requireCondition(cancelledStages.length >= 1, "The cancelled run did not attribute cancellation to a stage");
-              return { accepted: true, cancelled_stages: cancelledStages, cancelled_after_phase: outcome.firstPhase };
+              // One shared acceptance contract (audit QD-03 V3): slow
+              // cancellation evidence, fast completion evidence, or a bounded
+              // diagnostic failure. The classifier throws with the bounded
+              // reason; runCheck records it.
+              return classifyHealthCancellation(outcome);
             },
           );
 

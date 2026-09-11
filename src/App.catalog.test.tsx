@@ -1469,3 +1469,141 @@ describe("Bounded discovery diagnostics (audit S-15)", () => {
     ).toBe(1);
   });
 });
+
+describe("delayed and rejected catalog IPC (audit QD-02 I4)", () => {
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+
+  function orderSelect(): HTMLSelectElement {
+    const select = [...container.querySelectorAll("select")].find((candidate) =>
+      [...candidate.options].some((option) => (option.textContent ?? "").includes("Smallest file")),
+    );
+    expect(select, "the order selector must exist").toBeTruthy();
+    return select as HTMLSelectElement;
+  }
+
+  async function changeOrder(value: string) {
+    await act(async () => {
+      orderSelect().value = value;
+      orderSelect().dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await settle();
+  }
+
+  it("surfaces a rejected filter application and keeps the previously listed rows", async () => {
+    const rows = [model("m1", "alpha")];
+    useRows(rows);
+    handlers.set("load_model_catalog", () => snapshot(rows));
+    handlers.set("fetch_model_catalog", () => snapshot(rows));
+
+    await mount();
+    await openCatalogTab();
+    await settle();
+    expect(text()).toContain("alpha");
+
+    // The backend refuses the next filter application.
+    handlers.set("filter_catalog", () => {
+      throw new Error("filter refused by fixture");
+    });
+    await changeOrder("name");
+    expect(text()).toContain("filter refused by fixture");
+    expect(text(), "the previous rows stay visible").toContain("alpha");
+  });
+
+  it("keeps the newest filter result when an older application resolves late", async () => {
+    const initial = [model("m1", "alpha"), model("m2", "beta")];
+    handlers.set("catalog_local_models", () => initial);
+    handlers.set("load_model_catalog", () => snapshot(initial));
+    handlers.set("fetch_model_catalog", () => snapshot(initial));
+    const filters: Array<ReturnType<typeof deferred<unknown>>> = [];
+    handlers.set("filter_catalog", () => {
+      const next = deferred<unknown>();
+      filters.push(next);
+      return next.promise;
+    });
+
+    await mount();
+    await openCatalogTab();
+    await settle();
+    // Resolve every application dispatched so far with the full list.
+    await act(async () => {
+      for (const filter of filters.splice(0)) filter.resolve(initial);
+    });
+    await settle();
+    expect(text()).toContain("alpha");
+    expect(text()).toContain("beta");
+
+    // Two further applications; the newer resolves first with a different list.
+    await changeOrder("name");
+    await changeOrder("likes");
+    expect(filters.length, "two further filter applications must be dispatched").toBe(2);
+    await act(async () => {
+      filters[1]!.resolve([model("m3", "gamma")]);
+    });
+    await settle();
+    expect(text()).toContain("gamma");
+    // The older application resolves late; it must be discarded.
+    await act(async () => {
+      filters[0]!.resolve([model("m1", "alpha")]);
+    });
+    await settle();
+    expect(text(), "the newest filter result must stay").toContain("gamma");
+    expect(text(), "the stale filter result must be discarded").not.toContain("alpha");
+  });
+
+  it("keeps the previous hardware evidence when a refresh is rejected", async () => {
+    const evidence = (value: number | string | null) => ({
+      value,
+      level: value === null ? "unknown" : "observed",
+      source: { kind: "vendorApi", detail: "fixture" },
+      observedAtMs: 1,
+      notes: [],
+    });
+    const hardware = {
+      ...runtimeSetup().hardware,
+      adapters: [
+        {
+          adapterId: "gpu-0",
+          compatibilityId: "compat-gpu-0",
+          name: "GPU 0",
+          vendor: "nvidia",
+          driver: evidence("580.0"),
+          backend: evidence("cuda"),
+          dedicatedBytes: evidence(10_000_000_000),
+          sharedBytes: evidence(null),
+          budgetBytes: evidence(10_000_000_000),
+          currentUsageBytes: evidence(0),
+          availableBudgetBytes: evidence(9_000_000_000),
+          reservationBytes: evidence(0),
+          availableForReservationBytes: evidence(null),
+          capacityObservations: [],
+        },
+      ],
+    };
+    handlers.set("load_runtime_setup", () => runtimeSetup({ hardware }));
+    await mount();
+    await settle();
+    expect(text(), "the initial adapter evidence must render").toContain("gpu-0");
+
+    handlers.set("detect_hardware", () => {
+      throw new Error("hardware probe refused by fixture");
+    });
+    const refresh = [...container.querySelectorAll("button")].find((button) =>
+      (button.textContent ?? "").includes("Refresh hardware"),
+    );
+    expect(refresh, "the Refresh hardware action must exist").toBeTruthy();
+    await act(async () => {
+      refresh!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await settle();
+    expect(text()).toContain("hardware probe refused by fixture");
+    expect(text(), "the previous adapter evidence must stay").toContain("gpu-0");
+  });
+});
