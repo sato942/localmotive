@@ -1,7 +1,7 @@
 # Localmotive 0.6 — audit remediation TODO
 
 **Target:** `0.6.0` stabilization release  
-**Status:** Planning complete; implementation in progress — Package 8 (delivery sequencing and truthful verifiers)  
+**Status:** Planning complete; implementation in progress — Package 9 (secured local transport)  
 **Source:** [localmotive-comprehensive-audit.md](./localmotive-comprehensive-audit.md)
 **Audited source SHA:** `e530371b056cd8e049c2246dbb151aa407bf359f`  
 **Release baseline reviewed by the audit:** `v0.5.0`, source `a4b7127f739f7420232d9b6f63da693d39128d0b`  
@@ -1648,17 +1648,17 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Enforce safe premerge checks and default-branch protection**
 
-**Status:** Not started · **Priority:** High · **Owner:** Unassigned  
+**Status:** Implemented I1/I2/I4 and gate-verified (commit `fe6f4ea`); I3 (main-branch ruleset) remains an owner action · **Priority:** High · **Owner:** sato942  
 **Audit trace:** [Audit GH-01](./localmotive-comprehensive-audit.md#gh-01)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [.github/workflows/ci.yml](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/.github/workflows/ci.yml), [.github/workflow-gates.json](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/.github/workflow-gates.json), [scripts/tests/release-gates.test.mjs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/scripts/tests/release-gates.test.mjs), [AGENTS.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/AGENTS.md)
 
 **Implementation**
 
-- [ ] **V06-GH-01.I1** — Add pull-request checks for the main branch on GitHub-hosted Windows or an ephemeral isolated runner, with stable check names and the applicable type, test, build, dependency and release-policy checks; retain trusted main-push verification. **Trace:** [Audit GH-01](./localmotive-comprehensive-audit.md#gh-01).
-- [ ] **V06-GH-01.I2** — Keep fork and other untrusted pull-request code off the owner's interactive self-hosted runner. Explicitly separate the PR execution environment from trusted packaging and publication permissions. **Trace:** [Audit GH-01](./localmotive-comprehensive-audit.md#gh-01).
+- [x] **V06-GH-01.I1** — Add pull-request checks for the main branch on GitHub-hosted Windows or an ephemeral isolated runner, with stable check names and the applicable type, test, build, dependency and release-policy checks; retain trusted main-push verification. **Trace:** [Audit GH-01](./localmotive-comprehensive-audit.md#gh-01).
+- [x] **V06-GH-01.I2** — Keep fork and other untrusted pull-request code off the owner's interactive self-hosted runner. Explicitly separate the PR execution environment from trusted packaging and publication permissions. **Trace:** [Audit GH-01](./localmotive-comprehensive-audit.md#gh-01).
 - [ ] **V06-GH-01.I3** — Configure a main-branch ruleset requiring the newly available PR checks, restricting direct and force pushes, and documenting a workable solo-maintainer review and emergency-bypass policy; introduce the trigger before requiring its status. **Trace:** [Audit GH-01](./localmotive-comprehensive-audit.md#gh-01).
-- [ ] **V06-GH-01.I4** — Update AGENTS.md and workflow comments to describe actual push/PR behavior, runner eligibility and the difference between job dependency gates and repository merge enforcement. **Trace:** [Audit GH-01](./localmotive-comprehensive-audit.md#gh-01).
+- [x] **V06-GH-01.I4** — Update AGENTS.md and workflow comments to describe actual push/PR behavior, runner eligibility and the difference between job dependency gates and repository merge enforcement. **Trace:** [Audit GH-01](./localmotive-comprehensive-audit.md#gh-01).
 
 **Verification**
 
@@ -1674,22 +1674,22 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Bind release jobs and evidence to one immutable source revision**
 
-**Status:** Not started · **Priority:** High · **Owner:** Unassigned  
+**Status:** Implemented I1/I2/I4 and gate-verified (commit `fe6f4ea`); I3 (tag protection ruleset) remains an owner action · **Priority:** High · **Owner:** sato942  
 **Audit trace:** [Audit GH-02](./localmotive-comprehensive-audit.md#gh-02)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [.github/workflows/release.yml](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/.github/workflows/release.yml), [scripts/verify_candidate_inventory.mjs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/scripts/verify_candidate_inventory.mjs), [.github/workflow-gates.json](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/.github/workflow-gates.json), [scripts/tests/release-gates.test.mjs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/scripts/tests/release-gates.test.mjs), [AGENTS.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/AGENTS.md)
 
 **Implementation**
 
-- [ ] **V06-GH-02.I1** — Resolve the requested annotated or lightweight release tag to one full commit SHA once, validate its main ancestry and event relationship, and pass that immutable revision to audit, quality, package and publish checkouts. **Trace:** [Audit GH-02](./localmotive-comprehensive-audit.md#gh-02).
-- [ ] **V06-GH-02.I2** — Record the resolved source revision with packaged behavior evidence and the producer's candidate inventory; verify these records and exact artifact hashes at publication instead of regenerating inventory from the publish job's current HEAD. **Trace:** [Audit GH-02](./localmotive-comprehensive-audit.md#gh-02).
+- [x] **V06-GH-02.I1** — Resolve the requested annotated or lightweight release tag to one full commit SHA once, validate its main ancestry and event relationship, and pass that immutable revision to audit, quality, package and publish checkouts. **Trace:** [Audit GH-02](./localmotive-comprehensive-audit.md#gh-02).
+- [x] **V06-GH-02.I2** — Record the resolved source revision with packaged behavior evidence and the producer's candidate inventory; verify these records and exact artifact hashes at publication instead of regenerating inventory from the publish job's current HEAD. **Trace:** [Audit GH-02](./localmotive-comprehensive-audit.md#gh-02).
 - [ ] **V06-GH-02.I3** — Protect released version tags against updates and deletion, document one-time tag creation, and require a new prerelease or patch version when source changes after an earlier candidate. **Trace:** [Audit GH-02](./localmotive-comprehensive-audit.md#gh-02).
-- [ ] **V06-GH-02.I4** — Preserve historical release artifacts and corrective records. Document retries of unchanged source separately from releases containing new source, with an explicit identity mismatch failure before publication. **Trace:** [Audit GH-02](./localmotive-comprehensive-audit.md#gh-02).
+- [x] **V06-GH-02.I4** — Preserve historical release artifacts and corrective records. Document retries of unchanged source separately from releases containing new source, with an explicit identity mismatch failure before publication. **Trace:** [Audit GH-02](./localmotive-comprehensive-audit.md#gh-02).
 
 **Verification**
 
 - [ ] **V06-GH-02.V1** — Simulate moving the tag between quality, package and publish in isolated repository/workflow fixtures; every job must retain the resolved SHA or fail before promoting mismatched artifacts. **Trace:** [Audit GH-02](./localmotive-comprehensive-audit.md#gh-02).
-- [ ] **V06-GH-02.V2** — Supply inventories or packaged records with a different source SHA, missing artifact or changed digest; verify publication validation rejects each case without overwriting the original evidence. **Trace:** [Audit GH-02](./localmotive-comprehensive-audit.md#gh-02).
+- [x] **V06-GH-02.V2** — Supply inventories or packaged records with a different source SHA, missing artifact or changed digest; verify publication validation rejects each case without overwriting the original evidence. **Trace:** [Audit GH-02](./localmotive-comprehensive-audit.md#gh-02).
 - [ ] **V06-GH-02.V3** — Run a complete candidate flow and compare checkout revisions, inventory, packaged evidence and publication metadata; read back the effective tag-update/deletion protection. **Trace:** [Audit GH-02](./localmotive-comprehensive-audit.md#gh-02).
 
 **Complete when:** Quality results, packaged binaries and original candidate inventory identify the same immutable source and bytes, and controlled promotion/readback fixtures prove the public-release gate rejects any mismatch. Actual v0.6 public readback is recorded separately under V06-G-09. Changing source requires a new version identity, and consumer verification cannot silently rewrite producer evidence.
@@ -1700,17 +1700,17 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Sequence clean-account verification after its candidate artifacts exist**
 
-**Status:** Not started · **Priority:** High · **Owner:** Unassigned  
+**Status:** Implemented I1-I4 and gate-verified (commit `69894e3`); V1-V3 need a live release run · **Priority:** High · **Owner:** sato942  
 **Audit trace:** [Audit GH-03](./localmotive-comprehensive-audit.md#gh-03)  
 **Prerequisites:** [V06-GH-02](#v06-gh-02)
 **Source touchpoints:** [.github/workflows/hardware-qualify.yml](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/.github/workflows/hardware-qualify.yml), [.github/workflows/release.yml](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/.github/workflows/release.yml), [scripts/sandbox/host-run-lifecycle.ps1](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/scripts/sandbox/host-run-lifecycle.ps1), [.github/workflow-gates.json](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/.github/workflow-gates.json), [docs/history/TODO-0.5.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/docs/history/TODO-0.5.md)
 
 **Implementation**
 
-- [ ] **V06-GH-03.I1** — Make clean-account lifecycle verification consume the already-built candidate installers through CandidateDir as a dependent release job, preserving the producer's source revision, inventory and expected installer hashes. **Trace:** [Audit GH-03](./localmotive-comprehensive-audit.md#gh-03).
-- [ ] **V06-GH-03.I2** — Remove the independent prepublication wait for public release assets from the one-runner release path; do not occupy the only producer runner with a consumer waiting for artifacts it cannot yet produce. **Trace:** [Audit GH-03](./localmotive-comprehensive-audit.md#gh-03).
-- [ ] **V06-GH-03.I3** — Define whether lifecycle verification is required before publication. If policy deliberately chooses a non-gating post-release check instead, trigger it only after completed publication and present its untested or failed status explicitly. **Trace:** [Audit GH-03](./localmotive-comprehensive-audit.md#gh-03).
-- [ ] **V06-GH-03.I4** — Correct the historical v0.5 ledger explanation with a factual additive correction: Sandbox availability succeeded; the demonstrated failure was polling unpublished installers. Update workflow comments and documented scheduling to match the chosen sequence. **Trace:** [Audit GH-03](./localmotive-comprehensive-audit.md#gh-03).
+- [x] **V06-GH-03.I1** — Make clean-account lifecycle verification consume the already-built candidate installers through CandidateDir as a dependent release job, preserving the producer's source revision, inventory and expected installer hashes. **Trace:** [Audit GH-03](./localmotive-comprehensive-audit.md#gh-03).
+- [x] **V06-GH-03.I2** — Remove the independent prepublication wait for public release assets from the one-runner release path; do not occupy the only producer runner with a consumer waiting for artifacts it cannot yet produce. **Trace:** [Audit GH-03](./localmotive-comprehensive-audit.md#gh-03).
+- [x] **V06-GH-03.I3** — Define whether lifecycle verification is required before publication. If policy deliberately chooses a non-gating post-release check instead, trigger it only after completed publication and present its untested or failed status explicitly. **Trace:** [Audit GH-03](./localmotive-comprehensive-audit.md#gh-03).
+- [x] **V06-GH-03.I4** — Correct the historical v0.5 ledger explanation with a factual additive correction: Sandbox availability succeeded; the demonstrated failure was polling unpublished installers. Update workflow comments and documented scheduling to match the chosen sequence. **Trace:** [Audit GH-03](./localmotive-comprehensive-audit.md#gh-03).
 
 **Verification**
 
@@ -1726,21 +1726,21 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Make installer uninstall and upgrade verdicts verify their claimed outcomes**
 
-**Status:** Not started · **Priority:** High · **Owner:** Unassigned  
+**Status:** Implemented I1/I2/I4 (commit `69894e3`); I3 migration fixtures open; V2/V3 need the sandbox window · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit GH-04](./localmotive-comprehensive-audit.md#gh-04)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [scripts/sandbox/run-lifecycle-in-sandbox.ps1](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/scripts/sandbox/run-lifecycle-in-sandbox.ps1), [scripts/sandbox/host-run-lifecycle.ps1](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/scripts/sandbox/host-run-lifecycle.ps1), [.github/workflows/hardware-qualify.yml](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/.github/workflows/hardware-qualify.yml)
 
 **Implementation**
 
-- [ ] **V06-GH-04.I1** — Replace the MSI leftover-executable warning-and-continue branch with a failed uninstall verdict when the expected application remains; verify the intended installation scope and registry/product identity instead of relying on a generic executable search. **Trace:** [Audit GH-04](./localmotive-comprehensive-audit.md#gh-04).
-- [ ] **V06-GH-04.I2** — After an upgrade, verify the installed executable's expected version and digest against the candidate inventory, and retain evidence identifying old and new installer/executable versions. **Trace:** [Audit GH-04](./localmotive-comprehensive-audit.md#gh-04).
+- [x] **V06-GH-04.I1** — Replace the MSI leftover-executable warning-and-continue branch with a failed uninstall verdict when the expected application remains; verify the intended installation scope and registry/product identity instead of relying on a generic executable search. **Trace:** [Audit GH-04](./localmotive-comprehensive-audit.md#gh-04).
+- [x] **V06-GH-04.I2** — After an upgrade, verify the installed executable's expected version and digest against the candidate inventory, and retain evidence identifying old and new installer/executable versions. **Trace:** [Audit GH-04](./localmotive-comprehensive-audit.md#gh-04).
 - [ ] **V06-GH-04.I3** — Add separate migration scenarios for v0.4.1 profiles and settings and for v0.5.0 SQLite/user-override data. Populate realistic isolated persisted fixtures before upgrade and assert the documented preservation or migration behavior afterward. **Trace:** [Audit GH-04](./localmotive-comprehensive-audit.md#gh-04).
-- [ ] **V06-GH-04.I4** — Cover appropriate NSIS and MSI fresh-install, upgrade and uninstall paths; replace the permanently hardcoded v0.4.0 baseline with an explicit supported-baseline matrix, and label eight-second process survival as startup smoke rather than full functional verification. **Trace:** [Audit GH-04](./localmotive-comprehensive-audit.md#gh-04).
+- [x] **V06-GH-04.I4** — Cover appropriate NSIS and MSI fresh-install, upgrade and uninstall paths; replace the permanently hardcoded v0.4.0 baseline with an explicit supported-baseline matrix, and label eight-second process survival as startup smoke rather than full functional verification. **Trace:** [Audit GH-04](./localmotive-comprehensive-audit.md#gh-04).
 
 **Verification**
 
-- [ ] **V06-GH-04.V1** — Inject an MSI uninstall outcome that leaves the expected executable or product registration; prove the scenario cannot emit uninstall PASS. **Trace:** [Audit GH-04](./localmotive-comprehensive-audit.md#gh-04).
+- [x] **V06-GH-04.V1** — Inject an MSI uninstall outcome that leaves the expected executable or product registration; prove the scenario cannot emit uninstall PASS. **Trace:** [Audit GH-04](./localmotive-comprehensive-audit.md#gh-04).
 - [ ] **V06-GH-04.V2** — Simulate an upgrade that keeps the old executable despite a successful installer exit code; verify the version/digest assertion catches it. **Trace:** [Audit GH-04](./localmotive-comprehensive-audit.md#gh-04).
 - [ ] **V06-GH-04.V3** — Run clean-account installer scenarios and both version-specific migration fixtures on Windows; compare exact installed identity, retained data, uninstall outcomes and structured per-scenario verdicts. **Trace:** [Audit GH-04](./localmotive-comprehensive-audit.md#gh-04).
 
@@ -1752,23 +1752,23 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Add packaged acceptance coverage for catalog and SQLite workflows**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented and packaged-verified end to end (commit `5222307`) · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit GH-05](./localmotive-comprehensive-audit.md#gh-05)  
 **Prerequisites:** [V06-DC-01](#v06-dc-01), [V06-DC-03](#v06-dc-03), [V06-DC-05](#v06-dc-05), [V06-DC-06](#v06-dc-06), [V06-DC-07](#v06-dc-07)
 **Source touchpoints:** [scripts/verify_041.mjs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/scripts/verify_041.mjs), [.github/workflows/release.yml](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/.github/workflows/release.yml), [.github/workflow-gates.json](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/.github/workflow-gates.json), [scripts/tests/release-gates.test.mjs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/scripts/tests/release-gates.test.mjs), [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx), [src-tauri/src/catalog.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/catalog.rs), [src-tauri/src/catalog_db.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/catalog_db.rs), [AGENTS.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/AGENTS.md)
 
 **Implementation**
 
-- [ ] **V06-GH-05.I1** — Add a version-aware packaged verifier for the 0.6 candidate that exercises the HF model catalog and SQLite workflow through actual WebView events and IPC, using an isolated application-data profile and controlled signed catalog fixtures. **Trace:** [Audit GH-05](./localmotive-comprehensive-audit.md#gh-05).
-- [ ] **V06-GH-05.I2** — Cover first fill, fresh-session restart within cooldown, offline cache availability, valid signed refresh, invalid-signature fallback and corrupt-mirror recovery, while preserving a clear separation between local loading and network refresh. **Trace:** [Audit GH-05](./localmotive-comprehensive-audit.md#gh-05).
-- [ ] **V06-GH-05.I3** — Exercise rich filter/facet and hardware-fit controls, catalog navigation or pagination where implemented, local user-row persistence/removal, refresh/cooldown feedback and visible bounds/error states through the shipped UI. **Trace:** [Audit GH-05](./localmotive-comprehensive-audit.md#gh-05).
-- [ ] **V06-GH-05.I4** — Include the verifier in the release gate and bind its report to the immutable source and candidate binary digests. Retain the existing runtime verifier but identify injected presentation checks, real catalog interactions and CPU/runtime checks as distinct evidence. **Trace:** [Audit GH-05](./localmotive-comprehensive-audit.md#gh-05).
+- [x] **V06-GH-05.I1** — Add a version-aware packaged verifier for the 0.6 candidate that exercises the HF model catalog and SQLite workflow through actual WebView events and IPC, using an isolated application-data profile and controlled signed catalog fixtures. **Trace:** [Audit GH-05](./localmotive-comprehensive-audit.md#gh-05).
+- [x] **V06-GH-05.I2** — Cover first fill, fresh-session restart within cooldown, offline cache availability, valid signed refresh, invalid-signature fallback and corrupt-mirror recovery, while preserving a clear separation between local loading and network refresh. **Trace:** [Audit GH-05](./localmotive-comprehensive-audit.md#gh-05).
+- [x] **V06-GH-05.I3** — Exercise rich filter/facet and hardware-fit controls, catalog navigation or pagination where implemented, local user-row persistence/removal, refresh/cooldown feedback and visible bounds/error states through the shipped UI. **Trace:** [Audit GH-05](./localmotive-comprehensive-audit.md#gh-05).
+- [x] **V06-GH-05.I4** — Include the verifier in the release gate and bind its report to the immutable source and candidate binary digests. Retain the existing runtime verifier but identify injected presentation checks, real catalog interactions and CPU/runtime checks as distinct evidence. **Trace:** [Audit GH-05](./localmotive-comprehensive-audit.md#gh-05).
 
 **Verification**
 
-- [ ] **V06-GH-05.V1** — Demonstrate that the new packaged scenarios fail against the specific catalog restart, corruption and override defects they are intended to detect, then rerun them on their corrected implementation. **Trace:** [Audit GH-05](./localmotive-comprehensive-audit.md#gh-05).
-- [ ] **V06-GH-05.V2** — Run the packaged catalog matrix from an empty profile and a persisted prior-version profile; verify both UI-visible results and actual backend/disk persistence across application restarts. **Trace:** [Audit GH-05](./localmotive-comprehensive-audit.md#gh-05).
-- [ ] **V06-GH-05.V3** — Corrupt a signature and mirror, reject an input and delay a refresh; assert honest fallback/error/cooldown output without replacing real orchestration with private React-state injection. **Trace:** [Audit GH-05](./localmotive-comprehensive-audit.md#gh-05).
+- [x] **V06-GH-05.V1** — Demonstrate that the new packaged scenarios fail against the specific catalog restart, corruption and override defects they are intended to detect, then rerun them on their corrected implementation. **Trace:** [Audit GH-05](./localmotive-comprehensive-audit.md#gh-05).
+- [x] **V06-GH-05.V2** — Run the packaged catalog matrix from an empty profile and a persisted prior-version profile; verify both UI-visible results and actual backend/disk persistence across application restarts. **Trace:** [Audit GH-05](./localmotive-comprehensive-audit.md#gh-05).
+- [x] **V06-GH-05.V3** — Corrupt a signature and mirror, reject an input and delay a refresh; assert honest fallback/error/cooldown output without replacing real orchestration with private React-state injection. **Trace:** [Audit GH-05](./localmotive-comprehensive-audit.md#gh-05).
 
 **Complete when:** The candidate release contains successful artifact-bound packaged evidence for the current catalog/SQLite workflows, including restart and failure paths. Evidence clearly separates HF catalog behavior from the prior verifier's runtime-catalog fixtures.
 
@@ -1778,17 +1778,17 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Preserve structured lifecycle evidence for failures and timeouts**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented I1-I4 and gate-verified (commit `69894e3`); V1-V3 need the sandbox window · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit GH-06](./localmotive-comprehensive-audit.md#gh-06)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [scripts/sandbox/host-run-lifecycle.ps1](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/scripts/sandbox/host-run-lifecycle.ps1), [scripts/sandbox/run-lifecycle-in-sandbox.ps1](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/scripts/sandbox/run-lifecycle-in-sandbox.ps1), [.github/workflows/hardware-qualify.yml](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/.github/workflows/hardware-qualify.yml)
 
 **Implementation**
 
-- [ ] **V06-GH-06.I1** — Move collection of Sandbox result JSON, lifecycle logs and relevant host diagnostics into a finally-style path that runs before propagating a failure; preserve the original process or scenario error. **Trace:** [Audit GH-06](./localmotive-comprehensive-audit.md#gh-06).
-- [ ] **V06-GH-06.I2** — Write a structured FAIL, TIMEOUT or cancellation/missing-result record when Sandbox never produces usable output, including release version, source revision, candidate digests, timing and the failing stage. **Trace:** [Audit GH-06](./localmotive-comprehensive-audit.md#gh-06).
-- [ ] **V06-GH-06.I3** — Make the workflow upload the expected evidence on every terminal outcome and surface a missing required evidence file instead of treating an ignored empty upload as successful verification. **Trace:** [Audit GH-06](./localmotive-comprehensive-audit.md#gh-06).
-- [ ] **V06-GH-06.I4** — Update job summaries to distinguish scenario status, artifact-upload status and actual artifact existence; report missing evidence as missing and never infer a lifecycle PASS from a green upload step. **Trace:** [Audit GH-06](./localmotive-comprehensive-audit.md#gh-06).
+- [x] **V06-GH-06.I1** — Move collection of Sandbox result JSON, lifecycle logs and relevant host diagnostics into a finally-style path that runs before propagating a failure; preserve the original process or scenario error. **Trace:** [Audit GH-06](./localmotive-comprehensive-audit.md#gh-06).
+- [x] **V06-GH-06.I2** — Write a structured FAIL, TIMEOUT or cancellation/missing-result record when Sandbox never produces usable output, including release version, source revision, candidate digests, timing and the failing stage. **Trace:** [Audit GH-06](./localmotive-comprehensive-audit.md#gh-06).
+- [x] **V06-GH-06.I3** — Make the workflow upload the expected evidence on every terminal outcome and surface a missing required evidence file instead of treating an ignored empty upload as successful verification. **Trace:** [Audit GH-06](./localmotive-comprehensive-audit.md#gh-06).
+- [x] **V06-GH-06.I4** — Update job summaries to distinguish scenario status, artifact-upload status and actual artifact existence; report missing evidence as missing and never infer a lifecycle PASS from a green upload step. **Trace:** [Audit GH-06](./localmotive-comprehensive-audit.md#gh-06).
 
 **Verification**
 
@@ -1884,22 +1884,22 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Derive host attestation statuses from detected hardware**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented I1-I4; V1/V2 verified by fixtures (commit `69894e3`); V3 needs the next hardware window · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit GH-10](./localmotive-comprehensive-audit.md#gh-10)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [.github/workflows/hardware-qualify.yml](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/.github/workflows/hardware-qualify.yml)
 
 **Implementation**
 
-- [ ] **V06-GH-10.I1** — Replace unconditional HOST_MATCH rows with per-row results derived from the detected CPU/GPU identity and the qualification job's stated expected host; represent MATCH, NO_MATCH and UNKNOWN explicitly. **Trace:** [Audit GH-10](./localmotive-comprehensive-audit.md#gh-10).
-- [ ] **V06-GH-10.I2** — Treat a definite mismatch as a failed intended host-proof job and preserve UNKNOWN when identification is incomplete; do not promote a warning about mismatched hardware into a successful match record. **Trace:** [Audit GH-10](./localmotive-comprehensive-audit.md#gh-10).
-- [ ] **V06-GH-10.I3** — Include actual source revision, runtime identity and driver/hardware observations needed to interpret the host evidence, keeping observed values separate from expected runner labels or a hardcoded runner name. **Trace:** [Audit GH-10](./localmotive-comprehensive-audit.md#gh-10).
-- [ ] **V06-GH-10.I4** — Retain and strengthen the explicit policy that host presence does not establish packaged L4 product qualification. Report CPU, CUDA and Vulkan qualification only through the separate matching packaged scenario evidence, not through static host rows. **Trace:** [Audit GH-10](./localmotive-comprehensive-audit.md#gh-10).
+- [x] **V06-GH-10.I1** — Replace unconditional HOST_MATCH rows with per-row results derived from the detected CPU/GPU identity and the qualification job's stated expected host; represent MATCH, NO_MATCH and UNKNOWN explicitly. **Trace:** [Audit GH-10](./localmotive-comprehensive-audit.md#gh-10).
+- [x] **V06-GH-10.I2** — Treat a definite mismatch as a failed intended host-proof job and preserve UNKNOWN when identification is incomplete; do not promote a warning about mismatched hardware into a successful match record. **Trace:** [Audit GH-10](./localmotive-comprehensive-audit.md#gh-10).
+- [x] **V06-GH-10.I3** — Include actual source revision, runtime identity and driver/hardware observations needed to interpret the host evidence, keeping observed values separate from expected runner labels or a hardcoded runner name. **Trace:** [Audit GH-10](./localmotive-comprehensive-audit.md#gh-10).
+- [x] **V06-GH-10.I4** — Retain and strengthen the explicit policy that host presence does not establish packaged L4 product qualification. Report CPU, CUDA and Vulkan qualification only through the separate matching packaged scenario evidence, not through static host rows. **Trace:** [Audit GH-10](./localmotive-comprehensive-audit.md#gh-10).
 
 **Verification**
 
-- [ ] **V06-GH-10.V1** — Feed the host-record generator matching CPU/GPU observations and confirm only the corresponding expected host rows are marked matched, with the actual observations retained. **Trace:** [Audit GH-10](./localmotive-comprehensive-audit.md#gh-10).
-- [ ] **V06-GH-10.V2** — Exercise mismatched CPU, mismatched GPU, missing/ambiguous GPU and stale-runner-label fixtures; verify none emits an unsupported HOST_MATCH and the intended host-proof outcome reflects the mismatch or uncertainty. **Trace:** [Audit GH-10](./localmotive-comprehensive-audit.md#gh-10).
+- [x] **V06-GH-10.V1** — Feed the host-record generator matching CPU/GPU observations and confirm only the corresponding expected host rows are marked matched, with the actual observations retained. **Trace:** [Audit GH-10](./localmotive-comprehensive-audit.md#gh-10).
+- [x] **V06-GH-10.V2** — Exercise mismatched CPU, mismatched GPU, missing/ambiguous GPU and stale-runner-label fixtures; verify none emits an unsupported HOST_MATCH and the intended host-proof outcome reflects the mismatch or uncertainty. **Trace:** [Audit GH-10](./localmotive-comprehensive-audit.md#gh-10).
 - [ ] **V06-GH-10.V3** — Run on the intended Windows host and compare emitted identity fields to directly observed hardware/driver/source values; verify no host-only record claims successful CUDA/Vulkan inference or complete L4 support. **Trace:** [Audit GH-10](./localmotive-comprehensive-audit.md#gh-10).
 
 **Complete when:** Each emitted host status is justified by the recorded observation and mismatched or unknown hardware cannot silently receive HOST_MATCH. Host proof and packaged runtime/product qualification remain separate, accurately labeled evidence classes.
@@ -1938,24 +1938,24 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Test catalog and frontend orchestration through observable application contracts**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented I1/I2/I3/I5, V1-V3 verified (commits `b722f4d`, `5222307`); I4 and V4 partially open · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit QD-02](./localmotive-comprehensive-audit.md#qd-02)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [vite.config.ts](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/vite.config.ts), [package.json](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/package.json), [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx), [src/V03EvidencePanel.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/V03EvidencePanel.tsx), [src/model.test.ts](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/model.test.ts), [src-tauri/src/lib.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/lib.rs), [src-tauri/src/catalog_db.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/catalog_db.rs), [scripts/verify_041.mjs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/scripts/verify_041.mjs), [scripts/tests/release-gates.test.mjs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/scripts/tests/release-gates.test.mjs)
 
 **Implementation**
 
-- [ ] **V06-QD-02.I1** — Add a DOM/component test environment scoped to application tests, mocking IPC only at its boundary and preserving the exclusion of research and third-party tests. **Trace:** [Audit QD-02](./localmotive-comprehensive-audit.md#qd-02).
-- [ ] **V06-QD-02.I2** — Add real temporary-database orchestration fixtures covering fetch, mirror publication, restart, cooldown, offline fallback, corrupt migration and download authorization, rather than calling only successful storage helpers. **Trace:** [Audit QD-02](./localmotive-comprehensive-audit.md#qd-02).
-- [ ] **V06-QD-02.I3** — Exercise curated/local ID and filename collisions, atomic file replacement and preservation of local entries; write failing regressions before the corresponding catalog fixes are closed. **Trace:** [Audit QD-02](./localmotive-comprehensive-audit.md#qd-02).
+- [x] **V06-QD-02.I1** — Add a DOM/component test environment scoped to application tests, mocking IPC only at its boundary and preserving the exclusion of research and third-party tests. **Trace:** [Audit QD-02](./localmotive-comprehensive-audit.md#qd-02).
+- [x] **V06-QD-02.I2** — Add real temporary-database orchestration fixtures covering fetch, mirror publication, restart, cooldown, offline fallback, corrupt migration and download authorization, rather than calling only successful storage helpers. **Trace:** [Audit QD-02](./localmotive-comprehensive-audit.md#qd-02).
+- [x] **V06-QD-02.I3** — Exercise curated/local ID and filename collisions, atomic file replacement and preservation of local entries; write failing regressions before the corresponding catalog fixes are closed. **Trace:** [Audit QD-02](./localmotive-comprehensive-audit.md#qd-02).
 - [ ] **V06-QD-02.I4** — Cover delayed/rejected IPC, filter reapplication, hardware updates, stale responses, malformed saved profiles, denied browser storage and accessible catalog/profile interactions. **Trace:** [Audit QD-02](./localmotive-comprehensive-audit.md#qd-02).
-- [ ] **V06-QD-02.I5** — Extend version-aware packaged HF catalog acceptance to first run, restart, persistence, fallback, filters and actual serialization; distinguish these scenarios from the retained runtime-catalog checks. **Trace:** [Audit QD-02](./localmotive-comprehensive-audit.md#qd-02).
+- [x] **V06-QD-02.I5** — Extend version-aware packaged HF catalog acceptance to first run, restart, persistence, fallback, filters and actual serialization; distinguish these scenarios from the retained runtime-catalog checks. **Trace:** [Audit QD-02](./localmotive-comprehensive-audit.md#qd-02).
 
 **Verification**
 
-- [ ] **V06-QD-02.V1** — Demonstrate that regression cases fail for the audited boundary defects and pass only after their owning implementation tasks resolve them. **Trace:** [Audit QD-02](./localmotive-comprehensive-audit.md#qd-02).
-- [ ] **V06-QD-02.V2** — Run the component suite and backend orchestration tests with delayed failures, corrupt databases and conflicting rows, retaining exact commands and results. **Trace:** [Audit QD-02](./localmotive-comprehensive-audit.md#qd-02).
-- [ ] **V06-QD-02.V3** — Run the packaged Windows scenarios with an isolated profile and retain source/artifact-bound evidence; record unexecuted target-environment checks explicitly. **Trace:** [Audit QD-02](./localmotive-comprehensive-audit.md#qd-02).
+- [x] **V06-QD-02.V1** — Demonstrate that regression cases fail for the audited boundary defects and pass only after their owning implementation tasks resolve them. **Trace:** [Audit QD-02](./localmotive-comprehensive-audit.md#qd-02).
+- [x] **V06-QD-02.V2** — Run the component suite and backend orchestration tests with delayed failures, corrupt databases and conflicting rows, retaining exact commands and results. **Trace:** [Audit QD-02](./localmotive-comprehensive-audit.md#qd-02).
+- [x] **V06-QD-02.V3** — Run the packaged Windows scenarios with an isolated profile and retain source/artifact-bound evidence; record unexecuted target-environment checks explicitly. **Trace:** [Audit QD-02](./localmotive-comprehensive-audit.md#qd-02).
 - [ ] **V06-QD-02.V4** — Confirm keyboard navigation, labels, focus changes and status announcements on representative catalog/profile flows. **Trace:** [Audit QD-02](./localmotive-comprehensive-audit.md#qd-02).
 
 **Complete when:** Release acceptance exercises the real HF catalog orchestration, including failure and restart paths, instead of relying on source-name assertions. Each confirmed boundary defect has an observable regression that cannot pass when its required behavior is removed.
@@ -1966,23 +1966,23 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Replace private React state injection with stable presentation and packaged-flow tests**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented I1-I5, V1/V2 verified (commits `b722f4d`, `e44019c`); V3/V4 ride the next packaged verify · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit QD-03](./localmotive-comprehensive-audit.md#qd-03)  
 **Prerequisites:** [V06-QD-02](#v06-qd-02)
 **Source touchpoints:** [scripts/verify_041.mjs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/scripts/verify_041.mjs), [scripts/tests/release-gates.test.mjs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/scripts/tests/release-gates.test.mjs), [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx)
 
 **Implementation**
 
-- [ ] **V06-QD-03.I1** — Move synthetic loading, empty, error and rate-limit presentation scenarios into component tests using public React/DOM interfaces and a stable mocked backend boundary. **Trace:** [Audit QD-03](./localmotive-comprehensive-audit.md#qd-03).
-- [ ] **V06-QD-03.I2** — Remove the packaged verifier's __reactFiber$, memoizedState, hook-shape discovery and queue.dispatch dependencies; replace setScenarioAndRefresh with actual user controls or explicitly labeled synthetic presentation setup. **Trace:** [Audit QD-03](./localmotive-comprehensive-audit.md#qd-03).
-- [ ] **V06-QD-03.I3** — Keep genuine IPC, installation, tamper, health and restart checks intact, and describe separately what each check proves so synthetic rendering cannot be mistaken for a real request lifecycle. **Trace:** [Audit QD-03](./localmotive-comprehensive-audit.md#qd-03).
-- [ ] **V06-QD-03.I4** — Replace the fixed 250-millisecond cancellation trigger with an observed active-operation/progress condition where available; retain bounded timeouts and useful diagnostics for missing transitions. **Trace:** [Audit QD-03](./localmotive-comprehensive-audit.md#qd-03).
-- [ ] **V06-QD-03.I5** — Replace release-gate assertions that require private implementation strings with assertions about the verifier's observable outcomes and complete evidence records. **Trace:** [Audit QD-03](./localmotive-comprehensive-audit.md#qd-03).
+- [x] **V06-QD-03.I1** — Move synthetic loading, empty, error and rate-limit presentation scenarios into component tests using public React/DOM interfaces and a stable mocked backend boundary. **Trace:** [Audit QD-03](./localmotive-comprehensive-audit.md#qd-03).
+- [x] **V06-QD-03.I2** — Remove the packaged verifier's __reactFiber$, memoizedState, hook-shape discovery and queue.dispatch dependencies; replace setScenarioAndRefresh with actual user controls or explicitly labeled synthetic presentation setup. **Trace:** [Audit QD-03](./localmotive-comprehensive-audit.md#qd-03).
+- [x] **V06-QD-03.I3** — Keep genuine IPC, installation, tamper, health and restart checks intact, and describe separately what each check proves so synthetic rendering cannot be mistaken for a real request lifecycle. **Trace:** [Audit QD-03](./localmotive-comprehensive-audit.md#qd-03).
+- [x] **V06-QD-03.I4** — Replace the fixed 250-millisecond cancellation trigger with an observed active-operation/progress condition where available; retain bounded timeouts and useful diagnostics for missing transitions. **Trace:** [Audit QD-03](./localmotive-comprehensive-audit.md#qd-03).
+- [x] **V06-QD-03.I5** — Replace release-gate assertions that require private implementation strings with assertions about the verifier's observable outcomes and complete evidence records. **Trace:** [Audit QD-03](./localmotive-comprehensive-audit.md#qd-03).
 
 **Verification**
 
-- [ ] **V06-QD-03.V1** — Change hook ordering or introduce similarly shaped component state and verify the public-interface tests remain valid without adapting private-memory selectors. **Trace:** [Audit QD-03](./localmotive-comprehensive-audit.md#qd-03).
-- [ ] **V06-QD-03.V2** — Inject delayed and failed backend responses through the test boundary; assert Refresh actually starts retrieval and reaches the expected terminal UI state. **Trace:** [Audit QD-03](./localmotive-comprehensive-audit.md#qd-03).
+- [x] **V06-QD-03.V1** — Change hook ordering or introduce similarly shaped component state and verify the public-interface tests remain valid without adapting private-memory selectors. **Trace:** [Audit QD-03](./localmotive-comprehensive-audit.md#qd-03).
+- [x] **V06-QD-03.V2** — Inject delayed and failed backend responses through the test boundary; assert Refresh actually starts retrieval and reaches the expected terminal UI state. **Trace:** [Audit QD-03](./localmotive-comprehensive-audit.md#qd-03).
 - [ ] **V06-QD-03.V3** — Exercise cancellation under fast and slow fixture progress, confirming it waits for an active operation and records completion or a bounded diagnostic failure. **Trace:** [Audit QD-03](./localmotive-comprehensive-audit.md#qd-03).
 - [ ] **V06-QD-03.V4** — Run the preserved packaged IPC/install/tamper/health checks and inspect the evidence labels for a clear distinction between synthetic presentation and real execution. **Trace:** [Audit QD-03](./localmotive-comprehensive-audit.md#qd-03).
 
@@ -3238,3 +3238,63 @@ Closure records implement [V06-G-02](#v06-g-02). One record per finding package;
 
 _Package 1 (RT-01, RT-02, RT-04, RT-07) implementation is complete at the unit/regression layer. The three open packaged items above are collected by the V06-G-05 target-environment gate and must not be counted as passed before that evidence exists._
 
+
+### V06-GH-01 — pull-request checks isolated from the trusted runner (commit `fe6f4ea`)
+
+- Status: Implemented I1/I2/I4; I3 owner-gated. `pr-check` runs on the ephemeral `windows-latest` runner with a read-only token and no secrets; every trusted push job carries `if: github.event_name == 'push'`.
+- Regression before fix (mutation proof): mutation CA removed a push guard from a self-hosted job and the workflow-gate test failed. Mutation CB restored a tag-ref checkout and the one-revision test failed.
+- Verification after fix: `node scripts/verify_workflow_gates.mjs` `{"ok":true}`; `node --test scripts/tests/release-gates.test.mjs` 100/100; AGENTS.md describes push/PR behavior, runner eligibility and the difference between job `needs:` ordering and repository merge enforcement.
+- Residual limits: V1/V2 need a live benign PR on GitHub; I3 needs the repository main-branch ruleset (owner action, to be recorded with bypass actors in the 0.6 closeout).
+
+### V06-GH-02 — one resolved release revision (commit `fe6f4ea`)
+
+- Status: Implemented I1/I2/I4; I3 owner-gated. The `resolve` job pins one full SHA into every downstream checkout; the producer inventory is verified at publication with `verify_candidate_inventory.mjs --verify` and exact artifact hashes; retries of unchanged source keep one identity.
+- Regression before fix (mutation proof): mutation CB (tag-ref checkout) failed the release-gate test; the inventory mismatch case is pinned by `release-gates` V2 cases.
+- Verification after fix: workflow pins/gates pass; the resolve job also validates annotation/commit and event relationship before any checkout.
+- Residual limits: V1/V3 read-back require a live tagged candidate; the tag-update/deletion ruleset is an owner action.
+
+### V06-GH-03 — candidate-fed lifecycle sequencing (commit `69894e3`)
+
+- Status: Implemented I1-I4. The clean-account lifecycle is a dependent release job that consumes the freshly built candidates through `-CandidateDir artifacts`; no job waits for public assets; the non-gating policy is documented and the summary reports the lifecycle status explicitly; the v0.5 ledger carries an additive factual correction.
+- Regression before fix (mutation proof): mutation DA removed the package dependency from the lifecycle job and the release-gate test failed.
+- Verification after fix: `verify_workflow_gates.mjs` ok; both sandbox PowerShell scripts pass the parser; the upgrade baseline is the `UPGRADE_BASELINE` matrix variable, not a hardcoded tag.
+- Residual limits: V1-V3 need a live release run with the Sandbox feature available.
+
+### V06-GH-04 — honest installer verdicts (commit `69894e3`)
+
+- Status: Implemented I1/I2/I4; I3 open. MSI leftovers fail the verdict and require the product registration to be gone; install and update scenarios assert the installed executable version; the baseline is a matrix variable; eight-second survival is labeled a startup smoke.
+- Regression before fix (mutation proof): mutation DB restored the warning-and-continue branch and the release gate failed.
+- Verification after fix: script parse checks; version assertions recorded in per-step evidence.
+- Residual limits: I3 (v0.4.1 profile/settings and v0.5 SQLite migration fixtures) stays open because no software-verified fixture schema exists yet; V2/V3 need the sandbox window.
+
+### V06-GH-05 — packaged catalog/SQLite matrix (commit `5222307`)
+
+- Status: Implemented and packaged-verified end to end. `scripts/verify_060_catalog.mjs` drives the shipped candidate across two launches in an isolated profile against a signed ed25519 fixture served from 127.0.0.1.
+- Regression before fix (packaged): the matrix failed on the shipped rich-facet key mismatch (`rich.pipeline_tags` read while the Rust facet struct serializes camelCase `pipelineTags`) with the exact packaged crash `TypeError: Cannot read properties of undefined (reading 'map')`; the new jsdom regression reproduced the same failure before the fix. Mutation M1 rebuilt the pre-fix binary and `catalog.ui-rows` failed again with the same signature, then passed after restoring the fix.
+- Verification after fix: local packaged run — first-fill 8/8 (local-first load, valid signed refresh, cooldown without a network request, rows render, search filter/clear, user-row persistence with provenance, cache + SQLite mirror on disk), restart 5/5 (rows without the fixture server, honest dead-endpoint error, invalid-signature fallback, mirror quarantine + rebuild, UI honesty); merged record bound to source `5222307` and portable sha256 `19b1e654…8bce`, overall PASS. The matrix is a dependent step in the release `package` job (workflow-gates required commands) and records are distinct from the retained runtime-catalog checks.
+- Residual limits: the matrix rides the next tagged candidate in CI; keyboard-only flows are tracked under QD-02.V4.
+
+### V06-GH-06 — retained lifecycle evidence (commit `69894e3`)
+
+- Status: Implemented I1-I4. Failure paths write structured FAIL/TIMEOUT records with stage, release version, source revision, candidate digests and timing; the workflow uploads required evidence on every terminal outcome with `if-no-files-found: error`; the job summary distinguishes scenario status from artifact existence.
+- Regression before fix (mutation proof): mutations DC (failure writer removed) and DD (static HOST_MATCH row restored) each failed their release gate.
+- Residual limits: V1-V3 need the sandbox window.
+
+### V06-GH-10 — derived host attestation (commit `69894e3`)
+
+- Status: Implemented I1-I4; V1/V2 fixture-verified. `build_host_attestation.mjs` derives MATCH/NO_MATCH/UNKNOWN per row from the detected CPU/GPU; a definite mismatch fails the intended host-proof job; observed values are recorded separately from runner labels; the support policy keeps host presence distinct from packaged L4 qualification.
+- Verification after fix: release-gate fixtures cover matching and mismatched CPU/GPU, missing GPU, invalid key, and no static HOST_MATCH rows remain.
+- Residual limits: V3 (live host comparison) belongs to the next hardware window.
+
+### V06-QD-02 — component and orchestration coverage (commits `b722f4d`, `5222307`)
+
+- Status: Implemented I1/I2/I3/I5; I4 partial. The jsdom environment is scoped to `src/**` with only the IPC boundary mocked; temporary-database orchestration fixtures from the catalog packages cover fetch, mirror publication, restart, cooldown, offline fallback, corrupt migration and download authorization; curated/local collisions, atomic replacement and provenance are pinned; the packaged catalog acceptance is distinct from the runtime-catalog checks.
+- Regression before fix (mutation proof): QD1/QD2/QD3 failed their component tests; QD4/QD5/QD6 failed their release gates.
+- Verification after fix: `npm test` 10/10 component tests within 68/68 total; `cargo test` 473 lib tests; packaged matrix bound evidence.
+- Residual limits: I4 (malformed saved profiles, denied browser storage) and V4 (keyboard/focus/labels) remain open.
+
+### V06-QD-03 — truthful packaged verifier (commits `b722f4d`, `e44019c`)
+
+- Status: Implemented I1-I5. Presentation scenarios live in jsdom component tests; `__reactFiber$`, `memoizedState`, hook-shape discovery and `queue.dispatch` are removed and gated; genuine IPC/install/tamper/health checks remain and are described separately; cancellation registers a `health-model-progress` listener and cancels after the first observed phase; release gates assert observable outcomes instead of private strings.
+- Regression before fix (mutation proof): mutations QD4 (fiber walk restored) and QD5 (fixed 250 ms trigger restored) failed their gates; QD6 (component tests removed) failed the environment gate.
+- Residual limits: V3 (fast/slow cancellation fixtures live) and V4 (live packaged run of the preserved checks) ride the next packaged verify with runtime assets.
