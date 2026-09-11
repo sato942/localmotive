@@ -378,23 +378,23 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Map GPU telemetry and health devices by physical identity**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit RT-09](./localmotive-comprehensive-audit.md#rt-09)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src-tauri/src/runtime.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/runtime.rs), [src-tauri/src/health.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/health.rs)
 
 **Implementation**
 
-- [ ] **V06-RT-09.I1** — Extend NVIDIA probing to obtain a stable physical identifier, such as PCI location or UUID with an appropriate Windows mapping, and retain the identifier alongside driver/capacity/usage observations. **Trace:** [Audit RT-09](./localmotive-comprehensive-audit.md#rt-09).
-- [ ] **V06-RT-09.I2** — Join NVIDIA observations to DXGI adapters using a verified physical mapping rather than pairing the first unmatched adapter with the same display name. **Trace:** [Audit RT-09](./localmotive-comprehensive-audit.md#rt-09).
-- [ ] **V06-RT-09.I3** — When a trustworthy mapping is unavailable or ambiguous, keep observations unassigned or explicitly unknown instead of attaching device-specific usage/capacity evidence to an arbitrary LUID. **Trace:** [Audit RT-09](./localmotive-comprehensive-audit.md#rt-09).
-- [ ] **V06-RT-09.I4** — Use an explicit runtime-device-to-DXGI identity mapping for managed health selection so a requested adapter ID selects the intended physical device; preserve refusal on unresolved ambiguity and keep existing DXGI budget evidence separate. **Trace:** [Audit RT-09](./localmotive-comprehensive-audit.md#rt-09).
+- [x] **V06-RT-09.I1** — Extend NVIDIA probing to obtain a stable physical identifier, such as PCI location or UUID with an appropriate Windows mapping, and retain the identifier alongside driver/capacity/usage observations. **Trace:** [Audit RT-09](./localmotive-comprehensive-audit.md#rt-09).
+- [x] **V06-RT-09.I2** — Join NVIDIA observations to DXGI adapters using a verified physical mapping rather than pairing the first unmatched adapter with the same display name. **Trace:** [Audit RT-09](./localmotive-comprehensive-audit.md#rt-09).
+- [x] **V06-RT-09.I3** — When a trustworthy mapping is unavailable or ambiguous, keep observations unassigned or explicitly unknown instead of attaching device-specific usage/capacity evidence to an arbitrary LUID. **Trace:** [Audit RT-09](./localmotive-comprehensive-audit.md#rt-09).
+- [x] **V06-RT-09.I4** — Use an explicit runtime-device-to-DXGI identity mapping for managed health selection so a requested adapter ID selects the intended physical device; preserve refusal on unresolved ambiguity and keep existing DXGI budget evidence separate. **Trace:** [Audit RT-09](./localmotive-comprehensive-audit.md#rt-09).
 
 **Verification**
 
-- [ ] **V06-RT-09.V1** — Provide two identically named adapters with reversed DXGI and NVIDIA enumeration orders and distinct usage values; assert correct stable mapping or explicit unknown/unassigned evidence. **Trace:** [Audit RT-09](./localmotive-comprehensive-audit.md#rt-09).
-- [ ] **V06-RT-09.V2** — Exercise missing, duplicate, and conflicting physical identifiers and confirm that matching does not fall back to arbitrary enumeration order or name-only assignment. **Trace:** [Audit RT-09](./localmotive-comprehensive-audit.md#rt-09).
-- [ ] **V06-RT-09.V3** — Test same-name managed health selection against explicit runtime-device mappings, then validate the mapping on representative supported Windows hardware with multiple identical GPUs when available. **Trace:** [Audit RT-09](./localmotive-comprehensive-audit.md#rt-09).
+- [x] **V06-RT-09.V1** — Provide two identically named adapters with reversed DXGI and NVIDIA enumeration orders and distinct usage values; assert correct stable mapping or explicit unknown/unassigned evidence. **Trace:** [Audit RT-09](./localmotive-comprehensive-audit.md#rt-09).
+- [x] **V06-RT-09.V2** — Exercise missing, duplicate, and conflicting physical identifiers and confirm that matching does not fall back to arbitrary enumeration order or name-only assignment. **Trace:** [Audit RT-09](./localmotive-comprehensive-audit.md#rt-09).
+- [x] **V06-RT-09.V3** — Test same-name managed health selection against explicit runtime-device mappings, then validate the mapping on representative supported Windows hardware with multiple identical GPUs when available. **Trace:** [Audit RT-09](./localmotive-comprehensive-audit.md#rt-09).
 
 **Complete when:** Per-adapter NVIDIA observations are associated only through verified physical identity, with ambiguity visible rather than silently resolved. Managed health selects the requested physical adapter or returns an explicit mapping failure without selecting another same-name GPU.
 
@@ -3416,4 +3416,13 @@ _Package 1 (RT-01, RT-02, RT-04, RT-07) implementation is complete at the unit/r
 - Regression tests: `log_sink::tests::drain_caps_the_file_and_keeps_the_newest_lines` (full stream consumed, file at quota, marker present), `two_streams_share_one_quota`, `unique_run_ids_and_creation_refuse_collisions_and_links`, `pruning_bounds_the_directory_and_keeps_newest_failure_evidence`, `failure_evidence_survives_log_pruning`. Mutations MN1 (quota not enforced) / MN2 (retention disabled) / MN3 (collision truncation allowed) each failed their matching tests and passed after restore.
 - Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 518 pass / 0 fail / 2 ignored; `npm run check` EXIT 0.
 - Residual: the UI log tail view is unchanged (still the last 16 KiB/12 lines); a per-run "export diagnostics" button remains future UX work and the failure JSON carries the same information on disk.
+
+### V06-RT-09 — physical GPU identity for telemetry joins (commit `1d191c7`)
+
+- Status: Implemented I1-I4; V1 unit-verified (identical-name ambiguity).
+- Regression before fix: `nvidia-smi` rows carried only name/driver/memory, and the merge paired each row with the FIRST unmatched DXGI adapter of the same name — enumeration order decided identity, so two identically named GPUs could receive each other's usage/capacity under the wrong LUID.
+- Verification after fix: the query now asks for `uuid` and `pci.bus_id`; a row joins only when its name identifies exactly ONE adapter and exactly ONE row. Otherwise every affected row is recorded as `UnassignedNvidiaObservation` (name, uuid, PCI location, values, reason) on `HardwareInfo.unassigned_nvidia` and no device-specific evidence attaches to any LUID; the UI shows an explicit "unassigned NVIDIA telemetry" note. A matched adapter records the NVIDIA UUID as `physical_id` evidence. Health selection already refuses ambiguous same-name adapter resolution; the refusal path is preserved.
+- Regression tests: `rt09_identical_names_never_receive_another_devices_telemetry` (reversed orders + distinct usage), `rt09_one_adapter_with_duplicate_rows_stays_unassigned`, `rt09_distinct_names_map_each_row_to_its_own_adapter`, `rt09_probe_parser_reads_uuid_and_pci_location` (six- and four-field output). Mutations MO1 (order-based first-match restored) and MO2 (row-ambiguity guard bypassed) failed their matching tests and passed after restore.
+- Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 522 pass / 0 fail / 2 ignored; `npm run check` EXIT 0; `npx tsc --noEmit` EXIT 0.
+- Residual: joining to a DXGI LUID remains name-based (LUID-to-PCI mapping needs SetupAPI work); ambiguity now stays visibly unknown instead of wrong. Two real identically named adapters were not available on this host, so the fixture evidence is unit-level.
 
