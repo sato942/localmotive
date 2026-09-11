@@ -1,13 +1,14 @@
 # Localmotive 0.6 — audit remediation TODO
 
 **Target:** `0.6.0` stabilization release  
-**Status:** Planning complete; implementation in progress — Package 12 (final hardening and verification)  
+**Status:** Implementation of all 72 findings and all supplemental packages complete and unit/integration-verified; packaged Windows wave executed with the residual cells recorded as explicit deferrals (see [RELEASE-REVIEW-0.6.md](../RELEASE-REVIEW-0.6.md)); G-08 review in progress; final candidate re-cut plus re-bind next; G-09/G-10 await the owner's ship authorization.  
 **Source:** [localmotive-comprehensive-audit.md](./localmotive-comprehensive-audit.md)
 **Audited source SHA:** `e530371b056cd8e049c2246dbb151aa407bf359f`  
 **Release baseline reviewed by the audit:** `v0.5.0`, source `a4b7127f739f7420232d9b6f63da693d39128d0b`  
 **Audit file SHA-256:** `fb87c9df9fd4cffa3768b81ddd40fd55363e718456a182b4237c1bfc9054b647`  
 **Implementation start SHA:** `e530371b056cd8e049c2246dbb151aa407bf359f` (equals the audited snapshot)  
-**Candidate SHA / release date:** Not yet recorded
+**Candidate SHA / release date:** Final candidate re-cut in progress at `a0ed2470f2e4d571e4c2a48f0a58f90c0e77771` (supersedes the `1a9ab98` lineage that G-06 lifecycle evidence binds to); release date pending the G-09 authorization.
+**Current checkpoint (2026-09-11):** HEAD `a0ed247`; Rust 586/0/7, Vitest 122, node 146/146, fmt/clippy clean; packaged v2 default flow PASS (1002.60 tok/s mean, 5/5 sampled) on candidate `0cebbba8…` of this lineage; wrong-candidate negative control FAIL-with-identity as designed; host attestation MATCH. Next executable action: bind the re-cut candidate (installers + portable) to `a0ed247`, re-run the lifecycle and the critical packaged probes, then finish G-08 and hand G-09 to the owner.
 
 This tracker translates the complete audit into implementation and acceptance work. It contains **72 finding packages** (19 High, 43 Medium, 10 Low), **29 supplemental packages** for unnumbered audit recommendations, and **10 verification/release gates**. Every checkbox carries a stable task ID and a direct link to its supporting audit finding or section. No task is pre-completed, and no implementation, test, GitHub setting or release change is claimed by this document.
 
@@ -37,13 +38,13 @@ Owner: `sato942` (accountable maintainer). Implementation and evidence productio
 | 5 | Benchmark protocol, export privacy and failure records (MT-01, MT-02, MT-12) | Implementation complete; unit-verified (commit `9d4c36c`); packaged b10816 acceptance open in G-04/G-05 |
 | 6 | Model, runtime and operation ownership (FE-01, FE-02, FE-03, FE-05, FE-07, FE-16, MT-05) | Implementation complete; unit-verified (commits `bb9a5ab`, `411c32c`, `0045cb6`, `6da40d8`, `7d4a514`); packaged UI scenarios open in G-04 |
 | 7 | Responsive operations, parser and transfer bounds (IPC-01, FE-04, RT-05, RT-06, DC-02, DC-08, DC-12) | Implementation complete; unit-verified; packaged items open in G-04/G-05/G-06 |
-| 8 | Delivery sequencing and truthful verifiers (GH-01..GH-06, GH-10, QD-02, QD-03) | Not started |
-| 9 | Secured local transport (MT-06) | Not started |
-| 10 | Measurement identity, calibration and ranking (MT-07..MT-11, MT-13..MT-15, FE-06, FE-17) | Not started |
-| 11 | Recovery, privacy, accessibility and Windows edge cases (IPC-02, CLD-01, OPS-01, FE-08..FE-15, DC-11, RT-08, RT-09) | Not started |
-| 12 | Curation, documentation and maintenance (DC-09, DC-10, QD-01, QD-04..QD-06, GH-07..GH-09) | Not started |
-| S | Supplemental packages (S-01..S-29) | Not started |
-| G | Verification/release gates (G-01..G-10) | G-01 in progress |
+| 8 | Delivery sequencing and truthful verifiers (GH-01..GH-06, GH-10, QD-02, QD-03) | Implemented and verified (commits `fe6f4ea`, `69894e3`, `b722f4d`, `e44019c`, `5222307`); GitHub-hosted PR runs and ruleset application deferred to the owner |
+| 9 | Secured local transport (MT-06) | Implemented and verified (commit `8c73679`, extended by `69e6ff0`); packaged TLS/key acceptance recorded |
+| 10 | Measurement identity, calibration and ranking (MT-07..MT-11, MT-13..MT-15, FE-06, FE-17) | Implemented and verified (`72bb60b`, `fc02ce6`, `7ce5df9`, `6e3659d`, `f495e69`, `d1d718b`, `cf52adc`, `50a4845`); packaged identity walk deferred |
+| 11 | Recovery, privacy, accessibility and Windows edge cases (IPC-02, CLD-01, OPS-01, FE-08..FE-15, DC-11, RT-08, RT-09) | Implemented and verified (`4973936`, `090dcbc`, `1d191c7`, `5e22e4e`, `683b16f`, `375b076`, `bf77e69`, `a6f6617`, `002fe7b`, `297a50e`, `4d9027e`); screen-reader and OS-level contrast cells deferred |
+| 12 | Curation, documentation and maintenance (DC-09, DC-10, QD-01, QD-04..QD-06, GH-07..GH-09) | Implemented and verified (`7349a27`, docs/governance commits); catalog quant labels await the owner-run resign |
+| S | Supplemental packages (S-01..S-29) | 28 implemented and verified (see ledger); S-25.I3 remains an explicit hardware-program deferral |
+| G | Verification/release gates (G-01..G-10) | G-01..G-07 closed with evidence; G-05 residual cells deferred; G-06 closed at `1a9ab98` (re-bind to the final candidate next); G-08 in progress; G-09/G-10 await owner authorization |
 
 Baseline (recorded 2026-09-11, start SHA `e530371`): `npx tsc --noEmit` PASS; `npm test` 80/80 PASS; `npm run build` PASS; `cargo fmt --check` PASS; `cargo clippy --all-targets -- -D warnings` PASS; `cargo test` 403 passed / 0 failed / 2 ignored. Log: `.hermes-0.6/baseline.log` (local working note; not part of the repository).
 
