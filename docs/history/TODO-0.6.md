@@ -1618,6 +1618,327 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Scope / decision note:** The finding concerns local denial of service and misleading status, not demonstrated account takeover. Live provider login was outside the audit's executed scope.
 
+### V06-FE-08
+
+**Preserve raw argument text while users enter token separators**
+
+**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Audit trace:** [Audit FE-08](./localmotive-comprehensive-audit.md#fe-08)  
+**Prerequisites:** None; can begin independently.
+**Source touchpoints:** [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx)
+
+**Implementation**
+
+- [ ] **V06-FE-08.I1** — Maintain an editable raw-argument string independently of the parsed profile.extraArgs array while the field is being edited so trailing spaces are not immediately normalized away. **Trace:** [Audit FE-08](./localmotive-comprehensive-audit.md#fe-08).
+- [ ] **V06-FE-08.I2** — Parse and validate the draft at a deliberate boundary such as blur or explicit validation, preserving the existing documented self-contained token syntax. **Trace:** [Audit FE-08](./localmotive-comprehensive-audit.md#fe-08).
+- [ ] **V06-FE-08.I3** — Keep visible draft text and committed parsed arguments distinguishable when validation fails; show the problematic token and recovery instead of silently concatenating or discarding input. **Trace:** [Audit FE-08](./localmotive-comprehensive-audit.md#fe-08).
+- [ ] **V06-FE-08.I4** — Define behavior for paste, repeated whitespace, deletion, whitespace-only drafts and unsupported quoted/space-containing values without introducing shell execution or broadening privileged overrides. **Trace:** [Audit FE-08](./localmotive-comprehensive-audit.md#fe-08).
+- [ ] **V06-FE-08.I5** — Preserve the backend restrictions on typed-field overrides and privileged capabilities; synchronize normalized committed text only after a successful parse/validation transition. **Trace:** [Audit FE-08](./localmotive-comprehensive-audit.md#fe-08).
+
+**Verification**
+
+- [ ] **V06-FE-08.V1** — Dispatch actual input events typing --flag-one, a space, and --flag-two=value; assert the visible separator remains and the committed IPC profile contains two argument tokens. **Trace:** [Audit FE-08](./localmotive-comprehensive-audit.md#fe-08).
+- [ ] **V06-FE-08.V2** — Exercise paste, cursor edits, deletion, repeated whitespace, blank input and unsupported quoting, checking that errors preserve editable input and valid tokens remain deterministic. **Trace:** [Audit FE-08](./localmotive-comprehensive-audit.md#fe-08).
+- [ ] **V06-FE-08.V3** — Submit disallowed privileged and typed-field override tokens through the corrected field and verify backend rejection remains intact. **Trace:** [Audit FE-08](./localmotive-comprehensive-audit.md#fe-08).
+
+**Complete when:** Users can enter multiple supported tokens through normal typing without relying on pasting a complete string. Parsing errors are recoverable and no change expands the accepted privileged argument surface.
+
+**Scope / decision note:** The audit establishes destructive normalization in a controlled input, not arbitrary shell execution. Quoted values with embedded spaces are a documented syntax decision to resolve explicitly rather than silently promise.
+
+### V06-FE-09
+
+**Recover safely from corrupt persisted state and report save failures separately**
+
+**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Audit trace:** [Audit FE-09](./localmotive-comprehensive-audit.md#fe-09)  
+**Prerequisites:** None; can begin independently.
+**Source touchpoints:** [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx), [src/model.ts](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/model.ts), [src/main.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/main.tsx)
+
+**Implementation**
+
+- [ ] **V06-FE-09.I1** — Introduce safe versioned parsing, validation and migration for persisted profiles and tuning reports before normalization or render-time array/property access. **Trace:** [Audit FE-09](./localmotive-comprehensive-audit.md#fe-09).
+- [ ] **V06-FE-09.I2** — Quarantine or isolate invalid records and provide a per-record recovery/reset path with a default profile fallback, preserving unrelated valid user records. **Trace:** [Audit FE-09](./localmotive-comprehensive-audit.md#fe-09).
+- [ ] **V06-FE-09.I3** — Wrap every settings/profile/report write and separate persistence failure from a successfully completed native tuning or benchmark operation so valid results remain visible. **Trace:** [Audit FE-09](./localmotive-comprehensive-audit.md#fe-09).
+- [ ] **V06-FE-09.I4** — Add a root error boundary with actionable recovery/diagnostic controls and ensure it does not replace targeted storage error handling. **Trace:** [Audit FE-09](./localmotive-comprehensive-audit.md#fe-09).
+- [ ] **V06-FE-09.I5** — Define bounded report retention and explicit profile/report export or management controls so accumulated per-model records cannot exhaust browser storage without a recoverable explanation. **Trace:** [Audit FE-09](./localmotive-comprehensive-audit.md#fe-09).
+
+**Verification**
+
+- [ ] **V06-FE-09.V1** — Load malformed JSON, null, wrong extraArgs/trials types, older schemas and invalid enum values through normal selection/startup; assert the app remains usable and identifies the affected record. **Trace:** [Audit FE-09](./localmotive-comprehensive-audit.md#fe-09).
+- [ ] **V06-FE-09.V2** — Inject quota/security write failures after successful native tuning/benchmark completion and in direct profile/settings handlers; verify completion remains visible and save failure is separately explained. **Trace:** [Audit FE-09](./localmotive-comprehensive-audit.md#fe-09).
+- [ ] **V06-FE-09.V3** — Exercise blocked storage reads and recovery/reset of one corrupt record; assert other saved profiles survive and a valid migrated record still follows current-runtime normalization. **Trace:** [Audit FE-09](./localmotive-comprehensive-audit.md#fe-09).
+
+**Complete when:** Corrupt local records cannot blank the entire interface through the audited parse/render paths. Successful native results and failed persistence have distinct observable outcomes, with documented recovery and retention behavior.
+
+**Scope / decision note:** This is local resilience and schema-handling work, not evidence of remote exploitation. Error boundaries do not catch every event-handler failure; persistence calls still need explicit handling.
+
+### V06-FE-11
+
+**Cancel catalog transfers by immutable job identity and preserve active-job visibility**
+
+**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Audit trace:** [Audit FE-11](./localmotive-comprehensive-audit.md#fe-11)  
+**Prerequisites:** None; can begin independently.
+**Source touchpoints:** [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx), [src/model.ts](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/model.ts)
+
+**Implementation**
+
+- [ ] **V06-FE-11.I1** — Capture source repository, filename, revision and destination in an immutable transfer record at dispatch, and use a stable job identity for progress and cancellation. **Trace:** [Audit FE-11](./localmotive-comprehensive-audit.md#fe-11).
+- [ ] **V06-FE-11.I2** — Cancel the original job rather than rebuilding its target from the currently editable modelRoot; preserve the captured destination when the user chooses a new download folder. **Trace:** [Audit FE-11](./localmotive-comprehensive-audit.md#fe-11).
+- [ ] **V06-FE-11.I3** — Expose active transfers independently of catalog filters and the selected build on a card so changing either cannot hide a running job's status or stop control. **Trace:** [Audit FE-11](./localmotive-comprehensive-audit.md#fe-11).
+- [ ] **V06-FE-11.I4** — Handle rejected and false cancellation responses explicitly; show stopping only when accepted and retain useful diagnostics rather than leaving an unhandled promise rejection. **Trace:** [Audit FE-11](./localmotive-comprehensive-audit.md#fe-11).
+- [ ] **V06-FE-11.I5** — Scope already-on-disk and completed-transfer presentation to the relevant destination/revision, retain authoritative backend verification, and provide inventory refresh or a clear completion action. **Trace:** [Audit FE-11](./localmotive-comprehensive-audit.md#fe-11).
+
+**Verification**
+
+- [ ] **V06-FE-11.V1** — Start in folder A, change destination to B, then stop; assert the cancellation request targets A's original job and false/failure responses are described truthfully. **Trace:** [Audit FE-11](./localmotive-comprehensive-audit.md#fe-11).
+- [ ] **V06-FE-11.V2** — Change the selected build and catalog filters while transferring; verify all active jobs remain visible and individually cancellable. **Trace:** [Audit FE-11](./localmotive-comprehensive-audit.md#fe-11).
+- [ ] **V06-FE-11.V3** — Exercise the same repository/file across different destinations or revisions, completion after selection changes, and verification of a prior done event against the newly chosen destination. **Trace:** [Audit FE-11](./localmotive-comprehensive-audit.md#fe-11).
+
+**Complete when:** Destination/build/filter edits cannot redirect cancellation or hide the only active transfer control. Progress and reuse claims identify the actual source revision and destination, with backend verification still authoritative.
+
+**Scope / decision note:** This task does not resolve signed/local catalog authorization or range-download defects. Frontend filename suffix matches must not become proof of trusted on-disk identity; those boundaries remain native responsibilities.
+
+### V06-FE-12
+
+**Restore keyboard-focus outlines on model-folder and download-destination inputs**
+
+**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Audit trace:** [Audit FE-12](./localmotive-comprehensive-audit.md#fe-12)  
+**Prerequisites:** None; can begin independently.
+**Source touchpoints:** [src/App.css](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.css), [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx), [docs/DESIGN.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/docs/DESIGN.md)
+
+**Implementation**
+
+- [ ] **V06-FE-12.I1** — Remove the outline reset from .path-bar input or add an explicit .path-bar input:focus-visible rule applying the existing amber outline and offset. **Trace:** [Audit FE-12](./localmotive-comprehensive-audit.md#fe-12).
+- [ ] **V06-FE-12.I2** — Scope the correction to the Model root and Download destination path-bar fields, both of which have border:0 and no alternative declared focus indicator. **Trace:** [Audit FE-12](./localmotive-comprehensive-audit.md#fe-12).
+- [ ] **V06-FE-12.I3** — Retain the global :focus-visible treatment for ordinary labeled controls; do not rewrite unrelated input styles on the mistaken assumption that label input overrides the global pseudo-class. **Trace:** [Audit FE-12](./localmotive-comprehensive-audit.md#fe-12).
+- [ ] **V06-FE-12.I4** — Ensure the restored outline is visible against the path-bar background and is not clipped by surrounding borders, overflow behavior or the narrow-screen layout. **Trace:** [Audit FE-12](./localmotive-comprehensive-audit.md#fe-12).
+- [ ] **V06-FE-12.I5** — Keep pointer interaction and existing path input behavior intact while satisfying the normative design document's requirement to preserve the amber keyboard-focus ring. **Trace:** [Audit FE-12](./localmotive-comprehensive-audit.md#fe-12).
+
+**Verification**
+
+- [ ] **V06-FE-12.V1** — Tab into the model-folder and download-destination inputs and assert a nonzero amber outline in browser computed styles, including after editing and choosing a folder. **Trace:** [Audit FE-12](./localmotive-comprehensive-audit.md#fe-12).
+- [ ] **V06-FE-12.V2** — Use an ordinary labeled runtime/profile input as a control; verify its existing global outline remains present and no unrelated focus regression is introduced. **Trace:** [Audit FE-12](./localmotive-comprehensive-audit.md#fe-12).
+- [ ] **V06-FE-12.V3** — Perform packaged Windows keyboard traversal through both path bars at normal and narrow/zoomed layouts, recording whether focus is continuously identifiable. **Trace:** [Audit FE-12](./localmotive-comprehensive-audit.md#fe-12).
+
+**Complete when:** Keyboard users can visibly locate focus in both audited path-bar inputs. Existing focus indicators on ordinary labeled fields remain unchanged and the fix follows the design's amber-ring rule.
+
+**Scope / decision note:** Only .path-bar input has the greater specificity that suppresses the global outline. Generic label input/select selectors have lower specificity and are not part of this confirmed defect; packaged rendering was not audited.
+
+### V06-FE-13
+
+**Complete accessible control names, table semantics and navigation behavior**
+
+**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Audit trace:** [Audit FE-13](./localmotive-comprehensive-audit.md#fe-13)  
+**Prerequisites:** None; can begin independently.
+**Source touchpoints:** [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx), [src/V03EvidencePanel.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/V03EvidencePanel.tsx)
+
+**Implementation**
+
+- [ ] **V06-FE-13.I1** — Replace the incomplete inventory role=table structure with a native table containing column headers, cells and clearly named row actions, or explicitly choose a coherent accessible list pattern. **Trace:** [Audit FE-13](./localmotive-comprehensive-audit.md#fe-13).
+- [ ] **V06-FE-13.I2** — Give every paired N-gram minimum/maximum and map lookup/draft-size input its own associated label identifying its distinct value instead of placing two inputs under one label. **Trace:** [Audit FE-13](./localmotive-comprehensive-audit.md#fe-13).
+- [ ] **V06-FE-13.I3** — Implement provider tabs with the complete selected-tab, tabpanel, aria-controls and keyboard/roving-tabIndex relationships, or use ordinary buttons in a labeled group with suitable semantics. **Trace:** [Audit FE-13](./localmotive-comprehensive-audit.md#fe-13).
+- [ ] **V06-FE-13.I4** — Expose the current primary navigation destination semantically and define focus placement or a skip-to-main route after changing screens. **Trace:** [Audit FE-13](./localmotive-comprehensive-audit.md#fe-13).
+- [ ] **V06-FE-13.I5** — Repair the evidence heading hierarchy so its sections follow the containing heading level while retaining native controls and disclosure behavior. **Trace:** [Audit FE-13](./localmotive-comprehensive-audit.md#fe-13).
+
+**Verification**
+
+- [ ] **V06-FE-13.V1** — Add component accessible-role/name assertions for inventory columns/actions and every paired input; run an accessibility checker against representative loaded, empty and error states. **Trace:** [Audit FE-13](./localmotive-comprehensive-audit.md#fe-13).
+- [ ] **V06-FE-13.V2** — Exercise provider navigation with Tab, Arrow keys and relevant Home/End behavior, and verify selection, focus and displayed panel remain synchronized. **Trace:** [Audit FE-13](./localmotive-comprehensive-audit.md#fe-13).
+- [ ] **V06-FE-13.V3** — Use Windows Narrator or NVDA in the packaged app to traverse navigation, inventory, profile pairs and evidence headings, recording labels and focus after screen changes. **Trace:** [Audit FE-13](./localmotive-comprehensive-audit.md#fe-13).
+
+**Complete when:** Every audited input has a unique meaningful accessible name, and inventory exposes a coherent structure. Provider and primary navigation support their declared semantics and a predictable keyboard/focus sequence.
+
+**Scope / decision note:** The audit reviewed markup rather than running assistive technology. Native file dialogs are already used; do not invent a custom modal focus-trap requirement or claim complete accessibility certification from these checks.
+
+### V06-FE-14
+
+**Correct low-contrast text and make evidence controls usable in narrow layouts**
+
+**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Audit trace:** [Audit FE-14](./localmotive-comprehensive-audit.md#fe-14)  
+**Prerequisites:** None; can begin independently.
+**Source touchpoints:** [src/App.css](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.css), [docs/DESIGN.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/docs/DESIGN.md)
+
+**Implementation**
+
+- [ ] **V06-FE-14.I1** — Replace the audited hardware-source, runtime-code, field-help and empty-log text colors with tokens meeting at least 4.5:1 against their actual regular-text backgrounds. **Trace:** [Audit FE-14](./localmotive-comprehensive-audit.md#fe-14).
+- [ ] **V06-FE-14.I2** — Review extremely small help/evidence typography and increase practical sizes without losing complete values, treating computed contrast and legibility as related but distinct checks. **Trace:** [Audit FE-14](./localmotive-comprehensive-audit.md#fe-14).
+- [ ] **V06-FE-14.I3** — Add evidence-specific one-column breakpoints, wrap action-heading rows and constrain 205px/240px grid minima so nested padding cannot force clipped controls in a 320px window. **Trace:** [Audit FE-14](./localmotive-comprehensive-audit.md#fe-14).
+- [ ] **V06-FE-14.I4** — Redesign narrow bottom navigation and undersized path/plain-link/managed-entry targets to satisfy the repository's 44px mobile target requirement while retaining bottom clearance. **Trace:** [Audit FE-14](./localmotive-comprehensive-audit.md#fe-14).
+- [ ] **V06-FE-14.I5** — Preserve intentional horizontal scrolling for the inventory table rather than replacing its information structure with unrelated cards, and verify zoomed desktop reflow. **Trace:** [Audit FE-14](./localmotive-comprehensive-audit.md#fe-14).
+
+**Verification**
+
+- [ ] **V06-FE-14.V1** — Calculate contrast from the final computed foreground/background pairs for all four affected regular-text cases; assert ratios meet the threshold without rounding an under-threshold value upward. **Trace:** [Audit FE-14](./localmotive-comprehensive-audit.md#fe-14).
+- [ ] **V06-FE-14.V2** — Inspect 320, 375, 680 and 980px layouts and 200%/400% zoom for clipped evidence controls, horizontal overflow outside intentional inventory scrolling and reachable action controls. **Trace:** [Audit FE-14](./localmotive-comprehensive-audit.md#fe-14).
+- [ ] **V06-FE-14.V3** — Measure target dimensions for bottom navigation/path actions and run packaged Windows visual/DPI or high-contrast checks, documenting actual remaining limitations. **Trace:** [Audit FE-14](./localmotive-comprehensive-audit.md#fe-14).
+
+**Complete when:** Audited regular text meets the contrast threshold and remains readable in the supported display states. Narrow/zoomed evidence controls fit their containers, and mobile targets satisfy the project's declared size rule.
+
+**Scope / decision note:** The 44px target is the repository's design requirement, not a blanket statement of WCAG 2.2 AA target-size rules. Audit ratios were calculated from CSS; rendered Windows layouts were not tested.
+
+### V06-FE-15
+
+**Tie readiness labels and evidence colors to the proof actually available**
+
+**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Audit trace:** [Audit FE-15](./localmotive-comprehensive-audit.md#fe-15)  
+**Prerequisites:** [V06-FE-01](#v06-fe-01)
+**Source touchpoints:** [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx), [src/App.css](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.css)
+
+**Implementation**
+
+- [ ] **V06-FE-15.I1** — Replace the loaded-profile VALID label when only shard completeness is known with precise states such as shards complete, path selected, inspection pending or validated. **Trace:** [Audit FE-15](./localmotive-comprehensive-audit.md#fe-15).
+- [ ] **V06-FE-15.I2** — Stop marking first-run Runtime/Serve ready solely because path strings are nonempty; derive each readiness state from the inspected identity and relevant native validation evidence. **Trace:** [Audit FE-15](./localmotive-comprehensive-audit.md#fe-15).
+- [ ] **V06-FE-15.I3** — Clear or explicitly mark stale runtime capabilities when committed runtime identity changes, and avoid describing a hard-coded speculation fallback as methods advertised by the executable. **Trace:** [Audit FE-15](./localmotive-comprehensive-audit.md#fe-15).
+- [ ] **V06-FE-15.I4** — Offer supported speculation methods after inspection or label provisional selections clearly; expose unsupported/unknown capability status near affected settings without treating UI availability as support evidence. **Trace:** [Audit FE-15](./localmotive-comprehensive-audit.md#fe-15).
+- [ ] **V06-FE-15.I5** — Replace unconditional green evidence headings with status-based tones so Unknown, Blocked, rejected candidates and non-measured classes use the defined neutral/amber/red semantics with words. **Trace:** [Audit FE-15](./localmotive-comprehensive-audit.md#fe-15).
+
+**Verification**
+
+- [ ] **V06-FE-15.V1** — Render nonexistent runtime paths, pending/failed inspection and a complete-shard model with an invalid profile; assert no unsupported VALID/ready claim is shown. **Trace:** [Audit FE-15](./localmotive-comprehensive-audit.md#fe-15).
+- [ ] **V06-FE-15.V2** — Switch executable identity and delay inspection completion; verify old capabilities are not presented as current, and fallback methods are explicitly provisional or unavailable. **Trace:** [Audit FE-15](./localmotive-comprehensive-audit.md#fe-15).
+- [ ] **V06-FE-15.V3** — Exercise unknown, blocked, rejected, measured and launch-validated evidence classes; assert each has accurate text and the intended semantic tone. **Trace:** [Audit FE-15](./localmotive-comprehensive-audit.md#fe-15).
+
+**Complete when:** Readiness wording names the level of proof available instead of upgrading a path or shard check into successful launch validation. Every evidence status retains meaningful words and uses green only for the design's appropriate established states.
+
+**Scope / decision note:** Rust still decides valid arguments and launch correctness. This task repairs presentation of that evidence; exposing or hiding a control must not broaden the backend's supported capability or trust contract.
+
+### V06-FE-16
+
+**Coordinate UI operation state and separate running-server evidence from editable drafts**
+
+**Status:** Implemented; unit-verified (commit `6da40d8`); packaged overlap/exit scenarios open (V06-G-04) · **Priority:** Medium · **Owner:** sato942  
+**Audit trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16)  
+**Prerequisites:** None; can begin independently.
+**Source touchpoints:** [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx), [src/V03EvidencePanel.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/V03EvidencePanel.tsx)
+
+**Implementation**
+
+- [x] **V06-FE-16.I1** — Replace the shared busy string and disconnected operation flags with explicit UI operation records and compatibility rules so one completion cannot clear another active operation. **Trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16).
+- [x] **V06-FE-16.I2** — Coordinate legacy and v2 measurement controls, profile Start and other conflicting actions with the real active lifecycle, while preserving independent nonconflicting work where supported. **Trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16).
+- [x] **V06-FE-16.I3** — Make server-status retrieval single-flight or event-driven, reject obsolete poll results after start/stop transitions, and avoid expected failing native polling in browser preview. **Trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16).
+- [x] **V06-FE-16.I4** — Render running strategy/identity from the server snapshot rather than the current editable profile, and label legacy benchmark results with their actual model, runtime, workload and observation time. **Trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16).
+- [x] **V06-FE-16.I5** — Preserve the last bounded server log and exit/failure evidence after a process stops; provide explicit semantics for legacy vs v2 measurement rather than unrelated results on one screen. **Trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16).
+
+**Verification**
+
+- [ ] **V06-FE-16.V1** — Complete overlapping scan/cloud/start requests in different orders and verify active state persists; exercise legacy/v2 measurement and Start guards through actual UI interactions. **Trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16).
+- [x] **V06-FE-16.V2** — Resolve a delayed status poll after stop/start and assert it cannot replace the newer server snapshot; verify polling remains single-flight under slow native responses. **Trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16).
+- [ ] **V06-FE-16.V3** — Edit a draft while the server runs, then simulate unexpected exit; assert running identity was unchanged by edits and final logs/failure evidence remain visible. **Trace:** [Audit FE-16](./localmotive-comprehensive-audit.md#fe-16).
+
+**Complete when:** Each UI action reflects its own real lifecycle and conflicting controls cannot be reenabled by unrelated completion. Displayed running-server and benchmark identity is independent of drafts, with diagnostics retained after exit.
+
+**Scope / decision note:** IPC-01 owns native startup blocking and MT-05 owns backend operation ownership. This item coordinates their UI presentation without counting those native defects again or claiming unbounded log rendering.
+
+### V06-FE-17
+
+**Connect production workload inputs to tested validation and shared contracts**
+
+**Status:** Implemented + component-verified · **Priority:** Low · **Owner:** sato942  
+**Audit trace:** [Audit FE-17](./localmotive-comprehensive-audit.md#fe-17)  
+**Prerequisites:** None; can begin independently.
+**Source touchpoints:** [src/model.ts](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/model.ts), [src/model.test.ts](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/model.test.ts), [src/V03EvidencePanel.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/V03EvidencePanel.tsx)
+
+**Implementation**
+
+- [x] **V06-FE-17.I1** — Use the tested defaultWorkload factory in the production evidence panel instead of maintaining a separate literal with the same intended values. **Trace:** [Audit FE-17](./localmotive-comprehensive-audit.md#fe-17).
+- [x] **V06-FE-17.I2** — Validate editable workload drafts through the production-used helper or a native validation endpoint before dispatch, surfacing field-level errors instead of relying only on input attributes. **Trace:** [Audit FE-17](./localmotive-comprehensive-audit.md#fe-17).
+- [x] **V06-FE-17.I3** — Require finite integer values where Rust uses integer types and expose complete applicable minima/maxima; preserve an editable blank or partial draft until it can be committed safely. **Trace:** [Audit FE-17](./localmotive-comprehensive-audit.md#fe-17).
+- [x] **V06-FE-17.I4** — Add representative Rust-to-TypeScript contract fixtures or generated schema checks for persisted/IPC workload and correctness-sensitive profile fields, avoiding unsupported parity assumptions. **Trace:** [Audit FE-17](./localmotive-comprehensive-audit.md#fe-17).
+- [x] **V06-FE-17.I5** — Review duplicated fit/default/companion decision paths against the architecture's native-authority rule and document the selected authoritative boundary before consolidating them. **Trace:** [Audit FE-17](./localmotive-comprehensive-audit.md#fe-17).
+
+**Verification**
+
+- [x] **V06-FE-17.V1** — Exercise default factory values through the actual component and IPC payload, then test fractional, negative, blank, nonfinite and over-limit numeric drafts. **Trace:** [Audit FE-17](./localmotive-comprehensive-audit.md#fe-17).
+- [x] **V06-FE-17.V2** — Assert an invalid form dispatches no benchmark command, and separately invoke malformed native inputs to prove backend rejection remains in place. **Trace:** [Audit FE-17](./localmotive-comprehensive-audit.md#fe-17).
+- [x] **V06-FE-17.V3** — Run representative schema/default round trips and supported older-profile normalization fixtures; change a contract fixture deliberately to establish that the parity check catches drift. **Trace:** [Audit FE-17](./localmotive-comprehensive-audit.md#fe-17).
+
+**Complete when:** The production workload path uses the tested defaults and validation logic, with actionable field errors before dispatch. Contract tests exercise meaningful cross-layer values and malformed cases rather than only asserting helper behavior in isolation.
+
+**Scope / decision note:** Rust already rejects malformed requests; the audited gap concerns UX and misleading assurance from a helper-only test name. Do not infer complete schema parity or invent runtime-specific limits from HTML attributes.
+
+## IPC, cloud and operations tasks
+
+### V06-IPC-01
+
+**Make server startup an observable, cancellable background operation**
+
+**Status:** Implemented; unit-verified (`66a18c3`) · **Priority:** High · **Owner:** sato942  
+**Audit trace:** [Audit IPC-01](./localmotive-comprehensive-audit.md#ipc-01)  
+**Prerequisites:** None; can begin independently.
+**Source touchpoints:** [src-tauri/src/lib.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/lib.rs), [src-tauri/src/proc.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/proc.rs), [src-tauri/src/health.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/health.rs), [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx), [src/model.ts](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/model.ts)
+
+**Implementation**
+
+- [x] **V06-IPC-01.I1** — Define an operation ID and explicit starting, running, stopping, failed and cancelled states. Reserve ownership under a short lock and publish correlated progress before launching. **Trace:** [Audit IPC-01](./localmotive-comprehensive-audit.md#ipc-01).
+- [x] **V06-IPC-01.I2** — Move blocking filesystem, hashing, subprocess and socket work to a blocking worker. Keep the child handle and cancellation signal reachable by Stop while readiness is pending; do not hold the server mutex across the 600-second health wait. **Trace:** [Audit IPC-01](./localmotive-comprehensive-audit.md#ipc-01).
+- [x] **V06-IPC-01.I3** — Commit completion only if the operation ID still owns the slot. On cancellation, failure or window close, terminate and reap the contained process tree before reporting a terminal state or allowing a replacement start. **Trace:** [Audit IPC-01](./localmotive-comprehensive-audit.md#ipc-01).
+- [x] **V06-IPC-01.I4** — Classify every synchronous command named in the audit by actual cost, including preview, inspection, health, scanning, GGUF, preflight, legacy benchmark and replay. Move expensive work off both the Tauri main thread and async executor without weakening backend validation. **Trace:** [Audit IPC-01](./localmotive-comprehensive-audit.md#ipc-01).
+
+**Verification**
+
+- [ ] **V06-IPC-01.V1** — Use a benign fixture that binds the expected port but never becomes ready. In the packaged Windows application, verify responsive controls and starting status, then measure Stop-to-process-exit latency against a documented deadline. **Trace:** [Audit IPC-01](./localmotive-comprehensive-audit.md#ipc-01).
+- [ ] **V06-IPC-01.V2** — Exercise slow --help, unreadable GGUF, early child exit and window close during startup. Confirm child/listener cleanup, truthful terminal state and a successful subsequent start. **Trace:** [Audit IPC-01](./localmotive-comprehensive-audit.md#ipc-01).
+- [x] **V06-IPC-01.V3** — Force a late completion from an older operation after a new request and prove it cannot publish or clear the new operation's state. **Trace:** [Audit IPC-01](./localmotive-comprehensive-audit.md#ipc-01).
+
+**Complete when:** Start, status and Stop remain usable throughout loading; cleanup and latency evidence are attached for the packaged Windows candidate. No expensive command relies on merely adding async around blocking work or retaining a global lock for the operation lifetime.
+
+**Scope / decision note:** The audit established the synchronous/locking path; it did not measure Windows freeze duration. Choose and record cancellation deadlines during implementation, then test them.
+
+### V06-IPC-02
+
+**Enable a narrowly scoped production Content Security Policy**
+
+**Status:** Implemented + packaged-verified · **Priority:** Medium · **Owner:** sato942  
+**Audit trace:** [Audit IPC-02](./localmotive-comprehensive-audit.md#ipc-02)  
+**Prerequisites:** None; can begin independently.
+**Source touchpoints:** [src-tauri/tauri.conf.json](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/tauri.conf.json), [src-tauri/capabilities/default.json](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/capabilities/default.json), [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx)
+
+**Implementation**
+
+- [x] **V06-IPC-02.I1** — Inventory resources and IPC origins used by a packaged build and derive an explicit production CSP for bundled scripts, styles, fonts and images. Keep development-only exceptions out of production. **Trace:** [Audit IPC-02](./localmotive-comprehensive-audit.md#ipc-02).
+- [x] **V06-IPC-02.I2** — Review opener permission and custom-command reachability alongside the policy; retain only origins and operations required by actual application flows. **Trace:** [Audit IPC-02](./localmotive-comprehensive-audit.md#ipc-02).
+- [x] **V06-IPC-02.I3** — Document the purpose of each necessary policy exception and keep catalog, model, log and provider text rendered as text rather than HTML. **Trace:** [Audit IPC-02](./localmotive-comprehensive-audit.md#ipc-02).
+
+**Verification**
+
+- [x] **V06-IPC-02.V1** — Exercise every screen, dialog, icon, external URL action and inference WebUI navigation in the packaged application with CSP enabled. **Trace:** [Audit IPC-02](./localmotive-comprehensive-audit.md#ipc-02).
+- [x] **V06-IPC-02.V2** — Inject harmless hostile-text fixtures and deliberately disallowed inline/remote script requests; verify text remains inert and scripts are blocked without adding a broad unsafe-eval workaround. **Trace:** [Audit IPC-02](./localmotive-comprehensive-audit.md#ipc-02).
+
+**Complete when:** Production CSP is configured and the packaged acceptance record distinguishes allowed resources from blocked negative controls.
+
+**Scope / decision note:** This is a defense-in-depth task. The audit found no demonstrated XSS chain or proof that arbitrary external websites can invoke the privileged command surface.
+
+### V06-CLD-01
+
+**Bound and validate the complete OAuth callback lifecycle**
+
+**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Audit trace:** [Audit CLD-01](./localmotive-comprehensive-audit.md#cld-01)  
+**Prerequisites:** None; can begin independently.
+**Source touchpoints:** [src-tauri/src/cloud.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/cloud.rs), [src-tauri/src/lib.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/lib.rs)
+
+**Implementation**
+
+- [ ] **V06-CLD-01.I1** — Set request-line, code-length and concurrent-login limits. Enforce one monotonic end-to-end deadline through accept, read, parsing and exchange paths, including a steady byte trickle or successive stray connections. **Trace:** [Audit CLD-01](./localmotive-comprehensive-audit.md#cld-01).
+- [ ] **V06-CLD-01.I2** — Accept only the intended method and callback path. Use a URL/query parser with percent decoding; reject duplicate/empty codes and malformed encodings, and handle harmless probes without prematurely terminating a valid login. **Trace:** [Audit CLD-01](./localmotive-comprehensive-audit.md#cld-01).
+- [ ] **V06-CLD-01.I3** — Retain loopback binding, ephemeral ports and S256 PKCE. Add state binding only after confirming the provider's supported contract; do not replace PKCE with state. **Trace:** [Audit CLD-01](./localmotive-comprehensive-audit.md#cld-01).
+- [ ] **V06-CLD-01.I4** — Show callback-received wording until exchange and Credential Manager storage actually succeed. Report exchange/storage failure in the application without leaving a false connected indication in the browser. **Trace:** [Audit CLD-01](./localmotive-comprehensive-audit.md#cld-01).
+
+**Verification**
+
+- [ ] **V06-CLD-01.V1** — Test valid and percent-encoded codes, favicon requests, wrong method/path, duplicate/empty code, malformed encoding and overlong lines against a local callback listener. **Trace:** [Audit CLD-01](./localmotive-comprehensive-audit.md#cld-01).
+- [ ] **V06-CLD-01.V2** — Test half-open connections, slow byte trickles and repeated stray requests until the overall deadline. Assert bounded memory, bounded completion time and release of listener resources. **Trace:** [Audit CLD-01](./localmotive-comprehensive-audit.md#cld-01).
+- [ ] **V06-CLD-01.V3** — Stub remote exchange and secure storage to fail independently; prove neither failure reports connected and that a subsequent login can start. Use synthetic credentials. **Trace:** [Audit CLD-01](./localmotive-comprehensive-audit.md#cld-01).
+
+**Complete when:** Malformed local traffic cannot bypass the total resource budget or permanently monopolize login, and connected status requires completed exchange and secure storage.
+
+**Scope / decision note:** The finding concerns local denial of service and misleading status, not demonstrated account takeover. Live provider login was outside the audit's executed scope.
+
 ### V06-OPS-01
 
 **Bound per-run server logs and preserve failure diagnostics**
@@ -3407,4 +3728,13 @@ _Package 1 (RT-01, RT-02, RT-04, RT-07) implementation is complete at the unit/r
 - Verification after fix: production policy `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'` — the only inline exception is `style-src` (React style attributes; no user-controlled style strings), and there is no `unsafe-eval` anywhere. `devCsp` carries the Vite dev-server exception separately. The capability now grants `opener:allow-open-url` with an explicit origin scope (huggingface.co, github.com, the six provider consoles, tauri.app, react.dev, and `http://127.0.0.1/*` for the running server WebUI); all HTTP traffic stays in Rust (reqwest), so the WebView needs no network origins. Source scan positive control: zero `dangerouslySetInnerHTML`/`new Function`/`document.write`/`eval(` sinks in production sources.
 - Packaged evidence: `npm run tauri build -- --no-bundle` BUILD_EXIT 0; `node scripts/verify_csp.mjs src-tauri/target/release/localmotive.exe` → `{"pass": true, "navigationTargets": 14, "openerAction": "clicked", "cspViolationsDuringNavigation": 0, "inlineScriptBlocked": true, "remoteFetchBlocked": true, "hostileTextInert": true}` — every nav screen exercised, the scoped opener still opens the repository link, an injected inline script and a remote fetch are both blocked (with the CSP violation reported), and hostile `<img onerror>`/`<script>` text stays inert. Release-gates contract test `IPC-02 production CSP and opener scope are narrow and audited` pins the config + capability + sink scan (101/101 gates pass).
 - Residual: `scripts/verify_csp.mjs` runs from the release checklist; wiring it into `release.yml` as a required matrix step is a deferred hardening item (trigger: before the next tagged release).
+
+### V06-OPS-01 — bounded per-run logs with retention (commit `090dcbc`)
+
+- Status: Implemented I1-I3; V1/V2 unit-verified (quota, retention, collision and evidence survival).
+- Regression before fix: every run wrote `server-{port}.log` / `tuning.log` with `File::create` (truncating the previous failure's log) and no size bound, so a chatty or repeatedly failing runtime could consume disk and destroy prior diagnostics.
+- Verification after fix: new `log_sink` module. Each run creates `{prefix}-{millis}-{sequence}.log` with `create_new` (a collision or planted link fails creation instead of truncating); output is drained from pipes into a bounded sink (8 MiB per run, shared by the stdout and stderr writers via an atomic CAS quota; the drain keeps consuming past the quota so the child never blocks, with one truncation marker); retention keeps the newest 10 runs per prefix and 64 MiB total, and the newest 3 `*.log.failure.json` records survive even when their log is pruned. `launch_failure_evidence` now persists the bounded failure tail beside the run log. `stop_server` joins the drain threads after the child exits (bounded 2 s, then detach) so retained logs are complete. README documents location, caps, retention and the runtime-emitted-text caveat.
+- Regression tests: `log_sink::tests::drain_caps_the_file_and_keeps_the_newest_lines` (full stream consumed, file at quota, marker present), `two_streams_share_one_quota`, `unique_run_ids_and_creation_refuse_collisions_and_links`, `pruning_bounds_the_directory_and_keeps_newest_failure_evidence`, `failure_evidence_survives_log_pruning`. Mutations MN1 (quota not enforced) / MN2 (retention disabled) / MN3 (collision truncation allowed) each failed their matching tests and passed after restore.
+- Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 518 pass / 0 fail / 2 ignored; `npm run check` EXIT 0.
+- Residual: the UI log tail view is unchanged (still the last 16 KiB/12 lines); a per-run "export diagnostics" button remains future UX work and the failure JSON carries the same information on disk.
 
