@@ -3,6 +3,7 @@ import * as modelModule from "./model";
 import {
   evidenceTone,
   type DownloadJob,
+  type LaunchProfile,
   formatExtraArgs,
   normalizeProfile,
   normalizeTuningReport,
@@ -1089,5 +1090,65 @@ describe("reconcileDraftCompanion", () => {
   it("reports no change when there was nothing retained", () => {
     expect(reconcileDraftCompanion("none", null)).toEqual({ draftModelPath: null, cleared: false });
     expect(reconcileDraftCompanion("none", "  ")).toEqual({ draftModelPath: "  ", cleared: false });
+  });
+});
+
+describe("S-19 bounded property campaign (FE persistence boundary)", () => {
+  // Deterministic splitmix64 so any failure reproduces from its seed alone.
+  const rngFor = (seed: number) => {
+    let state = BigInt(seed) & 0xffffffffffffffffn;
+    const next = () => {
+      state = (state + 0x9e3779b97f4a7c15n) & 0xffffffffffffffffn;
+      let z = state;
+      z = ((z ^ (z >> 30n)) * 0xbf58476d1ce4e5b9n) & 0xffffffffffffffffn;
+      z = ((z ^ (z >> 27n)) * 0x94d049bb133111ebn) & 0xffffffffffffffffn;
+      return z ^ (z >> 31n);
+    };
+    return {
+      below: (bound: number) => Number(next() % BigInt(bound)),
+      text: (maxLen: number) => {
+        const pool = ["a", "{", "}", "\"", "[", "]", ":", ",", "é", "模", "\\n", "9"];
+        const len = 1 + Number(next() % BigInt(maxLen));
+        return Array.from({ length: len }, () => pool[Number(next() % BigInt(pool.length))]).join("");
+      },
+    };
+  };
+
+  it("safeJsonParse and normalizeProfile tolerate 300 generated garbage inputs", () => {
+    // The persistence boundary under test: a garbage STORED profile meets a
+    // valid model (models always come from Rust, never from storage).
+    const model: LogicalModel = {
+      id: "fixture/model",
+      name: "Fixture",
+      directory: "C:/fixtures",
+      firstShard: "C:/fixtures/fixture-00001-of-00001.gguf",
+      sizeBytes: 10,
+      shardCount: 1,
+      expectedShards: 1,
+      complete: true,
+      quant: "Q4_K_M",
+      shards: [],
+      companions: [],
+    };
+    for (let seed = 1; seed <= 300; seed += 1) {
+      const rng = rngFor(seed);
+      // Mix of raw garbage and structured-but-wrong JSON.
+      const raw =
+        seed % 3 === 0
+          ? rng.text(120)
+          : seed % 3 === 1
+            ? JSON.stringify({ name: rng.text(20), rawExtraArgs: rng.text(40), threads: rng.below(99999) })
+            : JSON.stringify([seed, rng.text(30), null]);
+      const parsed = safeJsonParse<unknown>(raw);
+      // normalizeProfile takes Partial<LaunchProfile>; feed the parsed value
+      // only when it is a non-null object, exactly like the caller does with
+      // a persisted record (safeJsonParse returns undefined on garbage).
+      const stored = parsed !== null && typeof parsed === "object" ? parsed : {};
+      const normalized = normalizeProfile(stored as Partial<LaunchProfile>, model, "fixture-runtime");
+      // The contract: never throws; the result is always a usable profile.
+      expect(typeof normalized.name, `seed ${seed}`).toBe("string");
+      expect(Array.isArray(normalized.extraArgs), `seed ${seed}`).toBe(true);
+      expect(["on", "off", "auto"]).toContain(normalized.flashAttention as string);
+    }
   });
 });

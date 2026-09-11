@@ -13,9 +13,13 @@ mod log_sink;
 pub mod measurement;
 pub mod preflight;
 mod proc;
+#[cfg(test)]
+mod property_tests;
 pub mod recommend;
 mod runtime;
 pub mod sharing;
+#[cfg(test)]
+mod test_support;
 mod tune;
 
 use core::{BenchmarkSummary, LaunchProfile, LogicalModel, RuntimeCapabilities};

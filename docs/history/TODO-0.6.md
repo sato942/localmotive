@@ -2459,18 +2459,18 @@ These packages preserve actionable recommendations outside the 72-item findings 
 
 **Add property and fuzz checks for parser and evidence invariants**
 
-**Status:** Not started · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
 **Audit trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities)  
 **Prerequisites:** [V06-DC-08](#v06-dc-08), [V06-MT-13](#v06-mt-13), [V06-QD-02](#v06-qd-02)
 
 **Implementation**
 
-- [ ] **V06-S-19.I1** — Add bounded property/fuzz targets around malformed JSON, Unicode, nested proposal braces, duplicate IDs, shard sets, finite extremes and numeric coercion. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
-- [ ] **V06-S-19.I2** — Assert common invariants across summary, persistence, import and export; retain deterministic regression seeds for every discovered issue and cap test resources. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
+- [x] **V06-S-19.I1** — Add bounded property/fuzz targets around malformed JSON, Unicode, nested proposal braces, duplicate IDs, shard sets, finite extremes and numeric coercion. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
+- [x] **V06-S-19.I2** — Assert common invariants across summary, persistence, import and export; retain deterministic regression seeds for every discovered issue and cap test resources. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
 
 **Verification**
 
-- [ ] **V06-S-19.V1** — Run a documented bounded campaign and confirm seeded mutations violate the intended invariant; archive commands, seed/corpus identity, time budget and observed result. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
+- [x] **V06-S-19.V1** — Run a documented bounded campaign and confirm seeded mutations violate the intended invariant; archive commands, seed/corpus identity, time budget and observed result. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
 
 **Complete when:** The critical invariants receive generated-input coverage in addition to example tests; no claim of exhaustive proof is made.
 
@@ -3815,3 +3815,10 @@ Revalidated at the candidate source (`065248a1` + the G-07 test addition) on Win
 - V1: `s18_calibration_records_version_and_reject_newer_formats` (field-stripped record loads as v1; an unknown extra field is tolerated; a v2 record is rejected with the actionable message) and the two shared-fixture tests above exercise old/current/malformed shapes on both sides.
 - Mutations: PI1 (TokenStatus `rename_all` removed — first attempt MISSED because `configured`/`masked` are single words; the fixture was strengthened with the multi-word `cleanupNotice`, after which PI1 is CAUGHT), PI2 (record-version check removed), PI3 (fixture key renamed — caught by BOTH the Rust test and the node test).
 - Commands: `cargo fmt --check` PASS; clippy `-D warnings` 0 errors; `cargo test` 563 passed / 0 failed / 2 ignored (561 + the two S-18 tests); `npm run check` PASS (342.88 kB); Vitest 106; node tests 114 + 2 + 21 + 6 + 140 total.
+
+#### S-19 closure record — bounded property campaigns with deterministic seeds
+
+- Added `src-tauri/src/test_support.rs` (splitmix64 `Rng` + `campaign` runner, seed reported in every panic) and `src-tauri/src/property_tests.rs` with five capped campaigns: GGUF reader versus 400 random byte-blobs plus 100 truncated-header fixtures (clean result or clean error, parsed counts bounded); proposal parser versus 600 noisy texts and 100 nested-brace texts; shard-name round-trip versus generated valid split names and 500 noise strings; sanitizer idempotence plus canary-path absence over all eleven path-bearing flags (200 seeds); numeric summaries versus ±MAX/±INF/NaN/subnormal inputs (400 seeds, all outputs asserted finite). Frontend: 300 generated garbage stored profiles through `safeJsonParse`/`normalizeProfile` against a valid model in `src/model.test.ts`. Total suite 568 passed / 0 failed / 2 ignored (~1.6 s for the Rust campaigns); Vitest 77.
+- Honest note: the first FE campaign draft called `normalizeProfile` without a model (vitest does not type-check), which surfaced as a crash inside `suggestedProfile`. That was a TEST misuse, not a product defect — the test now supplies a valid model, the campaign asserts the real contract, and `tsc` was added to the loop to catch such misuse.
+- Mutations: PM1 (finite-filter removed from `metric_stats` — CAUGHT by the numeric campaign), PM2 (`-md` removed from the sanitizer redaction list — CAUGHT by the canary property), PM3 (FE `extraArgs` isArray guard removed — CAUGHT, reported by the pre-existing FE-09 regression test which the campaign also drives through the same guard).
+- Limits recorded in `docs/EVIDENCE-MATRIX.md`: these are bounded campaigns with deterministic seeds — not exhaustive proof, not coverage-guided fuzzing; a passing run says nothing about inputs outside the generated classes.

@@ -101,3 +101,21 @@ executed.
   Localmotive" instead of being misread. Unknown fields are ignored on
   purpose for forward compatibility, and serialization validation lives in
   the model/loader layer, never in rendering.
+
+## Bounded property campaigns (audit S-19)
+
+`src-tauri/src/test_support.rs` provides a deterministic splitmix64 generator;
+`src-tauri/src/property_tests.rs` runs five campaigns (400-600 seeds each,
+inputs capped at 512 bytes / 256 characters): GGUF reader versus random and
+truncated bytes, proposal parser versus noisy and nested-brace text, shard
+name parse/display round-trip versus noise, effective-argument sanitizer
+idempotence plus a canary path, and numeric summaries versus extreme/NaN
+inputs — all asserted finite where the contract promises finite. The frontend
+campaign in `src/model.test.ts` runs 300 generated garbage stored profiles
+through `safeJsonParse`/`normalizeProfile` against a valid model.
+
+These are BOUNDED campaigns with deterministic seeds, not exhaustive proof and
+not coverage-guided fuzzing: a violation reproduces from its reported seed,
+resource use is capped by iteration and input-size limits, and passing this
+campaign says nothing about inputs outside the generated classes.
+

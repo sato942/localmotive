@@ -113,6 +113,12 @@ pub fn bound_observation_error(error: &str) -> String {
     format!("{}{MARKER}", &error[..cut])
 }
 
+/// Test-only access to the statistics builder for the S-19 numeric campaign.
+#[cfg(test)]
+pub fn metric_stats_for_test(values: impl Iterator<Item = f64>) -> Option<MetricStats> {
+    metric_stats(values)
+}
+
 fn metric_stats(values: impl Iterator<Item = f64>) -> Option<MetricStats> {
     let mut values = values
         .filter(|value| value.is_finite() && *value > 0.0)
