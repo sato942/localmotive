@@ -25,6 +25,9 @@ pub enum ArtifactProblemCode {
     DuplicateShard,
     ConflictingHeader,
     UnreadableHeader,
+    /// A grouped file is not a consistent shard name; discovery and launch
+    /// validation must refuse it identically (audit MT-15).
+    MalformedShardName,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

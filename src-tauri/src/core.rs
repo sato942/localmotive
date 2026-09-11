@@ -1,4 +1,7 @@
-use crate::artifact::{is_reparse_point, parse_shard_name, ArtifactFileFact};
+use crate::artifact::{
+    analyze_shard_names, is_reparse_point, parse_shard_name, ArtifactFileFact, ArtifactProblem,
+    ArtifactProblemCode,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
@@ -102,6 +105,10 @@ pub struct LogicalModel {
     pub shard_count: usize,
     pub expected_shards: usize,
     pub complete: bool,
+    /// Shard problems from the artifact analyzer (audit MT-15): the same
+    /// decision the launch validator reaches, visible at discovery time.
+    #[serde(default)]
+    pub problems: Vec<ArtifactProblem>,
     pub quant: String,
     pub shards: Vec<ArtifactFileFact>,
     pub companions: Vec<Companion>,
@@ -297,11 +304,24 @@ pub fn scan_models(root: &Path) -> Result<Vec<LogicalModel>, String> {
             .map(|shard| shard.count)
             .max()
             .unwrap_or(1);
-        let expected_consistent = shard_identities.iter().all(|shard| shard.count == expected);
-        let indices: HashSet<_> = shard_identities.iter().map(|shard| shard.index).collect();
-        let complete = expected_consistent
-            && indices.len() == expected
-            && (1..=expected).all(|index| indices.contains(&index));
+        // Discovery uses the artifact module's shard analysis (audit MT-15):
+        // duplicate indices, malformed shard-looking names, inconsistent
+        // counts and missing members produce the same decision the launch
+        // validator reaches, instead of a looser scanner-only heuristic.
+        let group_names = shards
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        let (complete, shard_problems) = match analyze_shard_names(&group_names) {
+            Ok(set) => (set.complete, set.problems),
+            Err(message) => (
+                false,
+                vec![ArtifactProblem {
+                    code: ArtifactProblemCode::MalformedShardName,
+                    message,
+                }],
+            ),
+        };
         let size_bytes = shards
             .iter()
             .map(|p| p.metadata().map(|m| m.len()).unwrap_or(0))
@@ -351,6 +371,7 @@ pub fn scan_models(root: &Path) -> Result<Vec<LogicalModel>, String> {
             shard_count: shards.len(),
             expected_shards: expected,
             complete,
+            problems: shard_problems,
             quant,
             shards: shard_facts,
             companions: model_companions,
@@ -2760,6 +2781,90 @@ fn main() {
                 }
             }
         }
+    }
+
+    /// Audit MT-15: discovery must reach the same completeness decision as
+    /// the artifact module's shard analysis for every ambiguous shape.
+    fn mt15_scan_matches_artifact_analysis(files: &[&str]) -> (bool, bool) {
+        let root = std::env::temp_dir().join(format!(
+            "localmotive-mt15-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        for name in files {
+            fs::write(root.join(name), b"x").unwrap();
+        }
+        let models = scan_models(Path::new(&root)).unwrap();
+        let discovery_complete = models.first().map(|model| model.complete).unwrap_or(false);
+        let names = files
+            .iter()
+            .map(|name| (*name).to_string())
+            .collect::<Vec<_>>();
+        let validation_complete = analyze_shard_names(&names)
+            .map(|set| set.complete)
+            .unwrap_or(false);
+        fs::remove_dir_all(root).unwrap();
+        (discovery_complete, validation_complete)
+    }
+
+    #[test]
+    fn mt15_duplicate_indices_and_unsplit_collisions_are_incomplete() {
+        // An unsplit file and its split twin group under one logical key:
+        // the artifact analyzer reports a duplicate index, and discovery must
+        // agree instead of advertising a complete model.
+        let (discovery, validation) =
+            mt15_scan_matches_artifact_analysis(&["foo.gguf", "foo-00001-of-00001.gguf"]);
+        assert!(!discovery, "duplicate indices must not be complete");
+        assert_eq!(discovery, validation);
+    }
+
+    #[test]
+    fn mt15_malformed_and_inconsistent_shard_names_are_incomplete() {
+        // A shard-looking name the parser rejects.
+        let (discovery, validation) =
+            mt15_scan_matches_artifact_analysis(&["foo-0001-of-0004.gguf"]);
+        assert!(!discovery, "a malformed shard name must not be complete");
+        assert_eq!(discovery, validation);
+
+        // Inconsistent expected counts across the folder.
+        let (discovery, validation) = mt15_scan_matches_artifact_analysis(&[
+            "foo-Q4-00001-of-00002.gguf",
+            "foo-Q4-00002-of-00003.gguf",
+        ]);
+        assert_eq!(discovery, validation, "inconsistent counts must agree");
+
+        // A missing member in an otherwise consistent set.
+        let (discovery, validation) = mt15_scan_matches_artifact_analysis(&[
+            "foo-Q4-00001-of-00003.gguf",
+            "foo-Q4-00003-of-00003.gguf",
+        ]);
+        assert!(!discovery, "a missing member must not be complete");
+        assert_eq!(discovery, validation);
+    }
+
+    #[test]
+    fn mt15_extension_case_variation_and_valid_sets_stay_complete() {
+        // Case variation in the extension still counts as a GGUF file.
+        let (discovery, validation) =
+            mt15_scan_matches_artifact_analysis(&["bar-Q4-00001-of-00002.GGUF"]);
+        assert_eq!(discovery, validation);
+        assert!(!discovery, "a lone member of a two-shard set is incomplete");
+
+        // Complete valid singleton and split set.
+        let (discovery, validation) = mt15_scan_matches_artifact_analysis(&["solo.gguf"]);
+        assert!(discovery, "a single unsplit file is a complete model");
+        assert_eq!(discovery, validation);
+        let (discovery, validation) = mt15_scan_matches_artifact_analysis(&[
+            "pair-Q4-00001-of-00002.gguf",
+            "pair-Q4-00002-of-00002.gguf",
+        ]);
+        assert!(discovery);
+        assert_eq!(discovery, validation);
     }
 
     #[test]
