@@ -1,6 +1,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
@@ -103,6 +104,36 @@ const DEFAULT_WEIGHTS: ObjectiveWeights = {
   storage: 0.05,
 };
 
+// Audit FE-06: the full launch-profile fingerprint used for preflight-input
+// identity. Every field that can change a preflight verdict is included.
+function profileFingerprintOf(profile: LaunchProfile): Record<string, unknown> {
+  const record = profile as unknown as Record<string, unknown>;
+  const keys = Object.keys(record)
+    .filter((key) => key !== "name")
+    .sort();
+  return Object.fromEntries(keys.map((key) => [key, record[key]]));
+}
+
+function hardwareSignatureOf(hardware: HardwareInfo | null): string | null {
+  if (!hardware) return null;
+  return JSON.stringify({
+    architecture: hardware.architecture,
+    vendor: hardware.vendor,
+    driverVersion: hardware.driverVersion,
+    detectionStatus: hardware.detectionStatus,
+    adapters: hardware.adapters.map((adapter) => adapter.adapterId),
+    systemMemoryBytes: hardware.systemMemory.totalPhysicalBytes.value ?? null,
+  });
+}
+
+function preflightArtifactsOf(model: LogicalModel | null): unknown {
+  if (!model) return null;
+  return {
+    firstShard: model.firstShard,
+    companions: model.companions.map((item) => item.path),
+  };
+}
+
 const PRIVACY_OMISSIONS = [
   "filesystem paths and hostnames",
   "prompts and model responses",
@@ -170,28 +201,35 @@ export function V03EvidencePanel({
   const [cancelPending, setCancelPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  const profileFingerprint = useMemo(
+  // Audit FE-06 I3: the preflight-input identity covers the whole profile
+  // (draft/projector, speculation, KV offload, fitting, attention, device
+  // settings, extra args) plus the model, hardware observation, adapter
+  // selection and manual capacity inputs — the material assumptions a
+  // preflight result depends on.
+  const preflightInputs = useMemo(
     () =>
-      JSON.stringify(profile ? {
-        runtime: profile.runtime,
-        model: profile.model,
-        context: profile.context,
-        batch: profile.batch,
-        ubatch: profile.ubatch,
-        parallel: profile.parallel,
-        gpuLayers: profile.gpuLayers,
-        cacheTypeK: profile.cacheTypeK,
-        cacheTypeV: profile.cacheTypeV,
-        splitMode: profile.splitMode,
-        tensorSplit: profile.tensorSplit,
-        mainGpu: profile.mainGpu,
-      } : null),
-    [profile],
+      JSON.stringify({
+        model: model?.id ?? null,
+        profile: profile ? profileFingerprintOf(profile) : null,
+        adapters: selectedAdapterIds,
+        manualCapacityGiB,
+        manualCapacityNote,
+        hardwareSignature: hardwareSignatureOf(hardware),
+        artifacts: preflightArtifactsOf(model),
+      }),
+    [model, profile, selectedAdapterIds, manualCapacityGiB, manualCapacityNote, hardware],
   );
+  const inputRevisionRef = useRef(0);
+  const [preflightInputsKey, setPreflightInputsKey] = useState<string | null>(null);
 
   useEffect(() => {
     setHardware(initialHardware);
   }, [initialHardware]);
+
+  const profileIdentityKey = useMemo(
+    () => (profile ? JSON.stringify(profileFingerprintOf(profile)) : null),
+    [profile],
+  );
 
   useEffect(() => {
     // FE-05: a different model or an edited profile invalidates the current
@@ -200,10 +238,11 @@ export function V03EvidencePanel({
     // model/runtime/workload identities.
     setArtifact(null);
     setPreflight(null);
+    setPreflightInputsKey(null);
     setRanking([]);
     setShareConfirmed(false);
     setMessage(null);
-  }, [model?.id, profileFingerprint]);
+  }, [model?.id, profileIdentityKey]);
 
   // FE-05: a new reviewed payload (a different run or quality result)
   // requires a fresh export approval.
@@ -211,11 +250,40 @@ export function V03EvidencePanel({
     setShareConfirmed(false);
   }, [benchmark?.manifestPath, quality?.observedAtMs]);
 
+  // Audit FE-06 I4: adapter defaults initialize once, and a deliberate empty
+  // selection (the user unchecked the final adapter) is preserved instead of
+  // being silently repopulated.
+  const [adaptersTouched, setAdaptersTouched] = useState(false);
   useEffect(() => {
-    if (selectedAdapterIds.length === 0 && hardware?.adapters[0]) {
+    if (!hardware || adaptersTouched) return;
+    if (selectedAdapterIds.length === 0 && hardware.adapters[0]) {
       setSelectedAdapterIds([hardware.adapters[0].adapterId]);
     }
-  }, [hardware, selectedAdapterIds.length]);
+  }, [hardware, adaptersTouched, selectedAdapterIds.length]);
+
+  // A refreshed hardware observation reconciles an existing selection: kept
+  // adapters stay, removed adapters drop out, and the result is never
+  // repopulated behind the user's back.
+  useEffect(() => {
+    if (!hardware) return;
+    setSelectedAdapterIds((current) => {
+      if (current.length === 0) return current;
+      const present = new Set(hardware.adapters.map((adapter) => adapter.adapterId));
+      const reconciled = current.filter((adapterId) => present.has(adapterId));
+      return reconciled.length === current.length ? current : reconciled;
+    });
+  }, [hardware]);
+
+  // Audit FE-06 I1/I2: whether the displayed preflight result still matches
+  // the inputs it was computed from.
+  const preflightStale = preflight !== null && preflightInputsKey !== preflightInputs;
+
+  // Async inspection/preflight responses carry the input revision they were
+  // requested under; a response whose revision is no longer current is
+  // discarded (audit FE-06 I5).
+  useEffect(() => {
+    inputRevisionRef.current += 1;
+  }, [preflightInputs]);
 
   const latestCalibrationState = calibrationState(
     calibration,
@@ -291,6 +359,7 @@ export function V03EvidencePanel({
       setMessage("Select a model before artifact inspection.");
       return;
     }
+    const capturedRevision = inputRevisionRef.current;
     const result = await runAction("artifact", () =>
       invoke<ArtifactInspection>("inspect_model_artifact", {
         firstShard: model.firstShard,
@@ -298,6 +367,10 @@ export function V03EvidencePanel({
         hashFiles: false,
       }),
     );
+    if (result && inputRevisionRef.current !== capturedRevision) {
+      setMessage("Artifact inspection discarded: the inputs changed while it ran.");
+      return;
+    }
     if (result) {
       setArtifact(result);
       setMessage(result.complete ? "Artifact structure is complete." : "Artifact inspection found blocking problems.");
@@ -326,6 +399,8 @@ export function V03EvidencePanel({
       }
       manualOverrides = [override];
     }
+    const capturedRevision = inputRevisionRef.current;
+    const capturedInputs = preflightInputs;
     const result = await runAction("preflight", () =>
       invoke<PreflightResult>("preflight_model", {
         profile,
@@ -333,7 +408,14 @@ export function V03EvidencePanel({
         manualOverrides,
       }),
     );
+    if (result && inputRevisionRef.current !== capturedRevision) {
+      setMessage(
+        "Preflight result discarded: the model, profile, adapters or hardware changed while it ran. Re-run preflight.",
+      );
+      return;
+    }
     if (result) {
+      setPreflightInputsKey(capturedInputs);
       setPreflight(result);
       setArtifact(result.launch.artifacts[0] ?? null);
       setHardware(result.hardware);
@@ -625,6 +707,12 @@ export function V03EvidencePanel({
               <span className="muted">Preflight class</span>
               <strong>{preflight?.report.class ?? "Unknown"}</strong>
               <span>{preflight?.report.executionPath ?? "Execution path unknown"}</span>
+              {preflightStale ? (
+                <span className="muted">
+                  Stale: the model, profile, adapters, manual capacity or hardware
+                  observation changed after this result. Re-run preflight.
+                </span>
+              ) : null}
               <span>
                 Required: {formatBytes(preflight?.report.memory.requiredBytes.value)}
               </span>
@@ -703,6 +791,7 @@ export function V03EvidencePanel({
                     type="checkbox"
                     checked={selectedAdapterIds.includes(adapter.adapterId)}
                     onChange={(event) => {
+                      setAdaptersTouched(true);
                       setSelectedAdapterIds((current) =>
                         event.target.checked
                           ? [...new Set([...current, adapter.adapterId])]
