@@ -36,7 +36,14 @@ async function versionFixture(overrides = {}) {
 /// App.tsx alone silently stop matching. Splits find real component bodies
 /// before any test-text mention because the screens come first.
 async function frontendSources() {
-  const screens = ["AboutScreen.tsx", "RuntimeScreen.tsx", "TuneScreen.tsx"];
+  const screens = [
+    "AboutScreen.tsx",
+    "BenchmarkScreen.tsx",
+    "DashboardScreen.tsx",
+    "InventoryScreen.tsx",
+    "RuntimeScreen.tsx",
+    "TuneScreen.tsx",
+  ];
   const parts = [];
   for (const name of screens) {
     try {
@@ -1402,7 +1409,7 @@ test("FE-16 status polling is single-flight with sequence guards", async () => {
   assert.match(app, /const requested = \+\+statusPollSeq\.current;/);
   const bumps = (app.match(/statusPollSeq\.current \+= 1;/g) ?? []).length;
   assert.ok(bumps >= 2, `expected start and stop bumps, saw ${bumps}`);
-  assert.match(app, /status\.running \? status\.specType : profile\?\.specType/);
+  assert.match(app, /(?:props\.)?status\.running \? (?:props\.)?status\.specType : (?:props\.)?profile\?\.specType/);
 });
 
 test("FE-05 evidence history and active runs survive navigation", async () => {
@@ -1415,7 +1422,10 @@ test("FE-05 evidence history and active runs survive navigation", async () => {
     app,
     /style=\{view === "benchmark" \? undefined : \{ display: "none" \}\}/,
   );
-  assert.match(app, /onRunStateChange=\{setEvidenceRun\}/);
+  // The always-mounted section renders BenchmarkScreen, which owns the
+  // panel; the mount is what guarantees survival, not the literal call site.
+  assert.match(app, /<BenchmarkScreen/);
+  assert.match(app, /onRunStateChange=\{(?:props\.)?setEvidenceRun\}/);
   // The active run's status and cancel handle are available app-wide.
   assert.match(app, /evidenceRun\.cancel && \(/);
   // Completed runs are retained across model/profile changes.

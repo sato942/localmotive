@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Activity, BadgeCheck, Box, Braces, CircleStop, Cpu, Database, Download, ExternalLink, FolderOpen, Gauge, HardDrive, Info, KeyRound, MonitorCog, Play, RefreshCw, Save, Settings2, Sparkles, SquareTerminal, TestTube2, TriangleAlert } from "lucide-react";
+import { Activity, BadgeCheck, Braces, CircleStop, Cpu, Database, Download, ExternalLink, FolderOpen, Gauge, HardDrive, Info, KeyRound, MonitorCog, Play, RefreshCw, Save, Settings2, Sparkles, TestTube2 } from "lucide-react";
 import "./App.css";
 import {
   managedHealthOutcome,
@@ -82,7 +82,10 @@ import {
 import { AboutScreen } from "./screens/AboutScreen";
 import { RuntimeScreen } from "./screens/RuntimeScreen";
 import { TuneScreen } from "./screens/TuneScreen";
-import { V03EvidencePanel } from "./V03EvidencePanel";
+import { DashboardScreen } from "./screens/DashboardScreen";
+import { PathText } from "./screens/PathText";
+import { InventoryScreen } from "./screens/InventoryScreen";
+import { BenchmarkScreen } from "./screens/BenchmarkScreen";
 
 type View = "dashboard" | "models" | "catalog" | "runtime" | "profile" | "tune" | "benchmark" | "about";
 
@@ -150,35 +153,6 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 /// S-24 I1: a path that is truncated for layout keeps its FULL value
 /// retrievable — the title carries it, the control is keyboard reachable, and
 /// one click copies it. Identity is never hidden by ellipsis alone.
-function PathText({ value, label }: { value: string; label: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <span className="path-text">
-      <span className="path-text-value" tabIndex={0} title={value} aria-label={`${label}: ${value}`}>
-        {value}
-      </span>
-      <button
-        type="button"
-        className="path-copy"
-        aria-label={`Copy ${label}`}
-        onClick={(event) => {
-          // The inventory row itself opens the profile on click; copying a
-          // path must not hijack the user into another screen (S-24 V1).
-          event.stopPropagation();
-          void navigator.clipboard
-            ?.writeText(value)
-            .then(() => {
-              setCopied(true);
-              window.setTimeout(() => setCopied(false), 1500);
-            })
-            .catch(() => setCopied(false));
-        }}
-      >
-        {copied ? "Copied" : "Copy"}
-      </button>
-    </span>
-  );
-}
 
 function App() {
   const [view, setView] = useState<View>(RUNTIME ? "dashboard" : "runtime");
@@ -1516,188 +1490,38 @@ function App() {
         )}
 
         {view === "dashboard" && (
-          <section className="screen dashboard-screen">
-            <div className="section-heading">
-              <div>
-                <h1>Server control</h1>
-                <p>One supervised process. Exact profile. No hidden defaults.</p>
-              </div>
-              <div className="actions">
-                {status.running || status.phase === "starting" ? (
-                  <>
-                    {status.running && (
-                      <button className="button secondary" onClick={() => openExternal(`http://127.0.0.1:${status.port}`)}>
-                        <SquareTerminal size={16} /> Open chat
-                      </button>
-                    )}
-                    <button className="button danger" onClick={stop} disabled={busy === "stop"}>
-                      <CircleStop size={16} /> {status.phase === "starting" ? "Cancel start" : "Stop server"}
-                    </button>
-                  </>
-                ) : (
-                  <button className="button primary" onClick={start} disabled={!profile || !profile.runtime || busy === "start" || !selected?.complete || evidenceRun !== null || tuning}>
-                    <Play size={16} fill="currentColor" /> Start profile
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div className="instrument-strip">
-              <div className={status.running ? "instrument primary-readout running" : "instrument primary-readout"}>
-                <span className="instrument-label">PROCESS</span>
-                <strong>{status.running ? "RUNNING" : status.phase === "starting" ? "STARTING" : "STANDBY"}</strong>
-                <small>{status.running ? `PID ${status.pid}` : status.phase === "starting" ? "Waiting for readiness; Stop stays available" : "No owned child process"}</small>
-              </div>
-              <div className="instrument">
-                <span className="instrument-label">ENDPOINT</span>
-                <strong>{status.port ? `:${status.port}` : "—"}</strong>
-                <small>{status.alias ?? "No alias assigned"}</small>
-              </div>
-              <div className="instrument">
-                <span className="instrument-label">STRATEGY</span>
-                {/* Running identity comes from the server snapshot; the
-                    editable draft only describes a not-yet-started profile
-                    (audit FE-16). */}
-                <strong>{(status.running ? status.specType : profile?.specType)?.replace("draft-", "").toUpperCase() ?? "NONE"}</strong>
-                <small>{status.running ? (status.companionLinked ? "Companion linked" : "Target only") : profile?.draftModel ? "Companion linked" : "Target only"}</small>
-              </div>
-              <div className="instrument">
-                <span className="instrument-label">LAST TEST</span>
-                <strong>{benchmark ? benchmark.meanTps.toFixed(1) : "—"}</strong>
-                <small>{benchmark ? "generation tok/s mean" : "Not measured"}</small>
-              </div>
-            </div>
-
-            <div className="control-grid">
-              <article className="machine-panel current-profile">
-                <div className="panel-title">
-                  <Box size={17} />
-                  <h2>Loaded profile</h2>
-                  <span className={selected?.complete ? "state-tag good" : "state-tag warning"}>
-                    {selected?.complete ? "SHARDS COMPLETE" : "SHARDS INCOMPLETE"}
-                  </span>
-                </div>
-                <div className="profile-identity">
-                  <strong>{profile?.name ?? "No profile"}</strong>
-                  <p>{selected?.firstShard ?? "Select a model from inventory"}</p>
-                </div>
-                <dl className="spec-list">
-                  <div><dt>Context</dt><dd>{profile?.context.toLocaleString() ?? "—"}</dd></div>
-                  <div><dt>GPU layers</dt><dd>{profile?.gpuLayers ?? "—"}</dd></div>
-                  <div><dt>Batch / uBatch</dt><dd>{profile ? `${profile.batch} / ${profile.ubatch}` : "—"}</dd></div>
-                  <div><dt>Draft depth</dt><dd>{profile?.specType !== "none" ? profile?.draftMax : "OFF"}</dd></div>
-                </dl>
-                <button className="text-button" onClick={() => setView("profile")}>Edit exact launch profile →</button>
-              </article>
-
-              <article className="machine-panel terminal-panel">
-                <div className="panel-title">
-                  <SquareTerminal size={17} />
-                  <h2>Server log</h2>
-                  <span className="log-path">{status.logPath ?? "buffer offline"}</span>
-                </div>
-                {status.running ? <pre>{log}</pre> : <div className="log-empty"><SquareTerminal size={26} /><strong>Server is stopped</strong><span>Start this profile to stream llama-server output here.</span></div>}
-              </article>
-            </div>
-          </section>
+          <DashboardScreen
+            benchmark={benchmark}
+            busy={busy}
+            evidenceRun={evidenceRun}
+            log={log}
+            openExternal={openExternal}
+            profile={profile}
+            runtime={runtime}
+            selected={selected}
+            setView={setView}
+            start={start}
+            status={status}
+            stop={stop}
+            tuning={tuning}
+          />
         )}
-
         {view === "models" && (
-          <section className="screen inventory-screen">
-            <div className="section-heading">
-              <div>
-                <h1>Logical inventory</h1>
-                <p>Split shards grouped; companions kept separate from targets.</p>
-              </div>
-              <button className="button secondary" onClick={scan} disabled={busy === "scan"}>
-                <RefreshCw size={16} className={busy === "scan" ? "spin" : ""} /> Rescan
-              </button>
-              {busy === "scan" && (
-                <button className="button danger" onClick={() => void invoke("cancel_scan")}>
-                  <CircleStop size={15} /> Cancel scan
-                </button>
-              )}
-            </div>
-            <div className="path-bar">
-              <HardDrive size={16} />
-              <input value={modelRoot} onChange={(event) => setModelRoot(event.target.value)} aria-label="Model root" placeholder="Choose a folder containing GGUF files" />
-              <button className="path-action" onClick={chooseModelFolder}><FolderOpen size={15} /> Choose</button>
-              <span>{models.length} targets · {bytesLabel(totalBytes)}</span>
-            </div>
-            {models.length === 0 ? (
-              <div className="empty-state" role="status">
-                <h2>
-                  {scanFailed
-                    ? "The scan could not complete"
-                    : lastScan
-                      ? "No GGUF models in this folder yet"
-                      : "Choose your GGUF model folder"}
-                </h2>
-                <p>
-                  {scanFailed
-                    ? "Fix access to the folder or pick another one, then scan again. The previous inventory was cleared to avoid showing stale targets."
-                    : lastScan
-                      ? `The folder was scanned (${lastScan.problems.length} diagnostic${lastScan.problems.length === 1 ? "" : "s"}) and contains no GGUF model shards. Add .gguf files or choose a different folder.`
-                      : "Localmotive reads GGUF files directly from a folder on this PC. Nothing is uploaded or moved."}
-                </p>
-                <div className="empty-state-actions">
-                  <button className="button secondary" onClick={chooseModelFolder}>
-                    <FolderOpen size={15} /> Choose folder
-                  </button>
-                  <button className="button primary" onClick={scan} disabled={busy === "scan" || !modelRoot.trim()}>
-                    <RefreshCw size={15} /> Rescan this folder
-                  </button>
-                </div>
-              </div>
-            ) : null}
-            <table className="inventory-table" aria-label="Model inventory">
-              <thead>
-                <tr>
-                  <th scope="col">Target</th><th scope="col">Quant</th><th scope="col">Footprint</th><th scope="col">Shards</th><th scope="col">Companions</th><th scope="col">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {models.map((model) => (
-                  <tr
-                    className={selectedId === model.id ? "selected" : ""}
-                    key={model.id}
-                    onClick={() => loadProfile(model)}
-                  >
-                    <td className="model-cell">
-                      <button
-                        type="button"
-                        className="row-target"
-                        onClick={() => loadProfile(model)}
-                      >
-                        <strong>{model.name}</strong>
-                      </button>
-                      <small>
-                        <PathText value={model.directory} label="Model folder" />
-                      </small>
-                    </td>
-                    <td>{model.quant}</td>
-                    <td className="numeric">{bytesLabel(model.sizeBytes)}</td>
-                    <td className="numeric">{model.shardCount}/{model.expectedShards}</td>
-                    <td className="companion-stack">
-                      {model.companions.length ? (() => {
-                        const counts = new Map<string, number>();
-                        model.companions.forEach((c) => counts.set(c.role, (counts.get(c.role) ?? 0) + 1));
-                        return [...counts].map(([role, count]) => <i key={role}>{role.toUpperCase()}{count > 1 ? ` ×${count}` : ""}</i>);
-                      })() : <small>None</small>}
-                    </td>
-                    <td className={model.complete ? "state-tag good" : "state-tag warning"}>
-                      {model.complete ? "READY" : "INCOMPLETE"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {invalidCount > 0 && (
-              <div className="warning-band"><TriangleAlert size={17} /><strong>{invalidCount} target blocked</strong><span>Missing shards must be restored before launch.</span></div>
-            )}
-          </section>
+          <InventoryScreen
+            busy={busy}
+            chooseModelFolder={chooseModelFolder}
+            invalidCount={invalidCount}
+            lastScan={lastScan}
+            loadProfile={loadProfile}
+            modelRoot={modelRoot}
+            models={models}
+            scan={scan}
+            scanFailed={scanFailed}
+            selectedId={selectedId}
+            setModelRoot={setModelRoot}
+            totalBytes={totalBytes}
+          />
         )}
-
         {view === "catalog" && (
           <section className="screen catalog-screen">
             <div className="section-heading">
@@ -2296,48 +2120,21 @@ function App() {
           className="screen benchmark-screen"
           style={view === "benchmark" ? undefined : { display: "none" }}
         >
-            <div className="section-heading">
-              <div>
-                <h1>Generation benchmark</h1>
-                <p>One warmup, fixed deterministic workload, repeated server-reported throughput.</p>
-              </div>
-              <button className="button primary" onClick={runBenchmark} disabled={!status.running || busy === "benchmark" || evidenceRun !== null}>
-                <Activity size={16} /> {busy === "benchmark" ? "Measuring…" : "Run benchmark"}
-              </button>
-            </div>
-            {!status.running && <div className="warning-band"><TriangleAlert size={17} /><strong>Server required</strong><span>Start a profile before measuring it.</span></div>}
-            <div className="benchmark-grid">
-              <article className="machine-panel benchmark-setup">
-                <div className="panel-title"><TestTube2 size={17} /><h2>Test setup</h2></div>
-                <label>Forced output tokens<input type="number" min="64" max="4096" value={tokens} onChange={(e) => setTokens(Number(e.target.value))} /></label>
-                <label>Measured repeats<input type="number" min="1" max="10" value={repeats} onChange={(e) => setRepeats(Number(e.target.value))} /></label>
-                <dl className="spec-list">
-                  <div><dt>Sampling</dt><dd>GREEDY</dd></div>
-                  <div><dt>Seed</dt><dd>42</dd></div>
-                  <div><dt>Early EOS</dt><dd>IGNORED</dd></div>
-                  <div><dt>Warmup</dt><dd>64 TOKENS</dd></div>
-                </dl>
-              </article>
-              <article className="machine-panel results-panel">
-                <div className="panel-title"><Gauge size={17} /><h2>Measured result</h2></div>
-                {benchmark ? (
-                  <>
-                    <div className="result-main"><strong>{benchmark.meanTps.toFixed(2)}</strong><span>generation tok/s mean</span></div>
-                    <div className="result-range"><span>Median {benchmark.medianTps.toFixed(2)}</span><span>Range {benchmark.minTps.toFixed(2)}–{benchmark.maxTps.toFixed(2)}</span></div>
-                    <div className="sample-bars">
-                      {benchmark.samples.map((sample, index) => <div key={index}><span>R{index + 1}</span><b style={{ width: `${(sample / benchmark.maxTps) * 100}%` }} /><em>{sample.toFixed(2)}</em></div>)}
-                    </div>
-                  </>
-                ) : <div className="empty-result"><Activity size={28} /><p>No measurement recorded for this session.</p></div>}
-              </article>
-            </div>
-            <V03EvidencePanel
-              model={selected ?? null}
-              profile={profile}
-              serverStatus={status}
-              initialHardware={hardware}
-              onRunStateChange={setEvidenceRun}
-            />
+          <BenchmarkScreen
+            benchmark={benchmark}
+            busy={busy}
+            evidenceRun={evidenceRun}
+            hardware={hardware}
+            profile={profile}
+            repeats={repeats}
+            runBenchmark={runBenchmark}
+            selected={selected}
+            setEvidenceRun={setEvidenceRun}
+            setRepeats={setRepeats}
+            setTokens={setTokens}
+            status={status}
+            tokens={tokens}
+          />
           </section>
       </main>
     </div>
