@@ -662,3 +662,137 @@ describe("download job identity (audit FE-11)", () => {
     expect(text()).toContain("not being downloaded");
   });
 });
+
+describe("assistive-technology structure (audit FE-13)", () => {
+  const fixtureScan = () => [
+    {
+      id: "fixture/model",
+      name: "fixture",
+      directory: "C:/models/fixture",
+      firstShard: "C:/models/fixture/model-Q4_K_M.gguf",
+      sizeBytes: 4_000_000_000,
+      shardCount: 1,
+      expectedShards: 1,
+      complete: true,
+      quant: "Q4_K_M",
+      shards: [],
+      companions: [],
+    },
+  ];
+  const navButton = (label: string) =>
+    [...container.querySelectorAll("button")].find(
+      (button) => (button.textContent ?? "").trim() === label,
+    );
+  const click = async (target: Element | undefined, why: string) => {
+    expect(target, why).toBeTruthy();
+    await act(async () => {
+      target!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await settle();
+  };
+
+  it("inventory is a real table with column headers and named row actions", async () => {
+    handlers.set("scan_models", fixtureScan);
+    await mount();
+    await click(navButton("Inventory"), "Inventory navigation");
+    const rootInput = document.querySelector('input[aria-label="Model root"]') as HTMLInputElement;
+    await act(async () => {
+      const proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!;
+      proto.set!.call(rootInput, "C:/models/fixture-root");
+      rootInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(
+      [...container.querySelectorAll("button")].find((button) =>
+        (button.textContent ?? "").includes("Rescan"),
+      ),
+      "Rescan action",
+    );
+    for (let attempt = 0; attempt < 10 && !text().includes("rescan"); attempt += 1) {
+      await settle();
+    }
+    // The scan selects the model and moves to the Profile screen; return to
+    // the inventory to inspect the table.
+    await click(navButton("Inventory"), "Inventory navigation again");
+    const table = container.querySelector("table.inventory-table");
+    expect(table, "the inventory must render a table").toBeTruthy();
+    const headers = [...table!.querySelectorAll("th")];
+    expect(headers).toHaveLength(6);
+    expect(headers.every((th) => th.getAttribute("scope") === "col")).toBe(true);
+    const rowButton = table!.querySelector("tbody .row-target") as HTMLButtonElement | null;
+    expect(rowButton, "each row must expose a named selection control").toBeTruthy();
+    expect(rowButton!.textContent).toContain("fixture");
+    // The row control is reachable and selects on Enter like any button.
+    rowButton!.focus();
+    expect(document.activeElement).toBe(rowButton);
+  });
+
+  it("paired numeric inputs each carry their own label", async () => {
+    handlers.set("scan_models", fixtureScan);
+    await mount();
+    await click(navButton("Inventory"), "Inventory navigation");
+    const rootField = document.querySelector('input[aria-label="Model root"]') as HTMLInputElement;
+    await act(async () => {
+      const proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!;
+      proto.set!.call(rootField, "C:/models/fixture-root");
+      rootField.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(
+      [...container.querySelectorAll("button")].find((button) =>
+        (button.textContent ?? "").includes("Rescan"),
+      ),
+      "Rescan action",
+    );
+    for (let attempt = 0; attempt < 10 && !container.querySelector("table.inventory-table"); attempt += 1) {
+      await settle();
+    }
+    await click(navButton("Profile"), "Profile navigation");
+    const labelWith = (needle: string) =>
+      [...container.querySelectorAll("label")].find((candidate) =>
+        (candidate.textContent ?? "").includes(needle),
+      );
+    const min = labelWith("N-gram draft min");
+    const max = labelWith("N-gram draft max");
+    const sizeN = labelWith("N-gram map size n");
+    const sizeM = labelWith("N-gram map size m");
+    for (const [label, name] of [
+      [min, "min"],
+      [max, "max"],
+      [sizeN, "n"],
+      [sizeM, "m"],
+    ] as const) {
+      expect(label, `the ${name} field must have its own label`).toBeTruthy();
+      expect(label!.querySelectorAll("input")).toHaveLength(1);
+    }
+    expect(min).not.toBe(max);
+  });
+
+  it("provider tabs follow the WAI-ARIA keyboard pattern with linked tabpanel", async () => {
+    handlers.set("cloud_providers", () => [
+      { id: "openrouter", label: "OpenRouter", supportsOauth: true, keyPrefixHint: "sk-or", consoleUrl: "https://openrouter.ai", defaultModel: "m" },
+      { id: "second", label: "Second Cloud", supportsOauth: false, keyPrefixHint: "sk-2", consoleUrl: "https://example.invalid", defaultModel: "m2" },
+    ]);
+    await mount();
+    await click(navButton("AI Tune"), "AI Tune navigation");
+    const tablist = container.querySelector('[role="tablist"]');
+    expect(tablist, "the provider tablist must render").toBeTruthy();
+    const tabs = [...tablist!.querySelectorAll('[role="tab"]')] as HTMLButtonElement[];
+    expect(tabs.length).toBeGreaterThanOrEqual(2);
+    const selectedIndex = tabs.findIndex((tab) => tab.getAttribute("aria-selected") === "true");
+    expect(selectedIndex).toBeGreaterThanOrEqual(0);
+    // Roving tabindex: exactly one tab is in the tab order.
+    expect(tabs.filter((tab) => tab.tabIndex === 0)).toHaveLength(1);
+    expect(tabs.every((tab) => tab.getAttribute("aria-controls") === "provider-panel")).toBe(true);
+    const panel = container.querySelector('[role="tabpanel"]');
+    expect(panel?.getAttribute("aria-labelledby")).toBe(tabs[selectedIndex].id);
+    // ArrowRight moves selection and focus to the next tab.
+    const next = tabs[(selectedIndex + 1) % tabs.length];
+    await act(async () => {
+      tabs[selectedIndex].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    });
+    await settle();
+    const refreshed = [...tablist!.querySelectorAll('[role="tab"]')];
+    const nowSelected = refreshed.find((tab) => tab.getAttribute("aria-selected") === "true");
+    expect(nowSelected?.id).toBe(next.id);
+    expect(document.activeElement?.id).toBe(next.id);
+  });
+});

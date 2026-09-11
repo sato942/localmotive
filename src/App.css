@@ -100,12 +100,20 @@ h1, h2 { font-family: "Bahnschrift Condensed", "Arial Narrow", sans-serif; }
 
 .path-bar { min-height: 45px; display: grid; grid-template-columns: auto minmax(200px, 1fr) auto auto; align-items: center; gap: 10px; padding: 0 13px; border: 1px solid var(--line); background: #252a2b; margin-bottom: 12px; }
 .path-bar input { background: transparent; border: 0; color: var(--paper); outline: 0; font: 11px Consolas, monospace; min-width: 0; }
+/* FE-12: the specificity of `.path-bar input` (0,1,1) overrides the global
+   :focus-visible ring (0,1,0); keyboard focus must stay visible. */
+.path-bar input:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
 .path-action { min-height: 30px; padding: 0 9px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid #50595a; background: #303637; color: #d0d5d2; font-size: 10px; font-weight: 700; cursor: pointer; }
 .path-bar span { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .inventory-table { border: 1px solid var(--line); background: #202425; min-width: 850px; }
-.table-row { width: 100%; min-height: 58px; padding: 0 14px; display: grid; grid-template-columns: minmax(280px, 2.2fr) .8fr .75fr .55fr 1fr .7fr; align-items: center; gap: 14px; border: 0; border-bottom: 1px solid var(--line-soft); background: transparent; text-align: left; cursor: pointer; }
-.table-row:hover:not(.table-head), .table-row.selected { background: #292f2e; }
-.table-head { min-height: 34px; color: #929a97; font: 600 10px "Bahnschrift Condensed", "Arial Narrow", sans-serif; letter-spacing: .1em; text-transform: uppercase; cursor: default; background: #292e2f; }
+.inventory-table { width: 100%; border-collapse: collapse; }
+.inventory-table th, .inventory-table td { padding: 8px 14px; border-bottom: 1px solid var(--line-soft); text-align: left; vertical-align: middle; }
+.inventory-table thead th { height: 34px; color: #929a97; font: 600 10px "Bahnschrift Condensed", "Arial Narrow", sans-serif; letter-spacing: .1em; text-transform: uppercase; background: #292e2f; }
+.inventory-table tbody tr { cursor: pointer; }
+.inventory-table tbody tr:hover, .inventory-table tbody tr.selected { background: #292f2e; }
+.inventory-table tbody td { min-height: 58px; }
+.row-target { display: block; width: 100%; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.row-target:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
 .model-cell { min-width: 0; }
 .model-cell strong { display: block; font: 600 14px "Public Sans", sans-serif; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-cell small { display: block; margin-top: 5px; color: #7e8684; font: 9px Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

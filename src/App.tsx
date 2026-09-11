@@ -790,6 +790,25 @@ function App() {
     await loadCloud(next);
   }
 
+  /// WAI-ARIA tabs keyboard pattern (audit FE-13): arrows cycle, Home/End
+  /// jump, and focus follows the selection.
+  function onProviderTabKey(
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    index: number,
+  ) {
+    let next = index;
+    if (event.key === "ArrowRight") next = (index + 1) % providers.length;
+    else if (event.key === "ArrowLeft") next = (index - 1 + providers.length) % providers.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = providers.length - 1;
+    else return;
+    event.preventDefault();
+    const target = providers[next];
+    if (!target) return;
+    switchProvider(target.id);
+    document.getElementById(`provider-tab-${target.id}`)?.focus();
+  }
+
   async function saveKey() {
     if (!keyDraft.trim()) return;
     const forProvider = providerId;
@@ -1425,29 +1444,45 @@ function App() {
               <button className="path-action" onClick={chooseModelFolder}><FolderOpen size={15} /> Choose</button>
               <span>{models.length} targets · {bytesLabel(totalBytes)}</span>
             </div>
-            <div className="inventory-table" role="table" aria-label="Model inventory">
-              <div className="table-row table-head" role="row">
-                <span>Target</span><span>Quant</span><span>Footprint</span><span>Shards</span><span>Companions</span><span>Status</span>
-              </div>
-              {models.map((model) => (
-                <button className={selectedId === model.id ? "table-row selected" : "table-row"} key={model.id} onClick={() => loadProfile(model)}>
-                  <span className="model-cell"><strong>{model.name}</strong><small>{model.directory}</small></span>
-                  <span>{model.quant}</span>
-                  <span className="numeric">{bytesLabel(model.sizeBytes)}</span>
-                  <span className="numeric">{model.shardCount}/{model.expectedShards}</span>
-                  <span className="companion-stack">
-                    {model.companions.length ? (() => {
-                      const counts = new Map<string, number>();
-                      model.companions.forEach((c) => counts.set(c.role, (counts.get(c.role) ?? 0) + 1));
-                      return [...counts].map(([role, count]) => <i key={role}>{role.toUpperCase()}{count > 1 ? ` ×${count}` : ""}</i>);
-                    })() : <small>None</small>}
-                  </span>
-                  <span className={model.complete ? "state-tag good" : "state-tag warning"}>
-                    {model.complete ? "READY" : "INCOMPLETE"}
-                  </span>
-                </button>
-              ))}
-            </div>
+            <table className="inventory-table" aria-label="Model inventory">
+              <thead>
+                <tr>
+                  <th scope="col">Target</th><th scope="col">Quant</th><th scope="col">Footprint</th><th scope="col">Shards</th><th scope="col">Companions</th><th scope="col">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {models.map((model) => (
+                  <tr
+                    className={selectedId === model.id ? "selected" : ""}
+                    key={model.id}
+                    onClick={() => loadProfile(model)}
+                  >
+                    <td className="model-cell">
+                      <button
+                        type="button"
+                        className="row-target"
+                        onClick={() => loadProfile(model)}
+                      >
+                        <strong>{model.name}</strong><small>{model.directory}</small>
+                      </button>
+                    </td>
+                    <td>{model.quant}</td>
+                    <td className="numeric">{bytesLabel(model.sizeBytes)}</td>
+                    <td className="numeric">{model.shardCount}/{model.expectedShards}</td>
+                    <td className="companion-stack">
+                      {model.companions.length ? (() => {
+                        const counts = new Map<string, number>();
+                        model.companions.forEach((c) => counts.set(c.role, (counts.get(c.role) ?? 0) + 1));
+                        return [...counts].map(([role, count]) => <i key={role}>{role.toUpperCase()}{count > 1 ? ` ×${count}` : ""}</i>);
+                      })() : <small>None</small>}
+                    </td>
+                    <td className={model.complete ? "state-tag good" : "state-tag warning"}>
+                      {model.complete ? "READY" : "INCOMPLETE"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
             {invalidCount > 0 && (
               <div className="warning-band"><TriangleAlert size={17} /><strong>{invalidCount} target blocked</strong><span>Missing shards must be restored before launch.</span></div>
             )}
@@ -2066,8 +2101,14 @@ function App() {
                         <label>Draft cache K<select value={profile.draftCacheTypeK} onChange={(e) => setProfile({ ...profile, draftCacheTypeK: e.target.value })}>{["f16","bf16","q8_0","q4_0","q4_1"].map((type) => <option key={type}>{type}</option>)}</select></label>
                         <label>Draft cache V<select value={profile.draftCacheTypeV} onChange={(e) => setProfile({ ...profile, draftCacheTypeV: e.target.value })}>{["f16","bf16","q8_0","q4_0","q4_1"].map((type) => <option key={type}>{type}</option>)}</select></label>
                         <label>N-gram match length<input type="number" value={profile.ngramMatch} onChange={(e) => setProfile({ ...profile, ngramMatch: Number(e.target.value) })} /></label>
-                        <label>N-gram draft min / max<div className="paired-inputs"><input type="number" value={profile.ngramMin} onChange={(e) => setProfile({ ...profile, ngramMin: Number(e.target.value) })} /><input type="number" value={profile.ngramMax} onChange={(e) => setProfile({ ...profile, ngramMax: Number(e.target.value) })} /></div></label>
-                        <label>Map lookup / draft size<div className="paired-inputs"><input type="number" value={profile.ngramSizeN} onChange={(e) => setProfile({ ...profile, ngramSizeN: Number(e.target.value) })} /><input type="number" value={profile.ngramSizeM} onChange={(e) => setProfile({ ...profile, ngramSizeM: Number(e.target.value) })} /></div></label>
+                        <div className="paired-inputs">
+                          <label>N-gram draft min<input type="number" value={profile.ngramMin} onChange={(e) => setProfile({ ...profile, ngramMin: Number(e.target.value) })} /></label>
+                          <label>N-gram draft max<input type="number" value={profile.ngramMax} onChange={(e) => setProfile({ ...profile, ngramMax: Number(e.target.value) })} /></label>
+                        </div>
+                        <div className="paired-inputs">
+                          <label>N-gram map size n<input type="number" value={profile.ngramSizeN} onChange={(e) => setProfile({ ...profile, ngramSizeN: Number(e.target.value) })} /></label>
+                          <label>N-gram map size m<input type="number" value={profile.ngramSizeM} onChange={(e) => setProfile({ ...profile, ngramSizeM: Number(e.target.value) })} /></label>
+                        </div>
                         <label>Map minimum hits<input type="number" value={profile.ngramMinHits} onChange={(e) => setProfile({ ...profile, ngramMinHits: Number(e.target.value) })} /></label>
                       </div>
                     </details>
@@ -2188,11 +2229,27 @@ function App() {
                 <article className="machine-panel">
                   <div className="panel-title"><KeyRound size={17} /><h2>Cloud provider</h2>{credential && <span className={credential.configured ? "state-tag good" : "state-tag warning"}>{credential.configured ? `CONNECTED ${credential.masked}` : "NO KEY"}</span>}</div>
                   <div className="provider-tabs" role="tablist" aria-label="Cloud providers">
-                    {providers.map((entry) => (
-                      <button key={entry.id} role="tab" aria-selected={entry.id === providerId} className={entry.id === providerId ? "provider-tab active" : "provider-tab"} onClick={() => switchProvider(entry.id)}>{entry.label}</button>
+                    {providers.map((entry, index) => (
+                      <button
+                        key={entry.id}
+                        id={`provider-tab-${entry.id}`}
+                        role="tab"
+                        aria-selected={entry.id === providerId}
+                        aria-controls="provider-panel"
+                        tabIndex={entry.id === providerId ? 0 : -1}
+                        className={entry.id === providerId ? "provider-tab active" : "provider-tab"}
+                        onClick={() => switchProvider(entry.id)}
+                        onKeyDown={(event) => onProviderTabKey(event, index)}
+                      >{entry.label}</button>
                     ))}
                   </div>
-                  <div className="provider-body">
+                  <div
+                    className="provider-body"
+                    id="provider-panel"
+                    role="tabpanel"
+                    aria-labelledby={`provider-tab-${providerId}`}
+                    tabIndex={0}
+                  >
                     {provider?.supportsOauth && (
                       <div className="oauth-row">
                         <button className="button secondary" onClick={openRouterLogin} disabled={busy === "oauth" || tuning}><LogIn size={15} /> {busy === "oauth" ? "Waiting for browser…" : credential?.configured ? "Sign in again" : "Sign in with OpenRouter"}</button>

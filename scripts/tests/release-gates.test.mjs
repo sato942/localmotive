@@ -1466,3 +1466,15 @@ test("IPC-02 production CSP and opener scope are narrow and audited", async () =
   }
 });
 
+test("FE-12 path-bar inputs keep a visible keyboard-focus ring", async () => {
+  const css = await readFile(join(process.cwd(), "src", "App.css"), "utf8");
+  assert.match(
+    css,
+    /\.path-bar input:focus-visible\s*\{[^}]*outline:/s,
+    "the path-bar input outline reset must be paired with a focus-visible ring",
+  );
+  assert.ok(
+    /\.path-bar input\s*\{[^}]*outline:\s*0/s.test(css.split(".path-bar input:focus-visible")[0]),
+    "sanity: the outline reset still exists before the focus rule",
+  );
+});
