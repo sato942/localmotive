@@ -433,33 +433,48 @@ export function V03EvidencePanel({
   }
 
   async function addCalibrationAnchor() {
-    const measured = benchmark?.summary?.decodeTps.mean;
     const estimated = Number(estimatedTps);
-    if (!benchmark || measured === undefined || !Number.isFinite(estimated) || estimated <= 0) {
+    if (!benchmark?.manifestPath || !Number.isFinite(estimated) || estimated <= 0) {
       setMessage("Enter a positive estimate after a successful measured benchmark.");
       return;
     }
-    const observedAtMs = Date.now();
-    const anchor: CalibrationAnchor = {
-      compatibilityKey: benchmark.compatibilityKey,
-      estimatedValue: estimated,
-      measuredValue: measured,
-      observedAtMs,
-    };
+    // The anchor is created in Rust from the persisted run identity: the
+    // measured value and observation time come from the saved manifest, and
+    // one run can contribute at most one sample (audit MT-08).
     const records = await runAction("calibration-anchor", () =>
-      invoke<CalibrationRecords>("store_calibration_anchor", { anchor }),
+      invoke<CalibrationRecords>("add_benchmark_calibration_anchor", {
+        manifestPath: benchmark.manifestPath,
+        estimatedValue: estimated,
+        estimator: "manual-estimate.v1",
+      }),
     );
     if (records) {
       setAnchors(records.anchors);
-      setMessage("Local calibration anchor persisted. The estimate remains labeled as estimated.");
+      setMessage(
+        "Calibration anchor persisted from the saved run. Repeated adds on one run share one sample.",
+      );
     }
+  }
+
+  function compatibleAnchors(): CalibrationAnchor[] {
+    if (!benchmark) return [];
+    return anchors.filter(
+      (anchor) => anchor.compatibilityKey === benchmark.compatibilityKey,
+    );
+  }
+
+  function compatibleRunCount(): number {
+    const runs = new Set(
+      compatibleAnchors()
+        .map((anchor) => anchor.sourceRunId ?? "")
+        .filter((identity) => identity.length > 0),
+    );
+    return runs.size;
   }
 
   async function buildCalibration() {
     if (!benchmark) return;
-    const compatible = anchors.filter(
-      (anchor) => anchor.compatibilityKey === benchmark.compatibilityKey,
-    );
+    const compatible = compatibleAnchors();
     const result = await runAction("calibration", () =>
       invoke<CalibrationModel>("build_calibration_model", {
         anchors: compatible,
@@ -856,14 +871,18 @@ export function V03EvidencePanel({
             <Field label="Uncalibrated estimate (tok/s)"><Input type="number" min={0} value={estimatedTps} onChange={(event) => setEstimatedTps(event.target.value)} /></Field>
             <div className="actions compact-actions evidence-action-cell">
               <Button variant="ghost" onClick={addCalibrationAnchor} disabled={!benchmark?.summary || busy !== null}>Add anchor</Button>
-              <Button variant="ghost" onClick={() => void buildCalibration()} disabled={anchors.length < 3 || !benchmark || busy !== null}>Build calibration</Button>
+              <Button variant="ghost" onClick={() => void buildCalibration()} disabled={compatibleRunCount() < 3 || !benchmark || busy !== null}>Build calibration</Button>
               <Button variant="ghost" onClick={() => void applyCalibration()} disabled={!calibration || latestCalibrationState !== "compatible" || busy !== null}>Apply</Button>
             </div>
           </div>
           <p className="muted">
-            Compatible anchors: {benchmark ? anchors.filter((item) => item.compatibilityKey === benchmark.compatibilityKey).length : 0}.
+            Compatible anchors: {compatibleAnchors().length} from {compatibleRunCount()} unique run{compatibleRunCount() === 1 ? "" : "s"} (three distinct runs are required).
             Calibration: {latestCalibrationState}.
             {calibrated ? ` Estimated interval ${calibrated.lowerBound.toFixed(2)}–${calibrated.upperBound.toFixed(2)} tok/s.` : ""}
+          </p>
+          <p className="muted">
+            Estimated interval = estimate × (mean measured/estimated ratio ± 1.96 × the ratio spread).
+            It is a descriptive spread of saved runs, not a calibrated confidence interval.
           </p>
 
           <Field label="External evidence JSON">

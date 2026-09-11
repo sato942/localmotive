@@ -253,6 +253,15 @@ pub struct CalibrationAnchor {
     /// Material facts the source snapshot could not observe.
     #[serde(default)]
     pub unknown_identities: Vec<String>,
+    /// Identity of the persisted benchmark run this anchor came from: the
+    /// SHA-256 of the manifest bytes. Repeated actions on one run share it,
+    /// so one run can never manufacture independent samples (audit MT-08).
+    #[serde(default)]
+    pub source_run_id: String,
+    /// Who produced the estimate (e.g. `manual-estimate.v1`); anchors from
+    /// different estimators never mix in one model.
+    #[serde(default)]
+    pub estimator: String,
 }
 
 impl CalibrationAnchor {
@@ -287,7 +296,35 @@ impl CalibrationAnchor {
             observed_at_ms,
             snapshot_schema_version: snapshot_schema_version.into(),
             unknown_identities: unknown_identities.to_vec(),
+            source_run_id: String::new(),
+            estimator: String::new(),
         }
+    }
+
+    /// The full anchor for a persisted run: the source-run identity and the
+    /// estimator identity travel with the sample.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_for_run(
+        compatibility_key: &str,
+        snapshot_schema_version: &str,
+        unknown_identities: &[String],
+        source_run_id: &str,
+        estimator: &str,
+        estimated_value: f64,
+        measured_value: f64,
+        observed_at_ms: u64,
+    ) -> Self {
+        let mut anchor = Self::new_with_snapshot(
+            compatibility_key,
+            snapshot_schema_version,
+            unknown_identities,
+            estimated_value,
+            measured_value,
+            observed_at_ms,
+        );
+        anchor.source_run_id = source_run_id.into();
+        anchor.estimator = estimator.into();
+        anchor
     }
 }
 
@@ -356,6 +393,33 @@ pub fn build_calibration(
         return Err(format!(
             "Calibration timestamps require a positive creation time and TTL no greater than {MAX_TTL_MS} ms"
         ));
+    }
+    // Distinct source runs (audit MT-08): three clicks on one benchmark or a
+    // reimported copy of the same run must never satisfy the count gate.
+    let mut source_runs = std::collections::BTreeSet::new();
+    for anchor in anchors {
+        if anchor.source_run_id.is_empty() {
+            return Err(
+                "Calibration anchors require a persisted source run identity; re-create them from saved benchmarks"
+                    .into(),
+            );
+        }
+        source_runs.insert(anchor.source_run_id.as_str());
+    }
+    if source_runs.len() < 3 {
+        return Err(format!(
+            "Calibration requires at least three distinct measured runs; {} distinct run{} found",
+            source_runs.len(),
+            if source_runs.len() == 1 { "" } else { "s" }
+        ));
+    }
+    let estimator = anchors[0].estimator.trim();
+    if estimator.is_empty()
+        || anchors
+            .iter()
+            .any(|anchor| anchor.estimator.trim() != estimator)
+    {
+        return Err("Calibration anchors must share one non-empty estimator identity".into());
     }
     if anchors.iter().any(|anchor| {
         !anchor.estimated_value.is_finite()
@@ -706,16 +770,25 @@ pub fn persist_calibration_anchor(
     anchor: &CalibrationAnchor,
 ) -> Result<PathBuf, String> {
     validate_persisted_anchor(anchor)?;
-    persist_record(
-        root,
-        "anchors",
-        &format!(
-            "{}-{}.json",
+    // One source run contributes at most one anchor for a compatibility key
+    // (audit MT-08 I2): the filename derives from the run identity, so
+    // persist_record refuses a different anchor for the same run and treats a
+    // byte-identical repeat as idempotent. Repeated Add anchor actions cannot
+    // manufacture samples.
+    let file_token = if anchor.source_run_id.is_empty() {
+        format!(
+            "{}-{}",
             anchor.observed_at_ms,
             key_file_token(&anchor.compatibility_key)
-        ),
-        anchor,
-    )
+        )
+    } else {
+        format!(
+            "{}-{}",
+            key_file_token(&anchor.source_run_id),
+            key_file_token(&anchor.compatibility_key)
+        )
+    };
+    persist_record(root, "anchors", &format!("{file_token}.json"), anchor)
 }
 
 pub fn load_calibration_anchors(
@@ -907,13 +980,34 @@ mod tests {
         format!("v2:{}", seed.to_string().repeat(64))
     }
 
+    /// An anchor as the run-derived flow creates it (audit MT-08): a distinct
+    /// source-run identity and one estimator identity.
+    fn test_anchor(
+        key: &str,
+        source_run: &str,
+        estimated: f64,
+        measured: f64,
+        at: u64,
+    ) -> CalibrationAnchor {
+        CalibrationAnchor::new_for_run(
+            key,
+            EXECUTION_SNAPSHOT_SCHEMA,
+            &[],
+            source_run,
+            "manual-estimate.v1",
+            estimated,
+            measured,
+            at,
+        )
+    }
+
     #[test]
     fn calibration_requires_matching_compatibility_and_expires() {
         let key = test_key('a');
         let anchors = vec![
-            CalibrationAnchor::new(&key, 100.0, 110.0, 10),
-            CalibrationAnchor::new(&key, 200.0, 220.0, 20),
-            CalibrationAnchor::new(&key, 300.0, 330.0, 30),
+            test_anchor(&key, "run-1", 100.0, 110.0, 10),
+            test_anchor(&key, "run-2", 200.0, 220.0, 20),
+            test_anchor(&key, "run-3", 300.0, 330.0, 30),
         ];
         let model = build_calibration(&anchors, 40, 100).unwrap();
 
@@ -949,9 +1043,9 @@ mod tests {
         // v2 key.
         let key = test_key('a');
         let mut stale = vec![
-            CalibrationAnchor::new(&key, 100.0, 110.0, 10),
-            CalibrationAnchor::new(&key, 200.0, 220.0, 20),
-            CalibrationAnchor::new(&key, 300.0, 330.0, 30),
+            test_anchor(&key, "run-1", 100.0, 110.0, 10),
+            test_anchor(&key, "run-2", 200.0, 220.0, 20),
+            test_anchor(&key, "run-3", 300.0, 330.0, 30),
         ];
         for anchor in &mut stale {
             anchor.snapshot_schema_version = String::new();
@@ -962,9 +1056,9 @@ mod tests {
 
         // A valid v2 set passes the key checks; the TTL bound still applies.
         let valid = vec![
-            CalibrationAnchor::new(&key, 100.0, 110.0, 10),
-            CalibrationAnchor::new(&key, 200.0, 220.0, 20),
-            CalibrationAnchor::new(&key, 300.0, 330.0, 30),
+            test_anchor(&key, "run-1", 100.0, 110.0, 10),
+            test_anchor(&key, "run-2", 200.0, 220.0, 20),
+            test_anchor(&key, "run-3", 300.0, 330.0, 30),
         ];
         assert!(build_calibration(&valid, 40, 366 * 24 * 60 * 60 * 1_000).is_err());
     }
@@ -979,9 +1073,13 @@ mod tests {
                 .as_nanos()
         ));
         let key = test_key('a');
-        let anchor = CalibrationAnchor::new(&key, 10.0, 11.0, 42);
-        let model =
-            build_calibration(&[anchor.clone(), anchor.clone(), anchor.clone()], 50, 100).unwrap();
+        let anchors = vec![
+            test_anchor(&key, "run-1", 10.0, 11.0, 10),
+            test_anchor(&key, "run-2", 20.0, 22.0, 20),
+            test_anchor(&key, "run-3", 30.0, 33.0, 30),
+        ];
+        let anchor = anchors[0].clone();
+        let model = build_calibration(&anchors, 50, 100).unwrap();
 
         persist_calibration_anchor(&root, &anchor).unwrap();
         persist_calibration_model(&root, &model).unwrap();
@@ -1220,9 +1318,9 @@ mod tests {
         // A complete snapshot builds.
         let complete_key = execution_snapshot_key(&snapshot_fixture()).unwrap();
         let anchors = vec![
-            CalibrationAnchor::new(&complete_key, 100.0, 110.0, 10),
-            CalibrationAnchor::new(&complete_key, 200.0, 220.0, 20),
-            CalibrationAnchor::new(&complete_key, 300.0, 330.0, 30),
+            test_anchor(&complete_key, "run-1", 100.0, 110.0, 10),
+            test_anchor(&complete_key, "run-2", 200.0, 220.0, 20),
+            test_anchor(&complete_key, "run-3", 300.0, 330.0, 30),
         ];
         assert!(build_calibration(&anchors, 40, 100).is_ok());
     }

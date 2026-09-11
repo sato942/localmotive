@@ -1959,7 +1959,13 @@ fn benchmark_file_fact(file: &artifact::ArtifactFileFact) -> evidence::FileFact 
     }
 }
 
-fn benchmark_compatibility_key_from_snapshot(
+struct ExecutionSnapshotOutcome {
+    compatibility_key: String,
+    schema_version: String,
+    unknown_identities: Vec<String>,
+}
+
+fn benchmark_execution_snapshot_from_profile(
     profile: &LaunchProfile,
     validation: &LaunchValidation,
     artifacts: &[artifact::ArtifactInspection],
@@ -1967,7 +1973,7 @@ fn benchmark_compatibility_key_from_snapshot(
     executable_sha256: &str,
     hardware: &runtime::HardwareInfo,
     workload: &evidence::Workload,
-) -> Result<String, String> {
+) -> Result<ExecutionSnapshotOutcome, String> {
     let main = artifacts
         .first()
         .ok_or("Benchmark snapshot did not contain a model artifact")?;
@@ -2089,7 +2095,12 @@ fn benchmark_compatibility_key_from_snapshot(
         estimator_version: calibration::ESTIMATOR_VERSION.into(),
         unknown_identities,
     };
-    calibration::execution_snapshot_key(&snapshot)
+    let compatibility_key = calibration::execution_snapshot_key(&snapshot)?;
+    Ok(ExecutionSnapshotOutcome {
+        compatibility_key,
+        schema_version: snapshot.schema_version,
+        unknown_identities: snapshot.unknown_identities,
+    })
 }
 
 fn run_benchmark_snapshot(
@@ -2151,7 +2162,7 @@ fn run_benchmark_snapshot(
             current_usage_bytes: adapter.current_usage_bytes.clone(),
         })
         .collect();
-    let compatibility_key = benchmark_compatibility_key_from_snapshot(
+    let snapshot_outcome = benchmark_execution_snapshot_from_profile(
         &profile,
         &validation,
         &artifacts,
@@ -2160,6 +2171,7 @@ fn run_benchmark_snapshot(
         &hardware,
         &workload,
     )?;
+    let compatibility_key = snapshot_outcome.compatibility_key.clone();
     let launch_fact = evidence::LaunchFact {
         requested_context: profile.context,
         effective_context: validation.effective_context.clone(),
@@ -2245,6 +2257,8 @@ fn run_benchmark_snapshot(
         schema: evidence::BENCHMARK_SCHEMA_VERSION,
         harness_version,
         compatibility_key: Some(compatibility_key.clone()),
+        execution_snapshot_schema: snapshot_outcome.schema_version.clone(),
+        execution_snapshot_unknowns: snapshot_outcome.unknown_identities.clone(),
         runtime: Some(evidence::RuntimeFact {
             path: profile.runtime.clone(),
             version: validation.runtime.version.clone(),
@@ -2461,7 +2475,7 @@ fn replay_benchmark_manifest_worker(
     let runtime_identity = runtime::describe_runtime(Path::new(&server.profile.runtime));
     let executable_sha256 = artifact::sha256_path(Path::new(&server.profile.runtime))?;
     let hardware = runtime::detect_hardware();
-    let current_compatibility_key = benchmark_compatibility_key_from_snapshot(
+    let current_compatibility_key = benchmark_execution_snapshot_from_profile(
         &server.profile,
         &server.validation,
         &artifacts,
@@ -2469,7 +2483,8 @@ fn replay_benchmark_manifest_worker(
         &executable_sha256,
         &hardware,
         &manifest.workload,
-    )?;
+    )?
+    .compatibility_key;
     measurement::validate_replay_compatibility(
         &manifest,
         logical_id,
@@ -2592,6 +2607,125 @@ fn store_calibration_anchor(
     let root = calibration_storage_root(&app)?;
     calibration::persist_calibration_anchor(&root, &anchor)?;
     load_calibration_records(app, anchor.compatibility_key)
+}
+
+/// Create a calibration anchor from a persisted benchmark manifest (audit
+/// MT-08): the source-run identity, observation time, and measured value are
+/// derived in Rust from the saved run, never from a click-stamped copy of a
+/// frontend number.
+fn add_benchmark_calibration_anchor_impl(
+    root: &Path,
+    manifest_path: &Path,
+    estimated_value: f64,
+    estimator: &str,
+) -> Result<CalibrationRecords, String> {
+    const MAX_MANIFEST_BYTES: u64 = 16 * 1024 * 1024;
+    if !estimated_value.is_finite() || estimated_value <= 0.0 || estimated_value > 1_000_000_000.0 {
+        return Err("The estimate must be a positive finite tokens-per-second value".into());
+    }
+    let estimator = estimator.trim();
+    if estimator.is_empty() || estimator.len() > 64 {
+        return Err("The estimator identity must be 1-64 characters".into());
+    }
+    if !estimator
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '.' | '_'))
+    {
+        return Err("The estimator identity may contain letters, digits, '.', '-' and '_'".into());
+    }
+    let metadata = std::fs::metadata(manifest_path)
+        .map_err(|error| format!("The benchmark manifest could not be read: {error}"))?;
+    if !metadata.is_file() {
+        return Err("The benchmark manifest path is not a file".into());
+    }
+    if metadata.len() > MAX_MANIFEST_BYTES {
+        return Err(format!(
+            "The benchmark manifest exceeds the {MAX_MANIFEST_BYTES}-byte limit"
+        ));
+    }
+    let bytes = std::fs::read(manifest_path)
+        .map_err(|error| format!("The benchmark manifest could not be read: {error}"))?;
+    let manifest: evidence::BenchmarkManifest = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("The benchmark manifest is not valid JSON: {error}"))?;
+    manifest
+        .validate_complete()
+        .map_err(|error| error.to_string())?;
+    // Eligibility policy (audit MT-08 I3): a run contributes an anchor only
+    // when it succeeded (manifests written before outcomes existed count as
+    // succeeded) and carries at least one observation.
+    match manifest.terminal_outcome {
+        None | Some(evidence::AttemptOutcome::Succeeded) => {}
+        Some(outcome) => {
+            return Err(format!(
+                "A {} benchmark run cannot become a calibration anchor",
+                match outcome {
+                    evidence::AttemptOutcome::Failed => "failed",
+                    evidence::AttemptOutcome::TimedOut => "timed-out",
+                    evidence::AttemptOutcome::Cancelled => "cancelled",
+                    evidence::AttemptOutcome::Succeeded => "succeeded",
+                }
+            ));
+        }
+    }
+    if manifest.observations.is_empty() {
+        return Err("The benchmark run contains no observations".into());
+    }
+    use sha2::Digest as _;
+    let source_run_id = hex::encode(sha2::Sha256::digest(&bytes));
+    // Observation time comes from the run itself, not from the click.
+    let observed_at_ms = manifest
+        .observations
+        .iter()
+        .map(|observation| observation.started_at_ms)
+        .max()
+        .unwrap_or(0);
+    if observed_at_ms == 0 {
+        return Err("The benchmark run does not carry observation timestamps".into());
+    }
+    let summary = measurement::summarize_observations(&manifest.observations)?;
+    let measured_value = summary.decode_tps.mean;
+    let compatibility_key = manifest
+        .compatibility_key
+        .clone()
+        .ok_or("The benchmark run does not carry a compatibility key")?;
+    let anchor = calibration::CalibrationAnchor::new_for_run(
+        &compatibility_key,
+        &manifest.execution_snapshot_schema,
+        &manifest.execution_snapshot_unknowns,
+        &source_run_id,
+        estimator,
+        estimated_value,
+        measured_value,
+        observed_at_ms,
+    );
+    calibration::persist_calibration_anchor(root, &anchor)?;
+    load_calibration_records_for(root, compatibility_key)
+}
+
+fn load_calibration_records_for(
+    root: &Path,
+    compatibility_key: String,
+) -> Result<CalibrationRecords, String> {
+    Ok(CalibrationRecords {
+        anchors: calibration::load_calibration_anchors(root, &compatibility_key)?,
+        models: calibration::load_calibration_models(root, &compatibility_key)?,
+    })
+}
+
+#[tauri::command]
+fn add_benchmark_calibration_anchor(
+    app: tauri::AppHandle,
+    manifest_path: String,
+    estimated_value: f64,
+    estimator: String,
+) -> Result<CalibrationRecords, String> {
+    let root = calibration_storage_root(&app)?;
+    add_benchmark_calibration_anchor_impl(
+        &root,
+        Path::new(&manifest_path),
+        estimated_value,
+        &estimator,
+    )
 }
 
 #[tauri::command]
@@ -3838,6 +3972,7 @@ pub fn run() {
             build_calibration_model,
             apply_calibration_model,
             store_calibration_anchor,
+            add_benchmark_calibration_anchor,
             store_calibration_model,
             load_calibration_records,
             import_external_evidence,
@@ -5594,5 +5729,291 @@ mod operation_coordinator_tests {
                 "{start} must discard results when its server identity was replaced"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod mt08_anchor_tests {
+    use super::*;
+    use evidence::{AttemptOutcome, BenchmarkManifest, BenchmarkObservation, Evidence};
+
+    fn manifest_fixture(
+        key: &str,
+        started_at_ms: u64,
+        decode_tps: f64,
+        outcome: AttemptOutcome,
+        observations: usize,
+    ) -> BenchmarkManifest {
+        let mut manifest = BenchmarkManifest {
+            compatibility_key: Some(key.into()),
+            execution_snapshot_schema: crate::calibration::EXECUTION_SNAPSHOT_SCHEMA.into(),
+            execution_snapshot_unknowns: Vec::new(),
+            runtime: Some(evidence::RuntimeFact {
+                path: "runtime.exe".into(),
+                version: "1".into(),
+                build: "1".into(),
+                executable_sha256: Some("a".repeat(64)),
+                help_sha256: "b".repeat(64),
+                backend: "cpu".into(),
+            }),
+            model: Some(evidence::ModelFact {
+                logical_id: "fixture".into(),
+                architecture: "llama".into(),
+                shards: vec![evidence::FileFact {
+                    path: "model.gguf".into(),
+                    bytes: 1,
+                    sha256: Some("d".repeat(64)),
+                }],
+                companions: Vec::new(),
+                gguf_header_sha256: "e".repeat(64),
+            }),
+            launch: Some(evidence::LaunchFact {
+                requested_context: 4_096,
+                effective_context: Evidence {
+                    value: Some(4_096),
+                    level: evidence::EvidenceLevel::Observed,
+                    source: evidence::EvidenceSource {
+                        kind: evidence::EvidenceSourceKind::Runtime,
+                        detail: "fixture".into(),
+                    },
+                    observed_at_ms: started_at_ms,
+                    notes: Vec::new(),
+                },
+                parallel: 1,
+                gpu_layers: "0".into(),
+                batch: 512,
+                ubatch: 128,
+                cache_type_k: "F16".into(),
+                cache_type_v: "F16".into(),
+                split_mode: "none".into(),
+                ..evidence::LaunchFact::default()
+            }),
+            // A successful run carries no terminal failure outcome; the
+            // manifest validator treats a present outcome as a failure.
+            terminal_outcome: match outcome {
+                AttemptOutcome::Succeeded => None,
+                other => Some(other),
+            },
+            ..BenchmarkManifest::default()
+        };
+        for trial in 1..=observations {
+            manifest.observations.push(BenchmarkObservation {
+                trial: trial as u16,
+                started_at_ms: started_at_ms + trial as u64,
+                duration_ms: 100.0,
+                prompt_tokens: 8,
+                cached_prompt_tokens: 0,
+                generated_tokens: 16,
+                prefill_tps: Some(10.0),
+                decode_tps: Some(decode_tps),
+                first_token_ms: Some(5.0),
+                derived_ttft_ms: None,
+                peak_process_rss_bytes: Evidence::unknown(
+                    evidence::EvidenceSource {
+                        kind: evidence::EvidenceSourceKind::Runtime,
+                        detail: "fixture".into(),
+                    },
+                    started_at_ms + trial as u64,
+                    "fixture",
+                ),
+                outcome: AttemptOutcome::Succeeded,
+                error: None,
+            });
+        }
+        manifest
+    }
+
+    fn write_manifest(directory: &Path, manifest: &BenchmarkManifest) -> std::path::PathBuf {
+        measurement::persist_manifest(directory, manifest).unwrap()
+    }
+
+    fn temp_root(label: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "localmotive-mt08-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    #[test]
+    fn mt08_three_adds_on_one_run_keep_one_anchor_and_the_gate_closed() {
+        let root = temp_root("one-run");
+        let manifest = manifest_fixture(
+            &format!("v2:{}", "c".repeat(64)),
+            1_000,
+            50.0,
+            AttemptOutcome::Succeeded,
+            2,
+        );
+        let path = write_manifest(&root, &manifest);
+
+        let first =
+            add_benchmark_calibration_anchor_impl(&root, &path, 100.0, "manual-estimate.v1")
+                .expect("first add succeeds");
+        assert_eq!(first.anchors.len(), 1);
+        assert_eq!(first.anchors[0].source_run_id.len(), 64);
+        assert_eq!(first.anchors[0].observed_at_ms, 1_002);
+
+        // Repeated clicks with different estimates: same run, so the second
+        // and third attempts cannot manufacture samples.
+        let second =
+            add_benchmark_calibration_anchor_impl(&root, &path, 150.0, "manual-estimate.v1");
+        assert!(
+            second.is_err(),
+            "a repeated add must not create a second anchor"
+        );
+        let third =
+            add_benchmark_calibration_anchor_impl(&root, &path, 200.0, "manual-estimate.v1");
+        assert!(third.is_err());
+
+        let records =
+            load_calibration_records_for(&root, format!("v2:{}", "c".repeat(64))).unwrap();
+        assert_eq!(
+            records.anchors.len(),
+            1,
+            "one run must contribute one anchor"
+        );
+
+        // The three-anchor gate stays closed with a single distinct run.
+        let error = calibration::build_calibration(&records.anchors, 10_000, 1_000).unwrap_err();
+        assert!(
+            error.contains("three"),
+            "the three-sample gate must stay closed: {error}"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn mt08_three_distinct_runs_build_and_keep_run_times() {
+        let root = temp_root("three-runs");
+        let key = format!("v2:{}", "c".repeat(64));
+        let mut anchors = Vec::new();
+        for (index, started_at) in [1_000_u64, 2_000, 3_000].into_iter().enumerate() {
+            let manifest = manifest_fixture(
+                &key,
+                started_at,
+                40.0 + index as f64 * 10.0,
+                AttemptOutcome::Succeeded,
+                2,
+            );
+            let path = write_manifest(&root, &manifest);
+            let records = add_benchmark_calibration_anchor_impl(
+                &root,
+                &path,
+                100.0 + index as f64 * 10.0,
+                "manual-estimate.v1",
+            )
+            .unwrap();
+            anchors = records.anchors;
+        }
+        assert_eq!(anchors.len(), 3);
+        let observed = anchors
+            .iter()
+            .map(|anchor| anchor.observed_at_ms)
+            .collect::<Vec<_>>();
+        assert!(
+            observed.contains(&1_002) && observed.contains(&2_002) && observed.contains(&3_002)
+        );
+
+        let model = calibration::build_calibration(&anchors, 10_000, 1_000).unwrap();
+        assert_eq!(model.anchor_count, 3);
+
+        // Reimporting the first manifest cannot add a fourth independent
+        // sample: the source-run identity dedupes it.
+        let first = manifest_fixture(&key, 1_000, 40.0, AttemptOutcome::Succeeded, 2);
+        let first_path = write_manifest(&root, &first);
+        let again =
+            add_benchmark_calibration_anchor_impl(&root, &first_path, 100.0, "manual-estimate.v1")
+                .expect("a byte-identical reimport is idempotent");
+        assert_eq!(
+            again.anchors.len(),
+            3,
+            "a reimport must not create a new sample"
+        );
+        // A reimport with a DIFFERENT estimate cannot reuse the run either.
+        assert!(add_benchmark_calibration_anchor_impl(
+            &root,
+            &first_path,
+            111.0,
+            "manual-estimate.v1"
+        )
+        .is_err());
+
+        // Three copies of ONE run identity cannot trip the gate: the model
+        // needs three distinct persisted runs, whatever the click count.
+        let mut forged = Vec::new();
+        for offset in 0..3_u64 {
+            let mut copy = anchors[0].clone();
+            copy.observed_at_ms = 9_000 + offset * 10;
+            copy.estimated_value = 100.0 + offset as f64;
+            forged.push(copy);
+        }
+        let error = calibration::build_calibration(&forged, 10_000, 1_000).unwrap_err();
+        assert!(error.contains("three distinct measured runs"), "{error}");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn mt08_failed_or_cancelled_runs_and_estimator_mixes_are_ineligible() {
+        let root = temp_root("ineligible");
+        let key = format!("v2:{}", "c".repeat(64));
+
+        for outcome in [
+            AttemptOutcome::Failed,
+            AttemptOutcome::TimedOut,
+            AttemptOutcome::Cancelled,
+        ] {
+            let manifest = manifest_fixture(&key, 1_000, 50.0, outcome, 2);
+            let path = write_manifest(&root, &manifest);
+            let error =
+                add_benchmark_calibration_anchor_impl(&root, &path, 100.0, "manual-estimate.v1")
+                    .unwrap_err();
+            assert!(
+                error.contains("cannot become a calibration anchor"),
+                "{error}"
+            );
+        }
+
+        let empty = manifest_fixture(&key, 1_000, 50.0, AttemptOutcome::Succeeded, 0);
+        let path = write_manifest(&root, &empty);
+        assert!(
+            add_benchmark_calibration_anchor_impl(&root, &path, 100.0, "manual-estimate.v1")
+                .unwrap_err()
+                .contains("no observations")
+        );
+
+        // Estimator identities cannot mix inside one model.
+        let mut anchors = Vec::new();
+        for (index, started_at) in [1_000_u64, 2_000, 3_000].into_iter().enumerate() {
+            let manifest = manifest_fixture(
+                &key,
+                started_at,
+                40.0 + index as f64,
+                AttemptOutcome::Succeeded,
+                2,
+            );
+            let path = write_manifest(&root, &manifest);
+            let estimator = if index == 2 {
+                "other-estimator.v1"
+            } else {
+                "manual-estimate.v1"
+            };
+            let records = add_benchmark_calibration_anchor_impl(
+                &root,
+                &path,
+                100.0 + index as f64,
+                estimator,
+            )
+            .unwrap();
+            anchors = records.anchors;
+        }
+        let error = calibration::build_calibration(&anchors, 10_000, 1_000).unwrap_err();
+        assert!(error.contains("estimator identity"), "{error}");
+        let _ = std::fs::remove_dir_all(root);
     }
 }

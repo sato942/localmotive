@@ -617,6 +617,14 @@ pub struct BenchmarkManifest {
     pub schema: u32,
     pub harness_version: String,
     pub compatibility_key: Option<String>,
+    /// Schema of the execution snapshot behind `compatibility_key` (empty for
+    /// manifests written before the snapshot identity existed).
+    #[serde(default)]
+    pub execution_snapshot_schema: String,
+    /// Material facts the snapshot could not observe, so calibration anchors
+    /// derived from this run know whether reuse is supported (audit MT-07/08).
+    #[serde(default)]
+    pub execution_snapshot_unknowns: Vec<String>,
     pub runtime: Option<RuntimeFact>,
     pub hardware: Vec<HardwareFact>,
     pub model: Option<ModelFact>,
@@ -633,6 +641,8 @@ impl Default for BenchmarkManifest {
             schema: BENCHMARK_SCHEMA_VERSION,
             harness_version: env!("CARGO_PKG_VERSION").into(),
             compatibility_key: None,
+            execution_snapshot_schema: String::new(),
+            execution_snapshot_unknowns: Vec::new(),
             runtime: None,
             hardware: Vec::new(),
             model: None,

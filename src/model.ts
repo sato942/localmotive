@@ -277,6 +277,13 @@ export type CalibrationAnchor = {
   estimatedValue: number;
   measuredValue: number;
   observedAtMs: number;
+  // Identities added with the versioned execution snapshot (audit MT-08):
+  // the persisted run behind the sample and the estimator that produced the
+  // estimate. Empty strings appear on legacy records.
+  sourceRunId?: string;
+  estimator?: string;
+  snapshotSchemaVersion?: string;
+  unknownIdentities?: string[];
 };
 
 export type CalibrationModel = {

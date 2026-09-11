@@ -791,6 +791,28 @@ pub fn verification_stats() -> RuntimeVerificationStats {
     }
 }
 
+// The process-wide counters above cannot attribute hashing to one caller, so
+// tests that assert "this call hashed nothing" compare a thread-local mirror
+// instead. Parallel tests run on separate threads and cannot disturb it
+// (this replaces a load-sensitive global-counter assertion that flaked).
+#[cfg(test)]
+thread_local! {
+    static VERIFICATION_BYTES_HASHED_THIS_THREAD: std::cell::Cell<u64> =
+        const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn verification_bytes_hashed_this_thread() -> u64 {
+    VERIFICATION_BYTES_HASHED_THIS_THREAD.with(std::cell::Cell::get)
+}
+
+fn record_verification_bytes_hashed(read: u64) {
+    use std::sync::atomic::Ordering::Relaxed;
+    VERIFICATION_BYTES_HASHED.fetch_add(read, Relaxed);
+    #[cfg(test)]
+    VERIFICATION_BYTES_HASHED_THIS_THREAD.with(|counter| counter.set(counter.get() + read));
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RuntimeManifest {
@@ -3520,7 +3542,7 @@ fn open_and_digest_managed_file(
             "Managed file {relative} changed during verification"
         ));
     }
-    VERIFICATION_BYTES_HASHED.fetch_add(read, std::sync::atomic::Ordering::Relaxed);
+    record_verification_bytes_hashed(read);
     Ok((file, read, hex::encode(hasher.finalize())))
 }
 
@@ -8407,13 +8429,12 @@ Connection: close
         // Discovery is cheap (audit RT-06 I1): the install lists because its
         // record matches compiled approval, with explicit unverified status,
         // and listing must not hash a single payload byte.
-        let before = verification_stats();
+        // Thread-local accounting: parallel tests hash other fixtures on
+        // their own threads, so only this thread's counter is attributable.
+        let before = verification_bytes_hashed_this_thread();
         let records = list_managed_runtimes_in(&root);
-        let after = verification_stats();
-        assert_eq!(
-            after.bytes_hashed, before.bytes_hashed,
-            "listing must not hash payload content"
-        );
+        let after = verification_bytes_hashed_this_thread();
+        assert_eq!(after, before, "listing must not hash payload content");
         assert_eq!(records.len(), 1, "approved records stay discoverable");
         assert!(
             !records[0].content_verified,
@@ -8428,9 +8449,9 @@ Connection: close
             error.contains("failed content verification"),
             "wrong bytes must fail content verification: {error}"
         );
-        let verified = verification_stats();
+        let verified = verification_bytes_hashed_this_thread();
         assert!(
-            verified.bytes_hashed > after.bytes_hashed,
+            verified > after,
             "on-demand verification must account its hashed bytes"
         );
         fs::remove_dir_all(root).unwrap();
