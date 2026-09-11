@@ -80,8 +80,6 @@ impl std::fmt::Display for ProcessFailure {
     }
 }
 
-#[cfg(windows)]
-type ContainedChild = Box<dyn process_wrap::std::ChildWrapper>;
 #[cfg(not(windows))]
 type ContainedChild = Child;
 
@@ -122,20 +120,204 @@ impl Drop for ContainedProcess {
 }
 
 #[cfg(windows)]
+mod containment {
+    //! Per-child job object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`.
+    //!
+    //! The packaged G-05 test found the gap this closes: `process-wrap`'s std
+    //! `JobObject` wrapper creates its job with `kill_on_drop = false`, so a
+    //! forced app exit left the managed `llama-server` alive and serving.
+    //! Each contained child now gets its own job. Killing one child terminates
+    //! only that child's tree (`TerminateJobObject`); when the app's handles
+    //! close - normal exit, forced kill, or crash - every job closes and
+    //! Windows kills the remaining children.
+    use std::os::windows::io::{AsRawHandle, BorrowedHandle};
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+
+    /// An owned job handle; closing it kills its members on Windows.
+    pub struct JobHandle(isize);
+
+    // The handle is process-wide; the app shares it across the threads that
+    // own, watch and reap the same child.
+    unsafe impl Send for JobHandle {}
+    unsafe impl Sync for JobHandle {}
+
+    impl JobHandle {
+        pub fn create() -> Result<JobHandle, String> {
+            unsafe {
+                let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+                if job.is_null() {
+                    return Err(format!(
+                        "process containment is unavailable on this system: {}",
+                        std::io::Error::last_os_error()
+                    ));
+                }
+                let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+                info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                let configured = SetInformationJobObject(
+                    job,
+                    JobObjectExtendedLimitInformation,
+                    &info as *const _ as *const core::ffi::c_void,
+                    std::mem::size_of_val(&info) as u32,
+                );
+                if configured == 0 {
+                    let message = format!(
+                        "process containment could not be configured: {}",
+                        std::io::Error::last_os_error()
+                    );
+                    let _ = CloseHandle(job);
+                    return Err(message);
+                }
+                Ok(JobHandle(job as isize))
+            }
+        }
+
+        pub fn handle(&self) -> HANDLE {
+            self.0 as HANDLE
+        }
+
+        pub fn assign(&self, process: &BorrowedHandle<'_>) -> Result<(), String> {
+            let assigned = unsafe {
+                AssignProcessToJobObject(self.handle(), process.as_raw_handle() as HANDLE)
+            };
+            if assigned == 0 {
+                return Err(format!(
+                    "process containment failed: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            Ok(())
+        }
+
+        /// Terminate every process in this job (the child and its descendants).
+        pub fn terminate(&self) {
+            unsafe {
+                let _ = TerminateJobObject(self.handle(), 1);
+            }
+        }
+    }
+
+    impl Drop for JobHandle {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = CloseHandle(self.handle());
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub fn process_in_job(process: std::os::windows::io::RawHandle, job: HANDLE) -> bool {
+        use windows_sys::Win32::System::JobObjects::IsProcessInJob;
+        let mut result = 0;
+        let ok = unsafe { IsProcessInJob(process as HANDLE, job, &mut result) };
+        ok != 0 && result != 0
+    }
+
+    #[cfg(test)]
+    pub fn kill_on_close_set(job: HANDLE) -> bool {
+        use windows_sys::Win32::System::JobObjects::QueryInformationJobObject;
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+        let ok = unsafe {
+            QueryInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                &mut info as *mut _ as *mut core::ffi::c_void,
+                std::mem::size_of_val(&info) as u32,
+                std::ptr::null_mut(),
+            )
+        };
+        ok != 0 && (info.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE) != 0
+    }
+}
+
+/// A contained child on Windows: the wrapped process plus its kill-on-close
+/// job. Killing the child terminates its whole tree; dropping the job handle
+/// (any app exit path) does the same for anything still running.
+#[cfg(windows)]
+pub struct ContainedChild {
+    inner: Box<dyn process_wrap::std::ChildWrapper>,
+    job: containment::JobHandle,
+}
+
+#[cfg(windows)]
+impl ContainedChild {
+    pub fn id(&self) -> u32 {
+        self.inner.id()
+    }
+
+    pub fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        self.inner.try_wait()
+    }
+
+    pub fn start_kill(&mut self) -> std::io::Result<()> {
+        self.job.terminate();
+        self.inner.start_kill()
+    }
+
+    pub fn stdout(&mut self) -> &mut Option<ChildStdout> {
+        self.inner.stdout()
+    }
+
+    pub fn stderr(&mut self) -> &mut Option<ChildStderr> {
+        self.inner.stderr()
+    }
+
+    /// Test-only view: the child's raw process handle, its job handle as a
+    /// raw value, and whether that job carries kill-on-close.
+    #[cfg(test)]
+    pub fn containment_probe(&self) -> Option<(std::os::windows::io::RawHandle, usize, bool)> {
+        use std::os::windows::io::AsRawHandle;
+        let process = self.inner.process_handle().map(|h| h.as_raw_handle())?;
+        Some((
+            process,
+            self.job.handle() as usize,
+            containment::kill_on_close_set(self.job.handle()),
+        ))
+    }
+}
+
+#[cfg(windows)]
 fn spawn_contained(command: &mut Command) -> Result<ContainedChild, ProcessFailure> {
-    use process_wrap::std::{CommandWrap, CreationFlags, JobObject};
+    use process_wrap::std::{CommandWrap, CreationFlags};
     use windows::Win32::System::Threading::CREATE_NO_WINDOW as WINDOWS_CREATE_NO_WINDOW;
 
+    let job = containment::JobHandle::create()
+        .map_err(|message| ProcessFailure::new(ProcessFailureKind::Spawn, message))?;
     let command = std::mem::replace(command, Command::new(""));
     let mut wrapped = CommandWrap::from(command);
     wrapped.wrap(CreationFlags(WINDOWS_CREATE_NO_WINDOW));
-    wrapped.wrap(JobObject);
-    wrapped.spawn().map_err(|error| {
+    let mut child = wrapped.spawn().map_err(|error| {
         ProcessFailure::new(
             ProcessFailureKind::Spawn,
             format!("Contained child process could not start: {error}"),
         )
-    })
+    })?;
+    // Assign immediately after spawn; the job is fresh for this child and the
+    // crate's non-kill-on-close job wrapper is not used, so no nested-job
+    // conflict arises. A child we cannot contain is terminated, not leaked
+    // (G-05 packaged finding).
+    match child.process_handle() {
+        Some(handle) => {
+            if let Err(message) = job.assign(&handle) {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(ProcessFailure::new(ProcessFailureKind::Spawn, message));
+            }
+        }
+        None => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(ProcessFailure::new(
+                ProcessFailureKind::Spawn,
+                "Child process handle was unavailable; refusing an uncontained child",
+            ));
+        }
+    }
+    Ok(ContainedChild { inner: child, job })
 }
 
 #[cfg(not(windows))]
@@ -321,6 +503,35 @@ pub fn output_with_timeout(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    #[test]
+    fn contained_children_are_members_of_the_kill_on_close_job() {
+        // G-05 packaged finding: the crate's std JobObject wrapper creates
+        // its job with kill_on_drop = false, so a killed app used to leave
+        // the managed server running. Every contained child now owns a job
+        // with that limit and is a member of it.
+        let mut command = super::hidden_command("powershell.exe");
+        command.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Start-Sleep -Seconds 30",
+        ]);
+        let mut process = super::spawn_contained_process(&mut command).expect("spawn");
+        let (raw_process, raw_job, kill_on_close) =
+            process.child.containment_probe().expect("probe");
+        use windows_sys::Win32::Foundation::HANDLE;
+        assert!(
+            kill_on_close,
+            "the child's job must carry JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE"
+        );
+        assert!(
+            super::containment::process_in_job(raw_process, raw_job as HANDLE),
+            "contained child must belong to its kill-on-close job"
+        );
+        assert!(process.terminate_and_wait(), "cleanup must succeed");
+    }
+
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
@@ -396,7 +607,8 @@ mod tests {
     #[test]
     fn child_tree_is_assigned_before_user_code_can_run() {
         let source = include_str!("proc.rs");
-        assert!(source.contains("wrapped.wrap(JobObject)"));
+        assert!(source.contains("containment::JobHandle::create()"));
+        assert!(source.contains("JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE"));
         assert_eq!(source.matches("ProcessTree::assign").count(), 1);
     }
 
