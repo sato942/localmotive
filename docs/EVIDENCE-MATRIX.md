@@ -79,3 +79,25 @@ executed.
   moved to `.../calibration/quarantine/<name>.corrupt-<stamp>` and reported as
   a bounded load problem while the remaining compatible history keeps
   loading; one bad file never hides the rest.
+
+## Rust–TypeScript and persisted-format contracts (audit S-18)
+
+- **Wire contract**: `scripts/tests/fixtures/ipc-contract.json` is the shared
+  authority for representative IPC payloads. The Rust test
+  `s18_shared_ipc_contract_fixture_matches_rust_serialization` asserts its
+  serialized values equal the fixture entries exactly (camelCase keys, enum
+  spellings, nullable fields serialized as `null`), and
+  `scripts/tests/ipc_contract.test.mjs` asserts the same entries match the
+  `model.ts` consumer expectations (exact key sets, JS types, camelCase only,
+  documented enum spellings). Errors cross the IPC boundary as plain strings
+  by contract — never as objects.
+- **Persisted formats**: catalog documents carry `schemaVersion` (verified by
+  the shared catalog contract), benchmark manifests carry `schema` and the
+  execution-snapshot schema inside their keys, calibration anchors and models
+  carry `schemaVersion` (current `RECORD_SCHEMA_VERSION = 1`), and profile
+  records are normalized on read (`normalizeProfile`) with quarantine for
+  unreadable shapes. Records missing the field load as version 1; a NEWER
+  version is rejected with "rebuild it from current measurements with a newer
+  Localmotive" instead of being misread. Unknown fields are ignored on
+  purpose for forward compatibility, and serialization validation lives in
+  the model/loader layer, never in rendering.

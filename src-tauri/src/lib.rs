@@ -6419,4 +6419,88 @@ mod mt08_anchor_tests {
         assert!(error.contains("estimator identity"), "{error}");
         let _ = std::fs::remove_dir_all(root);
     }
+
+    #[test]
+    fn s18_shared_ipc_contract_fixture_matches_rust_serialization() {
+        let raw = include_str!("../../scripts/tests/fixtures/ipc-contract.json");
+        let fixture: serde_json::Value = serde_json::from_str(raw).unwrap();
+        let types = &fixture["types"];
+
+        let token_status = catalog::TokenStatus {
+            configured: true,
+            masked: "••••abcd".into(),
+            cleanup_notice: Some(
+                "A credential from a previous product version is still stored".into(),
+            ),
+        };
+        assert_eq!(
+            serde_json::to_value(&token_status).unwrap(),
+            types["tokenStatus"],
+            "TokenStatus wire shape drifted"
+        );
+
+        let preview = CommandPreview {
+            power_shell: "'quoted token'".into(),
+            argv: "[\"a b\"]".into(),
+            cmd: None,
+            cmd_notice: Some("A launch value contains `%`".into()),
+        };
+        assert_eq!(
+            serde_json::to_value(&preview).unwrap(),
+            types["commandPreview"],
+            "CommandPreview wire shape drifted"
+        );
+
+        let drop = catalog::CatalogDrop {
+            id: "fixture/one".into(),
+            repo: "fixture/one-GGUF".into(),
+            reason: "missing model id".into(),
+        };
+        assert_eq!(
+            serde_json::to_value(&drop).unwrap(),
+            types["catalogDrop"],
+            "CatalogDrop wire shape drifted"
+        );
+
+        assert_eq!(
+            serde_json::to_value(calibration::ExternalEvidenceState::Pending).unwrap(),
+            types["externalEvidenceState"]
+        );
+        assert_eq!(
+            serde_json::to_value(calibration::ExternalProvenance::ImportedExternal).unwrap(),
+            types["externalProvenance"]
+        );
+        assert_eq!(
+            serde_json::to_value(calibration::RECORD_SCHEMA_VERSION).unwrap(),
+            types["calibrationRecordVersion"]
+        );
+    }
+
+    #[test]
+    fn s18_calibration_records_version_and_reject_newer_formats() {
+        let key = format!("v2:{}", "e".repeat(64));
+        let mut anchor = calibration::CalibrationAnchor::new(&key, 10.0, 11.0, 10);
+        // A record without the field (older files) defaults to version 1.
+        let json = serde_json::to_string(&anchor).unwrap();
+        let stripped = json.replace("\"schemaVersion\":1,", "");
+        let parsed: calibration::CalibrationAnchor = serde_json::from_str(&stripped).unwrap();
+        assert_eq!(
+            parsed.schema_version,
+            calibration::RECORD_SCHEMA_VERSION,
+            "older records must load as the current version"
+        );
+        // Unknown extra fields are tolerated on purpose (forward compatibility).
+        let with_extra = json.replace(
+            "\"compatibilityKey\"",
+            "\"futureField\":42,\"compatibilityKey\"",
+        );
+        let parsed: calibration::CalibrationAnchor = serde_json::from_str(&with_extra).unwrap();
+        assert_eq!(parsed.schema_version, calibration::RECORD_SCHEMA_VERSION);
+
+        // A NEWER record version is rejected with an actionable message.
+        anchor.schema_version = calibration::RECORD_SCHEMA_VERSION + 1;
+        let error = calibration::validate_persisted_anchor_for_test(&anchor).unwrap_err();
+        assert!(error.contains("record version"), "{error}");
+        assert!(error.contains("rebuild"), "{error}");
+    }
 }

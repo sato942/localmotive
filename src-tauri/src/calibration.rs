@@ -7,6 +7,13 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+/// Current on-disk calibration record version (audit S-18.I2).
+pub const RECORD_SCHEMA_VERSION: u32 = 1;
+
+fn default_record_schema_version() -> u32 {
+    RECORD_SCHEMA_VERSION
+}
+
 const MAX_CALIBRATION_RECORD_BYTES: u64 = 64 * 1024;
 const MAX_CALIBRATION_RECORDS: usize = 10_000;
 /// Retention bound per category (audit S-16.I1): persisting prunes the oldest
@@ -276,6 +283,11 @@ pub fn compatibility_key(identity: &CompatibilityIdentity) -> Result<String, Str
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CalibrationAnchor {
+    /// Record-format version (audit S-18.I2). Defaulted so records written
+    /// before the field existed load as version 1; a NEWER version is
+    /// rejected with an actionable message instead of being misread.
+    #[serde(default = "default_record_schema_version")]
+    pub schema_version: u32,
     pub compatibility_key: String,
     pub estimated_value: f64,
     pub measured_value: f64,
@@ -324,6 +336,7 @@ impl CalibrationAnchor {
         observed_at_ms: u64,
     ) -> Self {
         Self {
+            schema_version: RECORD_SCHEMA_VERSION,
             compatibility_key: compatibility_key.into(),
             estimated_value,
             measured_value,
@@ -365,6 +378,9 @@ impl CalibrationAnchor {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CalibrationModel {
+    /// Record-format version; see [`CalibrationAnchor::schema_version`].
+    #[serde(default = "default_record_schema_version")]
+    pub schema_version: u32,
     pub compatibility_key: String,
     pub factor: f64,
     pub residual_standard_deviation: f64,
@@ -539,6 +555,7 @@ pub fn build_calibration(
         return Err("Calibration arithmetic exceeded the finite numeric range".into());
     }
     let model = CalibrationModel {
+        schema_version: RECORD_SCHEMA_VERSION,
         compatibility_key: key.into(),
         factor,
         residual_standard_deviation: variance.sqrt(),
@@ -751,7 +768,20 @@ pub fn review_external_evidence(
     Ok(reviewed)
 }
 
+/// Test-only access to the persisted-anchor validator (used by the S-18
+/// version contract test).
+#[cfg(test)]
+pub fn validate_persisted_anchor_for_test(anchor: &CalibrationAnchor) -> Result<(), String> {
+    validate_persisted_anchor(anchor)
+}
+
 fn validate_persisted_anchor(anchor: &CalibrationAnchor) -> Result<(), String> {
+    if anchor.schema_version != RECORD_SCHEMA_VERSION {
+        return Err(format!(
+            "This calibration anchor uses record version {} but this build reads version {RECORD_SCHEMA_VERSION}; rebuild it from current measurements with a newer Localmotive.",
+            anchor.schema_version
+        ));
+    }
     validate_compatibility_key(&anchor.compatibility_key)?;
     if anchor.observed_at_ms == 0 {
         return Err("Calibration anchor observedAtMs must be greater than zero".into());
@@ -773,6 +803,12 @@ fn validate_persisted_anchor(anchor: &CalibrationAnchor) -> Result<(), String> {
 /// apply (audit MT-14 I1): anchor count, creation/expiry ordering, the TTL
 /// bound, finite metrics, and provenance shapes.
 pub fn validate_calibration_model(model: &CalibrationModel) -> Result<(), String> {
+    if model.schema_version != RECORD_SCHEMA_VERSION {
+        return Err(format!(
+            "This calibration model uses record version {} but this build reads version {RECORD_SCHEMA_VERSION}; rebuild it from current measurements with a newer Localmotive.",
+            model.schema_version
+        ));
+    }
     validate_compatibility_key(&model.compatibility_key)?;
     if model.created_at_ms == 0
         || model.expires_at_ms <= model.created_at_ms

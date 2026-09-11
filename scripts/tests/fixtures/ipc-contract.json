@@ -1,0 +1,24 @@
+{
+  "comment": "Shared IPC wire-shape contract (audit S-18). Rust asserts its serialized values equal these entries; the TypeScript test asserts these entries match the model.ts consumer expectations. Errors cross the IPC boundary as plain strings (never objects) by contract.",
+  "types": {
+    "tokenStatus": {
+      "configured": true,
+      "masked": "••••abcd",
+      "cleanupNotice": "A credential from a previous product version is still stored"
+    },
+    "commandPreview": {
+      "powerShell": "'quoted token'",
+      "argv": "[\"a b\"]",
+      "cmd": null,
+      "cmdNotice": "A launch value contains `%`"
+    },
+    "catalogDrop": {
+      "id": "fixture/one",
+      "repo": "fixture/one-GGUF",
+      "reason": "missing model id"
+    },
+    "externalEvidenceState": "pending",
+    "externalProvenance": "importedExternal",
+    "calibrationRecordVersion": 1
+  }
+}
