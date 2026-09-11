@@ -352,23 +352,23 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Capture original Win32 errors before closing handles**
 
-**Status:** Not started · **Priority:** Low · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Low · **Owner:** Unassigned  
 **Audit trace:** [Audit RT-08](./localmotive-comprehensive-audit.md#rt-08)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src-tauri/src/runtime.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/runtime.rs)
 
 **Implementation**
 
-- [ ] **V06-RT-08.I1** — Capture GetLastError immediately after a failed FindNextStreamW call, before FindClose or any other Win32 operation, and use the captured value to recognize ERROR_HANDLE_EOF. **Trace:** [Audit RT-08](./localmotive-comprehensive-audit.md#rt-08).
-- [ ] **V06-RT-08.I2** — Capture the failure status from GetProcessMemoryInfo before CloseHandle, preserving the actual measurement error in the returned unknown-evidence diagnostic. **Trace:** [Audit RT-08](./localmotive-comprehensive-audit.md#rt-08).
-- [ ] **V06-RT-08.I3** — Use scoped RAII handle ownership or an equivalent cleanup structure that closes each acquired handle exactly once without replacing the original operation result or error. **Trace:** [Audit RT-08](./localmotive-comprehensive-audit.md#rt-08).
-- [ ] **V06-RT-08.I4** — Keep alternate-stream rejection and valid-file verification semantics unchanged, distinguishing ordinary enumeration completion from extra streams and genuine enumeration failures. **Trace:** [Audit RT-08](./localmotive-comprehensive-audit.md#rt-08).
+- [x] **V06-RT-08.I1** — Capture GetLastError immediately after a failed FindNextStreamW call, before FindClose or any other Win32 operation, and use the captured value to recognize ERROR_HANDLE_EOF. **Trace:** [Audit RT-08](./localmotive-comprehensive-audit.md#rt-08).
+- [x] **V06-RT-08.I2** — Capture the failure status from GetProcessMemoryInfo before CloseHandle, preserving the actual measurement error in the returned unknown-evidence diagnostic. **Trace:** [Audit RT-08](./localmotive-comprehensive-audit.md#rt-08).
+- [x] **V06-RT-08.I3** — Use scoped RAII handle ownership or an equivalent cleanup structure that closes each acquired handle exactly once without replacing the original operation result or error. **Trace:** [Audit RT-08](./localmotive-comprehensive-audit.md#rt-08).
+- [x] **V06-RT-08.I4** — Keep alternate-stream rejection and valid-file verification semantics unchanged, distinguishing ordinary enumeration completion from extra streams and genuine enumeration failures. **Trace:** [Audit RT-08](./localmotive-comprehensive-audit.md#rt-08).
 
 **Verification**
 
-- [ ] **V06-RT-08.V1** — Add a Windows API-boundary fixture whose cleanup operation deliberately changes thread-local last-error state; assert that stream enumeration retains the pre-cleanup result. **Trace:** [Audit RT-08](./localmotive-comprehensive-audit.md#rt-08).
-- [ ] **V06-RT-08.V2** — Exercise a normal file with only the default data stream and a file with an extra stream; require acceptance of the former and rejection of the latter without false enumeration errors. **Trace:** [Audit RT-08](./localmotive-comprehensive-audit.md#rt-08).
-- [ ] **V06-RT-08.V3** — Force a process-memory measurement failure followed by cleanup that changes last error; verify that the reported diagnostic identifies the original measurement failure and handles are released. **Trace:** [Audit RT-08](./localmotive-comprehensive-audit.md#rt-08).
+- [x] **V06-RT-08.V1** — Add a Windows API-boundary fixture whose cleanup operation deliberately changes thread-local last-error state; assert that stream enumeration retains the pre-cleanup result. **Trace:** [Audit RT-08](./localmotive-comprehensive-audit.md#rt-08).
+- [x] **V06-RT-08.V2** — Exercise a normal file with only the default data stream and a file with an extra stream; require acceptance of the former and rejection of the latter without false enumeration errors. **Trace:** [Audit RT-08](./localmotive-comprehensive-audit.md#rt-08).
+- [x] **V06-RT-08.V3** — Force a process-memory measurement failure followed by cleanup that changes last error; verify that the reported diagnostic identifies the original measurement failure and handles are released. **Trace:** [Audit RT-08](./localmotive-comprehensive-audit.md#rt-08).
 
 **Complete when:** Stream and memory-probe decisions use the error captured from the failed operation, independent of later cleanup calls. Valid default-stream files remain accepted and alternate-stream files remain rejected on the supported Windows test environment.
 
@@ -666,23 +666,23 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Publish verified downloads without overwriting concurrent files**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Medium · **Owner:** Unassigned  
 **Audit trace:** [Audit DC-11](./localmotive-comprehensive-audit.md#dc-11)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src-tauri/src/download.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/download.rs), [src-tauri/src/lib.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/lib.rs)
 
 **Implementation**
 
-- [ ] **V06-DC-11.I1** — Add a per-target cross-process reservation or lock so separate app instances cannot share and mutate the same partial transfer merely because the in-process registry is clear. **Trace:** [Audit DC-11](./localmotive-comprehensive-audit.md#dc-11).
-- [ ] **V06-DC-11.I2** — Use a unique private partial filename and preserve stable file identity from writing through hash verification and final publication where platform APIs permit. **Trace:** [Audit DC-11](./localmotive-comprehensive-audit.md#dc-11).
-- [ ] **V06-DC-11.I3** — Publish with no-replace semantics, checking that the entry being committed is the verified object; an ordinary target appearing during transfer must produce a conflict instead of being overwritten. **Trace:** [Audit DC-11](./localmotive-comprehensive-audit.md#dc-11).
-- [ ] **V06-DC-11.I4** — Preserve both the verified artifact and the conflicting existing file on collision, report actionable recovery information, and retain directory-capability, reparse-point, and hard-link protections. **Trace:** [Audit DC-11](./localmotive-comprehensive-audit.md#dc-11).
+- [x] **V06-DC-11.I1** — Add a per-target cross-process reservation or lock so separate app instances cannot share and mutate the same partial transfer merely because the in-process registry is clear. **Trace:** [Audit DC-11](./localmotive-comprehensive-audit.md#dc-11).
+- [x] **V06-DC-11.I2** — Use a unique private partial filename and preserve stable file identity from writing through hash verification and final publication where platform APIs permit. **Trace:** [Audit DC-11](./localmotive-comprehensive-audit.md#dc-11).
+- [x] **V06-DC-11.I3** — Publish with no-replace semantics, checking that the entry being committed is the verified object; an ordinary target appearing during transfer must produce a conflict instead of being overwritten. **Trace:** [Audit DC-11](./localmotive-comprehensive-audit.md#dc-11).
+- [x] **V06-DC-11.I4** — Preserve both the verified artifact and the conflicting existing file on collision, report actionable recovery information, and retain directory-capability, reparse-point, and hard-link protections. **Trace:** [Audit DC-11](./localmotive-comprehensive-audit.md#dc-11).
 
 **Verification**
 
-- [ ] **V06-DC-11.V1** — Run two app instances targeting the same filename and introduce an unrelated final file during transfer; assert neither pre-existing file is modified. **Trace:** [Audit DC-11](./localmotive-comprehensive-audit.md#dc-11).
-- [ ] **V06-DC-11.V2** — Inject partial-entry replacement immediately after hashing and directory/root renaming during transfer; require safe failure or verified stable-object publication. **Trace:** [Audit DC-11](./localmotive-comprehensive-audit.md#dc-11).
-- [ ] **V06-DC-11.V3** — Exercise the cases on NTFS in the packaged application, record actual handle/rename behavior, and re-run existing directory-capability and link-safety regressions. **Trace:** [Audit DC-11](./localmotive-comprehensive-audit.md#dc-11).
+- [x] **V06-DC-11.V1** — Run two app instances targeting the same filename and introduce an unrelated final file during transfer; assert neither pre-existing file is modified. **Trace:** [Audit DC-11](./localmotive-comprehensive-audit.md#dc-11).
+- [x] **V06-DC-11.V2** — Inject partial-entry replacement immediately after hashing and directory/root renaming during transfer; require safe failure or verified stable-object publication. **Trace:** [Audit DC-11](./localmotive-comprehensive-audit.md#dc-11).
+- [x] **V06-DC-11.V3** — Exercise the cases on NTFS in the packaged application, record actual handle/rename behavior, and re-run existing directory-capability and link-safety regressions. **Trace:** [Audit DC-11](./localmotive-comprehensive-audit.md#dc-11).
 
 **Complete when:** Completion cannot overwrite a file created by another process during the transfer. Only the exact verified partial object is promoted, with recoverable conflict behavior and correct cross-process ownership.
 
@@ -3435,3 +3435,20 @@ _Package 1 (RT-01, RT-02, RT-04, RT-07) implementation is complete at the unit/r
 - Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 526 pass / 0 fail / 2 ignored; `npm run check` EXIT 0.
 - Residual: no live OpenRouter sign-in was performed (no real keys); the exchange/storage failure path was exercised through existing unit coverage, not a live provider flow.
 
+
+### V06-DC-11 — cross-process reservation and no-replace publication
+
+- Status: Implemented; acceptance matrix unit-verified.
+- Regression before fix: the download renamed `{target}.part` over the final name, replacing any file that appeared while the transfer ran, two app instances could write the same target concurrently, and the publication never proved the published name referenced the verified bytes.
+- Verification after fix: `reserve_download_target` creates `{target}.lm-lock` with `create_new` before the probe; a fresh lock refuses a second writer with an actionable message, a lock older than six hours is replaced once, and the lock is released on every exit path via RAII. `publish_verified_part` publishes with a no-replace hard link (`AlreadyExists` on conflict) and both files are preserved. The verified handle's identity (volume serial + file index via `GetFileInformationByHandle`) is captured before hashing and re-checked on the published name; a mismatch removes only the just-created link and publishes nothing.
+- Regression tests: `dc11_a_fresh_lock_refuses_a_second_writer`, `dc11_a_conflicting_target_preserves_both_files`, `dc11_a_part_swapped_after_verification_is_not_published`, `dc11_an_unchanged_part_publishes_without_replacing`. Mutations MQ1 (reservation disabled) / MQ2 (fresh lock accepted) / MQ3 (overwrite on conflict) / MQ4 (identity check skipped) failed their matching tests and passed after restore.
+- Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 531 pass / 0 fail / 2 ignored; `npm run check` EXIT 0.
+- Residual: the earlier pre-existing-target guard still fires first for mismatched targets (covered by `Err("...already exists but does not match...")` in the live-path probe); byte-range resume bookkeeping for replaced partials was not changed.
+
+### V06-RT-08 — last-error capture before cleanup calls
+
+- Status: Implemented (correctness by API contract + source guard); behavioral discrimination is not possible on this API.
+- Regression before fix: `reject_managed_file_alternate_streams` read `GetLastError` after `FindClose`, and the `GetProcessMemoryInfo` failure branch read `io::Error::last_os_error()` after `CloseHandle`; both cleanup calls can clobber the thread's last-error value, so a genuine enumeration failure could be misreported as EOF (accepted) or vice versa.
+- Verification after fix: the terminating status is captured immediately after `FindNextStreamW`, before `FindClose`; the memory failure status is captured immediately after `GetProcessMemoryInfo`, before `CloseHandle`. The existing ADS rejection test (`managed_runtime_verification_rejects_post_install_alternate_streams`) still passes, and the new guard test `rt08_last_error_is_captured_before_cleanup_calls` pins the capture order in the source.
+- Mutation evidence: the behavioral reorder mutation MR1 (pre-fix order restored) passes every behavioral test — Windows does not guarantee a clobber, so no behavioral test can discriminate this defect. The source-order guard fails under MR1 (`0 passed; 1 failed`) and passes after restore; this is recorded as the honest discrimination limit for this finding.
+- Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 531 pass / 0 fail / 2 ignored; `npm run check` EXIT 0.
