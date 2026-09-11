@@ -1994,24 +1994,24 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Reconcile current product, persistence and qualification documentation**
 
-**Status:** Implemented + component-verified · **Priority:** Low · **Owner:** sato942  
+**Status:** Implemented + unit-verified · **Priority:** Low · **Owner:** sato942  
 **Audit trace:** [Audit QD-04](./localmotive-comprehensive-audit.md#qd-04)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [README.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/README.md), [AGENTS.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/AGENTS.md), [CHANGELOG.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/CHANGELOG.md), [docs/PRODUCT.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/docs/PRODUCT.md), [docs/RUNTIME_MANAGER.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/docs/RUNTIME_MANAGER.md), [docs/qualification-tests.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/docs/qualification-tests.md), [docs/history/TODO-0.5.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/docs/history/TODO-0.5.md), [catalog/README.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/catalog/README.md), [.github/workflows/ci.yml](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/.github/workflows/ci.yml), [src-tauri/src/lib.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/lib.rs), [src-tauri/src/catalog_db.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/catalog_db.rs)
 
 **Implementation**
 
-- [ ] **V06-QD-04.I1** — Align active product/runtime documents with the actual desktop platform, local SQLite implementation, current version and standing unsigned-release policy; distinguish reusable runtime policy from version-specific qualification evidence. **Trace:** [Audit QD-04](./localmotive-comprehensive-audit.md#qd-04).
-- [ ] **V06-QD-04.I2** — Add a storage matrix covering settings, signed JSON cache, SQLite/user rows, refresh stamps, managed runtimes and evidence stores, with accurate reset, export and backup behavior and any temp-directory fallback. **Trace:** [Audit QD-04](./localmotive-comprehensive-audit.md#qd-04).
-- [ ] **V06-QD-04.I3** — Mark the September 6 qualification guide as a frozen snapshot or archive it with a current evidence index; correct current runnable version commands and the history path without rewriting past results. **Trace:** [Audit QD-04](./localmotive-comprehensive-audit.md#qd-04).
-- [ ] **V06-QD-04.I4** — Reconcile contributor CI claims with actual triggers, document builder fail-the-whole-build behavior and --allow-empty, and record the schema-v1 compatibility decision plus old-client fallback expectations. **Trace:** [Audit QD-04](./localmotive-comprehensive-audit.md#qd-04).
-- [ ] **V06-QD-04.I5** — Update module ownership/data-flow maps and present superseded v0.5 tracker decisions as dated history or beneath an authoritative current-status table. **Trace:** [Audit QD-04](./localmotive-comprehensive-audit.md#qd-04).
+- [x] **V06-QD-04.I1** — Align active product/runtime documents with the actual desktop platform, local SQLite implementation, current version and standing unsigned-release policy; distinguish reusable runtime policy from version-specific qualification evidence. **Trace:** [Audit QD-04](./localmotive-comprehensive-audit.md#qd-04).
+- [x] **V06-QD-04.I2** — Add a storage matrix covering settings, signed JSON cache, SQLite/user rows, refresh stamps, managed runtimes and evidence stores, with accurate reset, export and backup behavior and any temp-directory fallback. **Trace:** [Audit QD-04](./localmotive-comprehensive-audit.md#qd-04).
+- [x] **V06-QD-04.I3** — Mark the September 6 qualification guide as a frozen snapshot or archive it with a current evidence index; correct current runnable version commands and the history path without rewriting past results. **Trace:** [Audit QD-04](./localmotive-comprehensive-audit.md#qd-04).
+- [x] **V06-QD-04.I4** — Reconcile contributor CI claims with actual triggers, document builder fail-the-whole-build behavior and --allow-empty, and record the schema-v1 compatibility decision plus old-client fallback expectations. **Trace:** [Audit QD-04](./localmotive-comprehensive-audit.md#qd-04).
+- [x] **V06-QD-04.I5** — Update module ownership/data-flow maps and present superseded v0.5 tracker decisions as dated history or beneath an authoritative current-status table. **Trace:** [Audit QD-04](./localmotive-comprehensive-audit.md#qd-04).
 
 **Verification**
 
-- [ ] **V06-QD-04.V1** — Review every discrepancy in the audit's QD-04 table against source, current workflow definitions and version-bound evidence; retain an explicit resolution for each row. **Trace:** [Audit QD-04](./localmotive-comprehensive-audit.md#qd-04).
-- [ ] **V06-QD-04.V2** — Check documented commands and local paths, and verify storage/recovery descriptions against implemented behavior without presenting planned features as available. **Trace:** [Audit QD-04](./localmotive-comprehensive-audit.md#qd-04).
-- [ ] **V06-QD-04.V3** — Confirm historical counts, blockers and closeout evidence remain intact and distinguishable from current status; rerun documentation/branding gates that apply. **Trace:** [Audit QD-04](./localmotive-comprehensive-audit.md#qd-04).
+- [x] **V06-QD-04.V1** — Review every discrepancy in the audit's QD-04 table against source, current workflow definitions and version-bound evidence; retain an explicit resolution for each row. **Trace:** [Audit QD-04](./localmotive-comprehensive-audit.md#qd-04).
+- [x] **V06-QD-04.V2** — Check documented commands and local paths, and verify storage/recovery descriptions against implemented behavior without presenting planned features as available. **Trace:** [Audit QD-04](./localmotive-comprehensive-audit.md#qd-04).
+- [x] **V06-QD-04.V3** — Confirm historical counts, blockers and closeout evidence remain intact and distinguishable from current status; rerun documentation/branding gates that apply. **Trace:** [Audit QD-04](./localmotive-comprehensive-audit.md#qd-04).
 
 **Complete when:** Active documentation presents one consistent release, platform, persistence and verification contract. Readers can identify the version and evidence behind a support statement and can distinguish superseded history from current instructions.
 
@@ -2021,24 +2021,24 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Declare compatible build tooling and record reproducible toolchain choices**
 
-**Status:** Implemented + component-verified · **Priority:** Low · **Owner:** sato942  
+**Status:** Implemented + unit-verified · **Priority:** Low · **Owner:** sato942  
 **Audit trace:** [Audit QD-05](./localmotive-comprehensive-audit.md#qd-05)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [README.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/README.md), [package.json](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/package.json), [package-lock.json](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/package-lock.json), [src-tauri/Cargo.toml](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/Cargo.toml), `rust-toolchain.toml` (proposed; absent at audited SHA), [.github/workflows/ci.yml](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/.github/workflows/ci.yml)
 
 **Implementation**
 
-- [ ] **V06-QD-05.I1** — Declare a Node engine range compatible with the actual locked bundler/test toolchain and correct the broad Node.js 20 setup instruction; the audited Vite version requires Node 20.19 or an allowed later line. **Trace:** [Audit QD-05](./localmotive-comprehensive-audit.md#qd-05).
-- [ ] **V06-QD-05.I2** — Declare the selected package-manager version and project Node/Rust toolchain configuration, deciding explicitly which versions are exact pins and which are supported minimums. **Trace:** [Audit QD-05](./localmotive-comprehensive-audit.md#qd-05).
-- [ ] **V06-QD-05.I3** — Align CI toolchain selection with those project declarations while retaining immutable action references, npm ci and Cargo --locked dependency resolution. **Trace:** [Audit QD-05](./localmotive-comprehensive-audit.md#qd-05).
-- [ ] **V06-QD-05.I4** — Document how toolchain updates are proposed and verified, and record the actual Node, npm and Rust versions used in release evidence so floating environment changes are observable. **Trace:** [Audit QD-05](./localmotive-comprehensive-audit.md#qd-05).
+- [x] **V06-QD-05.I1** — Declare a Node engine range compatible with the actual locked bundler/test toolchain and correct the broad Node.js 20 setup instruction; the audited Vite version requires Node 20.19 or an allowed later line. **Trace:** [Audit QD-05](./localmotive-comprehensive-audit.md#qd-05).
+- [x] **V06-QD-05.I2** — Declare the selected package-manager version and project Node/Rust toolchain configuration, deciding explicitly which versions are exact pins and which are supported minimums. **Trace:** [Audit QD-05](./localmotive-comprehensive-audit.md#qd-05).
+- [x] **V06-QD-05.I3** — Align CI toolchain selection with those project declarations while retaining immutable action references, npm ci and Cargo --locked dependency resolution. **Trace:** [Audit QD-05](./localmotive-comprehensive-audit.md#qd-05).
+- [x] **V06-QD-05.I4** — Document how toolchain updates are proposed and verified, and record the actual Node, npm and Rust versions used in release evidence so floating environment changes are observable. **Trace:** [Audit QD-05](./localmotive-comprehensive-audit.md#qd-05).
 
 **Verification**
 
-- [ ] **V06-QD-05.V1** — Run documented setup and the required check suite in a clean environment with the declared supported tooling, retaining exact version output and command results. **Trace:** [Audit QD-05](./localmotive-comprehensive-audit.md#qd-05).
-- [ ] **V06-QD-05.V2** — Check an older unsupported Node configuration receives a clear engine/setup constraint instead of being recommended as supported by the documentation. **Trace:** [Audit QD-05](./localmotive-comprehensive-audit.md#qd-05).
-- [ ] **V06-QD-05.V3** — Verify CI, local configuration and release evidence agree on the chosen toolchain; confirm dependency installation preserves the committed lockfile selections. **Trace:** [Audit QD-05](./localmotive-comprehensive-audit.md#qd-05).
-- [ ] **V06-QD-05.V4** — Review an example toolchain update against the documented procedure, including compatibility checks for the current Vite/Vitest and Rust dependencies. **Trace:** [Audit QD-05](./localmotive-comprehensive-audit.md#qd-05).
+- [x] **V06-QD-05.V1** — Run documented setup and the required check suite in a clean environment with the declared supported tooling, retaining exact version output and command results. **Trace:** [Audit QD-05](./localmotive-comprehensive-audit.md#qd-05).
+- [x] **V06-QD-05.V2** — Check an older unsupported Node configuration receives a clear engine/setup constraint instead of being recommended as supported by the documentation. **Trace:** [Audit QD-05](./localmotive-comprehensive-audit.md#qd-05).
+- [x] **V06-QD-05.V3** — Verify CI, local configuration and release evidence agree on the chosen toolchain; confirm dependency installation preserves the committed lockfile selections. **Trace:** [Audit QD-05](./localmotive-comprehensive-audit.md#qd-05).
+- [x] **V06-QD-05.V4** — Review an example toolchain update against the documented procedure, including compatibility checks for the current Vite/Vitest and Rust dependencies. **Trace:** [Audit QD-05](./localmotive-comprehensive-audit.md#qd-05).
 
 **Complete when:** A contributor following the setup instructions selects tooling compatible with the committed dependencies. Every candidate evidence record identifies its actual compiler and package-manager versions and the project documents how those versions change.
 
@@ -2048,24 +2048,24 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Source-pin the imported llama-server reference and repair its links**
 
-**Status:** Implemented + component-verified · **Priority:** Low · **Owner:** sato942  
+**Status:** Implemented + unit-verified · **Priority:** Low · **Owner:** sato942  
 **Audit trace:** [Audit QD-06](./localmotive-comprehensive-audit.md#qd-06)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [docs/LLAMA-SERVER-README.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/docs/LLAMA-SERVER-README.md), [docs/OPTION_MAP.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/docs/OPTION_MAP.md)
 
 **Implementation**
 
-- [ ] **V06-QD-06.I1** — Identify the imported document's exact upstream repository path and commit, record its content identity and import date, and disclose any provenance that cannot be established instead of guessing it. **Trace:** [Audit QD-06](./localmotive-comprehensive-audit.md#qd-06).
-- [ ] **V06-QD-06.I2** — Resolve the ten audited missing relative targets to existing local resources or immutable URLs in the identified upstream tree, including multimodal, function-calling, examples, development notes and UI constants. **Trace:** [Audit QD-06](./localmotive-comprehensive-audit.md#qd-06).
-- [ ] **V06-QD-06.I3** — Keep the application option-grouping document separate from the imported generated server reference; state that the selected executable's --help remains authoritative for actual supported flags. **Trace:** [Audit QD-06](./localmotive-comprehensive-audit.md#qd-06).
-- [ ] **V06-QD-06.I4** — Add a small local-link check or an explicit, narrow policy for deliberately retained upstream-relative references, and describe how future reference imports preserve provenance and link integrity. **Trace:** [Audit QD-06](./localmotive-comprehensive-audit.md#qd-06).
+- [x] **V06-QD-06.I1** — Identify the imported document's exact upstream repository path and commit, record its content identity and import date, and disclose any provenance that cannot be established instead of guessing it. **Trace:** [Audit QD-06](./localmotive-comprehensive-audit.md#qd-06).
+- [x] **V06-QD-06.I2** — Resolve the ten audited missing relative targets to existing local resources or immutable URLs in the identified upstream tree, including multimodal, function-calling, examples, development notes and UI constants. **Trace:** [Audit QD-06](./localmotive-comprehensive-audit.md#qd-06).
+- [x] **V06-QD-06.I3** — Keep the application option-grouping document separate from the imported generated server reference; state that the selected executable's --help remains authoritative for actual supported flags. **Trace:** [Audit QD-06](./localmotive-comprehensive-audit.md#qd-06).
+- [x] **V06-QD-06.I4** — Add a small local-link check or an explicit, narrow policy for deliberately retained upstream-relative references, and describe how future reference imports preserve provenance and link integrity. **Trace:** [Audit QD-06](./localmotive-comprehensive-audit.md#qd-06).
 
 **Verification**
 
-- [ ] **V06-QD-06.V1** — Verify the recorded upstream path/commit and imported bytes or documented local changes against that exact source, preserving uncertainty if the historical origin remains unresolved. **Trace:** [Audit QD-06](./localmotive-comprehensive-audit.md#qd-06).
-- [ ] **V06-QD-06.V2** — Recheck all ten broken targets identified in QD-06 and confirm corrected links resolve to the intended documents at the pinned revision. **Trace:** [Audit QD-06](./localmotive-comprehensive-audit.md#qd-06).
-- [ ] **V06-QD-06.V3** — Run the local-link validator with a deliberately missing fixture target and a valid upstream-reference case to show it detects regressions without silently exempting ordinary broken links. **Trace:** [Audit QD-06](./localmotive-comprehensive-audit.md#qd-06).
-- [ ] **V06-QD-06.V4** — Review the option map and imported header together to confirm readers can distinguish application grouping guidance, historical upstream documentation and live runtime capabilities. **Trace:** [Audit QD-06](./localmotive-comprehensive-audit.md#qd-06).
+- [x] **V06-QD-06.V1** — Verify the recorded upstream path/commit and imported bytes or documented local changes against that exact source, preserving uncertainty if the historical origin remains unresolved. **Trace:** [Audit QD-06](./localmotive-comprehensive-audit.md#qd-06).
+- [x] **V06-QD-06.V2** — Recheck all ten broken targets identified in QD-06 and confirm corrected links resolve to the intended documents at the pinned revision. **Trace:** [Audit QD-06](./localmotive-comprehensive-audit.md#qd-06).
+- [x] **V06-QD-06.V3** — Run the local-link validator with a deliberately missing fixture target and a valid upstream-reference case to show it detects regressions without silently exempting ordinary broken links. **Trace:** [Audit QD-06](./localmotive-comprehensive-audit.md#qd-06).
+- [x] **V06-QD-06.V4** — Review the option map and imported header together to confirm readers can distinguish application grouping guidance, historical upstream documentation and live runtime capabilities. **Trace:** [Audit QD-06](./localmotive-comprehensive-audit.md#qd-06).
 
 **Complete when:** The imported reference has an explicit provenance record and its audited missing links are resolved or individually disclosed under a deliberate policy. Reference maintenance cannot silently introduce new undocumented broken local links.
 
@@ -3544,3 +3544,27 @@ _Package 1 (RT-01, RT-02, RT-04, RT-07) implementation is complete at the unit/r
 - Commands: release-gates 106/106; `node --check scripts/build_catalog.mjs` SYNTAX_OK.
 - Next action (owner): the next `Publish curated catalog` run exercises the rolling window against live data; the checked-in catalog keeps its signed bytes until that publication.
 
+
+### V06-QD-04 — active docs match the shipped policy and architecture
+
+- Status: Implemented; source-gated (commit `7c3bc32` with QD-05/QD-06).
+- Correction set: `docs/RUNTIME_MANAGER.md` marks signing optional/deferred with a pointer to the current release policy and labels version-specific contract numbers as historical; `docs/PRODUCT.md` states the Windows desktop platform (the `web` value is schema metadata), the active SQLite mirror (`catalog_db.rs`), and current-manifest version guidance; `docs/qualification-tests.md` carries a frozen-snapshot banner, the corrected `verify_versions.mjs` command, and the `docs/history/TODO-0.4.1.md` path; `catalog/README.md` states the fail-the-whole-build policy and the approved schema-2 rejection decision; `README.md` adds a storage matrix (signed cache, SQLite mirror and user rows, runtime installs, evidence, logs, quarantine) with lifecycle guidance; `AGENTS.md` maps the current module set (artifact, catalog_db, local_client, health, measurement, evidence, calibration, recommend, sharing, log_sink); `docs/history/TODO-0.5.md` gains a reading-order note without rewriting history.
+- Regression tests: release-gates `QD-04 active docs agree with the shipped unsigned policy and current platform` (unsigned policy present, platform claim absent, SQLite mirror described, frozen banner present, stale command absent). Mutation NB2 (platform claims `web` again) failed the gate and passed after restore.
+- Commands: `npm run check` EXIT 0; release-gates 110/110.
+
+### V06-QD-05 — the toolchain minimum is declared and reproducible
+
+- Status: Implemented; source-gated.
+- Regression before fix: `README.md` said "Node.js 20" while the locked Vite requires `^20.19.0 || >=22.12.0`; no `engines`, `packageManager`, `rust-toolchain.toml` or `rust-version` existed, so builds and lint gates could drift with the toolchain.
+- Verification after fix: `package.json` declares `engines.node` (`^20.19.0 || >=22.12.0`) and `packageManager` (`npm@11.18.0`); `rust-toolchain.toml` pins channel 1.98.1 with rustfmt and clippy components plus the update procedure; `src-tauri/Cargo.toml` mirrors `rust-version = "1.98"`; the README states the real minimum and the update procedure. CI keeps `npm ci` and `--locked`.
+- Regression tests: release-gates `QD-05 the toolchain minimum is declared` (engines, packageManager, pinned channel, rust-version, README minimum). Mutation NB1 (engines removed) failed the gate and passed after restore.
+- Commands: `npm run check` EXIT 0; `cargo test` 536/0/2 under the pinned toolchain; release-gates 110/110.
+
+### V06-QD-06 — vendored upstream documentation carries provenance
+
+- Status: Implemented; source-gated.
+- Regression before fix: `docs/LLAMA-SERVER-README.md` opened without any source/commit/import identification and kept ten relative links that target the upstream llama.cpp repository layout; `docs/OPTION_MAP.md` called it its source without provenance.
+- Verification after fix: the vendored README carries a provenance banner (upstream repository `ggml-org/llama.cpp`, import date 2026-09-06, upstream link resolution, and the policy that runtime `--help` is the authoritative capability list); `docs/OPTION_MAP.md` records the same source policy.
+- Regression tests: release-gates `QD-06 vendored upstream docs carry provenance and links resolve elsewhere` (banner fields + OPTION_MAP note) and `QD-06 local doc links resolve (the vendored upstream README is excluded)` (README, OPTION_MAP, PRODUCT, RUNTIME_MANAGER relative links must resolve; the vendored file is excluded by design). Mutation NB3 (provenance banner removed) failed the gate and passed after restore.
+- Commands: `npm run check` EXIT 0; release-gates 110/110.
+- Residual: the vendored README's own internal links stay upstream-relative by design and are not rewritten.
