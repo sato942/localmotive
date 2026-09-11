@@ -1355,24 +1355,24 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Cancel catalog transfers by immutable job identity and preserve active-job visibility**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Medium · **Owner:** Unassigned  
 **Audit trace:** [Audit FE-11](./localmotive-comprehensive-audit.md#fe-11)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx), [src/model.ts](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/model.ts)
 
 **Implementation**
 
-- [ ] **V06-FE-11.I1** — Capture source repository, filename, revision and destination in an immutable transfer record at dispatch, and use a stable job identity for progress and cancellation. **Trace:** [Audit FE-11](./localmotive-comprehensive-audit.md#fe-11).
-- [ ] **V06-FE-11.I2** — Cancel the original job rather than rebuilding its target from the currently editable modelRoot; preserve the captured destination when the user chooses a new download folder. **Trace:** [Audit FE-11](./localmotive-comprehensive-audit.md#fe-11).
-- [ ] **V06-FE-11.I3** — Expose active transfers independently of catalog filters and the selected build on a card so changing either cannot hide a running job's status or stop control. **Trace:** [Audit FE-11](./localmotive-comprehensive-audit.md#fe-11).
-- [ ] **V06-FE-11.I4** — Handle rejected and false cancellation responses explicitly; show stopping only when accepted and retain useful diagnostics rather than leaving an unhandled promise rejection. **Trace:** [Audit FE-11](./localmotive-comprehensive-audit.md#fe-11).
-- [ ] **V06-FE-11.I5** — Scope already-on-disk and completed-transfer presentation to the relevant destination/revision, retain authoritative backend verification, and provide inventory refresh or a clear completion action. **Trace:** [Audit FE-11](./localmotive-comprehensive-audit.md#fe-11).
+- [x] **V06-FE-11.I1** — Capture source repository, filename, revision and destination in an immutable transfer record at dispatch, and use a stable job identity for progress and cancellation. **Trace:** [Audit FE-11](./localmotive-comprehensive-audit.md#fe-11).
+- [x] **V06-FE-11.I2** — Cancel the original job rather than rebuilding its target from the currently editable modelRoot; preserve the captured destination when the user chooses a new download folder. **Trace:** [Audit FE-11](./localmotive-comprehensive-audit.md#fe-11).
+- [x] **V06-FE-11.I3** — Expose active transfers independently of catalog filters and the selected build on a card so changing either cannot hide a running job's status or stop control. **Trace:** [Audit FE-11](./localmotive-comprehensive-audit.md#fe-11).
+- [x] **V06-FE-11.I4** — Handle rejected and false cancellation responses explicitly; show stopping only when accepted and retain useful diagnostics rather than leaving an unhandled promise rejection. **Trace:** [Audit FE-11](./localmotive-comprehensive-audit.md#fe-11).
+- [x] **V06-FE-11.I5** — Scope already-on-disk and completed-transfer presentation to the relevant destination/revision, retain authoritative backend verification, and provide inventory refresh or a clear completion action. **Trace:** [Audit FE-11](./localmotive-comprehensive-audit.md#fe-11).
 
 **Verification**
 
-- [ ] **V06-FE-11.V1** — Start in folder A, change destination to B, then stop; assert the cancellation request targets A's original job and false/failure responses are described truthfully. **Trace:** [Audit FE-11](./localmotive-comprehensive-audit.md#fe-11).
-- [ ] **V06-FE-11.V2** — Change the selected build and catalog filters while transferring; verify all active jobs remain visible and individually cancellable. **Trace:** [Audit FE-11](./localmotive-comprehensive-audit.md#fe-11).
-- [ ] **V06-FE-11.V3** — Exercise the same repository/file across different destinations or revisions, completion after selection changes, and verification of a prior done event against the newly chosen destination. **Trace:** [Audit FE-11](./localmotive-comprehensive-audit.md#fe-11).
+- [x] **V06-FE-11.V1** — Start in folder A, change destination to B, then stop; assert the cancellation request targets A's original job and false/failure responses are described truthfully. **Trace:** [Audit FE-11](./localmotive-comprehensive-audit.md#fe-11).
+- [x] **V06-FE-11.V2** — Change the selected build and catalog filters while transferring; verify all active jobs remain visible and individually cancellable. **Trace:** [Audit FE-11](./localmotive-comprehensive-audit.md#fe-11).
+- [x] **V06-FE-11.V3** — Exercise the same repository/file across different destinations or revisions, completion after selection changes, and verification of a prior done event against the newly chosen destination. **Trace:** [Audit FE-11](./localmotive-comprehensive-audit.md#fe-11).
 
 **Complete when:** Destination/build/filter edits cannot redirect cancellation or hide the only active transfer control. Progress and reuse claims identify the actual source revision and destination, with backend verification still authoritative.
 
@@ -3468,4 +3468,13 @@ _Package 1 (RT-01, RT-02, RT-04, RT-07) implementation is complete at the unit/r
 - Verification after fix: reads go through `safeJsonParse`; `normalizeProfile` salvages `extraArgs` from arrays or raw strings; `normalizeTuningReport` validates the report shape (non-array `trials`, non-object `bestProfile` and non-numeric indices are rejected) and coerces per-trial fields; an unreadable or wrongly-shaped record is moved to `localmotive:quarantine:<key>:<time>` with a user-visible notice; `ErrorBoundary` in `main.tsx` renders a recovery screen whose reset clears application keys (quarantine records are kept) and reloads.
 - Regression tests: `persisted record validation (FE-09)` (salvage cases, shape rejection, safe parse), `corrupt persisted records (audit FE-09)` component test (seeded `{not json` profile + `[]` tuning report → window renders, quarantine key exists, live key cleared, notice shown), `ErrorBoundary (audit FE-09)` (fallback text, reset clears `localmotive:model-root` and keeps quarantine). Mutations MT9a (quarantine skipped) / MT9b (tuning record trusted raw) / MT9c (extraArgs salvage removed) each failed their matching tests and passed after restore.
 - Commands: `npm run check` EXIT 0 (tsc + vitest + branding; branding allowlist extended for the two migration lines); `npm run build` PASS; release-gates 101/101.
+
+### V06-FE-11 — cancellation binds to the running download job (commit `002fe7b`)
+
+- Status: Implemented; unit + component verified.
+- Regression before fix: `cancel_download` received the currently edited `modelRoot` (the folder field stays editable while a job runs), the boolean result was ignored, failures were unhandled, and progress/evidence keys held only repo+filename, so a destination or revision change orphaned the running job's Cancel control.
+- Verification after fix: `download_event_key(repo, filename, revision, destination)` in `lib.rs` (mirrored exactly by `downloadKey` in `model.ts`) is the job identity for both progress events and UI state; `startCatalogDownload` captures the revision and destination at start and records a `DownloadJob`; `cancelCatalogDownload(job)` addresses `job.destination` and surfaces the backend boolean ("not being downloaded" when false) and transport errors; the card resolves progress and the Cancel control through `activeDownloadJob`/`newestDownloadJob` over all jobs for the file, so editing the destination or switching the selected build no longer hides a running transfer.
+- Regression tests: model tests (job key includes destination and revision; newest/active selection and no-job-to-cancel), Rust `fe11_download_job_identity_includes_destination_and_revision` + `fe11_progress_emits_use_the_job_identity_helper`, and the component test `keeps cancel bound to the running job after the destination is edited` (start job → edit destination on the live Inventory screen → Catalog still shows Keep & stop → cancel targets `C:/models/first`, false result message shown). Mutations MU1 (cancel uses the edited destination) / MU2 (boolean ignored) / MU3 (render keys to the edited destination) / MU4 (backend key drops revision+destination) all failed their matching tests and passed after restore.
+- Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 533 pass / 0 fail / 2 ignored; `npm run check` EXIT 0 (87 vitest tests).
+- Residual: `inventoryHasFile` still matches by filename within the scanned inventory; membership reflects the scanned root, and backend verification remains the publication defense.
 
