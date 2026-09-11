@@ -1436,24 +1436,24 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Correct low-contrast text and make evidence controls usable in narrow layouts**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Medium · **Owner:** Unassigned  
 **Audit trace:** [Audit FE-14](./localmotive-comprehensive-audit.md#fe-14)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src/App.css](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.css), [docs/DESIGN.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/docs/DESIGN.md)
 
 **Implementation**
 
-- [ ] **V06-FE-14.I1** — Replace the audited hardware-source, runtime-code, field-help and empty-log text colors with tokens meeting at least 4.5:1 against their actual regular-text backgrounds. **Trace:** [Audit FE-14](./localmotive-comprehensive-audit.md#fe-14).
-- [ ] **V06-FE-14.I2** — Review extremely small help/evidence typography and increase practical sizes without losing complete values, treating computed contrast and legibility as related but distinct checks. **Trace:** [Audit FE-14](./localmotive-comprehensive-audit.md#fe-14).
-- [ ] **V06-FE-14.I3** — Add evidence-specific one-column breakpoints, wrap action-heading rows and constrain 205px/240px grid minima so nested padding cannot force clipped controls in a 320px window. **Trace:** [Audit FE-14](./localmotive-comprehensive-audit.md#fe-14).
-- [ ] **V06-FE-14.I4** — Redesign narrow bottom navigation and undersized path/plain-link/managed-entry targets to satisfy the repository's 44px mobile target requirement while retaining bottom clearance. **Trace:** [Audit FE-14](./localmotive-comprehensive-audit.md#fe-14).
-- [ ] **V06-FE-14.I5** — Preserve intentional horizontal scrolling for the inventory table rather than replacing its information structure with unrelated cards, and verify zoomed desktop reflow. **Trace:** [Audit FE-14](./localmotive-comprehensive-audit.md#fe-14).
+- [x] **V06-FE-14.I1** — Replace the audited hardware-source, runtime-code, field-help and empty-log text colors with tokens meeting at least 4.5:1 against their actual regular-text backgrounds. **Trace:** [Audit FE-14](./localmotive-comprehensive-audit.md#fe-14).
+- [x] **V06-FE-14.I2** — Review extremely small help/evidence typography and increase practical sizes without losing complete values, treating computed contrast and legibility as related but distinct checks. **Trace:** [Audit FE-14](./localmotive-comprehensive-audit.md#fe-14).
+- [x] **V06-FE-14.I3** — Add evidence-specific one-column breakpoints, wrap action-heading rows and constrain 205px/240px grid minima so nested padding cannot force clipped controls in a 320px window. **Trace:** [Audit FE-14](./localmotive-comprehensive-audit.md#fe-14).
+- [x] **V06-FE-14.I4** — Redesign narrow bottom navigation and undersized path/plain-link/managed-entry targets to satisfy the repository's 44px mobile target requirement while retaining bottom clearance. **Trace:** [Audit FE-14](./localmotive-comprehensive-audit.md#fe-14).
+- [x] **V06-FE-14.I5** — Preserve intentional horizontal scrolling for the inventory table rather than replacing its information structure with unrelated cards, and verify zoomed desktop reflow. **Trace:** [Audit FE-14](./localmotive-comprehensive-audit.md#fe-14).
 
 **Verification**
 
-- [ ] **V06-FE-14.V1** — Calculate contrast from the final computed foreground/background pairs for all four affected regular-text cases; assert ratios meet the threshold without rounding an under-threshold value upward. **Trace:** [Audit FE-14](./localmotive-comprehensive-audit.md#fe-14).
-- [ ] **V06-FE-14.V2** — Inspect 320, 375, 680 and 980px layouts and 200%/400% zoom for clipped evidence controls, horizontal overflow outside intentional inventory scrolling and reachable action controls. **Trace:** [Audit FE-14](./localmotive-comprehensive-audit.md#fe-14).
-- [ ] **V06-FE-14.V3** — Measure target dimensions for bottom navigation/path actions and run packaged Windows visual/DPI or high-contrast checks, documenting actual remaining limitations. **Trace:** [Audit FE-14](./localmotive-comprehensive-audit.md#fe-14).
+- [x] **V06-FE-14.V1** — Calculate contrast from the final computed foreground/background pairs for all four affected regular-text cases; assert ratios meet the threshold without rounding an under-threshold value upward. **Trace:** [Audit FE-14](./localmotive-comprehensive-audit.md#fe-14).
+- [x] **V06-FE-14.V2** — Inspect 320, 375, 680 and 980px layouts and 200%/400% zoom for clipped evidence controls, horizontal overflow outside intentional inventory scrolling and reachable action controls. **Trace:** [Audit FE-14](./localmotive-comprehensive-audit.md#fe-14).
+- [x] **V06-FE-14.V3** — Measure target dimensions for bottom navigation/path actions and run packaged Windows visual/DPI or high-contrast checks, documenting actual remaining limitations. **Trace:** [Audit FE-14](./localmotive-comprehensive-audit.md#fe-14).
 
 **Complete when:** Audited regular text meets the contrast threshold and remains readable in the supported display states. Narrow/zoomed evidence controls fit their containers, and mobile targets satisfy the project's declared size rule.
 
@@ -1463,24 +1463,24 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Tie readiness labels and evidence colors to the proof actually available**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Medium · **Owner:** Unassigned  
 **Audit trace:** [Audit FE-15](./localmotive-comprehensive-audit.md#fe-15)  
 **Prerequisites:** [V06-FE-01](#v06-fe-01)
 **Source touchpoints:** [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx), [src/App.css](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.css)
 
 **Implementation**
 
-- [ ] **V06-FE-15.I1** — Replace the loaded-profile VALID label when only shard completeness is known with precise states such as shards complete, path selected, inspection pending or validated. **Trace:** [Audit FE-15](./localmotive-comprehensive-audit.md#fe-15).
-- [ ] **V06-FE-15.I2** — Stop marking first-run Runtime/Serve ready solely because path strings are nonempty; derive each readiness state from the inspected identity and relevant native validation evidence. **Trace:** [Audit FE-15](./localmotive-comprehensive-audit.md#fe-15).
-- [ ] **V06-FE-15.I3** — Clear or explicitly mark stale runtime capabilities when committed runtime identity changes, and avoid describing a hard-coded speculation fallback as methods advertised by the executable. **Trace:** [Audit FE-15](./localmotive-comprehensive-audit.md#fe-15).
-- [ ] **V06-FE-15.I4** — Offer supported speculation methods after inspection or label provisional selections clearly; expose unsupported/unknown capability status near affected settings without treating UI availability as support evidence. **Trace:** [Audit FE-15](./localmotive-comprehensive-audit.md#fe-15).
-- [ ] **V06-FE-15.I5** — Replace unconditional green evidence headings with status-based tones so Unknown, Blocked, rejected candidates and non-measured classes use the defined neutral/amber/red semantics with words. **Trace:** [Audit FE-15](./localmotive-comprehensive-audit.md#fe-15).
+- [x] **V06-FE-15.I1** — Replace the loaded-profile VALID label when only shard completeness is known with precise states such as shards complete, path selected, inspection pending or validated. **Trace:** [Audit FE-15](./localmotive-comprehensive-audit.md#fe-15).
+- [x] **V06-FE-15.I2** — Stop marking first-run Runtime/Serve ready solely because path strings are nonempty; derive each readiness state from the inspected identity and relevant native validation evidence. **Trace:** [Audit FE-15](./localmotive-comprehensive-audit.md#fe-15).
+- [x] **V06-FE-15.I3** — Clear or explicitly mark stale runtime capabilities when committed runtime identity changes, and avoid describing a hard-coded speculation fallback as methods advertised by the executable. **Trace:** [Audit FE-15](./localmotive-comprehensive-audit.md#fe-15).
+- [x] **V06-FE-15.I4** — Offer supported speculation methods after inspection or label provisional selections clearly; expose unsupported/unknown capability status near affected settings without treating UI availability as support evidence. **Trace:** [Audit FE-15](./localmotive-comprehensive-audit.md#fe-15).
+- [x] **V06-FE-15.I5** — Replace unconditional green evidence headings with status-based tones so Unknown, Blocked, rejected candidates and non-measured classes use the defined neutral/amber/red semantics with words. **Trace:** [Audit FE-15](./localmotive-comprehensive-audit.md#fe-15).
 
 **Verification**
 
-- [ ] **V06-FE-15.V1** — Render nonexistent runtime paths, pending/failed inspection and a complete-shard model with an invalid profile; assert no unsupported VALID/ready claim is shown. **Trace:** [Audit FE-15](./localmotive-comprehensive-audit.md#fe-15).
-- [ ] **V06-FE-15.V2** — Switch executable identity and delay inspection completion; verify old capabilities are not presented as current, and fallback methods are explicitly provisional or unavailable. **Trace:** [Audit FE-15](./localmotive-comprehensive-audit.md#fe-15).
-- [ ] **V06-FE-15.V3** — Exercise unknown, blocked, rejected, measured and launch-validated evidence classes; assert each has accurate text and the intended semantic tone. **Trace:** [Audit FE-15](./localmotive-comprehensive-audit.md#fe-15).
+- [x] **V06-FE-15.V1** — Render nonexistent runtime paths, pending/failed inspection and a complete-shard model with an invalid profile; assert no unsupported VALID/ready claim is shown. **Trace:** [Audit FE-15](./localmotive-comprehensive-audit.md#fe-15).
+- [x] **V06-FE-15.V2** — Switch executable identity and delay inspection completion; verify old capabilities are not presented as current, and fallback methods are explicitly provisional or unavailable. **Trace:** [Audit FE-15](./localmotive-comprehensive-audit.md#fe-15).
+- [x] **V06-FE-15.V3** — Exercise unknown, blocked, rejected, measured and launch-validated evidence classes; assert each has accurate text and the intended semantic tone. **Trace:** [Audit FE-15](./localmotive-comprehensive-audit.md#fe-15).
 
 **Complete when:** Readiness wording names the level of proof available instead of upgrading a path or shard check into successful launch validation. Every evidence status retains meaningful words and uses green only for the design's appropriate established states.
 
@@ -3496,3 +3496,21 @@ _Package 1 (RT-01, RT-02, RT-04, RT-07) implementation is complete at the unit/r
 - Regression tests: component tests `inventory is a real table with column headers and named row actions`, `paired numeric inputs each carry their own label`, `provider tabs follow the WAI-ARIA keyboard pattern with linked tabpanel` (aria-selected moves and focus lands on the newly selected tab). Mutations MV1 (roving tabindex removed) / MV2 (arrow handling removed) / MV3 (paired labels merged back) each failed their matching tests and passed after restore.
 - Commands: `tsc --noEmit` PASS; `npm test` 90 passed; `npm run check` EXIT 0; `npm run build` PASS.
 - Residual: the detail-panel (V03EvidencePanel) markup named in the original audit line list was not re-checked beyond the tested surfaces; the tabpanel id is shared by all providers by design (one visible panel).
+
+### V06-FE-14 — compliant small-text contrast and narrow-viewport reflow
+
+- Status: Implemented; packaged verification PASS.
+- Regression before fix: four small-text colors failed 4.5:1 on their panels (#6f7974 3.42:1, #77817d 3.80:1, #7f8885 4.19:1, #737b78 4.24:1); evidence grids kept 205/240 px minimums and three-column tracks at every width; the eight-cell bottom navigation shared ~302 px at 320 px, below the project's 44 px rule.
+- Verification after fix: the four colors are replaced by the `--muted` token (#9ca3a0: 5.99:1 / 5.94:1 / 7.15:1 on the audited panels); evidence/hardware grids use `minmax(min(100%, …), 1fr)` and collapse to one column at <=680 px; the narrow bottom navigation keeps 44 px targets and scrolls horizontally instead of shrinking.
+- Regression tests: release-gates `FE-14 small-text colors keep at least 4.5:1 on their panels` (old values banned, ratios computed in-test) and the packaged probe `scripts/verify_responsive.mjs`: on the packaged binary at 320/375/680/980 px and 200%/400% page zoom there is no horizontal overflow (overflow <= 1 px) and every bottom-navigation cell is >= 44 px at 320/375. Build: `npm run tauri build -- --no-bundle` BUILD_EXIT 0; probe output `RESPONSIVE_PASS`.
+- Commands: `npm run check` EXIT 0; `npm run build` PASS; release-gates 103/103.
+- Residual: the 44 px target audit covered the bottom navigation only; other small links were not re-measured, and real hardware/DPI combinations beyond the emulated widths were not exercised.
+
+### V06-FE-15 — status words state only what was established
+
+- Status: Implemented; unit-verified (commit `4d9027e` with FE-14).
+- Regression before fix: the loaded-profile tag said `VALID` from `selected.complete`; first-run steps said `Configured`/`Ready` from nonempty path strings; the speculation method list fell back to a hard-coded set with no marker when no runtime was inspected; editing either runtime path left stale capabilities visible; every evidence strong was green, including `Unknown`/`Blocked`.
+- Verification after fix: the tag says `SHARDS COMPLETE` / `SHARDS INCOMPLETE`; the first-run steps say `Path selected` and `Ready to validate`; the speculation list carries a `Not inspected — this list is provisional…` note whenever no runtime is inspected; editing the executable path on either the Runtime screen or the Profile form clears the inspected capabilities until re-inspection; `evidenceTone` maps result words to tones (`tone-ok`/`tone-pending`/`tone-bad`) and the evidence cards use `--paper`/amber/red instead of unconditional green.
+- Regression tests: `evidence tone (FE-15)` unit cases, panel test `does not paint unknown results green`, and the App test `says shards complete, path selected and not inspected instead of overstating` (scan → Control shows SHARDS COMPLETE and never `VALID`; Profile shows the provisional note; inspection removes it; editing the Profile path and the Runtime path each restore it; Runtime shows `Path selected` + `Ready to validate`). Mutations MW1 (all tones green) / MW2 (`VALID` restored) / MW4 (`Ready` restored) / MW5 (profile edit keeps stale capabilities) / MW6 (Runtime edit keeps stale capabilities) each failed their matching tests and passed after restore.
+- Commands: `tsc --noEmit` PASS; `npm test` 93 passed; `npm run check` EXIT 0; `npm run build` PASS.
+- Residual: the capability-gated availability of individual profile controls (offered vs flag-supported) was not reworked beyond the provisional marker; the Rust preview/start validation remains the enforcement point.
