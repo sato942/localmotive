@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -1416,3 +1416,53 @@ test("user catalog overrides stay local, marked, and outside network verificatio
   assert.match(lib, /catalog_local_models/);
   assert.match(app, /USER ADDED/);
 });
+
+test("IPC-02 production CSP and opener scope are narrow and audited", async () => {
+  const configDir = join(process.cwd(), "src-tauri");
+  const config = JSON.parse(await readFile(join(configDir, "tauri.conf.json"), "utf8"));
+  const security = config.app?.security ?? {};
+  assert.ok(
+    typeof security.csp === "string" && security.csp.length > 0,
+    "a production CSP must be configured",
+  );
+  assert.ok(!security.csp.includes("unsafe-eval"), "no unsafe-eval workaround in production");
+  assert.match(security.csp, /script-src 'self'/);
+  assert.match(security.csp, /connect-src [^;]*ipc:/);
+  assert.match(security.csp, /connect-src [^;]*http:\/\/ipc\.localhost/);
+  assert.ok(
+    typeof security.devCsp === "string" && security.devCsp.includes("localhost:1420"),
+    "the development-only exception must be explicit and separate",
+  );
+  assert.ok(!security.devCsp.includes("unsafe-eval"), "no unsafe-eval in the dev policy either");
+
+  const capabilities = JSON.parse(
+    await readFile(join(configDir, "capabilities", "default.json"), "utf8"),
+  );
+  assert.ok(
+    !capabilities.permissions.includes("opener:default"),
+    "the unscoped opener default permission set must not be granted",
+  );
+  const opener = capabilities.permissions.find(
+    (permission) =>
+      typeof permission === "object" && permission.identifier === "opener:allow-open-url",
+  );
+  assert.ok(opener, "opener must use the scoped allow-open-url permission");
+  assert.ok(Array.isArray(opener.allow) && opener.allow.length > 0);
+  for (const entry of opener.allow) {
+    assert.ok(typeof entry.url === "string" && entry.url.length > 0, "every scope entry names a URL");
+  }
+  const patterns = opener.allow.map((entry) => entry.url);
+  assert.ok(!patterns.includes("https://*") && !patterns.includes("*"));
+  assert.ok(patterns.some((pattern) => pattern.startsWith("http://127.0.0.1/")));
+
+  // Positive control: production sources contain no HTML/eval sinks.
+  const sources = await readdir(join(process.cwd(), "src"));
+  const sink = /(dangerouslySetInnerHTML|new Function\s*\(|document\.write|(^|[^a-zA-Z_.])eval\s*\()/;
+  for (const name of sources) {
+    if (!/\.(ts|tsx)$/.test(name)) continue;
+    if (/\.test\.(ts|tsx)$/.test(name)) continue;
+    const content = await readFile(join(process.cwd(), "src", name), "utf8");
+    assert.ok(!sink.test(content), `unexpected injection sink in src/${name}`);
+  }
+});
+
