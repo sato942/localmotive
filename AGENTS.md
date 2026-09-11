@@ -40,11 +40,21 @@ src-tauri/src/
   lib.rs                Tauri commands — the only bridge to the frontend
   core.rs               Model scanning, launch profiles, validation, benchmarks
   runtime.rs            Hardware detection, GitHub releases, runtime installs
+  artifact.rs           File/shard facts, archive analysis, digest helpers
   gguf.rs               GGUF header reader (metadata only, never tensor data)
+  catalog.rs            Curated HF catalog fetch, signature and freshness policy
+  catalog_db.rs         SQLite catalog mirror, user overrides, quarantine
+  download.rs           Resumable parallel HTTP downloader, job reservation
+  local_client.rs       The one Rust-owned local HTTP client (TLS pinning)
+  health.rs             Managed-server health runs and supervised completion
+  measurement.rs        v2 benchmark orchestration and statistics
+  evidence.rs           Workload/observation/manifest contract and validation
+  calibration.rs        Execution snapshots, anchors, calibration models
+  recommend.rs          Quality suites and ranking
+  sharing.rs            Evidence export bundles and validation
   tune.rs               AI tuning: brief, whitelist, proposal parsing, loop
   cloud.rs              Cloud providers, credential storage, OAuth PKCE
-  catalog.rs            Curated HF catalog fetch + filtering
-  download.rs           Resumable parallel HTTP downloader
+  log_sink.rs           Bounded per-run launch logs and retention
   proc.rs               Child-process construction (CREATE_NO_WINDOW)
 catalog/catalog.json    The curated model catalog (see section 7)
 docs/                   Option map, runtime manager design, token exports

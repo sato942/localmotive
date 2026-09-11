@@ -1,5 +1,8 @@
 # Localmotive qualification tests — have and need
 
+> **Frozen snapshot (2026-09-06, 0.4.1).** The counts, FAIL/PENDING/BLOCKED labels and command examples below describe the 0.4.1 qualification cycle and are kept as history. They are not the current status. Current evidence lives in the 0.6 tracker: `docs/history/TODO-0.6.md`; version manifests are authoritative for the release number.
+
+
 ## Purpose
 
 This file lists qualification checks for Localmotive.
@@ -154,7 +157,7 @@ Each step unblocks the next step.
 
 To run the fast local gates, execute each command separately.
 
-Use `node scripts/verify_versions.mjs 0.4.1` for versions.
+Use `node scripts/verify_versions.mjs` for versions; the script reads the three manifests (`package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`).
 
 Use `node scripts/verify_workflow_pins.mjs` for action pins.
 
@@ -194,7 +197,7 @@ Stop before signing or publication without explicit authority.
 - Research ledger: `release-evidence/0.4.1/research-verification.json`
 - Research anchor: `release-evidence/0.4.1/research-freeze-anchor.json`
 - Catalog signing evidence: `release-evidence/0.4.1/catalog-signing.json`
-- Plan and acceptance criteria: `history/TODO-0.4.1.md`
+- Plan and acceptance criteria: `docs/history/TODO-0.4.1.md`
 - Attempt review: `REPORT-0.4.1.md`
 - Changelog limitations: `CHANGELOG.md`
 - Supported platform claims: `README.md` section `Supported platforms`

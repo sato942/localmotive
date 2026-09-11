@@ -93,7 +93,11 @@ completed bytes against that curator-published digest; byte length or an optiona
 HTTP ETag is never sufficient integrity proof.
 
 Version 1 files fail closed with an upgrade message: without rich fields the
-0.5 filters cannot be honest about what they hide.
+0.5 filters cannot be honest about what they hide. This is the approved
+compatibility decision: the loader supports schema 2 only, and an older client
+with a v2-blind loader falls back to its bundled catalog rather than guessing at
+fields it cannot interpret (`schemaVersion` mismatches never replace a
+supported cache; see `docs/history/TODO-0.6.md`, DC-07).
 
 ## Curating a change
 
@@ -116,10 +120,15 @@ Version 1 files fail closed with an upgrade message: without rich fields the
    reaches `main`. An invalid or missing signature falls back to the last signed
    cache, then to the catalog bundled with the app.
 
-The builder filters repos by `lastModified` within `cutoffDays` (90), includes
-all root-level single-file `.gguf` files, retries HTTP 429 with backoff, and
-requires a per-file SHA-256. A repo that cannot be resolved is skipped without
-replacing the last good catalog. Live dry-run: `node scripts/dryrun_catalog.mjs`.
+The builder filters repos by `lastModified` within a rolling `cutoffDays` (90)
+window measured from the build time, includes all root-level single-file
+`.gguf` files, retries HTTP 429 with backoff, pins each file to the repository
+commit it was read at, and requires a per-file SHA-256. A repo that cannot be
+resolved contributes a problem entry; the build **fails as a whole** and
+publishes nothing unless every problem is resolved, because a partially
+resolved list would silently drop offers. `--allow-empty` is the deliberate
+exception for a controlled empty-catalog test, never for a normal refresh.
+Live dry-run: `node scripts/dryrun_catalog.mjs`.
 
 Never invent repositories, filenames, sizes, download counts, licence status,
 or benchmark claims. If the API cannot verify a value, omit the candidate.

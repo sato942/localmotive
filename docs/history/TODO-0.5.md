@@ -1,5 +1,7 @@
 # Localmotive 0.5 implementation tracker
 
+> **Reading order (audit QD-04).** Phase records below are written in work order, and later entries supersede earlier ones where they disagree. The authoritative closeout state is the final ship-ledger and closeout sections of this file; treat any earlier "next/open" note as superseded history.
+
 - **Status:** v0.5.0 SHIPPED 2026-09-10. Tag `v0.5.0`, Latest = v0.5.0 (unsigned).
 - **Target:** `0.5.0`
 - **Tree at creation:** `30c28bfb2b4db1244f19424dc67326a074965535`

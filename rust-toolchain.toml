@@ -1,0 +1,7 @@
+# Pinned Rust toolchain for reproducible builds and lint gates.
+# Update procedure: bump the channel here and in src-tauri/Cargo.toml
+# (rust-version), run the full check suite, then note the change in the
+# release changelog.
+[toolchain]
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]

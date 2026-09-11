@@ -4,11 +4,13 @@
 
 ## Platform
 
-web
+Windows desktop application (Tauri 2; `web` is the schema metadata value, the
+shipped product is the desktop build). Current version identities live in
+`package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`.
 
 ## Stack
 
-delegated: Tauri 2 desktop shell, Rust control plane, React and TypeScript interface, SQLite-ready local persistence. The user delegated implementation choices.
+delegated: Tauri 2 desktop shell, Rust control plane, React and TypeScript interface, SQLite-backed local catalog mirror (`src-tauri/src/catalog_db.rs`, active). The user delegated implementation choices.
 
 ## Users
 
@@ -24,7 +26,7 @@ Unlike chat-first local-model apps, Localmotive treats runtime build capability,
 
 ## Operating Context
 
-Localmotive 0.4.1 targets Windows 10 and Windows 11 x64.
+Localmotive targets Windows 10 and Windows 11 x64. The current release line is recorded in the three version manifests; 0.4.1-era scope notes below remain historical context.
 
 The target scope is not a tested compatibility claim.
 

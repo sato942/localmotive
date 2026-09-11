@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import Ajv from "ajv";
 import { verifyVersions } from "../verify_versions.mjs";
@@ -1574,4 +1574,63 @@ test("QD-01 the catalog cutoff follows the build clock", async () => {
     !builder.includes('new Date("2026-09-10T00:00:00Z")'),
     "the frozen literal cutoff must not return",
   );
+});
+
+test("QD-04 active docs agree with the shipped unsigned policy and current platform", async () => {
+  const runtimeManager = await readFile(join(process.cwd(), "docs", "RUNTIME_MANAGER.md"), "utf8");
+  assert.ok(
+    runtimeManager.includes("ship **unsigned with an explicit"),
+    "the runtime manager notes the deferred-signing release policy",
+  );
+  const product = await readFile(join(process.cwd(), "docs", "PRODUCT.md"), "utf8");
+  assert.ok(
+    !/^web$/m.test(product.split("## Stack")[0]),
+    "the product schema no longer claims the web platform",
+  );
+  assert.ok(product.includes("SQLite-backed local catalog mirror"), "the SQLite mirror is described");
+  const qualification = await readFile(join(process.cwd(), "docs", "qualification-tests.md"), "utf8");
+  assert.ok(qualification.includes("Frozen snapshot"), "the qualification snapshot is labelled");
+  assert.ok(!qualification.includes("verify_versions.mjs 0.4.1"), "the stale command is corrected");
+});
+
+test("QD-05 the toolchain minimum is declared", async () => {
+  const packageJson = JSON.parse(await readFile(join(process.cwd(), "package.json"), "utf8"));
+  assert.equal(packageJson.engines?.node, "^20.19.0 || >=22.12.0");
+  assert.match(packageJson.packageManager ?? "", /^npm@/);
+  const toolchain = await readFile(join(process.cwd(), "rust-toolchain.toml"), "utf8");
+  assert.match(toolchain, /channel = "\d+\.\d+\.\d+"/, "the toolchain is pinned");
+  const cargo = await readFile(join(process.cwd(), "src-tauri", "Cargo.toml"), "utf8");
+  assert.match(cargo, /rust-version = "\d+\.\d+"/, "rust-version mirrors the pin");
+  const readme = await readFile(join(process.cwd(), "README.md"), "utf8");
+  assert.ok(readme.includes("20.19"), "the README states the real Node minimum");
+});
+
+test("QD-06 vendored upstream docs carry provenance and links resolve elsewhere", async () => {
+  const vendored = await readFile(join(process.cwd(), "docs", "LLAMA-SERVER-README.md"), "utf8");
+  assert.ok(vendored.includes("Provenance"), "the vendored README identifies its source");
+  assert.ok(vendored.includes("ggml-org/llama.cpp"), "the upstream repository is named");
+  const optionMap = await readFile(join(process.cwd(), "docs", "OPTION_MAP.md"), "utf8");
+  assert.ok(optionMap.includes("--help` is authoritative"), "OPTION_MAP records its source policy");
+});
+
+test("QD-06 local doc links resolve (the vendored upstream README is excluded)", async () => {
+  // The vendored docs/LLAMA-SERVER-README.md intentionally keeps upstream
+  // relative targets (see its provenance banner); every other active doc
+  // must resolve its relative links inside this repository.
+  const files = ["README.md", "docs/OPTION_MAP.md", "docs/PRODUCT.md", "docs/RUNTIME_MANAGER.md"];
+  const missing = [];
+  for (const file of files) {
+    const content = await readFile(join(process.cwd(), file), "utf8");
+    for (const match of content.matchAll(/\]\((?!https?:|#|mailto:)([^)]+)\)/g)) {
+      const link = match[1].split("#")[0].trim();
+      if (!link) continue;
+      const target = resolve(dirname(join(process.cwd(), file)), link);
+      try {
+        await stat(target);
+      } catch {
+        missing.push(`${file} -> ${link}`);
+      }
+    }
+  }
+  assert.deepEqual(missing, [], `unresolved relative links: ${missing.join(", ")}`);
 });

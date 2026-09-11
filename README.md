@@ -269,6 +269,20 @@ Localmotive stores these values in the application WebView's local storage:
 
 Localmotive does not encrypt these local-storage values.
 
+Beyond local storage, Localmotive keeps this state on disk (audit QD-04):
+
+| Store | Location | Lifecycle |
+|---|---|---|
+| Signed catalog cache and refresh stamp | Application cache directory; falls back to the temporary directory | Rebuilt from the signed catalog on refresh; safe to delete (rows reload from the bundled copy) |
+| Catalog SQLite mirror (`catalog-mirror.sqlite`) | Application cache directory | Holds the verified mirror plus your user-added rows; delete only to reset user additions, the app rebuilds the mirror |
+| Runtime downloads and installs | `%LOCALAPPDATA%\Localmotive` | Managed versioned installs; remove a version from the Runtime screen |
+| Benchmark, tuning, calibration and share evidence | Local storage (small records) plus exported files you choose | Export what you need before clearing application data |
+| Server logs and failure records | Operating system temporary directory | Bounded rotation as described below |
+
+Settings can be reset per record by clearing the matching `localmotive:*`
+local-storage key; a corrupt record is moved to `localmotive:quarantine:*`
+instead of crashing the window.
+
 Server logs use the operating system temporary directory.
 The server log subdirectory is `localmotive`.
 Each run writes a uniquely named log and is capped at 8 MiB of retained output.
@@ -366,7 +380,7 @@ Confirm that the runtime, model, companion, and key-file paths still exist.
 
 Install the [Tauri prerequisites for Windows][tauri-prerequisites].
 
-Use Node.js 20 with npm and the stable Rust toolchain.
+Use Node.js `^20.19.0 || >=22.12.0` (the locked Vite requires it; `package.json` declares `engines` and pins the npm version) and the Rust toolchain pinned in `rust-toolchain.toml` (1.98.1, mirrored by `rust-version` in `src-tauri/Cargo.toml`). Update both files together and re-run the full check suite when the toolchain changes.
 
 Install the Microsoft C++ Build Tools and WebView2 requirements described
 by the linked Tauri prerequisites.

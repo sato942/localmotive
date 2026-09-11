@@ -1,5 +1,7 @@
 # llama-server Option Map
 
+> Source note (audit QD-06): derived from the imported upstream server README (`docs/LLAMA-SERVER-README.md`, ggml-org/llama.cpp, imported 2026-09-06). Treat this mapping as a historical index; the selected runtime's `--help` is authoritative.
+
 Source: `LLAMA-SERVER-README.md`. Localmotive promotes options according to how often they matter, how safely they can be changed, and whether a wrong value can make a model fail to load.
 
 ## Shown immediately

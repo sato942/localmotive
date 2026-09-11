@@ -1,5 +1,8 @@
 # LLaMA.cpp HTTP Server
 
+> **Provenance (audit QD-06).** This file is an imported copy of the upstream llama.cpp `tools/server/README.md` (repository `ggml-org/llama.cpp`), imported on 2026-09-06 alongside the pinned runtime line. Relative links inside it target the upstream repository layout and are intentionally not resolvable in this repository; resolve them at `https://github.com/ggml-org/llama.cpp`. The option tables here are a historical reference: the selected runtime's real `--help` output is the only authoritative capability list (repository policy, AGENTS.md Rule 3).
+
+
 Fast, lightweight, pure C/C++ HTTP server based on [httplib](https://github.com/yhirose/cpp-httplib), [nlohmann::json](https://github.com/nlohmann/json) and **llama.cpp**.
 
 Set of LLM REST APIs and a web UI to interact with llama.cpp.

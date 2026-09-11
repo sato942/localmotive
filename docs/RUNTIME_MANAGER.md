@@ -1,5 +1,7 @@
 # Runtime Manager
 
+> Scope: the runtime policy (pinned official builds, per-version installs, `--help` capability gating) is version-independent. Release-specific counts, dates and contract numbers quoted below are historical 0.4.1 evidence; current identities live in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`.
+
 Localmotive does not bundle llama.cpp. It obtains official binaries at first run or accepts a user-supplied executable.
 
 ## Approved release identity
@@ -102,6 +104,8 @@ Cancellation terminates and waits for the complete contained process tree.
 ## Windows signing
 
 The ordinary `npm run tauri build` command produces unsigned test candidates.
+
+> Policy update (0.5 and later): public releases ship **unsigned with an explicit disclosure** while code signing is deferred; see the release policy in `README.md` and the release notes in `CHANGELOG.md`. The signing requirements below document the procedure to use **if and when** signing is resumed; they are no longer a precondition for a release candidate. Historical evidence in `docs/history/` is frozen and is not rewritten.
 
 The release candidate must use `npm run tauri:build:signed`.
 
