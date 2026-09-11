@@ -1555,6 +1555,23 @@ const HF_ACCOUNT: &str = "huggingface";
 pub struct TokenStatus {
     pub configured: bool,
     pub masked: String,
+    /// Present when a previous-version credential could not be removed from
+    /// Windows Credential Manager (audit S-07). The status is still masked;
+    /// Remove (clear) retries the cleanup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleanup_notice: Option<String>,
+}
+
+/// The user-facing wording for a failed legacy cleanup, shared by save and
+/// status so the message never varies by path (audit S-07).
+pub const LEGACY_CLEANUP_NOTICE: &str = "A credential from a previous product version is still stored in Windows Credential Manager. Remove retries the cleanup.";
+
+/// Map the legacy deletion result onto a visible notice (audit S-07): a
+/// failure is never silently swallowed, and a success keeps the notice away.
+pub fn legacy_cleanup_notice(delete_result: Result<(), String>) -> Option<String> {
+    delete_result
+        .err()
+        .map(|_| LEGACY_CLEANUP_NOTICE.to_string())
 }
 
 /// Show only the last four characters. A token that leaks into a screenshot,
@@ -1577,8 +1594,18 @@ pub fn mask_token(token: &str) -> String {
 
 /// Reject input that cannot be a Hugging Face token before it reaches the
 /// network, so the user gets an immediate, specific error.
+/// Longest accepted Hugging Face token input (audit S-07). Real tokens are
+/// well under 100 bytes; the bound stops an enormous paste before any
+/// character scan, storage attempt or diagnostic.
+pub const MAX_HF_TOKEN_BYTES: usize = 4096;
+
 pub fn validate_hf_token(token: &str) -> Result<String, String> {
     let token = token.trim();
+    if token.len() > MAX_HF_TOKEN_BYTES {
+        return Err(format!(
+            "That input is longer than the {MAX_HF_TOKEN_BYTES}-byte limit and cannot be a Hugging Face access token. Copy the token again from huggingface.co/settings/tokens."
+        ));
+    }
     if token.is_empty() {
         return Err("Paste a Hugging Face access token, or press Remove to clear it.".into());
     }
@@ -1649,15 +1676,31 @@ pub fn hf_token() -> Option<String> {
 }
 
 pub fn hf_token_status() -> TokenStatus {
+    let cleanup_notice = legacy_cleanup_notice(legacy_hf_entry_state());
     match hf_token() {
         Some(token) => TokenStatus {
             configured: true,
             masked: mask_token(&token),
+            cleanup_notice,
         },
         None => TokenStatus {
             configured: false,
             masked: String::new(),
+            cleanup_notice,
         },
+    }
+}
+
+/// A legacy entry that still reads is cleanup still owed; a failed read is
+/// reported as a deletion failure so the notice is never silently dropped.
+fn legacy_hf_entry_state() -> Result<(), String> {
+    let Ok(entry) = hf_entry_for(LEGACY_HF_KEYRING_SERVICE) else {
+        return Err("legacy entry unavailable".into());
+    };
+    match entry.get_password() {
+        Ok(_) => Err("legacy entry still present".into()),
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(format!("legacy entry read failed: {error}")),
     }
 }
 
@@ -1666,15 +1709,20 @@ pub fn save_hf_token(token: &str) -> Result<TokenStatus, String> {
     hf_entry()?
         .set_password(&token)
         .map_err(|error| format!("Could not save the token to Credential Manager: {error}"))?;
-    // A migrated write replaces the legacy entry; never keep two copies.
-    let _ =
-        hf_entry_for(LEGACY_HF_KEYRING_SERVICE).and_then(|entry| match entry.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(error) => Err(format!("Could not remove the token: {error}")),
-        });
+    // A migrated write replaces the legacy entry; never keep two copies. A
+    // failed removal is surfaced, never swallowed, and never fails the save
+    // (audit S-07): the new value is already stored.
+    let cleanup_notice =
+        legacy_cleanup_notice(hf_entry_for(LEGACY_HF_KEYRING_SERVICE).and_then(|entry| {
+            match entry.delete_credential() {
+                Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+                Err(error) => Err(format!("Could not remove the token: {error}")),
+            }
+        }));
     Ok(TokenStatus {
         configured: true,
         masked: mask_token(&token),
+        cleanup_notice,
     })
 }
 
@@ -1690,6 +1738,7 @@ pub fn clear_hf_token() -> Result<TokenStatus, String> {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(TokenStatus {
             configured: false,
             masked: String::new(),
+            cleanup_notice: None,
         }),
         Err(error) => Err(format!("Could not remove the token: {error}")),
     }
@@ -2061,6 +2110,42 @@ mod tests {
         assert_eq!(mask_token("ab"), "…ab", "a short value does not panic");
         // Multi-byte input must not split a character and panic.
         assert_eq!(mask_token("aé日本語"), "…é日本語");
+    }
+
+    #[test]
+    fn s07_hf_token_input_is_bounded_before_validation_and_never_echoed() {
+        // A real token is far below the bound and passes.
+        let ok = validate_hf_token("hf_abcdefghijklmnopqrstuvwxyz0123456789").unwrap();
+        assert_eq!(ok, "hf_abcdefghijklmnopqrstuvwxyz0123456789");
+
+        // Exactly the bound passes; one byte over is refused with an
+        // actionable message that never contains the input.
+        let at_bound = format!("hf_{}", "a".repeat(MAX_HF_TOKEN_BYTES - 3));
+        assert_eq!(at_bound.len(), MAX_HF_TOKEN_BYTES);
+        validate_hf_token(&at_bound).unwrap();
+        let over = format!("hf_{}", "b".repeat(MAX_HF_TOKEN_BYTES - 2));
+        assert_eq!(over.len(), MAX_HF_TOKEN_BYTES + 1);
+        let error = validate_hf_token(&over).unwrap_err();
+        assert!(error.contains("4096-byte limit"), "{error}");
+        assert!(
+            !error.contains("bbb"),
+            "the rejection must not echo any part of the input: {error}"
+        );
+
+        // Whitespace padding is trimmed before the bound applies.
+        let padded = "  hf_ok_token_1234  ";
+        assert_eq!(validate_hf_token(padded).unwrap(), "hf_ok_token_1234");
+    }
+
+    #[test]
+    fn s07_legacy_cleanup_failures_become_a_visible_notice() {
+        assert_eq!(legacy_cleanup_notice(Ok(())), None);
+        let notice = legacy_cleanup_notice(Err("Could not remove the token: denied".into()))
+            .expect("a failed cleanup must surface");
+        assert!(notice.contains("previous product version"), "{notice}");
+        assert!(notice.contains("Remove retries"), "{notice}");
+        // The notice never carries the underlying error text or any secret.
+        assert!(!notice.contains("denied"));
     }
 
     #[test]

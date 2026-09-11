@@ -1649,6 +1649,9 @@ function App() {
                   <p>A token is still useful: it enables gated repositories after you accept their licence and applies your account’s higher resolver rate limits. It does not guarantee higher raw bandwidth.</p>
                   <label>Read token<div className="key-row"><input type="password" autoComplete="off" value={hfTokenDraft} onChange={(event) => setHfTokenDraft(event.target.value)} placeholder={hfToken.configured ? `Stored ${hfToken.masked}` : "hf_…"} /><button className="button secondary" disabled={!hfTokenDraft.trim() || catalogBusy} onClick={saveHfToken}>Store</button></div></label>
                   {hfToken.configured && <button className="text-link" onClick={removeHfToken}>Remove stored token</button>}
+                  {hfToken.cleanupNotice && (
+                    <p role="status" className="token-cleanup-notice">{hfToken.cleanupNotice}</p>
+                  )}
                   <button className="text-link" onClick={() => openUrl("https://huggingface.co/settings/tokens")}>Create a read token on Hugging Face ↗</button>
                 </div>
                 <dl className="runtime-facts catalog-transfer-facts">

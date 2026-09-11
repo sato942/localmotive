@@ -1929,6 +1929,9 @@ export type CatalogSnapshot = {
 export type TokenStatus = {
   configured: boolean;
   masked: string;
+  /** Present when a previous-version credential could not be removed from
+   * Windows Credential Manager (audit S-07). Remove retries the cleanup. */
+  cleanupNotice?: string;
 };
 
 export type DownloadEvent = {

@@ -2206,18 +2206,18 @@ These packages preserve actionable recommendations outside the 72-item findings 
 
 **Harden HF token length and legacy credential cleanup**
 
-**Status:** Not started · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
 **Audit trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims)  
 **Prerequisites:** None; can begin independently.
 
 **Implementation**
 
-- [ ] **V06-S-07.I1** — Define a bounded token input length before validation/storage and return an actionable rejection without logging secret contents. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
-- [ ] **V06-S-07.I2** — Surface legacy Credential Manager deletion failures during migration/save and offer a retry/clear path; retain masked status and sensitive Authorization headers only. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
+- [x] **V06-S-07.I1** — Define a bounded token input length before validation/storage and return an actionable rejection without logging secret contents. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
+- [x] **V06-S-07.I2** — Surface legacy Credential Manager deletion failures during migration/save and offer a retry/clear path; retain masked status and sensitive Authorization headers only. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
 
 **Verification**
 
-- [ ] **V06-S-07.V1** — Use a fake secret store for overlength inputs, failed legacy deletion, retry and explicit clear. Assert no token appears in sidecars, UI status, diagnostics or logs. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
+- [x] **V06-S-07.V1** — Use a fake secret store for overlength inputs, failed legacy deletion, retry and explicit clear. Assert no token appears in sidecars, UI status, diagnostics or logs. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
 
 **Complete when:** Credential migration does not silently leave an obsolete entry while claiming full cleanup.
 
@@ -3716,3 +3716,11 @@ Revalidated at the candidate source (`065248a1` + the G-07 test addition) on Win
 - V1: `s06_ipc_payload_bounds_reject_oversized_before_aggregation` exercises one oversized row (257 files), too many tags (129) and an overlong tag, the aggregate total (130 rows x 64 files), 150 bounded rows with facets still available, a 2001-row deserialization refusal, and a legal Unicode filename; `s06_the_mirror_read_refuses_an_oversized_row_set` mirrors 5001 rows through the app path and asserts the refusal; the JS test file adds the generated too-many-files/too-many-tags/overlong-tag/many-bounded-rows/Unicode cases (21/21). `npm run catalog:validate` passes on the shipped pair.
 - Mutations: OW1 (deserialization row cap removed), OW2 (aggregate totals check removed) and OW3 (mirror read bound removed) each failed their guarding test and passed after restore.
 - Commands: `cargo fmt --check` PASS; clippy `-D warnings` 0 errors; `cargo test` 545 passed / 0 failed / 2 ignored (543 + the two S-06 tests); `npm run check` PASS (337.96 kB; node tests 21; catalog:validate 158 models / 1417 files · 0 drops).
+
+#### S-07 closure record — bounded token input, visible legacy cleanup
+
+- I1: `validate_hf_token` now checks `MAX_HF_TOKEN_BYTES` (4096) FIRST, before any character scan or storage attempt, and refuses with a fixed actionable message that never echoes the input (proved by a test that reads the message back). Real tokens and the exact bound pass; padded input is trimmed before the bound applies. Storage continues through Windows Credential Manager only.
+- I2: legacy (`GGUF Pilot`) deletion failures are no longer swallowed on save: `legacy_cleanup_notice` maps the deletion result onto `TokenStatus.cleanupNotice` ("A credential from a previous product version is still stored in Windows Credential Manager. Remove retries the cleanup."), `hf_token_status` reports a still-present legacy entry the same way, and Remove (`clear_hf_token`) retries both deletions with its existing error path. The status remains masked (`mask_token` only); Authorization headers stay confined to the download request (already proven by the `g07_an_authenticated_redirect` and `catalog_client_sends_no_secret_header` regressions). The frontend shows the notice next to the token controls.
+- V1: `s07_hf_token_input_is_bounded_before_validation_and_never_echoed` (real token, exactly-at-bound, one-over rejection with no echo, trimmed padding) and `s07_legacy_cleanup_failures_become_a_visible_notice` (success keeps the notice away; failure surfaces the shared wording without the underlying error text). The live Credential Manager vault is untouched by tests.
+- Mutations: OX1 (length bound removed) and OX2 (cleanup failure swallowed) each failed their guarding test and passed after restore.
+- Commands: `cargo fmt --check` PASS; clippy `-D warnings` 0 errors; `cargo test` 547 passed / 0 failed / 2 ignored (545 + the two S-07 tests); `npm run check` PASS (338.06 kB, `tsc --noEmit` PASS); Vitest 93.
