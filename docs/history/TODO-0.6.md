@@ -2683,22 +2683,29 @@ These packages preserve actionable recommendations outside the 72-item findings 
 
 **Document manual catalog candidate promotion and recovery**
 
-**Status:** Not started · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
+**Status:** Complete (documented + rehearsed; see the S-29 record) · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
 **Audit trace:** [CI history and reliability](./localmotive-comprehensive-audit.md#ci-history-and-reliability-context)  
 **Prerequisites:** [V06-QD-01](#v06-qd-01), [V06-DC-09](#v06-dc-09), [V06-DC-10](#v06-dc-10)
 
 **Implementation**
 
-- [ ] **V06-S-29.I1** — Document the exact handoff from the manually dispatched catalog candidate artifact through review, signature generation and committed promotion; make clear that the existing workflow does not itself publish to main. **Trace:** [CI history and reliability](./localmotive-comprehensive-audit.md#ci-history-and-reliability-context).
-- [ ] **V06-S-29.I2** — Define who retains/retrieves the candidate before the seven-day artifact expiry, how an expired/failed candidate is rebuilt, and how the promoted body/signature pair is checked together. **Trace:** [CI history and reliability](./localmotive-comprehensive-audit.md#ci-history-and-reliability-context).
+- [x] **V06-S-29.I1** — Document the exact handoff from the manually dispatched catalog candidate artifact through review, signature generation and committed promotion; make clear that the existing workflow does not itself publish to main. **Trace:** [CI history and reliability](./localmotive-comprehensive-audit.md#ci-history-and-reliability-context).
+- [x] **V06-S-29.I2** — Define who retains/retrieves the candidate before the seven-day artifact expiry, how an expired/failed candidate is rebuilt, and how the promoted body/signature pair is checked together. **Trace:** [CI history and reliability](./localmotive-comprehensive-audit.md#ci-history-and-reliability-context).
 
 **Verification**
 
-- [ ] **V06-S-29.V1** — Rehearse candidate generation, review and signature validation without treating candidate creation as publication. Exercise missing/expired artifacts and prove recovery cannot silently promote different unreviewed bytes. **Trace:** [CI history and reliability](./localmotive-comprehensive-audit.md#ci-history-and-reliability-context).
+- [x] **V06-S-29.V1** — Rehearse candidate generation, review and signature validation without treating candidate creation as publication. Exercise missing/expired artifacts and prove recovery cannot silently promote different unreviewed bytes. **Trace:** [CI history and reliability](./localmotive-comprehensive-audit.md#ci-history-and-reliability-context).
 
 **Complete when:** Catalog publication status and recovery are unambiguous and bound to the reviewed candidate bytes.
 
 **Scope / decision note:** The audit found a manual handoff and finite artifact retention; the workflow name alone does not prove automatic publication.
+
+#### S-29 progress record — catalog promotion and recovery
+
+- I1: `docs/CATALOG-PROMOTION.md` documents the exact handoff - manual dispatch, `build` job (pinned-action gates, rebuild from the allowlist, unsigned-structure validation, unsigned candidate artifact, retention 7 days), `sign` job (download of that exact artifact, signature with the CI-only `CATALOG_SIGNING_KEY_PEM` secret, detached-signature + structure re-validation against the embedded public key, `SHA256SUMS-candidate.txt`, signed-pair artifact, retention 7 days), then human review and a human commit of `catalog/catalog.json` + `catalog/catalog.json.sig` together. The document states explicitly that no workflow step publishes to `main`; promotion is the human commit.
+- I2: retained by the owner, retrieved with `gh run download <run-id> -n localmotive-catalog-signature` before the 7-day expiry; an expired or failed candidate is not recovered in place - recovery is a re-dispatch (or `sign_only` for checked-in bytes), and `dryrun_catalog.mjs` previews without writing. The pair is checked together by `node scripts/validate_catalog.mjs catalog/catalog.json` (exact-byte Ed25519 verification plus structure), by `SHA256SUMS-candidate.txt`, and by the app's own fetch-time verification against the same embedded key.
+- V1 rehearsal (`.hermes-0.6/s29-rehearsal.sh` -> `.hermes-0.6/s29-rehearsal.log`): baseline committed pair EXIT 0; candidate generation `build_catalog.mjs` EXIT 0 (rebuilt body 698 265 bytes vs committed 630 182 bytes - genuinely different bytes); unsigned candidate structure EXIT 0; tampered body EXIT 1 ("detached Ed25519 signature is invalid"); tampered signature EXIT 1; missing signature EXIT 1; NEW BODY + OLD SIGNATURE EXIT 1 (recovery cannot silently promote different unreviewed bytes); committed pair restored byte-identical (`RESTORED_IDENTICAL yes`, `git status catalog/` clean) and re-validated EXIT 0 ("valid v2 (158 models, 1417 files) · shared contract 0 drops"). One harness defect was found and corrected honestly: the first new-body-old-signature step lacked the signature file, so it proved the missing-signature path; the corrected rerun is appended to the log. Candidate creation was never treated as publication.
+- Limitation: the CI-side signing with the real key cannot be rehearsed locally by design (the key exists only as the repository secret); the sign job's own validation step is pinned by the GH-01/GH-02 workflow gates.
 
 ## Verification and release gates
 
