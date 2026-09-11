@@ -2881,7 +2881,15 @@ Environment: Windows 11 (26100) host with Windows Sandbox (WDAGUtilityAccount cl
 - **High-contrast signals checked at the engine level (G-05.I3 partial).** With `Emulation.setEmulatedMedia` forcing `forced-colors: active` and, separately, `prefers-contrast: more`, the packaged app renders with 113 visible text nodes and zero transparent text, 30 visible buttons and zero collapsed controls, and zero horizontal overflow; screenshots retained (`.hermes-0.6/g05-hc/`). Driver: `scripts/verify_high_contrast.mjs`. Honest limitation: this is engine-level media emulation, not a Windows High Contrast Mode session (Win+U), which remains a separate manual check; Narrator/NVDA remains NOT RUN (no screen reader on this host).
 - Remaining OPEN G-05 cells after this batch: partial-byte ("keep partial") download retention, the orphan-supervision reproducer, OS-level high-contrast, screen-reader, and live cloud/HF credential scenarios.
 
+#### G-05 packaged Windows wave — sixth batch: partial-byte download retention and resume
+
+- **Partial retention (G-05.I1) verified.** A real catalog download (Qwen3.8-27B-Q4_0, 16 056 478 688 bytes) was started into a scratch folder; the `.part` targets are preallocated to full size, so progress is tracked through the `.part.json` sidecar (url, size, expectedSha256, etag, four chunk ranges with per-range `done` bytes). `Keep & stop` kept the `.part` and sidecar, removed the `.lm-lock`, and produced no further writes while stopped (three samples stable); the notice read "Download cancelled".
+- **Resume verified.** A row-scoped Resume click on the same entry continued the download: the sidecar completed-byte sum grew from 1 115 684 864 to 1 123 292 284 (+7 607 420 bytes) before the row was stopped again (driver `scripts/g05_partial_resume.mjs`; the first attempt mis-targeted an older row's Resume control and is recorded as a harness iteration, not a product result).
+- **Open observation (harness-caused condition):** one older row (nemotron 707 MiB) shows `Resume` with no bytes and no progress; its job record survived while the scratch folder was deliberately deleted mid-life between runs. Clicking Resume produced no visible error and no progress. Exact cause unverified; candidate expectation: a resume whose partial/sidecar no longer exists should fail visibly. Repro: start a download, delete its destination folder externally while the job record lives, then click Resume.
+- Evidence: `.hermes-0.6/g05-partial.log`, `.hermes-0.6/g05-partial2.log`; scratch files removed after the run (16 GB preallocation reclaimed; a transient file handle left the empty directory in place).
+
 ### V06-G-06
+
 
 
 
