@@ -114,6 +114,33 @@ pub fn estimate_kv_cache_bytes(inputs: &KvCacheInputs) -> Evidence<u64> {
             notes: vec!["Dense KV cache arithmetic does not cover hybrid, recurrent, or zero-context workloads.".into()],
         };
     }
+    // Impossible dimensions must never produce an authoritative-looking
+    // number (audit S-03): zero blocks/heads/widths would silently estimate
+    // a near-zero cache, and absurd magnitudes indicate corrupt metadata.
+    const MAX_PLAUSIBLE_DIMENSION: u64 = 1 << 20;
+    let dimensions = [
+        ("block_count", blocks),
+        ("head_count_kv", kv_heads),
+        ("key_length", key_length),
+        ("value_length", value_length),
+    ];
+    let impossible: Vec<String> = dimensions
+        .iter()
+        .filter(|(_, value)| *value == 0 || *value > MAX_PLAUSIBLE_DIMENSION)
+        .map(|(name, value)| format!("{name}={value}"))
+        .collect();
+    if !impossible.is_empty() {
+        return Evidence {
+            value: None,
+            level: EvidenceLevel::Unknown,
+            source,
+            observed_at_ms: inputs.observed_at_ms,
+            notes: vec![format!(
+                "KV cache dimensions are not plausible: {}.",
+                impossible.join(", ")
+            )],
+        };
+    }
     let per_position = (key_length as u128)
         .checked_mul(key_bytes as u128)
         .and_then(|value| value.checked_add((value_length as u128) * (value_bytes as u128)));
@@ -888,6 +915,70 @@ mod tests {
             evidence.source.kind,
             crate::evidence::EvidenceSourceKind::Calculation
         );
+    }
+
+    #[test]
+    fn s03_impossible_kv_dimensions_are_rejected_and_overflow_stays_unknown() {
+        let base = |block_count: u64,
+                    head_count_kv: u64,
+                    key_length: u64,
+                    value_length: u64,
+                    context: u64| {
+            KvCacheInputs {
+                architecture: "llama".into(),
+                block_count: Some(block_count),
+                head_count_kv: Some(head_count_kv),
+                key_length: Some(key_length),
+                value_length: Some(value_length),
+                context,
+                cache_type_k: "f16".into(),
+                cache_type_v: "f16".into(),
+                recurrent_or_hybrid: false,
+                observed_at_ms: 42,
+            }
+        };
+
+        // Zero anywhere would silently compute a near-zero, authoritative-
+        // looking number; every zero dimension must stay unknown with the
+        // offending term named.
+        for (label, inputs) in [
+            ("blocks", base(0, 8, 128, 128, 4096)),
+            ("kv heads", base(32, 0, 128, 128, 4096)),
+            ("key width", base(32, 8, 0, 128, 4096)),
+            ("value width", base(32, 8, 128, 0, 4096)),
+        ] {
+            let evidence = estimate_kv_cache_bytes(&inputs);
+            assert_eq!(evidence.value, None, "{label}");
+            assert_eq!(
+                evidence.level,
+                crate::evidence::EvidenceLevel::Unknown,
+                "{label}"
+            );
+            assert!(
+                evidence
+                    .notes
+                    .iter()
+                    .any(|note| note.contains("not plausible")),
+                "{label}: {:?}",
+                evidence.notes
+            );
+        }
+
+        // Absurd magnitudes (corrupt metadata) stay unknown too.
+        let evidence = estimate_kv_cache_bytes(&base(u64::MAX, 8, 128, 128, 4096));
+        assert_eq!(evidence.value, None);
+        assert!(evidence
+            .notes
+            .iter()
+            .any(|note| note.contains("block_count")));
+
+        // Overflow through the u128 chain stays unknown rather than wrapping.
+        let evidence = estimate_kv_cache_bytes(&base(1 << 20, 1 << 20, 1 << 20, 1 << 20, u64::MAX));
+        assert_eq!(evidence.value, None);
+        assert!(evidence
+            .notes
+            .iter()
+            .any(|note| note.contains("byte range") || note.contains("not plausible")));
     }
 
     #[test]

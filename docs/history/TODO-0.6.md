@@ -2122,18 +2122,18 @@ These packages preserve actionable recommendations outside the 72-item findings 
 
 **Reject impossible preflight dimensions while preserving unknown estimates**
 
-**Status:** Not started · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
 **Audit trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations)  
 **Prerequisites:** [V06-FE-06](#v06-fe-06)
 
 **Implementation**
 
-- [ ] **V06-S-03.I1** — Reject zero or otherwise impossible block/head/key/value dimensions before computing dense KV estimates; preserve checked arithmetic and explicit reasons for unknown results. **Trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations).
-- [ ] **V06-S-03.I2** — Keep unsupported architectures, quantized caches, recurrent/hybrid layouts and uncertain multi-device allocations unknown; label file-size weight estimates as proxies. **Trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations).
+- [x] **V06-S-03.I1** — Reject zero or otherwise impossible block/head/key/value dimensions before computing dense KV estimates; preserve checked arithmetic and explicit reasons for unknown results. **Trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations).
+- [x] **V06-S-03.I2** — Keep unsupported architectures, quantized caches, recurrent/hybrid layouts and uncertain multi-device allocations unknown; label file-size weight estimates as proxies. **Trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations).
 
 **Verification**
 
-- [ ] **V06-S-03.V1** — Cover zero dimensions, overflow, valid supported dense shapes and unsupported layouts; assert no invalid metadata produces an authoritative zero-memory estimate. **Trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations).
+- [x] **V06-S-03.V1** — Cover zero dimensions, overflow, valid supported dense shapes and unsupported layouts; assert no invalid metadata produces an authoritative zero-memory estimate. **Trace:** [Runtime additional observations](./localmotive-comprehensive-audit.md#additional-limitations-and-engineering-observations).
 
 **Complete when:** Preflight cannot report a plausible numeric estimate from impossible dimensions.
 
@@ -3684,3 +3684,11 @@ Revalidated at the candidate source (`065248a1` + the G-07 test addition) on Win
 - V1: fixtures used: same-size header with/without split metadata (the `fixture_with_split` variant differs from `fixture` by exactly two keys and the kv count), inconsistent split metadata (count mismatch, index mismatch, half-recorded pairs), and the existing MT-15/DC-11 suites cover renamed-identical-bytes (digest) and reordered-companion (deterministic ordering) claims at their levels.
 - Mutations: NS1 (split keys no longer read) and NS2 (verdict accepts any recorded metadata) each failed their matching tests and passed after restore, verified in isolation.
 - Commands: `cargo fmt --check` PASS; clippy included in the full gate; `cargo test` 539 passed / 0 failed / 2 ignored (537 after S-01 + the two new S-02 tests); `tsc --noEmit` PASS.
+
+#### S-03 closure record — impossible preflight dimensions never look authoritative
+
+- I1: `estimate_kv_cache_bytes` now rejects zero and implausible (> 2^20) values for block_count, head_count_kv, key_length and value_length BEFORE arithmetic, naming each offending term in the Unknown evidence notes. The u128 checked chain and the explicit overflow note already existed and are unchanged; a zero anywhere previously produced a small, authoritative-looking `Derived` number.
+- I2: already-honest levels re-verified in the same function: unsupported architectures, quantized/unknown cache element widths, recurrent/hybrid layouts and multi-device placements stay Unknown; weight bytes remain a `Heuristic` proxy with the note "File bytes do not prove final runtime allocation"; per-adapter placements stay Unknown until a validated runtime measurement.
+- V1: `s03_impossible_kv_dimensions_are_rejected_and_overflow_stays_unknown` covers zero blocks/heads/key/value (each stays Unknown and names the term), an absurd `u64::MAX` block count, overflow through the u128 chain (stays Unknown), and the existing valid-dense case (`calculates_dense_kv_bytes_only_from_complete_terms` = 536_870_912 bytes) and unsupported-layout cases remain green.
+- Mutation NT1 (the zero check dropped, keeping only the magnitude bound) failed the new test and passed after restore.
+- Commands: `cargo fmt --check` PASS; `cargo test` 540 passed / 0 failed / 2 ignored (539 + the new S-03 test).
