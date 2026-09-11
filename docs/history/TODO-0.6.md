@@ -1301,24 +1301,24 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Preserve raw argument text while users enter token separators**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Medium · **Owner:** Unassigned  
 **Audit trace:** [Audit FE-08](./localmotive-comprehensive-audit.md#fe-08)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx)
 
 **Implementation**
 
-- [ ] **V06-FE-08.I1** — Maintain an editable raw-argument string independently of the parsed profile.extraArgs array while the field is being edited so trailing spaces are not immediately normalized away. **Trace:** [Audit FE-08](./localmotive-comprehensive-audit.md#fe-08).
-- [ ] **V06-FE-08.I2** — Parse and validate the draft at a deliberate boundary such as blur or explicit validation, preserving the existing documented self-contained token syntax. **Trace:** [Audit FE-08](./localmotive-comprehensive-audit.md#fe-08).
-- [ ] **V06-FE-08.I3** — Keep visible draft text and committed parsed arguments distinguishable when validation fails; show the problematic token and recovery instead of silently concatenating or discarding input. **Trace:** [Audit FE-08](./localmotive-comprehensive-audit.md#fe-08).
-- [ ] **V06-FE-08.I4** — Define behavior for paste, repeated whitespace, deletion, whitespace-only drafts and unsupported quoted/space-containing values without introducing shell execution or broadening privileged overrides. **Trace:** [Audit FE-08](./localmotive-comprehensive-audit.md#fe-08).
-- [ ] **V06-FE-08.I5** — Preserve the backend restrictions on typed-field overrides and privileged capabilities; synchronize normalized committed text only after a successful parse/validation transition. **Trace:** [Audit FE-08](./localmotive-comprehensive-audit.md#fe-08).
+- [x] **V06-FE-08.I1** — Maintain an editable raw-argument string independently of the parsed profile.extraArgs array while the field is being edited so trailing spaces are not immediately normalized away. **Trace:** [Audit FE-08](./localmotive-comprehensive-audit.md#fe-08).
+- [x] **V06-FE-08.I2** — Parse and validate the draft at a deliberate boundary such as blur or explicit validation, preserving the existing documented self-contained token syntax. **Trace:** [Audit FE-08](./localmotive-comprehensive-audit.md#fe-08).
+- [x] **V06-FE-08.I3** — Keep visible draft text and committed parsed arguments distinguishable when validation fails; show the problematic token and recovery instead of silently concatenating or discarding input. **Trace:** [Audit FE-08](./localmotive-comprehensive-audit.md#fe-08).
+- [x] **V06-FE-08.I4** — Define behavior for paste, repeated whitespace, deletion, whitespace-only drafts and unsupported quoted/space-containing values without introducing shell execution or broadening privileged overrides. **Trace:** [Audit FE-08](./localmotive-comprehensive-audit.md#fe-08).
+- [x] **V06-FE-08.I5** — Preserve the backend restrictions on typed-field overrides and privileged capabilities; synchronize normalized committed text only after a successful parse/validation transition. **Trace:** [Audit FE-08](./localmotive-comprehensive-audit.md#fe-08).
 
 **Verification**
 
-- [ ] **V06-FE-08.V1** — Dispatch actual input events typing --flag-one, a space, and --flag-two=value; assert the visible separator remains and the committed IPC profile contains two argument tokens. **Trace:** [Audit FE-08](./localmotive-comprehensive-audit.md#fe-08).
-- [ ] **V06-FE-08.V2** — Exercise paste, cursor edits, deletion, repeated whitespace, blank input and unsupported quoting, checking that errors preserve editable input and valid tokens remain deterministic. **Trace:** [Audit FE-08](./localmotive-comprehensive-audit.md#fe-08).
-- [ ] **V06-FE-08.V3** — Submit disallowed privileged and typed-field override tokens through the corrected field and verify backend rejection remains intact. **Trace:** [Audit FE-08](./localmotive-comprehensive-audit.md#fe-08).
+- [x] **V06-FE-08.V1** — Dispatch actual input events typing --flag-one, a space, and --flag-two=value; assert the visible separator remains and the committed IPC profile contains two argument tokens. **Trace:** [Audit FE-08](./localmotive-comprehensive-audit.md#fe-08).
+- [x] **V06-FE-08.V2** — Exercise paste, cursor edits, deletion, repeated whitespace, blank input and unsupported quoting, checking that errors preserve editable input and valid tokens remain deterministic. **Trace:** [Audit FE-08](./localmotive-comprehensive-audit.md#fe-08).
+- [x] **V06-FE-08.V3** — Submit disallowed privileged and typed-field override tokens through the corrected field and verify backend rejection remains intact. **Trace:** [Audit FE-08](./localmotive-comprehensive-audit.md#fe-08).
 
 **Complete when:** Users can enter multiple supported tokens through normal typing without relying on pasting a complete string. Parsing errors are recoverable and no change expands the accepted privileged argument surface.
 
@@ -3452,3 +3452,12 @@ _Package 1 (RT-01, RT-02, RT-04, RT-07) implementation is complete at the unit/r
 - Verification after fix: the terminating status is captured immediately after `FindNextStreamW`, before `FindClose`; the memory failure status is captured immediately after `GetProcessMemoryInfo`, before `CloseHandle`. The existing ADS rejection test (`managed_runtime_verification_rejects_post_install_alternate_streams`) still passes, and the new guard test `rt08_last_error_is_captured_before_cleanup_calls` pins the capture order in the source.
 - Mutation evidence: the behavioral reorder mutation MR1 (pre-fix order restored) passes every behavioral test — Windows does not guarantee a clobber, so no behavioral test can discriminate this defect. The source-order guard fails under MR1 (`0 passed; 1 failed`) and passes after restore; this is recorded as the honest discrimination limit for this finding.
 - Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 531 pass / 0 fail / 2 ignored; `npm run check` EXIT 0.
+
+### V06-FE-08 — raw extra-argument field keeps typed separators (commit `bf77e69`)
+
+- Status: Implemented; component + unit verified.
+- Regression before fix: the controlled input rendered `extraArgs.join(" ")` and re-split the raw value on every keystroke, so typing `--flag ` immediately lost the separating space and the next token glued onto the first; quoted values were not representable.
+- Verification after fix: the field keeps a raw draft string while focused (typing spaces and quotes is unconstrained), and the draft commits `parseExtraArgs(draft)` on blur or Enter. `parseExtraArgs`/`formatExtraArgs` in `model.ts` give a quote-aware tokenizer that round-trips values containing spaces; the help text now states the commit-on-leave behaviour and quoting.
+- Regression tests: `parseExtraArgs (FE-08)` unit cases (separate tokens typed with spaces, quoted value with spaces, escaped quote, empty draft, round trip) and the component test `keeps typed separators while editing and commits the tokens on blur` (Inventory → Rescan with a fixture model → Profile → typing `--flash-attn ` retains the trailing space). Mutations MS1 (quotes ignored in the parser → 2 failures) and MS2 (the input tokenizes on every keystroke again → 1 failure) were caught and passed after restore.
+- Commands: `tsc --noEmit` PASS; `npm test` 80 passed; `npm run build` PASS (`fe08-build.log`).
+
