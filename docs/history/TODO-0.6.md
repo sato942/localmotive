@@ -1084,23 +1084,23 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Use the artifact shard contract for discovery completeness**
 
-**Status:** Not started · **Priority:** Low · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Low · **Owner:** sato942  
 **Audit trace:** [Audit MT-15](./localmotive-comprehensive-audit.md#mt-15)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src-tauri/src/core.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/core.rs), [src-tauri/src/artifact.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/artifact.rs)
 
 **Implementation**
 
-- [ ] **V06-MT-15.I1** — Route discovery's grouped shard names through the artifact module's analysis instead of deciding completeness from a HashSet that silently drops parse failures and duplicate file indices. **Trace:** [Audit MT-15](./localmotive-comprehensive-audit.md#mt-15).
-- [ ] **V06-MT-15.I2** — Require every grouped file to parse consistently, agree on logical identity and expected count, and contribute exactly one unique required index. **Trace:** [Audit MT-15](./localmotive-comprehensive-audit.md#mt-15).
-- [ ] **V06-MT-15.I3** — Return explicit duplicate, malformed, inconsistent-count, and missing-shard problems to discovery so the displayed complete state matches launch validation. **Trace:** [Audit MT-15](./localmotive-comprehensive-audit.md#mt-15).
-- [ ] **V06-MT-15.I4** — Preserve deterministic first-shard selection, valid singleton behavior, split ordering, and existing symlink/reparse protections while replacing the divergent decision logic. **Trace:** [Audit MT-15](./localmotive-comprehensive-audit.md#mt-15).
+- [x] **V06-MT-15.I1** — Route discovery's grouped shard names through the artifact module's analysis instead of deciding completeness from a HashSet that silently drops parse failures and duplicate file indices. **Trace:** [Audit MT-15](./localmotive-comprehensive-audit.md#mt-15).
+- [x] **V06-MT-15.I2** — Require every grouped file to parse consistently, agree on logical identity and expected count, and contribute exactly one unique required index. **Trace:** [Audit MT-15](./localmotive-comprehensive-audit.md#mt-15).
+- [x] **V06-MT-15.I3** — Return explicit duplicate, malformed, inconsistent-count, and missing-shard problems to discovery so the displayed complete state matches launch validation. **Trace:** [Audit MT-15](./localmotive-comprehensive-audit.md#mt-15).
+- [x] **V06-MT-15.I4** — Preserve deterministic first-shard selection, valid singleton behavior, split ordering, and existing symlink/reparse protections while replacing the divergent decision logic. **Trace:** [Audit MT-15](./localmotive-comprehensive-audit.md#mt-15).
 
 **Verification**
 
-- [ ] **V06-MT-15.V1** — Create a real temporary tree containing foo.gguf and foo-00001-of-00001.gguf; assert discovery and artifact validation agree that the duplicate index does not form a complete valid model. **Trace:** [Audit MT-15](./localmotive-comprehensive-audit.md#mt-15).
-- [ ] **V06-MT-15.V2** — Cover duplicate indices, malformed index/count, conflicting expected counts, missing first shard, extension case variation, and valid complete singleton/split sets. **Trace:** [Audit MT-15](./localmotive-comprehensive-audit.md#mt-15).
-- [ ] **V06-MT-15.V3** — Compare completeness and diagnostic outcomes across scanning and launch inspection for each fixture and verify only the intended first shard is selected for valid models. **Trace:** [Audit MT-15](./localmotive-comprehensive-audit.md#mt-15).
+- [x] **V06-MT-15.V1** — Create a real temporary tree containing foo.gguf and foo-00001-of-00001.gguf; assert discovery and artifact validation agree that the duplicate index does not form a complete valid model. **Trace:** [Audit MT-15](./localmotive-comprehensive-audit.md#mt-15).
+- [x] **V06-MT-15.V2** — Cover duplicate indices, malformed index/count, conflicting expected counts, missing first shard, extension case variation, and valid complete singleton/split sets. **Trace:** [Audit MT-15](./localmotive-comprehensive-audit.md#mt-15).
+- [x] **V06-MT-15.V3** — Compare completeness and diagnostic outcomes across scanning and launch inspection for each fixture and verify only the intended first shard is selected for valid models. **Trace:** [Audit MT-15](./localmotive-comprehensive-audit.md#mt-15).
 
 **Complete when:** Discovery no longer reports complete for a shard group the shared artifact contract rejects, and invalid groups expose actionable reasons. Valid model selection remains deterministic and retains the existing downstream launch and filesystem protections.
 
@@ -3361,4 +3361,12 @@ _Package 1 (RT-01, RT-02, RT-04, RT-07) implementation is complete at the unit/r
 - Regression tests: `mt10_missing_metrics_make_pairs_incomparable_not_cyclic` (the exact audit counterexample; all three candidates frontier members with empty dominator lists; a fully measured pair still dominates; deterministic re-run), `mt10_partial_coverage_cannot_inflate_a_score`, `mt10_duplicate_ids_are_rejected_and_dominators_are_bounded`, `mt10_ranking_scales_to_ten_thousand_candidates` (10,000 candidates: debug 12.8 s, release 1.88 s — recorded here as the measured worst-case bound). Mutations MI1 (skip-missing dominance restored) / MI2 (available-only denominator) / MI3 (dominator cap removed) each failed their matching test and passed after restore.
 - Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 505 pass / 0 fail / 2 ignored; `npm run check` EXIT 0; `npx tsc --noEmit` EXIT 0; release-profile measurement `cargo test --release --lib mt10_ranking_scales -- --nocapture` → `ranked 10000 candidates in 1.8770413s`.
 - Residual: 10,000-candidate ranking stays O(n^2) by design (bounded detail, measured runtime); the panel shows evidence coverage per candidate, so a low-coverage candidate is visible even when it ranks high.
+
+### V06-MT-15 — discovery reuses artifact shard analysis (commit `pending`)
+
+- Status: Implemented; V1 verified.
+- Regression before fix: the scanner judged completeness from its own index set, tolerating duplicate indices (an unsplit `foo.gguf` beside `foo-00001-of-00001.gguf` could report complete) and silently dropping parse failures, while the artifact module rejected the same folders.
+- Verification after fix: `scan_models` groups files as before but derives `complete` and an explicit `problems: Vec<ArtifactProblem>` from `artifact::analyze_shard_names` (new `MalformedShardName` code for analyzer refusals); `LogicalModel` carries the problems to the UI. Deterministic first-shard selection is unchanged.
+- Regression tests: `mt15_duplicate_indices_and_unsplit_collisions_are_incomplete`, `mt15_malformed_and_inconsistent_shard_names_are_incomplete`, `mt15_extension_case_variation_and_valid_sets_stay_complete` — each case asserts discovery's decision equals `analyze_shard_names`' decision. Mutations MJ1 (scanner heuristic restored) and MJ2 (analyzer errors treated as complete) failed their matching tests and passed after restore.
+- Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 508 pass / 0 fail / 2 ignored; `npm run check` EXIT 0.
 
