@@ -31,13 +31,13 @@ Owner: `sato942` (accountable maintainer). Implementation and evidence productio
 
 | Package | Scope | Status |
 |---|---|---|
-| 1 | Managed runtime trust and legacy recovery (RT-01, RT-02, RT-04, RT-07) | Implementation complete; unit-verified; packaged items open in G-05 |
-| 2 | Catalog restart, offline loading and recovery (DC-01, DC-03, DC-07) | Implementation complete; unit-verified (commit `e6c7f59`); packaged items open in G-04/G-05 |
-| 3 | Override identity and atomic persistence (DC-04, DC-05, DC-06) | Implementation complete; unit-verified (commit `6be56e5`); packaged items open in G-04/G-05 |
-| 4 | Bounded and cancellable tuning (MT-03, MT-04, RT-03) | Implementation complete; unit-verified (commit `1eaa476`); packaged Windows cancellation evidence open in G-04/G-05 |
-| 5 | Benchmark protocol, export privacy and failure records (MT-01, MT-02, MT-12) | Implementation complete; unit-verified (commit `9d4c36c`); packaged b10816 acceptance open in G-04/G-05 |
-| 6 | Model, runtime and operation ownership (FE-01, FE-02, FE-03, FE-05, FE-07, FE-16, MT-05) | Implementation complete; unit-verified (commits `bb9a5ab`, `411c32c`, `0045cb6`, `6da40d8`, `7d4a514`); packaged UI scenarios open in G-04 |
-| 7 | Responsive operations, parser and transfer bounds (IPC-01, FE-04, RT-05, RT-06, DC-02, DC-08, DC-12) | Implementation complete; unit-verified; packaged items open in G-04/G-05/G-06 |
+| 1 | Managed runtime trust and legacy recovery (RT-01, RT-02, RT-04, RT-07) | Implementation complete; unit-verified; packaged wave executed (residual cells deferred per the release review) |
+| 2 | Catalog restart, offline loading and recovery (DC-01, DC-03, DC-07) | Implementation complete; unit-verified (commit `e6c7f59`); packaged wave executed |
+| 3 | Override identity and atomic persistence (DC-04, DC-05, DC-06) | Implementation complete; unit-verified (commit `6be56e5`); packaged wave executed |
+| 4 | Bounded and cancellable tuning (MT-03, MT-04, RT-03) | Implementation complete; unit-verified (commit `1eaa476`); packaged cancellation evidence recorded in G-05 |
+| 5 | Benchmark protocol, export privacy and failure records (MT-01, MT-02, MT-12) | Implementation complete; unit-verified (commit `9d4c36c`); packaged b10816 acceptance recorded (MT-01.V3: 1002.60 tok/s mean, 5/5 sampled) |
+| 6 | Model, runtime and operation ownership (FE-01, FE-02, FE-03, FE-05, FE-07, FE-16, MT-05) | Implementation complete; unit-verified (commits `bb9a5ab`, `411c32c`, `0045cb6`, `6da40d8`, `7d4a514`); packaged UI scenarios recorded with residual cells deferred |
+| 7 | Responsive operations, parser and transfer bounds (IPC-01, FE-04, RT-05, RT-06, DC-02, DC-08, DC-12) | Implementation complete; unit-verified; packaged wave + lifecycle executed |
 | 8 | Delivery sequencing and truthful verifiers (GH-01..GH-06, GH-10, QD-02, QD-03) | Implemented and verified (commits `fe6f4ea`, `69894e3`, `b722f4d`, `e44019c`, `5222307`); GitHub-hosted PR runs and ruleset application deferred to the owner |
 | 9 | Secured local transport (MT-06) | Implemented and verified (commit `8c73679`, extended by `69e6ff0`); packaged TLS/key acceptance recorded |
 | 10 | Measurement identity, calibration and ranking (MT-07..MT-11, MT-13..MT-15, FE-06, FE-17) | Implemented and verified (`72bb60b`, `fc02ce6`, `7ce5df9`, `6e3659d`, `f495e69`, `d1d718b`, `cf52adc`, `50a4845`); packaged identity walk deferred |
