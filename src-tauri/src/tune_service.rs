@@ -96,20 +96,76 @@ impl tune::Bench for LiveBench<'_> {
         let cleanup = child.terminate_and_wait();
         // Give the OS a moment to release the port before the next launch.
         std::thread::sleep(Duration::from_millis(600));
-        match (result, cleanup) {
-            (Ok(mut measurement), true) => {
-                measurement.command = command;
-                Ok(measurement)
-            }
-            (Ok(_), false) => Err(
-                "The measured configuration succeeded, but its trial server could not be stopped cleanly; the result is withheld for the next session to re-check."
-                    .into(),
-            ),
-            (Err(error), true) => Err(error),
-            (Err(error), false) => {
-                Err(format!("{error} (cleanup also failed: the trial server did not exit)"))
-            }
+        combine_trial_outcome(result, cleanup, command)
+    }
+}
+
+/// Combine a trial result with the outcome of stopping its server. A
+/// measured result is withheld when the server could not be stopped, so a
+/// failed cleanup can never read as a clean tuning success (audit MT-04).
+pub(crate) fn combine_trial_outcome(
+    result: Result<tune::TrialMeasurement, String>,
+    cleanup_stopped: bool,
+    command: String,
+) -> Result<tune::TrialMeasurement, String> {
+    match (result, cleanup_stopped) {
+        (Ok(mut measurement), true) => {
+            measurement.command = command;
+            Ok(measurement)
         }
+        (Ok(_), false) => Err(
+            "The measured configuration succeeded, but its trial server could not be stopped cleanly; the result is withheld for the next session to re-check."
+                .into(),
+        ),
+        (Err(error), true) => Err(error),
+        (Err(error), false) => {
+            Err(format!("{error} (cleanup also failed: the trial server did not exit)"))
+        }
+    }
+}
+
+#[cfg(test)]
+mod combine_trial_outcome_tests {
+    use super::*;
+
+    fn measurement() -> tune::TrialMeasurement {
+        tune::TrialMeasurement {
+            summary: crate::core::summarize_benchmark(vec![100.0, 101.0], 256, 2)
+                .expect("fixture summarises"),
+            command: String::new(),
+            effective_context: Some(4096),
+        }
+    }
+
+    #[test]
+    fn a_stopped_server_keeps_the_measured_result_with_its_command() {
+        let out = combine_trial_outcome(Ok(measurement()), true, "llama-server --model x".into())
+            .unwrap();
+        assert_eq!(out.command, "llama-server --model x");
+    }
+
+    #[test]
+    fn a_measurement_is_withheld_when_its_server_could_not_be_stopped() {
+        // Injection: the trial measured fine, but cleanup failed. The result
+        // must not be reported as a clean success (audit MT-04).
+        let error = combine_trial_outcome(Ok(measurement()), false, String::new()).unwrap_err();
+        assert!(error.contains("could not be stopped cleanly"), "{error}");
+        assert!(error.contains("withheld"), "{error}");
+    }
+
+    #[test]
+    fn the_original_measurement_error_survives_a_successful_cleanup() {
+        let error =
+            combine_trial_outcome(Err("health timed out".into()), true, String::new()).unwrap_err();
+        assert_eq!(error, "health timed out");
+    }
+
+    #[test]
+    fn a_measurement_error_is_annotated_when_cleanup_also_failed() {
+        let error = combine_trial_outcome(Err("health timed out".into()), false, String::new())
+            .unwrap_err();
+        assert!(error.contains("health timed out"), "{error}");
+        assert!(error.contains("cleanup also failed"), "{error}");
     }
 }
 

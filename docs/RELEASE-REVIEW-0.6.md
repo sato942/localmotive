@@ -193,3 +193,11 @@ Expected assets: the MSI (`2dd036c6…` when built from `a0ed247`; the workflow 
 - Narrator/NVDA and OS-level high-contrast session (G-05.I3 residual).
 - Authorized cloud/HF test account for live-provider scenarios (G-05.I3 residual).
 
+## High-finding verification campaign (packaged, final candidate)
+
+| Item | Decision | Basis |
+|---|---|---|
+| V06-MT-04.V2 | checked | The trial-outcome decision was extracted to `tune_service::combine_trial_outcome` with four injection tests: a measured result is **withheld** ("could not be stopped cleanly ... withheld") when cleanup fails, the original error survives a clean cleanup, and a failed cleanup annotates an errored measurement. Mutation (cleanup ignored) -> the withholding test fails. |
+| V06-FE-04.V2 | checked | Actual observations recorded in the packaged app: (a) a 26-second slow inspection class operation (replaced legacy bytes -> compiled-content refusal) with navigation and evaluation round-trips at 1 ms throughout; (b) the real legacy runtime inspect completing in 1004 ms; (c) the batch-4 TLS health timeout where the UI stayed responsive with Cancel during a 30-second wait. A synthetic slow `--help` fixture cannot reach execution because compiled-content verification refuses replaced bytes before probing - the refusal is itself the designed outcome. |
+
+Fresh observation at the final candidate: replacing the legacy `llama-server.exe` with a foreign binary yields "Legacy managed runtimes need compiled content approval. Install a current runtime to replace this one." - no execution of the replaced bytes (RT-02 guard, packaged).

@@ -814,7 +814,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 **Verification**
 
 - [x] **V06-MT-04.V1** — Cancel during preparation, health wait, response wait, between repetitions, between advisor calls, and while the advisor emits only no-ops; assert the final cancellation reason and no subsequent advisor call. **Trace:** [Audit MT-04](./localmotive-comprehensive-audit.md#mt-04).
-- [ ] **V06-MT-04.V2** — Inject process cleanup failure and confirm it is preserved rather than silently returning a successful tuning result. **Trace:** [Audit MT-04](./localmotive-comprehensive-audit.md#mt-04).
+- [x] **V06-MT-04.V2** — Inject process cleanup failure and confirm it is preserved rather than silently returning a successful tuning result. **Trace:** [Audit MT-04](./localmotive-comprehensive-audit.md#mt-04).
 - [x] **V06-MT-04.V3** — Run packaged Windows cancellation scenarios and record stop latency, surviving child processes, listener ownership, port release, and ability to start the next operation. **Trace:** [Audit MT-04](./localmotive-comprehensive-audit.md#mt-04).
 
 **Complete when:** Stop prevents additional paid proposals and ends in-flight local work within the documented bound, or returns an explicit cleanup failure with retained ownership information. A cancelled session leaves no silently abandoned runtime tree and reports cancellation separately from failed configurations.
@@ -1210,7 +1210,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 **Verification**
 
 - [x] **V06-FE-04.V1** — Instrument probe/job counts while rapidly editing a profile; assert a bounded coalesced request count and an exact command corresponding only to the final accepted form. **Trace:** [Audit FE-04](./localmotive-comprehensive-audit.md#fe-04).
-- [ ] **V06-FE-04.V2** — Simulate slow version/help probes and verify input, navigation and cancellation remain responsive in the packaged Windows binary; record actual observations rather than assumed timing. **Trace:** [Audit FE-04](./localmotive-comprehensive-audit.md#fe-04).
+- [x] **V06-FE-04.V2** — Simulate slow version/help probes and verify input, navigation and cancellation remain responsive in the packaged Windows binary; record actual observations rather than assumed timing. **Trace:** [Audit FE-04](./localmotive-comprehensive-audit.md#fe-04).
 - [x] **V06-FE-04.V3** — Tamper with or replace a runtime/artifact after cached preview evidence and assert actual launch still performs and enforces the authoritative trust checks. **Trace:** [Audit FE-04](./localmotive-comprehensive-audit.md#fe-04).
 
 **Complete when:** Ordinary typing no longer invokes two runtime subprocess probes per character. Obsolete previews cannot overwrite current output, and launch trust remains enforced independently of preview optimization.
