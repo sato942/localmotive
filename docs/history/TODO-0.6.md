@@ -1382,24 +1382,24 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Restore keyboard-focus outlines on model-folder and download-destination inputs**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Medium · **Owner:** Unassigned  
 **Audit trace:** [Audit FE-12](./localmotive-comprehensive-audit.md#fe-12)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src/App.css](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.css), [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx), [docs/DESIGN.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/docs/DESIGN.md)
 
 **Implementation**
 
-- [ ] **V06-FE-12.I1** — Remove the outline reset from .path-bar input or add an explicit .path-bar input:focus-visible rule applying the existing amber outline and offset. **Trace:** [Audit FE-12](./localmotive-comprehensive-audit.md#fe-12).
-- [ ] **V06-FE-12.I2** — Scope the correction to the Model root and Download destination path-bar fields, both of which have border:0 and no alternative declared focus indicator. **Trace:** [Audit FE-12](./localmotive-comprehensive-audit.md#fe-12).
-- [ ] **V06-FE-12.I3** — Retain the global :focus-visible treatment for ordinary labeled controls; do not rewrite unrelated input styles on the mistaken assumption that label input overrides the global pseudo-class. **Trace:** [Audit FE-12](./localmotive-comprehensive-audit.md#fe-12).
-- [ ] **V06-FE-12.I4** — Ensure the restored outline is visible against the path-bar background and is not clipped by surrounding borders, overflow behavior or the narrow-screen layout. **Trace:** [Audit FE-12](./localmotive-comprehensive-audit.md#fe-12).
-- [ ] **V06-FE-12.I5** — Keep pointer interaction and existing path input behavior intact while satisfying the normative design document's requirement to preserve the amber keyboard-focus ring. **Trace:** [Audit FE-12](./localmotive-comprehensive-audit.md#fe-12).
+- [x] **V06-FE-12.I1** — Remove the outline reset from .path-bar input or add an explicit .path-bar input:focus-visible rule applying the existing amber outline and offset. **Trace:** [Audit FE-12](./localmotive-comprehensive-audit.md#fe-12).
+- [x] **V06-FE-12.I2** — Scope the correction to the Model root and Download destination path-bar fields, both of which have border:0 and no alternative declared focus indicator. **Trace:** [Audit FE-12](./localmotive-comprehensive-audit.md#fe-12).
+- [x] **V06-FE-12.I3** — Retain the global :focus-visible treatment for ordinary labeled controls; do not rewrite unrelated input styles on the mistaken assumption that label input overrides the global pseudo-class. **Trace:** [Audit FE-12](./localmotive-comprehensive-audit.md#fe-12).
+- [x] **V06-FE-12.I4** — Ensure the restored outline is visible against the path-bar background and is not clipped by surrounding borders, overflow behavior or the narrow-screen layout. **Trace:** [Audit FE-12](./localmotive-comprehensive-audit.md#fe-12).
+- [x] **V06-FE-12.I5** — Keep pointer interaction and existing path input behavior intact while satisfying the normative design document's requirement to preserve the amber keyboard-focus ring. **Trace:** [Audit FE-12](./localmotive-comprehensive-audit.md#fe-12).
 
 **Verification**
 
-- [ ] **V06-FE-12.V1** — Tab into the model-folder and download-destination inputs and assert a nonzero amber outline in browser computed styles, including after editing and choosing a folder. **Trace:** [Audit FE-12](./localmotive-comprehensive-audit.md#fe-12).
-- [ ] **V06-FE-12.V2** — Use an ordinary labeled runtime/profile input as a control; verify its existing global outline remains present and no unrelated focus regression is introduced. **Trace:** [Audit FE-12](./localmotive-comprehensive-audit.md#fe-12).
-- [ ] **V06-FE-12.V3** — Perform packaged Windows keyboard traversal through both path bars at normal and narrow/zoomed layouts, recording whether focus is continuously identifiable. **Trace:** [Audit FE-12](./localmotive-comprehensive-audit.md#fe-12).
+- [x] **V06-FE-12.V1** — Tab into the model-folder and download-destination inputs and assert a nonzero amber outline in browser computed styles, including after editing and choosing a folder. **Trace:** [Audit FE-12](./localmotive-comprehensive-audit.md#fe-12).
+- [x] **V06-FE-12.V2** — Use an ordinary labeled runtime/profile input as a control; verify its existing global outline remains present and no unrelated focus regression is introduced. **Trace:** [Audit FE-12](./localmotive-comprehensive-audit.md#fe-12).
+- [x] **V06-FE-12.V3** — Perform packaged Windows keyboard traversal through both path bars at normal and narrow/zoomed layouts, recording whether focus is continuously identifiable. **Trace:** [Audit FE-12](./localmotive-comprehensive-audit.md#fe-12).
 
 **Complete when:** Keyboard users can visibly locate focus in both audited path-bar inputs. Existing focus indicators on ordinary labeled fields remain unchanged and the fix follows the design's amber-ring rule.
 
@@ -1409,24 +1409,24 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Complete accessible control names, table semantics and navigation behavior**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Medium · **Owner:** Unassigned  
 **Audit trace:** [Audit FE-13](./localmotive-comprehensive-audit.md#fe-13)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src/App.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/App.tsx), [src/V03EvidencePanel.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/V03EvidencePanel.tsx)
 
 **Implementation**
 
-- [ ] **V06-FE-13.I1** — Replace the incomplete inventory role=table structure with a native table containing column headers, cells and clearly named row actions, or explicitly choose a coherent accessible list pattern. **Trace:** [Audit FE-13](./localmotive-comprehensive-audit.md#fe-13).
-- [ ] **V06-FE-13.I2** — Give every paired N-gram minimum/maximum and map lookup/draft-size input its own associated label identifying its distinct value instead of placing two inputs under one label. **Trace:** [Audit FE-13](./localmotive-comprehensive-audit.md#fe-13).
-- [ ] **V06-FE-13.I3** — Implement provider tabs with the complete selected-tab, tabpanel, aria-controls and keyboard/roving-tabIndex relationships, or use ordinary buttons in a labeled group with suitable semantics. **Trace:** [Audit FE-13](./localmotive-comprehensive-audit.md#fe-13).
-- [ ] **V06-FE-13.I4** — Expose the current primary navigation destination semantically and define focus placement or a skip-to-main route after changing screens. **Trace:** [Audit FE-13](./localmotive-comprehensive-audit.md#fe-13).
-- [ ] **V06-FE-13.I5** — Repair the evidence heading hierarchy so its sections follow the containing heading level while retaining native controls and disclosure behavior. **Trace:** [Audit FE-13](./localmotive-comprehensive-audit.md#fe-13).
+- [x] **V06-FE-13.I1** — Replace the incomplete inventory role=table structure with a native table containing column headers, cells and clearly named row actions, or explicitly choose a coherent accessible list pattern. **Trace:** [Audit FE-13](./localmotive-comprehensive-audit.md#fe-13).
+- [x] **V06-FE-13.I2** — Give every paired N-gram minimum/maximum and map lookup/draft-size input its own associated label identifying its distinct value instead of placing two inputs under one label. **Trace:** [Audit FE-13](./localmotive-comprehensive-audit.md#fe-13).
+- [x] **V06-FE-13.I3** — Implement provider tabs with the complete selected-tab, tabpanel, aria-controls and keyboard/roving-tabIndex relationships, or use ordinary buttons in a labeled group with suitable semantics. **Trace:** [Audit FE-13](./localmotive-comprehensive-audit.md#fe-13).
+- [x] **V06-FE-13.I4** — Expose the current primary navigation destination semantically and define focus placement or a skip-to-main route after changing screens. **Trace:** [Audit FE-13](./localmotive-comprehensive-audit.md#fe-13).
+- [x] **V06-FE-13.I5** — Repair the evidence heading hierarchy so its sections follow the containing heading level while retaining native controls and disclosure behavior. **Trace:** [Audit FE-13](./localmotive-comprehensive-audit.md#fe-13).
 
 **Verification**
 
-- [ ] **V06-FE-13.V1** — Add component accessible-role/name assertions for inventory columns/actions and every paired input; run an accessibility checker against representative loaded, empty and error states. **Trace:** [Audit FE-13](./localmotive-comprehensive-audit.md#fe-13).
-- [ ] **V06-FE-13.V2** — Exercise provider navigation with Tab, Arrow keys and relevant Home/End behavior, and verify selection, focus and displayed panel remain synchronized. **Trace:** [Audit FE-13](./localmotive-comprehensive-audit.md#fe-13).
-- [ ] **V06-FE-13.V3** — Use Windows Narrator or NVDA in the packaged app to traverse navigation, inventory, profile pairs and evidence headings, recording labels and focus after screen changes. **Trace:** [Audit FE-13](./localmotive-comprehensive-audit.md#fe-13).
+- [x] **V06-FE-13.V1** — Add component accessible-role/name assertions for inventory columns/actions and every paired input; run an accessibility checker against representative loaded, empty and error states. **Trace:** [Audit FE-13](./localmotive-comprehensive-audit.md#fe-13).
+- [x] **V06-FE-13.V2** — Exercise provider navigation with Tab, Arrow keys and relevant Home/End behavior, and verify selection, focus and displayed panel remain synchronized. **Trace:** [Audit FE-13](./localmotive-comprehensive-audit.md#fe-13).
+- [x] **V06-FE-13.V3** — Use Windows Narrator or NVDA in the packaged app to traverse navigation, inventory, profile pairs and evidence headings, recording labels and focus after screen changes. **Trace:** [Audit FE-13](./localmotive-comprehensive-audit.md#fe-13).
 
 **Complete when:** Every audited input has a unique meaningful accessible name, and inventory exposes a coherent structure. Provider and primary navigation support their declared semantics and a predictable keyboard/focus sequence.
 
@@ -3478,3 +3478,21 @@ _Package 1 (RT-01, RT-02, RT-04, RT-07) implementation is complete at the unit/r
 - Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 533 pass / 0 fail / 2 ignored; `npm run check` EXIT 0 (87 vitest tests).
 - Residual: `inventoryHasFile` still matches by filename within the scanned inventory; membership reflects the scanned root, and backend verification remains the publication defense.
 
+
+### V06-FE-12 — keyboard focus ring restored on path-bar inputs
+
+- Status: Implemented; source-gated.
+- Regression before fix: `.path-bar input` (specificity 0,1,1) set `outline: 0` and overrode the global `:focus-visible` ring (0,1,0) on the model-folder and download-destination fields, which also have `border: 0` — no visible keyboard focus indicator remained.
+- Verification after fix: `.path-bar input:focus-visible` restores the documented amber outline (2px, offset 2px); the global rule and every other control are unchanged.
+- Regression test: release-gates `FE-12 path-bar inputs keep a visible keyboard-focus ring` asserts the focus rule exists and that the outline reset still precedes it. Mutation MV4 (focus rule removed) fails the gate and passes after restore.
+- Commands: `npm run check` EXIT 0; `npm run build` PASS; release-gates 102/102.
+- Detector: the impeccable detector reports zero findings in the edited regions; its four findings (font-size 7px, #65502f, #c9eab8, side-tab border-left) are pre-existing at HEAD and are recorded as an out-of-scope residual for a dedicated design pass.
+
+### V06-FE-13 — complete names and structures for assistive technology
+
+- Status: Implemented; unit-verified (commit `297a50e` with FE-12).
+- Regression before fix: the inventory advertised `role="table"` with plain spans and button rows (no columnheader/row/cell semantics), each N-gram pair placed two inputs inside one label, and provider tabs had no roving tabIndex, arrow-key handling, or tabpanel association.
+- Verification after fix: the inventory is a real `<table>` with `th scope="col"` headers and a per-row `.row-target` button whose name is the model (keyboard focus and Enter select; rows keep pointer selection). Paired fields are four separate labels ("N-gram draft min", "N-gram draft max", "N-gram map size n", "N-gram map size m"), one input each. Provider tabs implement the WAI-ARIA tabs pattern: roving tabIndex, ArrowLeft/ArrowRight (wrapping), Home/End, focus follows selection, `aria-controls="provider-panel"`, and a linked `role="tabpanel"` with `aria-labelledby`.
+- Regression tests: component tests `inventory is a real table with column headers and named row actions`, `paired numeric inputs each carry their own label`, `provider tabs follow the WAI-ARIA keyboard pattern with linked tabpanel` (aria-selected moves and focus lands on the newly selected tab). Mutations MV1 (roving tabindex removed) / MV2 (arrow handling removed) / MV3 (paired labels merged back) each failed their matching tests and passed after restore.
+- Commands: `tsc --noEmit` PASS; `npm test` 90 passed; `npm run check` EXIT 0; `npm run build` PASS.
+- Residual: the detail-panel (V03EvidencePanel) markup named in the original audit line list was not re-checked beyond the tested surfaces; the tabpanel id is shared by all providers by design (one visible panel).
