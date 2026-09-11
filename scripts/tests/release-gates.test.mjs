@@ -1552,3 +1552,26 @@ test("DC-10 the builder pins immutable revisions and signed freshness fields", a
     "the catalog carries a signed expiry deadline",
   );
 });
+
+test("QD-01 the catalog cutoff follows the build clock", async () => {
+  const { catalogCutoff } = await import("../lib/catalog_window.mjs");
+  // The audit's reproduction: identical inputs a year apart must not share
+  // a threshold; the old literal kept June 12, 2026 for every build.
+  const first = catalogCutoff(new Date("2026-09-10T12:00:00Z"), 90);
+  const later = catalogCutoff(new Date("2027-09-10T12:00:00Z"), 90);
+  assert.notEqual(first.toISOString(), later.toISOString());
+  assert.equal(first.toISOString().slice(0, 10), "2026-06-12");
+  assert.equal(later.toISOString().slice(0, 10), "2027-06-12");
+  // The threshold is UTC midnight of (now - cutoffDays).
+  assert.equal(catalogCutoff(new Date("2026-09-10T23:59:59Z"), 30).toISOString(), "2026-08-11T00:00:00.000Z");
+
+  const builder = await readFile(join(process.cwd(), "scripts", "build_catalog.mjs"), "utf8");
+  assert.ok(
+    builder.includes("catalogCutoff(new Date(), CUTOFF_DAYS)"),
+    "the builder must derive the cutoff from the build clock",
+  );
+  assert.ok(
+    !builder.includes('new Date("2026-09-10T00:00:00Z")'),
+    "the frozen literal cutoff must not return",
+  );
+});

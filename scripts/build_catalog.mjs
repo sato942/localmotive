@@ -7,6 +7,7 @@
 //   node scripts/build_catalog.mjs --stdout              # preview JSON on stdout, no write
 import { rename, readFile, writeFile } from "node:fs/promises";
 import { isCanonicalQuant, quantFromFilename } from "./lib/quant_label.mjs";
+import { catalogCutoff } from "./lib/catalog_window.mjs";
 
 const providers = JSON.parse(await readFile("catalog/providers.json", "utf8"));
 const ALLOWLIST = providers.allowlist ?? [];
@@ -14,8 +15,9 @@ const CUTOFF_DAYS = providers.cutoffDays ?? 90;
 const MAX_REPOS = process.argv.includes("--full") ? 100 : (providers.maxReposPerAuthor ?? 20);
 const DRY_RUN = process.argv.includes("--dry-run");
 const ALLOW_EMPTY = process.argv.includes("--allow-empty");
-const cutoff = new Date("2026-09-10T00:00:00Z");
-cutoff.setUTCDate(cutoff.getUTCDate() - CUTOFF_DAYS);
+// Rolling window (audit QD-01): the threshold follows the build clock, so a
+// later build never keeps an earlier build's cutoff.
+const cutoff = catalogCutoff(new Date(), CUTOFF_DAYS);
 const excludePatterns = (providers.excludeFilenamePatterns ?? []).map(
   (pattern) => new RegExp(pattern, "i"),
 );
