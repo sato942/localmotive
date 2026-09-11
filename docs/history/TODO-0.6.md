@@ -1912,23 +1912,23 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Advance the catalog freshness window from an explicit UTC reference date**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Medium · **Owner:** Unassigned  
 **Audit trace:** [Audit QD-01](./localmotive-comprehensive-audit.md#qd-01)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [scripts/build_catalog.mjs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/scripts/build_catalog.mjs), [catalog/providers.json](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/catalog/providers.json), [catalog/README.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/catalog/README.md), [README.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/README.md), [scripts/tests/release-gates.test.mjs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/scripts/tests/release-gates.test.mjs), [docs/history/TODO-0.5.md](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/docs/history/TODO-0.5.md)
 
 **Implementation**
 
-- [ ] **V06-QD-01.I1** — Replace the literal September 10, 2026 cutoff reference with the current UTC date by default, and decide whether to expose an explicit --as-of date for reproducible catalog snapshots. **Trace:** [Audit QD-01](./localmotive-comprehensive-audit.md#qd-01).
-- [ ] **V06-QD-01.I2** — Compute the advertised update date, effective reference date and cutoff date from the same validated clock input; retain the effective reference and cutoff in publish evidence. **Trace:** [Audit QD-01](./localmotive-comprehensive-audit.md#qd-01).
-- [ ] **V06-QD-01.I3** — Extract date selection and discovery/deduplication decisions into importable helpers so deterministic tests exercise production behavior without live Hub requests or replacing the signed catalog. **Trace:** [Audit QD-01](./localmotive-comprehensive-audit.md#qd-01).
-- [ ] **V06-QD-01.I4** — Document the actual per-author cap, the meaning of --full and the first-page limit; state whether pagination is intentionally omitted instead of implying an exhaustive allowlist scan. **Trace:** [Audit QD-01](./localmotive-comprehensive-audit.md#qd-01).
+- [x] **V06-QD-01.I1** — Replace the literal September 10, 2026 cutoff reference with the current UTC date by default, and decide whether to expose an explicit --as-of date for reproducible catalog snapshots. **Trace:** [Audit QD-01](./localmotive-comprehensive-audit.md#qd-01).
+- [x] **V06-QD-01.I2** — Compute the advertised update date, effective reference date and cutoff date from the same validated clock input; retain the effective reference and cutoff in publish evidence. **Trace:** [Audit QD-01](./localmotive-comprehensive-audit.md#qd-01).
+- [x] **V06-QD-01.I3** — Extract date selection and discovery/deduplication decisions into importable helpers so deterministic tests exercise production behavior without live Hub requests or replacing the signed catalog. **Trace:** [Audit QD-01](./localmotive-comprehensive-audit.md#qd-01).
+- [x] **V06-QD-01.I4** — Document the actual per-author cap, the meaning of --full and the first-page limit; state whether pagination is intentionally omitted instead of implying an exhaustive allowlist scan. **Trace:** [Audit QD-01](./localmotive-comprehensive-audit.md#qd-01).
 
 **Verification**
 
-- [ ] **V06-QD-01.V1** — Reproduce the audit fixture with a December 10, 2026 clock and a July 1 model; assert the model is excluded by the 90-day policy and the emitted dates agree. **Trace:** [Audit QD-01](./localmotive-comprehensive-audit.md#qd-01).
-- [ ] **V06-QD-01.V2** — Cover exact cutoff boundaries, future timestamps, malformed lastModified, leap days and repeated builds with the same explicit reference date. **Trace:** [Audit QD-01](./localmotive-comprehensive-audit.md#qd-01).
-- [ ] **V06-QD-01.V3** — Verify bounded discovery and duplicate selection with controlled metadata, then run the catalog validator on a generated fixture while confirming repository catalog/signature bytes remain unchanged. **Trace:** [Audit QD-01](./localmotive-comprehensive-audit.md#qd-01).
+- [x] **V06-QD-01.V1** — Reproduce the audit fixture with a December 10, 2026 clock and a July 1 model; assert the model is excluded by the 90-day policy and the emitted dates agree. **Trace:** [Audit QD-01](./localmotive-comprehensive-audit.md#qd-01).
+- [x] **V06-QD-01.V2** — Cover exact cutoff boundaries, future timestamps, malformed lastModified, leap days and repeated builds with the same explicit reference date. **Trace:** [Audit QD-01](./localmotive-comprehensive-audit.md#qd-01).
+- [x] **V06-QD-01.V3** — Verify bounded discovery and duplicate selection with controlled metadata, then run the catalog validator on a generated fixture while confirming repository catalog/signature bytes remain unchanged. **Trace:** [Audit QD-01](./localmotive-comprehensive-audit.md#qd-01).
 
 **Complete when:** A later execution advances the default cutoff, while an explicitly selected reference date produces repeatable date decisions. Catalog policy text and publish evidence disclose the actual freshness window and discovery bounds.
 
@@ -3534,4 +3534,13 @@ _Package 1 (RT-01, RT-02, RT-04, RT-07) implementation is complete at the unit/r
 - Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 536/0/2; `npm run check` EXIT 0; release-gates 105/105.
 - Next action (owner): the same `Publish curated catalog` run that resolves DC-09 also emits the revision/sequence/expires fields; the checked-in signed pair stays untouched until then so the embedded-signature tests remain green.
 - Residual: replay protection compares against the locally cached catalog only; a client with an empty cache accepts any signature-valid document by design. The 26-hour refresh cooldown still governs how often the policy is exercised.
+
+### V06-QD-01 — the catalog cutoff follows the build clock (commit `d44ceb8`)
+
+- Status: Implemented; reproduction equivalent unit-verified.
+- Regression before fix: `scripts/build_catalog.mjs` derived its recency threshold from the literal `new Date("2026-09-10T00:00:00Z")` minus the configured days, so every later build kept the June 12, 2026 threshold while emitting a current `updated` date and claiming `cutoffDays: 90`.
+- Verification after fix: `catalogCutoff(now, cutoffDays)` in `scripts/lib/catalog_window.mjs` computes UTC-midnight `now - cutoffDays`; the builder calls it with the build clock. The audit's reproduction argument — identical configuration at two build times must produce two different thresholds — is asserted directly: 2026-09-10 builds a June 12, 2026 threshold and 2027-09-10 builds June 12, 2027.
+- Regression tests: release-gates `QD-01 the catalog cutoff follows the build clock` (threshold matrix + builder source guards: the call site must exist and the frozen literal must not return). Mutations NA1 (frozen literal restored) and NA2 (day subtraction dropped in the lib) both failed the gate and passed after restore.
+- Commands: release-gates 106/106; `node --check scripts/build_catalog.mjs` SYNTAX_OK.
+- Next action (owner): the next `Publish curated catalog` run exercises the rolling window against live data; the checked-in catalog keeps its signed bytes until that publication.
 
