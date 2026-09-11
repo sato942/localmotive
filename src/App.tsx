@@ -166,6 +166,39 @@ const idleStatus: ServerStatus = {
   failure: null,
 };
 
+/// S-24 I1: a path that is truncated for layout keeps its FULL value
+/// retrievable — the title carries it, the control is keyboard reachable, and
+/// one click copies it. Identity is never hidden by ellipsis alone.
+function PathText({ value, label }: { value: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <span className="path-text">
+      <span className="path-text-value" tabIndex={0} title={value} aria-label={`${label}: ${value}`}>
+        {value}
+      </span>
+      <button
+        type="button"
+        className="path-copy"
+        aria-label={`Copy ${label}`}
+        onClick={(event) => {
+          // The inventory row itself opens the profile on click; copying a
+          // path must not hijack the user into another screen (S-24 V1).
+          event.stopPropagation();
+          void navigator.clipboard
+            ?.writeText(value)
+            .then(() => {
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 1500);
+            })
+            .catch(() => setCopied(false));
+        }}
+      >
+        {copied ? "Copied" : "Copy"}
+      </button>
+    </span>
+  );
+}
+
 function App() {
   const [view, setView] = useState<View>(RUNTIME ? "dashboard" : "runtime");
   // FE-05: the active evidence run's status and cancel handle, published by
@@ -1655,8 +1688,11 @@ function App() {
                         className="row-target"
                         onClick={() => loadProfile(model)}
                       >
-                        <strong>{model.name}</strong><small>{model.directory}</small>
+                        <strong>{model.name}</strong>
                       </button>
+                      <small>
+                        <PathText value={model.directory} label="Model folder" />
+                      </small>
                     </td>
                     <td>{model.quant}</td>
                     <td className="numeric">{bytesLabel(model.sizeBytes)}</td>
@@ -1782,11 +1818,11 @@ function App() {
                       </div>
                       <div className="catalog-file-row">
                         <label>Build<select value={file.filename} onChange={(event) => setCatalogFiles((current) => ({ ...current, [model.id]: event.target.value }))}>{model.files.map((entry) => <option key={entry.filename} value={entry.filename}>{entry.quant} · {bytesLabel(entry.sizeBytes)}</option>)}</select></label>
-                        <div className="catalog-filename"><span>{file.filename}</span>{file.userSourced && <span className="state-tag">USER FILE · LOCAL DIGEST</span>}<small>{bytesLabel(file.sizeBytes)} · 4 PARALLEL RANGES</small></div>
+                        <div className="catalog-filename"><PathText value={file.filename} label="Model file" />{file.userSourced && <span className="state-tag">USER FILE · LOCAL DIGEST</span>}<small>{bytesLabel(file.sizeBytes)} · 4 PARALLEL RANGES</small></div>
                         {running ? (
                           <button className="button danger" onClick={() => cancelCatalogDownload(activeJob!)}><CircleStop size={15} /> Keep & stop</button>
                         ) : (
-                          <button className={alreadyOnDisk ? "button is-current" : "button primary"} disabled={!readiness.canStart} title={readiness.reason} onClick={() => startCatalogDownload(model, file)}>
+                          <button className={alreadyOnDisk ? "button is-current" : "button secondary"} disabled={!readiness.canStart} title={readiness.reason} onClick={() => startCatalogDownload(model, file)}>
                             {alreadyOnDisk ? <><BadgeCheck size={15} /> Verify file</> : <><Download size={15} /> {progress?.state === "error" ? "Resume" : "Download"}</>}
                           </button>
                         )}
@@ -2221,7 +2257,25 @@ function App() {
               <div className="settings-stack">
                 <div className="profile-guide">
                   <div><strong>Essentials first</strong><span>Common fit, speed, acceleration, and chat controls stay visible.</span></div>
-                  <button onClick={() => { const advanced = document.querySelector(".advanced-zone") as HTMLDetailsElement | null; if (advanced) { advanced.open = true; advanced.scrollIntoView({ behavior: "smooth", block: "start" }); } }}>Jump to Advanced</button>
+                  <button
+                  onClick={() => {
+                    const advanced = document.querySelector(".advanced-zone") as HTMLDetailsElement | null;
+                    if (!advanced) return;
+                    advanced.open = true;
+                    // S-24 I3: honour the reduced-motion preference instead of
+                    // forcing a smooth scroll, and put keyboard focus on the
+                    // revealed region so the next Tab stop is inside it.
+                    const reduced =
+                      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+                    advanced.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
+                    // The region is open synchronously, so the summary can
+                    // take focus immediately (no animation frame needed).
+                    const summary = advanced.querySelector("summary") as HTMLElement | null;
+                    summary?.focus();
+                  }}
+                >
+                  Jump to Advanced
+                </button>
                 </div>
                 <fieldset>
                   <legend>Identity & runtime</legend>

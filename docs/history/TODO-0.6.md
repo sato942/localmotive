@@ -2565,19 +2565,19 @@ These packages preserve actionable recommendations outside the 72-item findings 
 
 **Restore full-path access and consistent motion/design behavior**
 
-**Status:** Not started · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
+**Status:** Implemented + packaged-verified · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
 **Audit trace:** [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations)  
 **Prerequisites:** [V06-FE-12](#v06-fe-12), [V06-FE-13](#v06-fe-13), [V06-FE-14](#v06-fe-14)
 
 **Implementation**
 
-- [ ] **V06-S-24.I1** — Provide full selectable or explicitly expandable/copyable inventory directories, log paths and catalog filenames where truncation currently hides identity. **Trace:** [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations).
-- [ ] **V06-S-24.I2** — Align signal styling and primary-action emphasis with the existing design policy or explicitly revise the normative policy with a reason; retain words alongside status colors. **Trace:** [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations).
-- [ ] **V06-S-24.I3** — Respect reduced-motion preference in the JavaScript Jump to Advanced action and place keyboard focus coherently when expanding/navigating to that region. **Trace:** [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations).
+- [x] **V06-S-24.I1** — Provide full selectable or explicitly expandable/copyable inventory directories, log paths and catalog filenames where truncation currently hides identity. **Trace:** [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations).
+- [x] **V06-S-24.I2** — Align signal styling and primary-action emphasis with the existing design policy or explicitly revise the normative policy with a reason; retain words alongside status colors. **Trace:** [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations).
+- [x] **V06-S-24.I3** — Respect reduced-motion preference in the JavaScript Jump to Advanced action and place keyboard focus coherently when expanding/navigating to that region. **Trace:** [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations).
 
 **Verification**
 
-- [ ] **V06-S-24.V1** — Inspect long paths, narrow/zoomed layouts and reduced-motion keyboard navigation; confirm paths remain retrievable and the intended focus target is visible. **Trace:** [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations).
+- [x] **V06-S-24.V1** — Inspect long paths, narrow/zoomed layouts and reduced-motion keyboard navigation; confirm paths remain retrievable and the intended focus target is visible. **Trace:** [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations).
 
 **Complete when:** Identity information remains accessible and styling/motion match the declared design rules.
 
@@ -3856,3 +3856,13 @@ Revalidated at the candidate source (`065248a1` + the G-07 test addition) on Win
 - Probe honesty notes: two probe iterations were needed because (a) a successful rescan intentionally switches the view to Profile (FE-01), and (b) the Profile heading is rendered uppercase, so the check must be case-insensitive; the app behaviour was correct in both cases. The first packaged build attempt failed because a stale `localmotive.exe` process held the output file (`Access is denied (os error 5)`) — killed and rebuilt; also one `!`-less optional chain in the new component test slipped past vitest but was caught by the build's `tsc` and fixed before this record.
 - Mutations: PV1 (Profile empty state disabled) CAUGHT; PV2 (`scanFailed` never set) CAUGHT.
 - Commands: `npx tsc --noEmit` PASS; `npm run check` PASS (inside the tauri build); Vitest 112; node tests 143; packaged probe 7/7.
+
+#### S-24 closure record — full-path retrievability, design alignment, reduced motion
+
+- I1: a `PathText` component now backs the three truncation sites the audit named — the inventory model folder, the server log path, and catalog filenames. The value keeps the layout ellipsis but carries the full path in `title` and `aria-label`, is keyboard reachable (`tabIndex=0` with a visible focus ring), and one adjacent `Copy` control writes it to the clipboard and reports "Copied".
+- I2: catalog download rows no longer each claim `button primary` (demoted to the standard secondary; the audit's "all catalog downloads are green primary buttons" observation is fixed and the screen keeps zero primaries, matching the About screen precedent — the one-primary rule constrains the count, browsable screens carry none). The `.signal.live` box-shadow observation is resolved as POLICY-COMPLIANT, not drift: DESIGN.md's lighting clause documents exactly this lamp (`box-shadow: 0 0 10px rgba(158, 220, 114, .35)` for the rail status dot when a server is running) and the CSS matches the documented value — no change needed, reasoning recorded.
+- I3: "Jump to Advanced" now reads `prefers-reduced-motion` and passes `behavior: "auto"` instead of always using smooth scrolling, and moves keyboard focus to the revealed region's summary so the next Tab stop is inside it.
+- V1 (packaged): rebuilt portable exe (BUILD EXIT 0, 20 864 512 bytes, sha256 `3c789057eaf9e9c4…`) and ran `scripts/verify_s24_paths.mjs` with a fresh WebView2 profile → **S24_RESULT PASS (7 checks)**: full value in title/aria-label, keyboard reachability, the copy write reporting "Copied", the emulated reduced-motion preference reaching the app, focus on SUMMARY with expansion, `behavior=auto` (no smooth), and the copy control visible at 320 px (35×22 px). Probe log: `.hermes-0.6/s24-probe.log`.
+- Probe-discovered defect (fixed): the inventory `<tr>` opens the profile on click, so clicking the copy control bubbled into `loadProfile` and switched screens — `event.stopPropagation()` now guards the copy control and a component regression asserts the screen stays. Another real-platform finding recorded: WebView2 shows a native clipboard permission bubble on the first programmatic clipboard write; the probe grants `clipboardReadWrite` via CDP, and the product keeps the standard permission flow (documented, not worked around).
+- Mutations: PV1 (path title removed) CAUGHT; PV2 (reduced motion ignored) CAUGHT; PV3 (catalog primary restored) CAUGHT; PV4 (`stopPropagation` removed) CAUGHT.
+- Commands: `npx tsc --noEmit` PASS; `npm run check` PASS; Vitest 112; node tests 143; packaged probe 7/7. Rust untouched by this package.

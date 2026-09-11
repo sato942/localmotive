@@ -1246,4 +1246,189 @@ describe("Bounded discovery diagnostics (audit S-15)", () => {
     expect(rendered).toContain("Access to the folder was denied");
     expect(rendered).toContain("Choose folder");
   });
+
+  it("long paths stay retrievable and Jump to Advanced respects motion and focus (S-24)", async () => {
+    const longFolder = "C:/Users/fixture-user/Documents/very/deep/folder/tree/with/many/segments/models";
+    handlers.set("scan_models_report", () => ({
+      models: [
+        {
+          id: "fixture-alpha",
+          name: "fixture-alpha",
+          directory: longFolder,
+          firstShard: `${longFolder}/fixture-alpha-00001-of-00001.gguf`,
+          sizeBytes: 2048,
+          shardCount: 1,
+          expectedShards: 1,
+          complete: true,
+          quant: "Q4_K_M",
+          shards: [],
+          companions: [],
+        },
+      ],
+      problems: [],
+      truncated: false,
+    }));
+    await mount();
+    const navFor = (label: string) =>
+      [...container.querySelectorAll("button")].find(
+        (button) => (button.textContent ?? "").trim() === label,
+      );
+    await act(async () => {
+      navFor("Inventory")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await settle();
+    const rootInput = container.querySelector(
+      'input[aria-label="Model root"]',
+    ) as HTMLInputElement;
+    await act(async () => {
+      const proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!;
+      proto.set!.call(rootInput, "C:/models/fixture-root");
+      rootInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      [...container.querySelectorAll("button")]
+        .find((button) => (button.textContent ?? "").includes("Rescan"))!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await settle();
+    // A successful rescan opens the loaded profile (FE-01); return to the
+    // inventory to inspect the row presentation.
+    await act(async () => {
+      navFor("Inventory")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await settle();
+
+    // The truncated folder value keeps the full path in title and aria-label,
+    // and one adjacent control copies it.
+    const value = container.querySelector(".path-text-value") as HTMLElement | null;
+    expect(value, "the directory must render through the PathText pattern").toBeTruthy();
+    expect(value!.getAttribute("title")).toBe(longFolder);
+    expect(value!.getAttribute("aria-label")).toContain(longFolder);
+    expect(value!.tabIndex).toBe(0);
+    const copy = container.querySelector(".path-copy") as HTMLButtonElement | null;
+    expect(copy, "a copy control must sit beside the truncated value").toBeTruthy();
+    const writes: string[] = [];
+    Object.assign(navigator, {
+      clipboard: { writeText: (text: string) => (writes.push(text), Promise.resolve()) },
+    });
+    await act(async () => {
+      copy!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await settle();
+    expect(writes).toContain(longFolder);
+    // The row's own click opens the profile; the copy control must not
+    // trigger that navigation (real packaged defect found by the S-24 probe).
+    expect(text(), "copying must not leave the inventory").toContain("Logical inventory");
+    expect(
+      (container.querySelector(".path-copy") as HTMLButtonElement)?.textContent,
+      "the copy control must report the write",
+    ).toBe("Copied");
+  });
+
+  it("Jump to Advanced honours reduced motion and moves focus into the region (S-24)", async () => {
+    const behaviorCalls: Array<{ behavior?: string }> = [];
+    const originalScroll = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (options?: ScrollIntoViewOptions) {
+      behaviorCalls.push((options ?? {}) as { behavior?: string });
+    };
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = ((query: string) =>
+      ({
+        matches: query.includes("prefers-reduced-motion"),
+        media: query,
+        onchange: null,
+        addListener: () => undefined,
+        removeListener: () => undefined,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+        dispatchEvent: () => false,
+      }) as MediaQueryList) as typeof window.matchMedia;
+    try {
+      handlers.set("scan_models_report", () => ({
+        models: [
+          {
+            id: "fixture-alpha",
+            name: "fixture-alpha",
+            directory: "C:/models/fixture-root",
+            firstShard: "C:/models/fixture-root/fixture-alpha-00001-of-00001.gguf",
+            sizeBytes: 2048,
+            shardCount: 1,
+            expectedShards: 1,
+            complete: true,
+            quant: "Q4_K_M",
+            shards: [],
+            companions: [],
+          },
+        ],
+        problems: [],
+        truncated: false,
+      }));
+      await mount();
+      const navFor = (label: string) =>
+        [...container.querySelectorAll("button")].find(
+          (button) => (button.textContent ?? "").trim() === label,
+        );
+      // Scan to load a profile — the advanced zone lives on the profile screen.
+      await act(async () => {
+        navFor("Inventory")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      await settle();
+      const rootInput = container.querySelector(
+        'input[aria-label="Model root"]',
+      ) as HTMLInputElement;
+      await act(async () => {
+        const proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!;
+        proto.set!.call(rootInput, "C:/models/fixture-root");
+        rootInput.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () => {
+        [...container.querySelectorAll("button")]
+          .find((button) => (button.textContent ?? "").includes("Rescan"))!
+          .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      await settle();
+      await act(async () => {
+        navFor("Profile")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      await settle();
+      const jump = [...container.querySelectorAll("button")].find((button) =>
+        (button.textContent ?? "").includes("Jump to Advanced"),
+      );
+      expect(jump, "the Jump to Advanced action must exist on the profile screen").toBeTruthy();
+      await act(async () => {
+        jump!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      await settle();
+      expect(
+        behaviorCalls[behaviorCalls.length - 1]?.behavior,
+        "reduced motion must not force smooth scrolling",
+      ).toBe("auto");
+      const advanced = container.querySelector(".advanced-zone") as HTMLDetailsElement;
+      expect(advanced.open, "the region must be expanded").toBe(true);
+      expect((document.activeElement as HTMLElement)?.tagName).toBe("SUMMARY");
+    } finally {
+      Element.prototype.scrollIntoView = originalScroll;
+      window.matchMedia = originalMatchMedia;
+    }
+  });
+
+  it("catalog download rows do not each claim the primary action (S-24)", async () => {
+    useRows([model("m1", "alpha"), model("m2", "beta")]);
+    await mount();
+    await openCatalogTab();
+    await settle();
+    const catalog = container.querySelector(".catalog-screen") ?? container;
+    const primariesInCatalog = catalog.querySelectorAll("button.button.primary").length;
+    expect(
+      primariesInCatalog,
+      "the one-primary-per-screen rule forbids a primary on every download row",
+    ).toBe(0);
+    const downloadButtons = [...catalog.querySelectorAll("button")].filter((button) =>
+      /download|verify file/i.test(button.textContent ?? ""),
+    );
+    expect(downloadButtons.length).toBeGreaterThanOrEqual(2);
+    for (const button of downloadButtons) {
+      expect(button.className).toContain("secondary");
+    }
+  });
 });
