@@ -2544,18 +2544,18 @@ These packages preserve actionable recommendations outside the 72-item findings 
 
 **Provide useful first-run and empty-inventory screens**
 
-**Status:** Not started · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
+**Status:** Implemented + packaged-verified · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
 **Audit trace:** [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations)  
 **Prerequisites:** [V06-FE-01](#v06-fe-01)
 
 **Implementation**
 
-- [ ] **V06-S-23.I1** — Render a Profile empty state before a model/profile exists, with the next action required to create one. **Trace:** [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations).
-- [ ] **V06-S-23.I2** — Add a zero-model Inventory state and local recovery actions for choosing/rescanning a folder; distinguish an empty valid folder from a failed scan. **Trace:** [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations).
+- [x] **V06-S-23.I1** — Render a Profile empty state before a model/profile exists, with the next action required to create one. **Trace:** [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations).
+- [x] **V06-S-23.I2** — Add a zero-model Inventory state and local recovery actions for choosing/rescanning a folder; distinguish an empty valid folder from a failed scan. **Trace:** [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations).
 
 **Verification**
 
-- [ ] **V06-S-23.V1** — Open the packaged app with no settings/models, visit Profile and Inventory, choose an empty folder and then a valid fixture folder; verify each state gives an accurate next action. **Trace:** [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations).
+- [x] **V06-S-23.V1** — Open the packaged app with no settings/models, visit Profile and Inventory, choose an empty folder and then a valid fixture folder; verify each state gives an accurate next action. **Trace:** [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations).
 
 **Complete when:** No navigation target becomes a blank screen solely because prerequisite inventory is absent.
 
@@ -3847,3 +3847,12 @@ Revalidated at the candidate source (`065248a1` + the G-07 test addition) on Win
 - V1: `src/model.test.ts` covers `errorText` for Error/string/structured-string/object-with-message/object-without-message/null; the App component test rejects both the dialog and the opener, asserting recovery text, the unchanged model root, the disclosed diagnostic, and that the screen survives; the panel test rejects the save dialog and asserts the rejection message plus the surviving "Decode throughput" result.
 - Mutations: PU1 (dialog catch removed) CAUGHT; PU2 (diagnostic disclosure removed) CAUGHT; PU3 (panel save un-wrapped from `runAction`) CAUGHT.
 - Commands: `npx tsc --noEmit` PASS; `npm run check` PASS; Vitest 111; node tests 143. The first commit for this work (`40dd9f9`) slipped three type errors in the new test files past the pre-commit `npm run check` (it had been run before those edits); the follow-up fixed them and amended to `590674b` — recorded honestly because an unverified commit briefly existed in local history.
+
+#### S-23 closure record — first-run and empty-inventory states
+
+- I1: the Profile screen now renders an explicit empty state instead of rendering nothing when no profile exists: "No models to profile yet" (zero models) or "No model selected" (models exist), each with the next action ("Open Inventory") that switches screens. The old blank-screen condition (`view === "profile" && profile && &&`) is gone.
+- I2: the Inventory screen shows a zero-model state with a heading that distinguishes all three situations — no root yet, an empty-but-valid scanned folder, and a failed scan (`scanFailed` state) — plus local recovery actions (Choose folder, Rescan this folder) and the scan's diagnostic count for the valid-empty case.
+- V1 (packaged): rebuilt the portable exe (`npm run tauri build -- --no-bundle`, BUILD EXIT 0, 20 864 512 bytes, sha256 `f64c0fbf7bfb0789…`) and opened it with a fresh WebView2 user-data folder (no settings, no models) and CDP port 10027. `scripts/verify_s23_firstrun.mjs` reports **S23_RESULT PASS (7 checks)**: first-run Profile empty state with the Open Inventory action; Inventory folder prompt with both actions; an empty valid folder reported honestly ("No GGUF models in this folder yet"); a fixture folder with one shard scanning to 1 logical target; the inventory row naming `fixture-alpha` with 1/1 shards; and Profile becoming a real profile with a Start action once the selection loads. Probe log: `.hermes-0.6/s23-probe.log`.
+- Probe honesty notes: two probe iterations were needed because (a) a successful rescan intentionally switches the view to Profile (FE-01), and (b) the Profile heading is rendered uppercase, so the check must be case-insensitive; the app behaviour was correct in both cases. The first packaged build attempt failed because a stale `localmotive.exe` process held the output file (`Access is denied (os error 5)`) — killed and rebuilt; also one `!`-less optional chain in the new component test slipped past vitest but was caught by the build's `tsc` and fixed before this record.
+- Mutations: PV1 (Profile empty state disabled) CAUGHT; PV2 (`scanFailed` never set) CAUGHT.
+- Commands: `npx tsc --noEmit` PASS; `npm run check` PASS (inside the tauri build); Vitest 112; node tests 143; packaged probe 7/7.

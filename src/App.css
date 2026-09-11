@@ -618,3 +618,30 @@ label input:disabled { color: #8d9491; }
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* S-23: first-run and empty-inventory states — a heading, one honest
+   paragraph, and the next concrete action. */
+.empty-state {
+  border: 1px solid var(--line-soft);
+  padding: 18px;
+  margin: 12px 0;
+  display: grid;
+  gap: 10px;
+  max-width: 72ch;
+}
+
+.empty-state h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.empty-state p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.empty-state-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}

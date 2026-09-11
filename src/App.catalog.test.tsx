@@ -1184,4 +1184,66 @@ describe("Bounded discovery diagnostics (audit S-15)", () => {
       expect(after).toContain("Could not open the browser");
     }
   });
+
+  it("first-run Profile and Inventory empty states give an accurate next action (S-23)", async () => {
+    handlers.set("scan_models_report", () => ({ models: [], problems: [], truncated: false }));
+    await mount();
+    const navFor = (label: string) =>
+      [...container.querySelectorAll("button")].find(
+        (button) => (button.textContent ?? "").trim() === label,
+      );
+    // Profile before any selection: not a blank screen; routes to Inventory.
+    await act(async () => {
+      navFor("Profile")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await settle();
+    let rendered = text();
+    expect(rendered).toContain("No models to profile yet");
+    expect(rendered).toContain("Open Inventory");
+    await act(async () => {
+      [...container.querySelectorAll("button")]
+        .find((button) => (button.textContent ?? "").includes("Open Inventory"))!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await settle();
+    // Inventory with no root: asks for a folder and offers both actions.
+    rendered = text();
+    expect(rendered).toContain("Choose your GGUF model folder");
+    expect(rendered).toContain("Choose folder");
+    expect(rendered).toContain("Rescan this folder");
+
+    // An empty-but-valid folder scan is distinguished from a failure.
+    const rootInput = container.querySelector(
+      'input[aria-label="Model root"]',
+    ) as HTMLInputElement;
+    await act(async () => {
+      const proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!;
+      proto.set!.call(rootInput, "C:/models/empty-fixture");
+      rootInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      [...container.querySelectorAll("button")]
+        .find((button) => (button.textContent ?? "").includes("Rescan this folder"))!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await settle();
+    rendered = text();
+    expect(rendered).toContain("No GGUF models in this folder yet");
+    expect(rendered).toContain("Add .gguf files or choose a different folder");
+
+    // A failed scan says so and keeps the recovery actions.
+    handlers.set("scan_models_report", () => {
+      throw new Error("Access to the folder was denied");
+    });
+    await act(async () => {
+      [...container.querySelectorAll("button")]
+        .find((button) => (button.textContent ?? "").includes("Rescan"))!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await settle();
+    rendered = text();
+    expect(rendered).toContain("The scan could not complete");
+    expect(rendered).toContain("Access to the folder was denied");
+    expect(rendered).toContain("Choose folder");
+  });
 });

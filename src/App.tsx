@@ -199,6 +199,9 @@ function App() {
   const [status, setStatus] = useState<ServerStatus>(idleStatus);
   const [command, setCommand] = useState<CommandPreview | null>(null);
   const [lastScan, setLastScan] = useState<ScanReport | null>(null);
+  // S-23 I2: distinguish an empty-but-valid folder from a failed scan so the
+  // empty inventory offers the right next action.
+  const [scanFailed, setScanFailed] = useState(false);
   // FE-03: per-resource request sequences and live identity mirrors, so a
   // deferred response can never commit against a newer resource state.
   const cloudSeq = useRef(0);
@@ -354,6 +357,7 @@ function App() {
     try {
       const report = await invoke<ScanReport>("scan_models_report", { root: modelRoot });
       setLastScan(report);
+      setScanFailed(false);
       const result = report.models;
       // FE-01: a rescan preserves the committed selection while the model
       // still exists; otherwise the replacement is loaded together with its
@@ -379,6 +383,7 @@ function App() {
       // A failed scan clears the selection and its editable profile as one
       // transition, so a stale draft can never masquerade as current.
       setModels([]);
+      setScanFailed(true);
       clearCommittedSelection();
       setNotice(inTauri() ? errorText(error) : "Browser preview cannot scan local model files. Use the packaged app.");
     } finally {
@@ -1605,6 +1610,32 @@ function App() {
               <button className="path-action" onClick={chooseModelFolder}><FolderOpen size={15} /> Choose</button>
               <span>{models.length} targets · {bytesLabel(totalBytes)}</span>
             </div>
+            {models.length === 0 ? (
+              <div className="empty-state" role="status">
+                <h2>
+                  {scanFailed
+                    ? "The scan could not complete"
+                    : lastScan
+                      ? "No GGUF models in this folder yet"
+                      : "Choose your GGUF model folder"}
+                </h2>
+                <p>
+                  {scanFailed
+                    ? "Fix access to the folder or pick another one, then scan again. The previous inventory was cleared to avoid showing stale targets."
+                    : lastScan
+                      ? `The folder was scanned (${lastScan.problems.length} diagnostic${lastScan.problems.length === 1 ? "" : "s"}) and contains no GGUF model shards. Add .gguf files or choose a different folder.`
+                      : "Localmotive reads GGUF files directly from a folder on this PC. Nothing is uploaded or moved."}
+                </p>
+                <div className="empty-state-actions">
+                  <button className="button secondary" onClick={chooseModelFolder}>
+                    <FolderOpen size={15} /> Choose folder
+                  </button>
+                  <button className="button primary" onClick={scan} disabled={busy === "scan" || !modelRoot.trim()}>
+                    <RefreshCw size={15} /> Rescan this folder
+                  </button>
+                </div>
+              </div>
+            ) : null}
             <table className="inventory-table" aria-label="Model inventory">
               <thead>
                 <tr>
@@ -2142,6 +2173,33 @@ function App() {
                   <div><dt>Updates</dt><dd>Versioned; existing installs preserved</dd></div>
                 </dl>
               </aside>
+            </div>
+          </section>
+        )}
+
+        {view === "profile" && !profile && (
+          <section className="screen profile-screen">
+            <div className="section-heading">
+              <div>
+                <h1>Launch profile</h1>
+                <p>Every field becomes an explicit llama-server argument.</p>
+              </div>
+            </div>
+            <div className="empty-state" role="status">
+              <h2>{models.length === 0 ? "No models to profile yet" : "No model selected"}</h2>
+              <p>
+                {models.length === 0
+                  ? "A launch profile is built from a scanned model. Choose a folder of GGUF files first — the Inventory screen walks through it."
+                  : "Choose a model in the Inventory screen; its profile, runtime check and Start action appear here."}
+              </p>
+              <div className="empty-state-actions">
+                <button
+                  className="button primary"
+                  onClick={() => setView("models")}
+                >
+                  <FolderOpen size={15} /> Open Inventory
+                </button>
+              </div>
             </div>
           </section>
         )}
