@@ -124,3 +124,72 @@ Owner configuration package (prepared, not applied - repository settings are own
 |---|---|---|
 | V06-G-08.I2 | checked | `docs/SUPPORT-MATRIX.md` published: every row carries its evidence class (MEASURED / EXERCISED / REVIEWED / UNTESTED) with pointers to the release evidence; untested GPU/OS/provider/screen-reader rows stay explicitly unclaimed; the README support section was rewritten to the 0.6.0 candidate's observed behavior and links the matrix. |
 | V06-G-08.I3 | checked | Unsigned distribution policy retained (release name `(unsigned)`, SmartScreen disclosure, SHA256SUMS verification, signing deferred by owner order and blocking no gate); the 0.6.0 changelog is written from finding traces for users; README unsigned references now name 0.6.0. `npm test` 146/146 with the updated gates. |
+## Final candidate re-bind (G-05.V1)
+
+The fixes from the batch-7 defect family changed shipped code, so the lifecycle and critical probes were re-run against the re-cut candidate (source code state `a0ed247`; evidence committed at `496373a`):
+
+| Probe | Result |
+|---|---|
+| Lifecycle v0.4.1 -> 0.6.0 (installers `a4d14496…` / `2dd036c6…`) | PASS, preservation PASS, bound with sourceRevision + digests |
+| Lifecycle v0.5.0 -> 0.6.0 | PASS, preservation PASS |
+| Start/stop supervision (portable `075daa54…`) | child gone in 1 s, none remaining, app idle |
+| Seven-stage health | PASSED all seven stages; no process tree, listener, or temp file remained |
+| Default v2 workload | 984.76 tok/s mean, p50 985.08, p95 993.99, n=5, 5/5 sampled, 1 warmup |
+| Tamper negative (DLL replacement) | refused with "failed content verification", 0 processes; exact bytes restored; clean start LIVE |
+
+G-05.V1 is satisfied at the final candidate; the earlier `1a9ab98` binding is superseded.
+
+## Owner package for G-09 (authorization required)
+
+Everything below is prepared and intentionally NOT executed. No tag, no release, no repository setting changes without the owner's explicit go.
+
+### 1. Repository rulesets (owner action; currently absent - `gh api repos/sato942/localmotive/rulesets` returns none, `branches/main.protected` is false)
+
+```bash
+# Main-branch ruleset: require pr-check, forbid force pushes and deletions.
+gh api repos/sato942/localmotive/rulesets --method POST --input - <<'JSON'
+{
+  "name": "main-pr-check",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {"ref_name": {"include": ["refs/heads/main"], "exclude": []}},
+  "rules": [
+    {"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": true, "required_status_checks": [{"context": "pr-check"}]}},
+    {"type": "non_fast_forward"},
+    {"type": "deletion"}
+  ]
+}
+JSON
+
+# Tag ruleset: released tags are immutable.
+gh api repos/sato942/localmotive/rulesets --method POST --input - <<'JSON'
+{
+  "name": "immutable-release-tags",
+  "target": "tag",
+  "enforcement": "active",
+  "conditions": {"ref_name": {"include": ["refs/tags/v*"], "exclude": []}},
+  "rules": [{"type": "update"}, {"type": "deletion"}]
+}
+JSON
+
+# Read back the effective settings and record the bypass actors.
+gh api repos/sato942/localmotive/rulesets --jq '.[] | {id, name, target, enforcement}'
+```
+
+### 2. Publication (owner action; executes release.yml)
+
+```bash
+git tag -a v0.6.0 -m "Localmotive 0.6.0 (unsigned)" && git push origin v0.6.0
+gh run watch $(gh run list --workflow=release.yml --limit 1 --json databaseId --jq '.[0].databaseId')
+# Then read back: tag object, release body, asset set, checksums, Latest state.
+gh release view v0.6.0 --json tagName,isLatest,isPrerelease,assets
+```
+
+Expected assets: the MSI (`2dd036c6…` when built from `a0ed247`; the workflow rebuilds from the tagged SHA, so verify the published digests against `SHA256SUMS`), the NSIS setup, the portable exe, `SHA256SUMS`, the SBOM, and the attestation artifacts. G-09 additionally requires the negative publication controls (wrong SHA, moved tag, modified bytes, missing assets, absent lifecycle evidence) exercised before the real path is trusted.
+
+### 3. Approved runs and sessions still pending owner approval
+
+- A benign PR plus a controlled failing-check PR (GH-01.V1/V2) - GitHub-hosted `pr-check` runs are not burned without approval.
+- Narrator/NVDA and OS-level high-contrast session (G-05.I3 residual).
+- Authorized cloud/HF test account for live-provider scenarios (G-05.I3 residual).
+
