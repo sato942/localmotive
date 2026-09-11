@@ -474,7 +474,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 - [x] **V06-DC-03.V1** — Create a real temporary database with curated and user records; refresh repeatedly and assert both provenance and user contents survive. **Trace:** [Audit DC-03](./localmotive-comprehensive-audit.md#dc-03).
 - [x] **V06-DC-03.V2** — Exercise corrupt databases, unknown-newer schemas, unavailable database paths, held locks, and injected write failures; verify recovery policy and preservation of the prior readable state. **Trace:** [Audit DC-03](./localmotive-comprehensive-audit.md#dc-03).
-- [ ] **V06-DC-03.V3** — Run the open-handle and recovery cases in the packaged Windows application, recording actual NTFS/SQLite sharing outcomes and confirming that every failed persistence action is visible. **Trace:** [Audit DC-03](./localmotive-comprehensive-audit.md#dc-03).
+- [x] **V06-DC-03.V3** — Run the open-handle and recovery cases in the packaged Windows application, recording actual NTFS/SQLite sharing outcomes and confirming that every failed persistence action is visible. **Trace:** [Audit DC-03](./localmotive-comprehensive-audit.md#dc-03).
 
 **Complete when:** Normal refresh updates curated rows without rebuilding the healthy database or losing user overrides. Corruption and unsupported-schema handling follow a documented recoverable path, and persistence errors are observable without making valid signed browsing data unavailable.
 
@@ -2845,6 +2845,13 @@ Environment: Windows 11 (26100), Ryzen 9 9950X3D + RTX 5090 (driver 610.74), pac
 - DC-01.V3 sequence COMPLETE: fresh restart within the cooldown window -> HF Catalog shows `OFFLINE · SHOWING LAST SAVED LIST` with "158 curated Hugging Face models loaded from cache" and "Refresh pending: The catalog was refreshed recently. Try again in about 423 min."; browsing rendered 158 cached entries; the search filter (Qwen) reduced the list to 40 rows. Checkbox V06-DC-01.V3 checked.
 - Still open (explicit): SQLite/catalog-DB locking and recovery (DC-03.V3), override with correct/incorrect SHA-256 (DC-04.V2), download-cancellation alignment (DC-12.I4), accepted TLS/auth local profile runs, high-contrast theme pass (only emulated checks so far), Narrator/NVDA (NOT RUN - no screen reader in this session).
 - Evidence paths: `.hermes-0.6/g05-dc01.log`, `.hermes-0.6/g05-v2-cancel.log`, `.hermes-0.6/g05-tamper/original-llama-server-impl.dll`, driver scripts `scripts/g05_dc01.mjs`, `scripts/g05_v2_cancel.mjs`, `scripts/g05_run_cancel.mjs`, `scripts/g05_cancellation.mjs`.
+
+#### G-05 packaged Windows wave — third batch: catalog-mirror recovery and open-handle (candidate `f556fba6…`, source `e8a42ca`)
+
+- Recovery case (DC-03.V3): the real mirror `io.github.localmotive.app\catalog-mirror.sqlite` was overwritten with 21 bytes of text. On the cache-hit path the app is unaffected (158 rows still render). Clearing the refresh stamp and refreshing through the UI made the app detect the corrupt database, quarantine it (`catalog-mirror.sqlite.quarantine-1789136638`, bytes preserved) and rebuild a valid mirror (647 168 bytes, `SQLite format 3`), with "LIST UPDATED 2026-09-10 · LAST SUCCESS 9/11/2026, 6:23:58 PM · 158 of 158 curated models".
+- Open-handle case (DC-03.V3): a Python process held `BEGIN EXCLUSIVE` on the mirror while the UI refresh ran. The app surfaced a VISIBLE failure: "The verified catalog is available in memory, but local persistence failed: The local catalog database needs a rebuild, but the previous file could not be quarantined: The process cannot access the file because it is being used by another process." - an actual NTFS sharing outcome, no silent loss. After the lock was released, the same refresh succeeded ("LIST UPDATED · LAST SUCCESS 6:25:30 PM"). V06-DC-03.V3 checked.
+- DC-04.V2 (override with correct/incorrect SHA-256 against a controlled server) is BLOCKED at the packaged layer: `save_user_catalog_override` has no frontend surface to drive from the UI, and driving raw IPC from a verifier would not exercise a user-acceptable flow. The authority behavior is covered by the Rust `override_authority_tests`; the packaged variant stays open with the exact unblock: a reviewed UI (or a documented maintenance command) that adds/removes an override and shows the download-authorization consequence.
+- Evidence: `.hermes-0.6/g05-dc03.log`, `.hermes-0.6/g05-lock.log`, `.hermes-0.6/g05-tamper/original-catalog-mirror.sqlite`, `.hermes-0.6/g05-tamper/original-refresh-stamp.txt`.
 
 ### V06-G-06
 
