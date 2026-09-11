@@ -59,6 +59,7 @@ export async function attach(cdpPort, { deadlineMs = 90_000 } = {}) {
         return {
           socket,
           exceptions,
+          send,
           async evaluate(expression, timeoutMs = 120_000) {
             const result = await Promise.race([
               send("Runtime.evaluate", {

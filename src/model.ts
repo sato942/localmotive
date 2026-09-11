@@ -582,6 +582,22 @@ export function normalizeTuningReport(stored: unknown): TuningReport | undefined
   };
 }
 
+/// Tone for an evidence result, from its actual status (audit FE-15):
+/// measured/complete states are green, unknown or pending states amber,
+/// blocked or failed states red. Colour is a second channel; the words
+/// remain.
+export function evidenceTone(value: string | null | undefined): "ok" | "pending" | "bad" {
+  if (value === null || value === undefined || value.trim() === "") return "pending";
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "unknown" || normalized === "notmeasured" || normalized === "not measured" || normalized === "pending") {
+    return "pending";
+  }
+  if (normalized.includes("blocked") || normalized.includes("failed") || normalized.includes("rejected") || normalized.includes("cancelled") || normalized.includes("error")) {
+    return "bad";
+  }
+  return "ok";
+}
+
 export function safeJsonParse<T>(raw: string): T | undefined {
   try {
     return JSON.parse(raw) as T;

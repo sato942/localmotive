@@ -1478,3 +1478,28 @@ test("FE-12 path-bar inputs keep a visible keyboard-focus ring", async () => {
     "sanity: the outline reset still exists before the focus rule",
   );
 });
+
+test("FE-14 small-text colors keep at least 4.5:1 on their panels", async () => {
+  const css = await readFile(join(process.cwd(), "src", "App.css"), "utf8");
+  for (const old of ["#6f7974", "#77817d", "#7f8885", "#737b78"]) {
+    assert.ok(!css.includes(old), `${old} was below 4.5:1 and must not return`);
+  }
+  const linear = (channel) => {
+    const value = channel / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance = (hex) => {
+    const value = hex.replace("#", "");
+    const [r, g, b] = [0, 2, 4].map((offset) => Number.parseInt(value.slice(offset, offset + 2), 16));
+    return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
+  };
+  const ratio = (fg, bg) => {
+    const [a, b] = [luminance(fg), luminance(bg)].sort((x, y) => y - x);
+    return (a + 0.05) / (b + 0.05);
+  };
+  const muted = "#9ca3a0";
+  assert.match(css, /\.hardware-source \{[^}]*#9ca3a0/s, "the hardware-source line uses the muted token");
+  for (const panel of ["#202622", "#222627", "#111514"]) {
+    assert.ok(ratio(muted, panel) >= 4.5, `${muted} on ${panel} is ${ratio(muted, panel).toFixed(3)}:1`);
+  }
+});

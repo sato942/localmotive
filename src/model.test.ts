@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as modelModule from "./model";
 import {
+  evidenceTone,
   type DownloadJob,
   formatExtraArgs,
   normalizeProfile,
@@ -993,5 +994,18 @@ describe("persisted record validation (FE-09)", () => {
   it("parses JSON without throwing", () => {
     expect(safeJsonParse("{not json")).toBeUndefined();
     expect(safeJsonParse('{"ok":1}')).toEqual({ ok: 1 });
+  });
+});
+
+describe("evidence tone (FE-15)", () => {
+  it("maps status words to tones instead of painting every result green", () => {
+    expect(evidenceTone("Measured")).toBe("ok");
+    expect(evidenceTone("Complete")).toBe("ok");
+    expect(evidenceTone("Unknown")).toBe("pending");
+    expect(evidenceTone(null)).toBe("pending");
+    expect(evidenceTone("")).toBe("pending");
+    expect(evidenceTone("Blocked")).toBe("bad");
+    expect(evidenceTone("Rejected")).toBe("bad");
+    expect(evidenceTone("Cancelled")).toBe("bad");
   });
 });

@@ -373,3 +373,20 @@ describe("preflight staleness and adapter selection (FE-06)", () => {
     expect(container.textContent).toContain("Stale:");
   });
 });
+
+describe("evidence tone follows the status (FE-15)", () => {
+  it("does not paint unknown results green", () => {
+    render(null);
+    const strongs = [...container.querySelectorAll(".evidence-status-card strong")];
+    expect(strongs.length).toBeGreaterThanOrEqual(3);
+    const unknowns = strongs.filter((strong) => (strong.textContent ?? "").trim() === "Unknown");
+    expect(unknowns.length).toBeGreaterThanOrEqual(3);
+    for (const strong of unknowns) {
+      expect(strong.className).toContain("tone-pending");
+    }
+    // Nothing in the panel may present an unknown or empty result as green.
+    for (const strong of strongs) {
+      expect(strong.className).not.toContain("tone-ok");
+    }
+  });
+});

@@ -1399,7 +1399,7 @@ function App() {
                   <Box size={17} />
                   <h2>Loaded profile</h2>
                   <span className={selected?.complete ? "state-tag good" : "state-tag warning"}>
-                    {selected?.complete ? "VALID" : "BLOCKED"}
+                    {selected?.complete ? "SHARDS COMPLETE" : "SHARDS INCOMPLETE"}
                   </span>
                 </div>
                 <div className="profile-identity">
@@ -1639,9 +1639,9 @@ function App() {
             </div>
 
             <div className="setup-steps" aria-label="First-run setup">
-              <div className={runtimePath ? "setup-step done" : "setup-step active"}><span>1</span><strong>Runtime</strong><small>{runtimePath ? "Configured" : "Install or choose"}</small></div>
+              <div className={runtimePath ? "setup-step done" : "setup-step active"}><span>1</span><strong>Runtime</strong><small>{runtimePath ? "Path selected" : "Install or choose"}</small></div>
               <div className={modelRoot ? "setup-step done" : "setup-step"}><span>2</span><strong>Models</strong><small>{modelRoot ? "Folder selected" : "Choose in Inventory"}</small></div>
-              <div className={runtimePath && modelRoot ? "setup-step done" : "setup-step"}><span>3</span><strong>Serve</strong><small>{runtimePath && modelRoot ? "Ready" : "Complete setup"}</small></div>
+              <div className={runtimePath && modelRoot ? "setup-step done" : "setup-step"}><span>3</span><strong>Serve</strong><small>{runtimePath && modelRoot ? "Ready to validate" : "Complete setup"}</small></div>
             </div>
 
             <div className="hardware-panel">
@@ -1896,7 +1896,12 @@ function App() {
                   <span className={runtime ? "plate-light ok" : "plate-light"} />
                   <div><strong>{runtime ? `llama.cpp b${runtime.build}` : "Not configured"}</strong>{runtime && <span className={isManagedPath ? "runtime-trust managed" : "runtime-trust supplied"}>{isManagedPath ? "MANAGED · VERIFIED DOWNLOAD" : "USER-SUPPLIED · VERSION INSPECTED"}</span>}{runtimeIdentity && runtimeIdentity.backend !== "unknown" && <span className="runtime-trust neutral">{runtimeIdentity.backend.toUpperCase()}{runtimeIdentity.cudaMajor ? ` ${runtimeIdentity.cudaMajor}` : ""} · {runtimeIdentity.source === "manifest" ? "FROM MANIFEST" : "FROM DLLS"}</span>}<small>{runtimePath || "Install a recommended build or choose an existing executable."}</small></div>
                 </div>
-                <label>Existing llama-server.exe<input value={runtimePath} onChange={(event) => setRuntimePath(event.target.value)} placeholder="Path to llama-server.exe" /></label>
+                <label>Existing llama-server.exe<input value={runtimePath} onChange={(event) => {
+                  // The inspected identity belongs to the old path (FE-15):
+                  // clear stale capabilities until this path is inspected.
+                  if (event.target.value !== runtimePath) setRuntime(null);
+                  setRuntimePath(event.target.value);
+                }} placeholder="Path to llama-server.exe" /></label>
                 <div className="runtime-side-actions">
                   <button className="button secondary" onClick={chooseExistingRuntime}><FolderOpen size={15} /> Browse</button>
                   <button className="button secondary" onClick={() => inspect()} disabled={!runtimePath}><Cpu size={15} /> Inspect</button>
@@ -1972,7 +1977,13 @@ function App() {
                 <fieldset>
                   <legend>Identity & runtime</legend>
                   <label className="wide">Profile name<input value={profile.name} onChange={(e) => setProfile({ ...profile, name: e.target.value })} /></label>
-                  <label className="wide">llama-server executable<input value={profile.runtime} onChange={(e) => { setRuntimePath(e.target.value); setProfile({ ...profile, runtime: e.target.value }); }} /></label>
+                  <label className="wide">llama-server executable<input value={profile.runtime} onChange={(e) => {
+                    // Editing the committed path clears stale capabilities
+                    // until the new path is inspected (audit FE-15).
+                    if (e.target.value !== profile.runtime) setRuntime(null);
+                    setRuntimePath(e.target.value);
+                    setProfile({ ...profile, runtime: e.target.value });
+                  }} /></label>
                   <button className="inline-action" onClick={() => inspect()} disabled={busy === "runtime"}>Inspect selected runtime</button>
                   <label>Host<input value={profile.host} onChange={(e) => setProfile({ ...profile, host: e.target.value })} /></label>
                   <label>Port<input type="number" value={profile.port} onChange={(e) => setProfile({ ...profile, port: Number(e.target.value) })} /></label>
@@ -2011,6 +2022,7 @@ function App() {
                   <label className="wide">Speculative method
                     <select value={profile.specType} onChange={(e) => setProfile({ ...profile, specType: e.target.value })}>
                       {(runtime?.specTypes ?? ["none", "draft-mtp", "draft-dspark", "ngram-mod", "ngram-simple", "ngram-map-k", "ngram-map-k4v"]).map((type) => <option key={type}>{type}</option>)}
+                      {!runtime && <small className="field-help">Not inspected — this list is provisional until the selected runtime is inspected.</small>}
                     </select>
                   </label>
                   <label className="wide">Draft / companion GGUF

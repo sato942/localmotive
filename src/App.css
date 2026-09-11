@@ -91,7 +91,8 @@ h1, h2 { font-family: "Bahnschrift Condensed", "Arial Narrow", sans-serif; }
 .text-button { margin: 14px 18px 16px; border: 0; background: transparent; color: var(--green); padding: 0; cursor: pointer; font-size: 11px; font-weight: 700; }
 .terminal-panel { display: flex; flex-direction: column; }
 .terminal-panel pre { flex: 1; max-height: none; }
-.log-empty { flex: 1; min-height: 270px; display: grid; place-content: center; justify-items: center; gap: 8px; color: #737b78; background: #111514; text-align: center; }
+/* FE-14: small text color raised to the muted token (>=4.5:1 on the panels below). */
+.log-empty { flex: 1; min-height: 270px; display: grid; place-content: center; justify-items: center; gap: 8px; color: #9ca3a0; background: #111514; text-align: center; }
 .log-empty strong { color: #a6adaa; font-size: 12px; }
 .log-empty span { font-size: 10px; }
 .terminal-panel pre, .command-preview pre { margin: 0; padding: 16px; min-height: 270px; max-height: 390px; overflow: auto; color: #b8eaa0; background: #111514; font: 11px/1.55 Consolas, "Cascadia Mono", monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -139,7 +140,7 @@ h1, h2 { font-family: "Bahnschrift Condensed", "Arial Narrow", sans-serif; }
 .hardware-icon { width: 48px; height: 48px; display: grid; place-items: center; color: var(--green); border: 1px solid #536558; background: #18201a; }
 .hardware-panel strong { display: block; margin-top: 7px; font: 700 19px "Bahnschrift Condensed", "Arial Narrow", sans-serif; }
 .hardware-panel p { margin: 5px 0 0; color: #929b97; font-size: 10px; }
-.hardware-source { display: block; margin-top: 5px; color: #6f7974; font-size: 8px; }
+.hardware-source { display: block; margin-top: 5px; color: #9ca3a0; font-size: 8px; }
 .hardware-meta { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; max-width: 190px; }
 .hardware-meta span { padding: 4px 6px; color: #b9c4bd; background: #28302b; border: 1px solid #4b5850; font: 700 9px "Bahnschrift Condensed", "Arial Narrow", sans-serif; letter-spacing: .06em; }
 .hardware-evidence-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 10px; margin: -6px 0 16px; }
@@ -172,7 +173,7 @@ h1, h2 { font-family: "Bahnschrift Condensed", "Arial Narrow", sans-serif; }
 .runtime-role { display: inline-block; margin-top: 4px; color: #aab6af; font: 700 8px "Bahnschrift Condensed", "Arial Narrow", sans-serif; letter-spacing: .06em; text-transform: uppercase; }
 .runtime-option-main p { margin: 7px 0 3px; color: #c1c6c3; font-size: 10px; }
 .runtime-option-main small { display: block; color: #858e8a; font-size: 9px; }
-.runtime-option-main code { display: block; margin-top: 8px; color: #77817d; font: 8px Consolas, monospace; overflow-wrap: anywhere; }
+.runtime-option-main code { display: block; margin-top: 8px; color: #9ca3a0; font: 8px Consolas, monospace; overflow-wrap: anywhere; }
 .runtime-provenance { margin-top: 7px !important; display: flex !important; align-items: center; gap: 5px; color: #9eb89d !important; }
 .asset-proof { margin-top: 7px; border-top: 1px solid #35413a; padding-top: 6px; }
 .asset-proof summary { color: #91a29a; cursor: pointer; font-size: 8px; font-weight: 700; }
@@ -237,7 +238,7 @@ h1, h2 { font-family: "Bahnschrift Condensed", "Arial Narrow", sans-serif; }
 fieldset { margin: 0; padding: 17px; border: 1px solid var(--line); background: var(--panel); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
 legend { padding: 0 8px; color: var(--paper); font: 700 14px "Bahnschrift Condensed", "Arial Narrow", sans-serif; letter-spacing: .07em; text-transform: uppercase; }
 .group-note { grid-column: 1 / -1; margin: -2px 0 2px; color: var(--muted); font-size: 10px; line-height: 1.5; }
-.field-help { display: block; margin-top: 5px; color: #7f8885; font-size: 9px; font-weight: 400; line-height: 1.35; }
+.field-help { display: block; margin-top: 5px; color: #9ca3a0; font-size: 9px; font-weight: 400; line-height: 1.35; }
 .advanced-zone { scroll-margin-top: 18px; border: 1px solid #53605a; background: #1d2221; }
 .advanced-zone > summary { min-height: 58px; padding: 0 17px; display: flex; flex-direction: column; justify-content: center; gap: 4px; color: var(--green); cursor: pointer; list-style: none; }
 .advanced-zone > summary::-webkit-details-marker, .option-group > summary::-webkit-details-marker { display: none; }
@@ -347,7 +348,7 @@ label input:disabled { color: #8d9491; }
 .provider-body > label.wide { display: block; }
 .provider-body .runtime-side-actions { padding: 0; }
 .oauth-row { display: grid; gap: 8px; }
-.oauth-row small { color: #7f8885; font-size: 9px; font-weight: 400; line-height: 1.4; }
+.oauth-row small { color: #9ca3a0; font-size: 9px; font-weight: 400; line-height: 1.4; }
 .key-row { margin-top: 6px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
 .key-row input { margin-top: 0; font: 11px Consolas, "Cascadia Mono", monospace; letter-spacing: .12em; }
 .key-row .button { min-width: 88px; }
@@ -388,7 +389,7 @@ label input:disabled { color: #8d9491; }
 .sample-bars div { height: 32px; display: grid; grid-template-columns: 28px minmax(100px, 1fr) 62px; align-items: center; gap: 8px; }
 .sample-bars span, .sample-bars em { color: #99a19e; font: normal 10px "Bahnschrift Condensed", "Arial Narrow", sans-serif; font-variant-numeric: tabular-nums; }
 .sample-bars b { height: 8px; background: var(--green); min-width: 2px; }
-.empty-result { min-height: 330px; display: grid; place-content: center; justify-items: center; color: #737b78; }
+.empty-result { min-height: 330px; display: grid; place-content: center; justify-items: center; color: #9ca3a0; }
 .empty-result p { font-size: 11px; }
 .spin { animation: spin .9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -414,7 +415,11 @@ label input:disabled { color: #8d9491; }
 .manual-override-controls { margin-top: 12px; }
 .override-help { align-self: end; margin: 0 0 4px; }
 .evidence-status-card { min-height: 112px; padding: 12px; border: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; gap: 7px; overflow-wrap: anywhere; }
-.evidence-status-card strong { color: var(--green); font: 700 18px "Bahnschrift Condensed", "Arial Narrow", sans-serif; letter-spacing: .03em; }
+.evidence-status-card strong { color: var(--paper); font: 700 18px "Bahnschrift Condensed", "Arial Narrow", sans-serif; letter-spacing: .03em; }
+/* FE-15: the tone follows the actual status; unknown is amber, failures red. */
+.evidence-status-card strong.tone-ok, strong.tone-ok { color: var(--green); }
+.evidence-status-card strong.tone-pending, strong.tone-pending { color: var(--amber); }
+.evidence-status-card strong.tone-bad, strong.tone-bad { color: var(--red); }
 .evidence-status-card span { color: #aeb5b2; font-size: 10px; line-height: 1.4; }
 .evidence-status-card .danger-text, .danger-text { color: var(--red); }
 .launch-failure { white-space: pre-wrap; }
@@ -514,4 +519,21 @@ label input:disabled { color: #8d9491; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
+}
+
+
+/* FE-14: narrow-viewport reflow. Large-screen Windows is the primary
+   target; these rules keep the controls usable at 320-680 px and under
+   zoom, and retain >=44 px targets for the bottom navigation. */
+.evidence-grid, .device-plan-grid, .ranking-list, .hardware-evidence-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 205px), 1fr)) !important; }
+.adapter-picker { grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)) !important; }
+.section-heading, .panel-title, .actions { flex-wrap: wrap; }
+@media (max-width: 680px) {
+  .evidence-grid, .device-plan-grid, .ranking-list, .hardware-evidence-grid,
+  .evidence-controls, .setup-steps, .instrument-strip { grid-template-columns: minmax(0, 1fr) !important; }
+  .adapter-picker { grid-template-columns: minmax(0, 1fr) !important; }
+  /* Eight bottom cells cannot each hold 44 px at 320 px; the row scrolls
+     horizontally instead of shrinking the targets below the project rule. */
+  .rail nav { overflow-x: auto; justify-content: flex-start; }
+  .nav-item { min-width: 44px; flex: 0 0 auto; }
 }

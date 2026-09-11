@@ -11,6 +11,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
+  evidenceTone,
   calibrationState,
   defaultWorkload,
   errorText,
@@ -712,7 +713,7 @@ export function V03EvidencePanel({
           <div className="evidence-grid">
             <div className="evidence-status-card">
               <span className="muted">Artifact</span>
-              <strong>{artifact ? (artifact.complete ? "Complete" : "Blocked") : "Unknown"}</strong>
+              <strong className={`tone-${evidenceTone(artifact ? (artifact.complete ? "Complete" : "Blocked") : "Unknown")}`}>{artifact ? (artifact.complete ? "Complete" : "Blocked") : "Unknown"}</strong>
               <span>{artifact?.summary?.architecture ?? "Architecture unknown"}</span>
               {artifact?.problems.map((problem) => (
                 <span className="danger-text" key={`${problem.code}-${problem.message}`}>
@@ -722,7 +723,7 @@ export function V03EvidencePanel({
             </div>
             <div className="evidence-status-card">
               <span className="muted">Preflight class</span>
-              <strong>{preflight?.report.class ?? "Unknown"}</strong>
+              <strong className={`tone-${evidenceTone(preflight?.report.class ?? "Unknown")}`}>{preflight?.report.class ?? "Unknown"}</strong>
               <span>{preflight?.report.executionPath ?? "Execution path unknown"}</span>
               {preflightStale ? (
                 <span className="muted">
@@ -903,12 +904,12 @@ export function V03EvidencePanel({
           <div className="evidence-grid">
             <div className="evidence-status-card">
               <span className="muted">Result class</span>
-              <strong>{benchmark?.resultClass ?? "Unknown"}</strong>
+              <strong className={`tone-${evidenceTone(benchmark?.resultClass ?? "Unknown")}`}>{benchmark?.resultClass ?? "Unknown"}</strong>
               <span>{benchmark?.summary ? `${benchmark.summary.successfulTrials}/${benchmark.summary.successfulTrials + benchmark.summary.failedTrials} successful trials` : "No v2 result"}</span>
             </div>
             <div className="evidence-status-card">
               <span className="muted">Decode throughput</span>
-              <strong>{benchmark?.summary?.decodeTps ? `${benchmark.summary.decodeTps.mean.toFixed(2)} tok/s` : "Unknown"}</strong>
+              <strong className={`tone-${evidenceTone(benchmark?.summary?.decodeTps ? "measured" : "Unknown")}`}>{benchmark?.summary?.decodeTps ? `${benchmark.summary.decodeTps.mean.toFixed(2)} tok/s` : "Unknown"}</strong>
               <span>{benchmark?.summary?.decodeTps ? `p50 ${benchmark.summary.decodeTps.p50.toFixed(2)} · p95 ${benchmark.summary.decodeTps.p95.toFixed(2)}` : "No measured statistic"}</span>
               {benchmark?.summary?.decodeTps && (
                 <span>Median {benchmark.summary.decodeTps.median.toFixed(2)} tok/s</span>
@@ -916,7 +917,7 @@ export function V03EvidencePanel({
             </div>
             <div className="evidence-status-card">
               <span className="muted">First-token latency</span>
-              <strong>{benchmark?.summary?.firstTokenMs ? `${benchmark.summary.firstTokenMs.p50.toFixed(1)} ms p50` : "Unknown"}</strong>
+              <strong className={`tone-${evidenceTone(benchmark?.summary?.firstTokenMs ? "measured" : "Unknown")}`}>{benchmark?.summary?.firstTokenMs ? `${benchmark.summary.firstTokenMs.p50.toFixed(1)} ms p50` : "Unknown"}</strong>
               <span>{benchmark?.summary?.derivedTtftMs ? `Derived TTFT p50 ${benchmark.summary.derivedTtftMs.p50.toFixed(1)} ms` : "Derived TTFT unavailable"}</span>
             </div>
           </div>

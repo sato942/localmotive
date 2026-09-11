@@ -796,3 +796,118 @@ describe("assistive-technology structure (audit FE-13)", () => {
     expect(document.activeElement?.id).toBe(next.id);
   });
 });
+
+describe("capability and status words stay honest (audit FE-15)", () => {
+  it("says shards complete, path selected and not inspected instead of overstating", async () => {
+    handlers.set("scan_models", () => [
+      {
+        id: "fixture/model",
+        name: "fixture",
+        directory: "C:/models/fixture",
+        firstShard: "C:/models/fixture/model-Q4_K_M.gguf",
+        sizeBytes: 4_000_000_000,
+        shardCount: 1,
+        expectedShards: 1,
+        complete: true,
+        quant: "Q4_K_M",
+        shards: [],
+        companions: [],
+      },
+    ]);
+    await mount();
+    const navButton = (label: string) =>
+      [...container.querySelectorAll("button")].find(
+        (button) => (button.textContent ?? "").trim() === label,
+      );
+    const click = async (target: Element | undefined, why: string) => {
+      expect(target, why).toBeTruthy();
+      await act(async () => {
+        target!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      await settle();
+    };
+    // The runtime path is chosen before the scan so the suggested profile
+    // carries it and the speculation select can be inspected.
+    await click(navButton("Runtime"), "Runtime navigation");
+    const runtimeField = [...container.querySelectorAll("input")].find(
+      (input) => (input as HTMLInputElement).placeholder === "Path to llama-server.exe",
+    ) as HTMLInputElement | undefined;
+    expect(runtimeField, "the runtime path field must render").toBeTruthy();
+    await act(async () => {
+      const proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!;
+      proto.set!.call(runtimeField, "C:/runtime/llama-server.exe");
+      runtimeField!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await settle();
+    await click(navButton("Inventory"), "Inventory navigation");
+    const rootInput = document.querySelector('input[aria-label="Model root"]') as HTMLInputElement;
+    await act(async () => {
+      const proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!;
+      proto.set!.call(rootInput, "C:/models/fixture-root");
+      rootInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(
+      [...container.querySelectorAll("button")].find((button) =>
+        (button.textContent ?? "").includes("Rescan"),
+      ),
+      "Rescan action",
+    );
+    for (let attempt = 0; attempt < 10 && !text().includes("SHARDS") && !text().includes("Complete"); attempt += 1) {
+      await settle();
+    }
+    // The loaded-profile tag states the shard fact, not a validation claim.
+    await click(navButton("Control"), "Control navigation");
+    expect(text()).toContain("SHARDS COMPLETE");
+    expect(text()).not.toContain("VALID");
+    // The profile's speculation list is marked provisional until inspection.
+    await click(navButton("Profile"), "Profile navigation");
+    expect(text(), "provisional before inspection").toContain("provisional");
+    // Inspecting binds the list to this executable…
+    handlers.set("inspect_runtime", () => ({ build: "b9999", specTypes: ["none", "draft-mtp"], supportedFlags: [] }));
+    handlers.set("describe_runtime", () => ({ path: "C:/runtime/llama-server.exe", backend: "cuda", cudaMajor: 13, tag: "b9999", installKey: null, source: "manifest", managedVerified: false }));
+    await click(
+      [...container.querySelectorAll("button")].find((button) =>
+        (button.textContent ?? "").includes("Inspect selected runtime"),
+      ),
+      "Inspect action",
+    );
+    expect(text()).not.toContain("provisional");
+    // …and editing the path clears the stale capabilities (FE-15).
+    const execInput = [...container.querySelectorAll("input")].find(
+      (input) => (input as HTMLInputElement).value === "C:/runtime/llama-server.exe"
+        && input.getAttribute("type") !== "password",
+    ) as HTMLInputElement | undefined;
+    expect(execInput, "the profile executable field must render").toBeTruthy();
+    await act(async () => {
+      const proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!;
+      proto.set!.call(execInput, "C:/runtime/other.exe");
+      execInput!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await settle();
+    expect(text(), "provisional after path edit").toContain("provisional");
+    // The Runtime screen's own path field clears stale capabilities too.
+    await click(
+      [...container.querySelectorAll("button")].find((button) =>
+        (button.textContent ?? "").includes("Inspect selected runtime"),
+      ),
+      "Inspect action again",
+    );
+    expect(text()).not.toContain("provisional");
+    await click(navButton("Runtime"), "Runtime navigation");
+    const liveRuntimeField = [...container.querySelectorAll("input")].find(
+      (input) => (input as HTMLInputElement).placeholder === "Path to llama-server.exe",
+    ) as HTMLInputElement;
+    await act(async () => {
+      const proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!;
+      proto.set!.call(liveRuntimeField, "C:/runtime/third.exe");
+      liveRuntimeField.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await settle();
+    await click(navButton("Profile"), "Profile navigation again");
+    expect(text(), "provisional after Runtime-screen path edit").toContain("provisional");
+    // First-run readiness does not claim validation.
+    await click(navButton("Runtime"), "Runtime navigation");
+    expect(text()).toContain("Path selected");
+    expect(text()).toContain("Ready to validate");
+  });
+});
