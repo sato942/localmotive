@@ -790,8 +790,146 @@ impl BenchmarkManifest {
             .as_ref()
             .expect("launch presence checked above")
             .validate()?;
+        validate_attempt_consistency(&self.workload, &self.observations, self.terminal_outcome)?;
         Ok(())
     }
+}
+
+/// Attempt/workload/result consistency shared by persistence, replay, share
+/// building and direct export (audit MT-13): one contract, every boundary.
+pub fn validate_attempt_consistency(
+    workload: &Workload,
+    observations: &[BenchmarkObservation],
+    terminal_outcome: Option<AttemptOutcome>,
+) -> Result<(), DomainError> {
+    if observations.is_empty() {
+        return Err(DomainError::new(
+            ErrorCode::MissingValue,
+            "observations",
+            "A finalized record requires at least one observation",
+        ));
+    }
+    if let Some(outcome) = terminal_outcome {
+        if outcome == AttemptOutcome::Succeeded {
+            return Err(DomainError::new(
+                ErrorCode::InvalidRange,
+                "terminalOutcome",
+                "A successful run must not carry a terminal failure outcome",
+            ));
+        }
+        let last = observations.len();
+        if observations[last - 1].outcome != outcome {
+            return Err(DomainError::new(
+                ErrorCode::InvalidRange,
+                "terminalOutcome",
+                "The terminal outcome must match the last observation",
+            ));
+        }
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for observation in observations {
+        if observation.trial == 0 {
+            return Err(DomainError::new(
+                ErrorCode::InvalidRange,
+                "observations[].trial",
+                "Trial identifiers must be positive",
+            ));
+        }
+        if !seen.insert(observation.trial) {
+            return Err(DomainError::new(
+                ErrorCode::InvalidRange,
+                "observations[].trial",
+                "Trial identifiers must be unique",
+            ));
+        }
+        if observation.outcome == AttemptOutcome::Succeeded {
+            let decode = observation.decode_tps.ok_or_else(|| {
+                DomainError::new(
+                    ErrorCode::MissingValue,
+                    "observations[].decodeTps",
+                    "A successful trial must carry decode throughput",
+                )
+            })?;
+            if !decode.is_finite() || decode <= 0.0 {
+                return Err(DomainError::new(
+                    ErrorCode::InvalidRange,
+                    "observations[].decodeTps",
+                    "Decode throughput must be positive and finite",
+                ));
+            }
+            if observation.generated_tokens == 0 {
+                return Err(DomainError::new(
+                    ErrorCode::InvalidRange,
+                    "observations[].generatedTokens",
+                    "A successful trial must generate at least one token",
+                ));
+            }
+            if workload.generation_tokens > 0
+                && observation.generated_tokens != workload.generation_tokens
+            {
+                return Err(DomainError::new(
+                    ErrorCode::InvalidRange,
+                    "observations[].generatedTokens",
+                    "Generated token counts must match the declared workload",
+                ));
+            }
+            if workload.prompt_tokens > 0 && observation.prompt_tokens != workload.prompt_tokens {
+                return Err(DomainError::new(
+                    ErrorCode::InvalidRange,
+                    "observations[].promptTokens",
+                    "Prompt token counts must match the declared workload",
+                ));
+            }
+            if observation.cached_prompt_tokens > observation.prompt_tokens {
+                return Err(DomainError::new(
+                    ErrorCode::InvalidRange,
+                    "observations[].cachedPromptTokens",
+                    "Cached prompt tokens cannot exceed the prompt length",
+                ));
+            }
+        } else if observation.error.is_none() {
+            return Err(DomainError::new(
+                ErrorCode::MissingValue,
+                "observations[].error",
+                "A failed attempt must carry its error evidence",
+            ));
+        }
+    }
+    // Identifiers form exactly 1..=n: sequence gaps or renumbering are
+    // record corruption, not a measurement.
+    let expected: std::collections::BTreeSet<u16> = (1..=observations.len() as u16).collect();
+    if seen != expected {
+        return Err(DomainError::new(
+            ErrorCode::InvalidRange,
+            "observations[].trial",
+            "Trial identifiers must be sequential starting at one",
+        ));
+    }
+    // A run without a terminal outcome must contain every requested trial.
+    if terminal_outcome.is_none()
+        && workload.trials > 0
+        && observations.len() != usize::from(workload.trials)
+    {
+        return Err(DomainError::new(
+            ErrorCode::InvalidRange,
+            "observations",
+            format!(
+                "A completed run requires all {} requested trials",
+                workload.trials
+            ),
+        ));
+    }
+    if terminal_outcome.is_some()
+        && workload.trials > 0
+        && observations.len() > usize::from(workload.trials)
+    {
+        return Err(DomainError::new(
+            ErrorCode::InvalidRange,
+            "observations",
+            "Attempts cannot exceed the declared trial count",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_text(field: &str, value: &str, max_bytes: usize) -> Result<(), DomainError> {

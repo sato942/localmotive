@@ -1393,6 +1393,15 @@ mod tests {
                 split_mode: "none".into(),
                 ..LaunchFact::default()
             }),
+            // The workload declares exactly what the observation measured
+            // (audit MT-13): one 32-token prompt generating 16 tokens.
+            workload: crate::evidence::Workload {
+                prompt_tokens: 32,
+                generation_tokens: 16,
+                warmups: 0,
+                trials: 1,
+                ..crate::evidence::Workload::default()
+            },
             observations: vec![observation(1, Some(50.0), None)],
             ..BenchmarkManifest::default()
         };

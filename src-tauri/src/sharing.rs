@@ -458,6 +458,107 @@ pub fn validate_share_bundle(bundle: &ShareBundle) -> Result<(), String> {
                 128,
             )?;
         }
+        // Status must agree with its cases (audit MT-13): a passing suite
+        // with a failed case, or a failed suite with none, is contradictory.
+        let has_failed = quality
+            .cases
+            .iter()
+            .any(|case| case.status == QualityStatus::Failed);
+        let has_error = quality
+            .cases
+            .iter()
+            .any(|case| case.status == QualityStatus::Error);
+        let coherent = match quality.status {
+            QualityStatus::Passed => !has_failed && !has_error,
+            QualityStatus::Failed => has_failed,
+            QualityStatus::Error => has_error,
+            QualityStatus::NotRun => quality.cases.is_empty(),
+        };
+        if !coherent {
+            return Err(format!(
+                "Quality status {:?} contradicts its cases",
+                quality.status
+            ));
+        }
+    }
+    // The direct bundle validator applies the same workload and attempt
+    // contract as persistence (audit MT-13).
+    bundle
+        .workload
+        .validate()
+        .map_err(|error| error.to_string())?;
+    let trial_ids = bundle
+        .observations
+        .iter()
+        .map(|observation| observation.trial)
+        .collect::<Vec<_>>();
+    let mut unique = trial_ids.clone();
+    unique.sort_unstable();
+    unique.dedup();
+    if unique.len() != trial_ids.len() || trial_ids.contains(&0) {
+        return Err("Share observations must carry unique positive trial identifiers".into());
+    }
+    let expected: Vec<u16> = (1..=bundle.observations.len() as u16).collect();
+    if unique != expected {
+        return Err("Share observations must be sequential starting at one".into());
+    }
+    if let Some(outcome) = bundle.terminal_outcome {
+        let last = bundle
+            .observations
+            .last()
+            .ok_or("A terminal outcome requires observations")?;
+        if last.outcome != outcome {
+            return Err("The terminal outcome must match the last share observation".into());
+        }
+    } else if bundle.workload.trials > 0
+        && bundle.observations.len() != usize::from(bundle.workload.trials)
+    {
+        return Err(format!(
+            "A completed share record requires all {} requested trials",
+            bundle.workload.trials
+        ));
+    }
+    for (index, observation) in bundle.observations.iter().enumerate() {
+        if observation.outcome == AttemptOutcome::Succeeded {
+            {
+                let decode = observation.decode_tps.ok_or_else(|| {
+                    format!("observations[{index}].decodeTps: a successful trial needs decode throughput")
+                })?;
+                if !decode.is_finite() || decode <= 0.0 || observation.generated_tokens == 0 {
+                    return Err(format!(
+                        "observations[{index}]: successful trials need positive throughput and generated tokens"
+                    ));
+                }
+                if bundle.workload.generation_tokens > 0
+                    && observation.generated_tokens != bundle.workload.generation_tokens
+                {
+                    return Err(format!(
+                        "observations[{index}].generatedTokens: generated counts must match the declared workload"
+                    ));
+                }
+                if bundle.workload.prompt_tokens > 0
+                    && observation.prompt_tokens != bundle.workload.prompt_tokens
+                {
+                    return Err(format!(
+                        "observations[{index}].promptTokens: prompt counts must match the declared workload"
+                    ));
+                }
+            }
+        }
+    }
+    // A supplied summary must agree with the observations it summarizes.
+    if let Some(summary) = bundle.summary.as_ref() {
+        let succeeded = bundle
+            .observations
+            .iter()
+            .filter(|observation| observation.outcome == AttemptOutcome::Succeeded)
+            .count();
+        let failed = bundle.observations.len() - succeeded;
+        if summary.successful_trials as usize != succeeded
+            || summary.failed_trials as usize != failed
+        {
+            return Err("Share summary trial counts do not match the observations".into());
+        }
     }
     let bytes = serde_json::to_vec(bundle).map_err(|error| error.to_string())?;
     if bytes.len() > MAX_SHARE_EXPORT_BYTES {
@@ -825,6 +926,11 @@ mod tests {
                 command_args: vec!["--api-key".into(), "super-secret".into()],
                 ..LaunchFact::default()
             }),
+            workload: Workload {
+                trials: 1,
+                warmups: 0,
+                ..Workload::default()
+            },
             observations: vec![BenchmarkObservation {
                 trial: 1,
                 started_at_ms: 42,
@@ -900,6 +1006,183 @@ mod tests {
         assert!(error.contains("missing its execution identity"), "{error}");
     }
 
+    /// Audit MT-13: one attempt/workload contract shared by persistence and
+    /// direct export. Every malformed shape must be refused identically at
+    /// both boundaries; the valid shape must be accepted by both.
+    fn mt13_base_manifest() -> BenchmarkManifest {
+        let mut manifest = BenchmarkManifest {
+            compatibility_key: Some(format!("v2:{}", "e".repeat(64))),
+            runtime: Some(RuntimeFact {
+                path: "runtime.exe".into(),
+                version: "v1".into(),
+                build: "42".into(),
+                executable_sha256: Some("a".repeat(64)),
+                help_sha256: "b".repeat(64),
+                backend: "cpu".into(),
+            }),
+            model: Some(ModelFact {
+                logical_id: "mt13".into(),
+                architecture: "llama".into(),
+                shards: vec![FileFact {
+                    path: "model.gguf".into(),
+                    bytes: 1_000,
+                    sha256: Some("c".repeat(64)),
+                }],
+                companions: Vec::new(),
+                gguf_header_sha256: "d".repeat(64),
+            }),
+            launch: Some(LaunchFact {
+                requested_context: 4_096,
+                effective_context: observed_context(4_096),
+                parallel: 1,
+                gpu_layers: "0".into(),
+                batch: 512,
+                ubatch: 128,
+                cache_type_k: "f16".into(),
+                cache_type_v: "f16".into(),
+                split_mode: "none".into(),
+                ..LaunchFact::default()
+            }),
+            workload: Workload {
+                trials: 2,
+                warmups: 0,
+                prompt_tokens: 8,
+                generation_tokens: 16,
+                ..Workload::default()
+            },
+            ..BenchmarkManifest::default()
+        };
+        for trial in 1..=2u16 {
+            manifest.observations.push(BenchmarkObservation {
+                trial,
+                started_at_ms: 40 + u64::from(trial),
+                duration_ms: 1.0,
+                prompt_tokens: 8,
+                generated_tokens: 16,
+                prefill_tps: Some(100.0),
+                decode_tps: Some(50.0),
+                first_token_ms: Some(5.0),
+                outcome: AttemptOutcome::Succeeded,
+                error: None,
+                ..BenchmarkObservation::default()
+            });
+        }
+        manifest
+    }
+
+    fn mt13_boundaries_agree(manifest: &BenchmarkManifest, expect_ok: bool, label: &str) {
+        let persisted = manifest.validate_complete();
+        // The export path requires the recomputed summary for successful
+        // observations; derive it when the observations are summarizable.
+        let summary = crate::measurement::summarize_observations(&manifest.observations).ok();
+        let export = build_share_bundle(
+            manifest,
+            summary.as_ref(),
+            None,
+            format!("v2:{}", "e".repeat(64)),
+            42,
+        );
+        assert_eq!(
+            persisted.is_err(),
+            export.is_err(),
+            "{label}: boundaries disagree (persist {:?}, export {:?})",
+            persisted.err().map(|error| error.to_string()),
+            export.err().map(|error| error.to_string())
+        );
+        if expect_ok {
+            assert!(
+                persisted.is_ok() && export.is_ok(),
+                "{label}: {persisted:?}"
+            );
+        } else {
+            assert!(persisted.is_err(), "{label}: both boundaries must refuse");
+        }
+    }
+
+    #[test]
+    fn mt13_both_boundaries_refuse_the_same_malformed_records() {
+        mt13_boundaries_agree(&mt13_base_manifest(), true, "valid record");
+
+        let mut duplicate = mt13_base_manifest();
+        duplicate.observations[1].trial = 1;
+        mt13_boundaries_agree(&duplicate, false, "duplicate trial ids");
+
+        let mut zero = mt13_base_manifest();
+        zero.observations[0].trial = 0;
+        mt13_boundaries_agree(&zero, false, "trial zero");
+
+        let mut gap = mt13_base_manifest();
+        gap.observations[1].trial = 3;
+        mt13_boundaries_agree(&gap, false, "sequence gap");
+
+        let mut zero_tokens = mt13_base_manifest();
+        zero_tokens.observations[0].generated_tokens = 0;
+        mt13_boundaries_agree(&zero_tokens, false, "successful zero-token attempt");
+
+        let mut mismatched_tokens = mt13_base_manifest();
+        mismatched_tokens.observations[0].generated_tokens = 99;
+        mt13_boundaries_agree(&mismatched_tokens, false, "token counts off the workload");
+
+        let mut missing = mt13_base_manifest();
+        missing.observations.pop();
+        mt13_boundaries_agree(&missing, false, "missing trials without a terminal outcome");
+
+        let mut contradictory_terminal = mt13_base_manifest();
+        contradictory_terminal.terminal_outcome = Some(AttemptOutcome::Failed);
+        mt13_boundaries_agree(
+            &contradictory_terminal,
+            false,
+            "terminal outcome vs last attempt",
+        );
+
+        let mut silent_failure = mt13_base_manifest();
+        silent_failure.observations[0].outcome = AttemptOutcome::Failed;
+        silent_failure.observations[0].error = None;
+        mt13_boundaries_agree(&silent_failure, false, "failure without error evidence");
+    }
+
+    #[test]
+    fn mt13_share_bundle_rejects_inconsistent_summary_and_quality() {
+        // A supplied summary with counts that do not match the observations.
+        let manifest = mt13_base_manifest();
+        let key = format!("v2:{}", "e".repeat(64));
+        let summary = crate::measurement::summarize_observations(&manifest.observations).unwrap();
+        let export = build_share_bundle(&manifest, Some(&summary), None, key.clone(), 42).unwrap();
+        let mut corrupt = export.clone();
+        if let Some(summary) = corrupt.summary.as_mut() {
+            summary.successful_trials += 1;
+        } else {
+            // The builder always attaches a recomputed summary; if a future
+            // schema drops it, this test must be revisited, not silently pass.
+            panic!("share export must carry a summary for this case");
+        }
+        let error = validate_share_bundle(&corrupt).unwrap_err();
+        assert!(error.contains("trial counts"), "{error}");
+
+        // A quality status that contradicts its cases.
+        let mut contradicted = export.clone();
+        contradicted.quality = Some(ShareQuality {
+            suite_id: "localmotive-structural-v1".into(),
+            seed: 42,
+            observed_at_ms: 43,
+            model_logical_id: "mt13".into(),
+            runtime_sha256: "a".repeat(64),
+            status: QualityStatus::Passed,
+            cases: vec![
+                ShareQualityCase {
+                    case_id: "exact-ready-v1".into(),
+                    status: QualityStatus::Passed,
+                },
+                ShareQualityCase {
+                    case_id: "json-status-v1".into(),
+                    status: QualityStatus::Failed,
+                },
+            ],
+        });
+        let error = validate_share_bundle(&contradicted).unwrap_err();
+        assert!(error.contains("contradicts its cases"), "{error}");
+    }
+
     #[test]
     fn share_export_requires_explicit_user_confirmation() {
         assert!(require_export_confirmation(false).is_err());
@@ -954,6 +1237,15 @@ mod tests {
         };
         // Keep the success in a local variable name that the compiler allows.
         success.trial = 1;
+        // The declared workload matches what the observations measured and
+        // the manifest completed both requested trials (audit MT-13).
+        manifest.workload.trials = 2;
+        manifest.workload.warmups = 0;
+        manifest.workload.prompt_tokens = 8;
+        manifest.workload.generation_tokens = 16;
+        success.prompt_tokens = 8;
+        success.generated_tokens = 16;
+        success.decode_tps = Some(50.0);
         manifest.observations = vec![success, failed];
         manifest.hardware = vec![crate::evidence::HardwareFact {
             adapter_id: "adapter-0".into(),
@@ -1134,9 +1426,39 @@ mod tests {
                 main_gpu: 0,
                 rejected_flags: Vec::new(),
             },
-            workload: Workload::default(),
+            workload: Workload {
+                trials: 1,
+                warmups: 0,
+                prompt_tokens: 8,
+                generation_tokens: 16,
+                ..Workload::default()
+            },
             warmup_outcomes: Vec::new(),
-            observations: Vec::new(),
+            observations: vec![ShareObservation {
+                trial: 1,
+                duration_ms: 1.0,
+                prompt_tokens: 8,
+                generated_tokens: 16,
+                prefill_tps: Some(100.0),
+                decode_tps: Some(50.0),
+                first_token_ms: Some(5.0),
+                derived_ttft_ms: None,
+                peak_process_rss_bytes: public_evidence(
+                    &Evidence::known(
+                        1_000u64,
+                        crate::evidence::EvidenceLevel::Observed,
+                        crate::evidence::EvidenceSource {
+                            kind: crate::evidence::EvidenceSourceKind::Runtime,
+                            detail: "llama-server fixture".into(),
+                        },
+                        42,
+                        Vec::new(),
+                    )
+                    .unwrap(),
+                ),
+                outcome: AttemptOutcome::Succeeded,
+                succeeded: true,
+            }],
             terminal_outcome: None,
             summary: None,
             quality: None,

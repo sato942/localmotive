@@ -901,6 +901,9 @@ mod tests {
             ..BenchmarkManifest::default()
         };
         manifest.workload.trials = 2;
+        manifest.workload.prompt_tokens = 8;
+        manifest.workload.generation_tokens = 16;
+        manifest.workload.warmups = 0;
         for trial in 1..=2u16 {
             manifest.observations.push(BenchmarkObservation {
                 trial,

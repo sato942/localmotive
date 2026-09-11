@@ -5916,6 +5916,11 @@ mod mt08_anchor_tests {
         // empty-observation fixture keeps trials=1 so the "no observations"
         // check is the one that fires.
         manifest.workload.trials = observations.max(1) as u16;
+        // Declare the measured workload so the attempt/workload contract
+        // (audit MT-13) accepts the fixture.
+        manifest.workload.prompt_tokens = 8;
+        manifest.workload.generation_tokens = 16;
+        manifest.workload.warmups = 0;
         for trial in 1..=observations {
             manifest.observations.push(BenchmarkObservation {
                 trial: trial as u16,
@@ -5939,6 +5944,14 @@ mod mt08_anchor_tests {
                 outcome: AttemptOutcome::Succeeded,
                 error: None,
             });
+        }
+        // A terminal failure outcome must match the last observation
+        // (audit MT-13): mark the final trial as the failed attempt.
+        if let Some(failed) = manifest.terminal_outcome {
+            if let Some(last) = manifest.observations.last_mut() {
+                last.outcome = failed;
+                last.error = Some("fixture failure".into());
+            }
         }
         manifest
     }
@@ -6099,23 +6112,38 @@ mod mt08_anchor_tests {
             );
         }
 
-        let empty = manifest_fixture(&key, 1_000, 50.0, AttemptOutcome::Succeeded, 0);
-        let path = write_manifest(&root, &empty);
-        assert!(
-            add_benchmark_calibration_anchor_impl(&root, &path, 100.0, "manual-estimate.v1")
-                .unwrap_err()
-                .contains("no observations")
-        );
+        // An empty run cannot even pass the shared attempt/workload contract
+        // (audit MT-13), so the fixture is written as raw JSON to prove the
+        // anchor command still refuses it independently.
+        let mut empty = manifest_fixture(&key, 1_000, 50.0, AttemptOutcome::Succeeded, 0);
+        empty.workload.trials = 1;
+        let empty_path = root.join("empty-observations.json");
+        std::fs::write(&empty_path, serde_json::to_vec_pretty(&empty).unwrap()).unwrap();
+        let error =
+            add_benchmark_calibration_anchor_impl(&root, &empty_path, 100.0, "manual-estimate.v1")
+                .unwrap_err();
+        assert!(error.contains("observation"), "{error}");
 
         // A partial run (fewer observations than the workload's planned
         // trials) is ineligible even when it carries no failure outcome.
+        // The shared attempt/workload contract rejects it at the boundary,
+        // so the fixture is raw JSON to prove the anchor command refuses it
+        // independently too.
         let mut partial = manifest_fixture(&key, 1_000, 50.0, AttemptOutcome::Succeeded, 1);
         partial.workload.trials = 3;
-        let path = write_manifest(&root, &partial);
-        let error =
-            add_benchmark_calibration_anchor_impl(&root, &path, 100.0, "manual-estimate.v1")
-                .unwrap_err();
-        assert!(error.contains("partial benchmark run"), "{error}");
+        let partial_path = root.join("partial-run.json");
+        std::fs::write(&partial_path, serde_json::to_vec_pretty(&partial).unwrap()).unwrap();
+        let error = add_benchmark_calibration_anchor_impl(
+            &root,
+            &partial_path,
+            100.0,
+            "manual-estimate.v1",
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("requested trials") || error.contains("partial benchmark run"),
+            "{error}"
+        );
 
         // Estimator identities cannot mix inside one model.
         let mut anchors = Vec::new();
