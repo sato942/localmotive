@@ -2354,18 +2354,18 @@ These packages preserve actionable recommendations outside the 72-item findings 
 
 **Make copied commands and local manifest redaction truthful**
 
-**Status:** Not started · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
 **Audit trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities)  
 **Prerequisites:** [V06-MT-02](#v06-mt-02)
 
 **Implementation**
 
-- [ ] **V06-S-14.I1** — Either provide correctly escaped commands for an explicitly named target shell or export structured argv; keep process execution on argument arrays. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
-- [ ] **V06-S-14.I2** — Cover actual short/long path-bearing flags including -md and LoRA in manifest-safe argument handling, and document that raw local manifests still include explicit local paths and differ from public share exports. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
+- [x] **V06-S-14.I1** — Either provide correctly escaped commands for an explicitly named target shell or export structured argv; keep process execution on argument arrays. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
+- [x] **V06-S-14.I2** — Cover actual short/long path-bearing flags including -md and LoRA in manifest-safe argument handling, and document that raw local manifests still include explicit local paths and differ from public share exports. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
 
 **Verification**
 
-- [ ] **V06-S-14.V1** — Round-trip spaces, quotes, metacharacters and Unicode through the chosen command representation; use canary paths across every supported path-bearing flag and verify each stated redaction guarantee. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
+- [x] **V06-S-14.V1** — Round-trip spaces, quotes, metacharacters and Unicode through the chosen command representation; use canary paths across every supported path-bearing flag and verify each stated redaction guarantee. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
 
 **Complete when:** Copied-command behavior is reproducible and local/private versus public export contracts are explicit.
 
@@ -3773,3 +3773,11 @@ Revalidated at the candidate source (`065248a1` + the G-07 test addition) on Win
 - V1: `s13_impossible_profile_domains_fail_before_launch_and_name_the_value` runs 20 invalid-domain cases (including NaN temperature and a zero n-gram size) plus the relationship case; the baseline profile is asserted to build fully (`build_args().expect(...)`) — a fix made after PD1 initially passed through a vacuous assertion (`Wildcard CORS requires an API key file` broke every case), which is recorded rather than hidden. JS `reconcileDraftCompanion` cases cover draft methods kept, ngram/none cleared, and no-op when nothing was retained.
 - Mutations: PD1 (domain validation disabled in build_args), PD2 (cache-type membership check removed) and PD3 (companion reconciliation disabled) each failed their guarding test after the vacuous-assert fix and passed after restore.
 - Commands: `cargo fmt --check` PASS; clippy `-D warnings` 0 errors (one `type_complexity` fixed by a local type alias); `cargo test` 555 passed / 0 failed / 2 ignored (554 + the S-13 test); `npm run check` PASS (340.38 kB); Vitest 103 passed; node tests 140 passed.
+
+#### S-14 closure record — truthful copied commands and redaction
+
+- I1: `LaunchProfile::escaped_command_with_args(args, CommandShell)` quotes for a NAMED shell — PowerShell single-quotes every token with `'` doubled (literal under PowerShell for spaces, quotes, `& | > < ^ $ \` ()`, `%` and Unicode), cmd.exe applies MSVCRT quoting (embedded `"` as `\"`, backslash runs before quotes doubled) and REFUSES a `%` value with an actionable notice instead of quoting a lie. `argv_json_with_args` emits the exact argv as a JSON array: lossless for any wrapper. The `preview_command` Tauri command now returns `{powerShell, argv, cmd, cmdNotice}` and the Provisional command panel renders each form labelled; `validate_launch_arguments` uses the PowerShell form for its recorded command. The naive space-only quoting helper (`display_command_with_args`) and the superseded `compose_provisional_command` were removed; the FE-04 source gate was updated to the new API and still asserts cheap composition (no `prepare_launch`).
+- I2: `sanitize_effective_args` now covers the short draft flag `-md` (plus `-mdl`, `--draft-model`, `--spec-draft-model`, `--model-draft`) and `--chat-template-file`, alongside the existing model/projector/LoRA/key/cert mappings. `docs/EVIDENCE-MATRIX.md` documents that raw local manifests still include explicit local paths and are not publication artifacts, while share/export bundles run the separate redaction path and the calibration identity uses the sanitized tokens.
+- V1: `s14_quoted_commands_and_argv_round_trip_every_hazard` round-trips an 8-token hazard set (spaces, single and double quotes, shell metacharacters, `%`, Unicode, a trailing-backslash path) through the PowerShell form with a reversible tokenizer, asserts the cmd.exe refusal for `%` and deterministic quoting otherwise, and parses the argv JSON back to an exact array. `s14_sanitizer_covers_every_path_bearing_flag_with_canaries` places a distinct canary path after each of eleven path-bearing flags and asserts none survives while `--port 8080` does.
+- Mutations: PE1 (PowerShell quoting reverted to space-only), PE2 (cmd `%` refusal removed) and PE3 (draft-flag sanitization removed) each failed their guarding test and passed after restore.
+- Commands: `cargo fmt --check` PASS; clippy `-D warnings` 0 errors; `cargo test` 557 passed / 0 failed / 2 ignored (555 + the two S-14 tests); `npm run check` PASS (340.99 kB); Vitest 103; node tests 140 (the FE-04 gate updated to the new preview API).

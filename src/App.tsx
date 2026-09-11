@@ -41,6 +41,7 @@ import {
   bytesLabel,
   catalogBuildFit,
   catalogRevision,
+  type CommandPreview,
   reconcileDraftCompanion,
   conflictingCapacityMetrics,
   contextChoices,
@@ -192,7 +193,7 @@ function App() {
   const [profile, setProfile] = useState<LaunchProfile | null>(null);
   const [runtime, setRuntime] = useState<RuntimeCapabilities | null>(null);
   const [status, setStatus] = useState<ServerStatus>(idleStatus);
-  const [command, setCommand] = useState("");
+  const [command, setCommand] = useState<CommandPreview | null>(null);
   // FE-03: per-resource request sequences and live identity mirrors, so a
   // deferred response can never commit against a newer resource state.
   const cloudSeq = useRef(0);
@@ -1074,7 +1075,7 @@ function App() {
     const identity = profileIdentity(profile);
     const sequence = ++previewSeq.current;
     try {
-      const command = await invoke<string>("preview_command", { profile });
+      const command = await invoke<CommandPreview>("preview_command", { profile });
       // FE-03: an old preview must not overwrite a newer one; an old profile
       // must not label the current one's command.
       const currentIdentity = profileRef.current ? profileIdentity(profileRef.current) : "";
@@ -1082,7 +1083,11 @@ function App() {
       setCommand(command);
     } catch (error) {
       if (keepLatestRequest(sequence, previewSeq.current)) {
-        setCommand(inTauri() ? String(error) : "Browser preview cannot compose the command. Use the packaged app.");
+        setCommand(
+          inTauri()
+            ? { powerShell: String(error), argv: "", cmd: null, cmdNotice: null }
+            : { powerShell: "Browser preview cannot compose the command. Use the packaged app.", argv: "", cmd: null, cmdNotice: null },
+        );
       }
     }
   }
@@ -2277,7 +2282,27 @@ function App() {
 
               <aside className="command-preview">
                 <div className="panel-title"><Braces size={17} /><h2>Provisional command</h2></div>
-                <pre>{command || "Edit a setting to compose the command."}</pre>
+                {command ? (
+                  <>
+                    <p className="field-help">PowerShell form (paste-ready):</p>
+                    <pre>{command.powerShell}</pre>
+                    {command.cmd && (
+                      <>
+                        <p className="field-help">cmd.exe form:</p>
+                        <pre>{command.cmd}</pre>
+                      </>
+                    )}
+                    {command.cmdNotice && <small className="field-help">{command.cmdNotice}</small>}
+                    {command.argv && (
+                      <>
+                        <p className="field-help">argv (JSON array — lossless for any wrapper):</p>
+                        <pre>{command.argv}</pre>
+                      </>
+                    )}
+                  </>
+                ) : (
+                  <pre>Edit a setting to compose the command.</pre>
+                )}
                 <p className="security-note">Composed without probing the runtime: capability filtering, artifact checks, and managed-runtime trust are enforced when the profile is validated and launched.</p>
                 <div className="capability-list">
                   <span>RUNTIME CAPABILITIES</span>

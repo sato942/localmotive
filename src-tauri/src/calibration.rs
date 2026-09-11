@@ -202,6 +202,13 @@ pub fn sanitize_effective_args(args: &[String]) -> Vec<String> {
             "-m" | "--model" => Some("[model]"),
             "--mmproj" => Some("[mmproj]"),
             "--lora" | "--lora-scaled" => Some("[lora]"),
+            // The short draft flags carry local draft paths exactly like the
+            // long forms (audit S-14.I2).
+            "-md" | "-mdl" | "--draft-model" | "--spec-draft-model" | "--model-draft" => {
+                Some("[draft-model]")
+            }
+            // Any other path-bearing value the launch builder can emit.
+            "--chat-template-file" => Some("[configured]"),
             "--api-key-file" | "--ssl-key-file" | "--ssl-cert-file" => Some("[configured]"),
             value if value.ends_with("draft-model") || value.ends_with("model-draft") => {
                 Some("[draft-model]")
@@ -1668,5 +1675,52 @@ mod tests {
         let second = selected_artifact_set_sha256(&["a".repeat(64), "c".repeat(64)]).unwrap();
 
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn s14_sanitizer_covers_every_path_bearing_flag_with_canaries() {
+        // One canary per path-bearing flag the launch builder can emit; none
+        // may survive sanitization (audit S-14.I2).
+        let canary = |name: &str| format!("C:\\Users\\canary-user\\secret-{name}\\file.bin");
+        let flags = [
+            "-m",
+            "--model",
+            "--mmproj",
+            "--lora",
+            "--lora-scaled",
+            "-md",
+            "--spec-draft-model",
+            "--chat-template-file",
+            "--api-key-file",
+            "--ssl-key-file",
+            "--ssl-cert-file",
+        ];
+        let mut args = Vec::new();
+        for flag in flags {
+            args.push(flag.to_string());
+            args.push(canary(flag.trim_start_matches('-')));
+        }
+        args.push("--port".into());
+        args.push("8080".into());
+        let sanitized = sanitize_effective_args(&args);
+        let joined = sanitized.join(" ");
+        assert!(
+            !joined.contains("canary-user"),
+            "a local path survived sanitization: {joined}"
+        );
+        for flag in flags {
+            let position = sanitized
+                .iter()
+                .position(|token| token == flag)
+                .unwrap_or_else(|| panic!("{flag} missing from {joined}"));
+            assert!(
+                sanitized
+                    .get(position + 1)
+                    .is_some_and(|value| value.starts_with('[')),
+                "{flag} value was not replaced: {joined}"
+            );
+        }
+        // Non-path values survive untouched.
+        assert!(sanitized.windows(2).any(|pair| pair == ["--port", "8080"]));
     }
 }

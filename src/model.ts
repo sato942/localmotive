@@ -2010,6 +2010,17 @@ export type CatalogSnapshot = {
   persistenceNotice?: string;
 };
 
+export type CommandPreview = {
+  /** The launch line quoted for PowerShell (paste-ready). */
+  powerShell: string;
+  /** The exact argv as a JSON array: lossless for any wrapper (audit S-14). */
+  argv: string;
+  /** The launch line quoted for cmd.exe, when every value is expressible. */
+  cmd: string | null;
+  /** Why a cmd.exe form is not offered, when that is the case. */
+  cmdNotice: string | null;
+};
+
 export type TokenStatus = {
   configured: boolean;
   masked: string;

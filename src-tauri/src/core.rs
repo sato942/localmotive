@@ -1105,19 +1105,86 @@ impl LaunchProfile {
         Ok(args)
     }
 
-    pub fn display_command_with_args(&self, args: &[String]) -> String {
-        let quote = |s: &str| {
-            if s.contains(' ') {
-                format!("\"{}\"", s)
-            } else {
-                s.to_string()
+    /// The launch line quoted for one NAMED shell (audit S-14.I1). The app
+    /// itself always launches with an argument array; this string exists only
+    /// for display and copy/paste, so the quoting must be correct for the
+    /// shell it names. Use [`Self::argv_json_with_args`] for a lossless form.
+    pub fn escaped_command_with_args(
+        &self,
+        args: &[String],
+        shell: CommandShell,
+    ) -> Result<String, String> {
+        let tokens = std::iter::once(self.runtime.as_str()).chain(args.iter().map(String::as_str));
+        match shell {
+            CommandShell::PowerShell => Ok(tokens
+                .map(|token| format!("'{}'", token.replace('\'', "''")))
+                .collect::<Vec<_>>()
+                .join(" ")),
+            CommandShell::Cmd => {
+                let mut quoted = Vec::new();
+                for token in tokens {
+                    if token.contains('%') {
+                        return Err(
+                            "A launch value contains `%`, which cmd.exe cannot take literally; copy the PowerShell form or the argv list instead."
+                                .into(),
+                        );
+                    }
+                    quoted.push(cmd_quote(token));
+                }
+                Ok(quoted.join(" "))
             }
-        };
-        std::iter::once(quote(&self.runtime))
-            .chain(args.iter().map(|argument| quote(argument)))
-            .collect::<Vec<_>>()
-            .join(" ")
+        }
     }
+
+    /// The launch line as a JSON array of exact arguments (audit S-14.I1):
+    /// lossless for every shell and safe to paste into a wrapper.
+    pub fn argv_json_with_args(&self, args: &[String]) -> Result<String, String> {
+        let mut argv = Vec::with_capacity(args.len() + 1);
+        argv.push(self.runtime.clone());
+        argv.extend(args.iter().cloned());
+        serde_json::to_string(&argv).map_err(|error| format!("Could not serialize argv: {error}"))
+    }
+}
+
+/// The shell a copied command line targets (audit S-14.I1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommandShell {
+    PowerShell,
+    Cmd,
+}
+
+/// MSVCRT-compatible quoting for cmd.exe: wrap in double quotes, escape
+/// embedded quotes as `\"`, and double any run of backslashes that precedes a
+/// quote or the closing quote.
+fn cmd_quote(token: &str) -> String {
+    let mut out = String::with_capacity(token.len() + 2);
+    out.push('"');
+    let mut backslashes = 0usize;
+    for character in token.chars() {
+        match character {
+            '\\' => {
+                backslashes += 1;
+                out.push('\\');
+            }
+            '"' => {
+                for _ in 0..backslashes {
+                    out.push('\\');
+                }
+                backslashes = 0;
+                out.push('\\');
+                out.push('"');
+            }
+            _ => {
+                backslashes = 0;
+                out.push(character);
+            }
+        }
+    }
+    for _ in 0..backslashes {
+        out.push('\\');
+    }
+    out.push('"');
+    out
 }
 
 fn argument_flag(token: &str) -> Option<&str> {
@@ -1337,17 +1404,6 @@ pub struct LaunchArgumentValidation {
     pub command: String,
 }
 
-/// Compose the provisional command line for a profile without probing the
-/// runtime, hashing artifacts, or filtering by advertised capabilities: a
-/// cheap composition so an ordinary profile edit never dispatches
-/// authoritative validation work (audit FE-04). The result is explicitly
-/// provisional; launch, start, preflight, and tuning still run the full
-/// capability-filtered, trust-checked path through `validate_launch_arguments`.
-pub fn compose_provisional_command(profile: &LaunchProfile) -> Result<String, String> {
-    let raw_args = profile.build_args()?;
-    Ok(profile.display_command_with_args(&raw_args))
-}
-
 pub fn validate_launch_arguments(
     profile: &LaunchProfile,
     capabilities: &RuntimeCapabilities,
@@ -1380,7 +1436,7 @@ pub fn validate_launch_arguments(
             flag,
         })
         .collect();
-    let command = profile.display_command_with_args(&effective_args);
+    let command = profile.escaped_command_with_args(&effective_args, CommandShell::PowerShell)?;
     Ok(LaunchArgumentValidation {
         effective_args,
         rejected,
@@ -3569,7 +3625,9 @@ fn main() {
             ..LaunchProfile::default()
         };
         profile.flash_attention = "on".into();
-        let provisional = compose_provisional_command(&profile).unwrap();
+        let provisional = profile
+            .escaped_command_with_args(&profile.build_args().unwrap(), CommandShell::PowerShell)
+            .unwrap();
         assert!(provisional.contains("--flash-attn"), "{provisional}");
         assert!(provisional.contains("fixture.gguf"), "{provisional}");
 
@@ -3764,5 +3822,87 @@ fn main() {
         inverted.batch = 256;
         inverted.ubatch = 512;
         assert!(inverted.build_args().unwrap_err().contains("uBatch"));
+    }
+
+    #[test]
+    fn s14_quoted_commands_and_argv_round_trip_every_hazard() {
+        let profile = LaunchProfile {
+            runtime: "C:\\Program Files\\llama\\llama-server.exe".into(),
+            ..LaunchProfile::default()
+        };
+        let hazards: Vec<String> = vec![
+            "plain".into(),
+            "with space".into(),
+            "quote'inside".into(),
+            "double\"quote".into(),
+            "meta&|><^$`()".into(),
+            "percent%value".into(),
+            "模型-é-a.gguf".into(),
+            "C:\\models\\trailing\\".into(),
+        ];
+        let args: Vec<String> = std::iter::once("-m".to_string())
+            .chain(std::iter::once(hazards[1].clone()))
+            .chain(hazards.iter().skip(2).cloned())
+            .collect();
+
+        // PowerShell: every token is single-quoted with `'` doubled, so the
+        // form is literal under PowerShell for every hazard.
+        let ps = profile
+            .escaped_command_with_args(&args, CommandShell::PowerShell)
+            .unwrap();
+        let tokens = ps_single_quote_tokens(&ps);
+        let expected: Vec<String> = std::iter::once(profile.runtime.clone())
+            .chain(args.iter().cloned())
+            .collect();
+        assert_eq!(tokens, expected);
+
+        // cmd.exe: a `%` value cannot be expressed literally and is refused
+        // with an actionable message; everything else quotes deterministically.
+        let err = profile
+            .escaped_command_with_args(&["-m".into(), "percent%value".into()], CommandShell::Cmd)
+            .unwrap_err();
+        assert!(err.contains("cmd.exe"), "{err}");
+        let cmd = profile
+            .escaped_command_with_args(
+                &["-m".into(), "space value".into(), "quote\"in".into()],
+                CommandShell::Cmd,
+            )
+            .unwrap();
+        assert!(cmd.contains("\"space value\""), "{cmd}");
+        assert!(cmd.contains("\"quote\\\"in\""), "{cmd}");
+
+        // argv is lossless: parse it back and compare exactly.
+        let argv = profile.argv_json_with_args(&args).unwrap();
+        let parsed: Vec<String> = serde_json::from_str(&argv).unwrap();
+        assert_eq!(parsed, expected);
+        assert!(argv.contains("percent%value"), "{argv}");
+    }
+
+    /// Split a PowerShell single-quoted token list back into raw values
+    /// (quotes doubled inside). Used to prove the escaping is reversible.
+    fn ps_single_quote_tokens(command: &str) -> Vec<String> {
+        let mut tokens = Vec::new();
+        let mut current = String::new();
+        let mut in_quotes = false;
+        let mut chars = command.chars().peekable();
+        while let Some(character) = chars.next() {
+            match character {
+                '\'' if in_quotes && chars.peek() == Some(&'\'') => {
+                    current.push('\'');
+                    chars.next();
+                }
+                '\'' => in_quotes = !in_quotes,
+                ' ' if !in_quotes => {
+                    if !current.is_empty() {
+                        tokens.push(std::mem::take(&mut current));
+                    }
+                }
+                other => current.push(other),
+            }
+        }
+        if !current.is_empty() {
+            tokens.push(current);
+        }
+        tokens
     }
 }

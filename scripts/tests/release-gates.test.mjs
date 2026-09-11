@@ -1341,7 +1341,11 @@ test("FE-04 previews compose provisionally and launch trust stays authoritative"
   // The preview command is cheap composition only: no probing or trust work
   // on the profile-edit path (audit FE-04).
   const preview = lib.split("fn preview_command(")[1].split("#[tauri::command]")[0];
-  assert.match(preview, /compose_provisional_command/);
+  // The preview names its shell and offers a lossless argv form (S-14) while
+  // staying cheap composition only.
+  assert.match(preview, /escaped_command_with_args/);
+  assert.match(preview, /CommandShell::PowerShell/);
+  assert.match(preview, /argv_json_with_args/);
   assert.doesNotMatch(preview, /prepare_launch/);
   // Validation and launch keep the authoritative checks.
   const validate = lib.split("fn validate_launch_profile(")[1].split("#[tauri::command]")[0];

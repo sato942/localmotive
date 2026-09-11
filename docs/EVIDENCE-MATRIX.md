@@ -44,3 +44,20 @@ executed.
 - The catalog signature authenticates the catalog document; it does not
   authenticate application installers (see `SECURITY.md`).
 - Releases ship unsigned with disclosure; verify published SHA-256 checksums.
+
+## Copied commands and manifest paths (audit S-14)
+
+- The provisional command preview names its shell: a paste-ready PowerShell
+  line (single-quoted, so every metacharacter and Unicode value is literal)
+  and, when every value is expressible, a cmd.exe line; a value containing
+  `%` refuses the cmd.exe form with an explanatory notice. A JSON `argv`
+  array accompanies both and is lossless for any wrapper. The application
+  itself always launches llama-server through an argument array, never a
+  shell string.
+- Raw local run manifests are working files for this machine and still
+  include explicit local paths (model, projector, draft, LoRA, template and
+  key/certificate files). They are **not** publication artifacts: share and
+  export bundles run the separate redaction path, and the effective-argument
+  identity used for calibration is sanitized (`[model]`, `[draft-model]`,
+  `[lora]`, `[configured]`) for every path-bearing flag, including the short
+  `-md` draft form.

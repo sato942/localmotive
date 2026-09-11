@@ -1661,11 +1661,37 @@ async fn preflight_model(request: PreflightRequest) -> Result<PreflightResult, S
 }
 
 #[tauri::command]
-fn preview_command(profile: LaunchProfile) -> Result<String, String> {
+fn preview_command(profile: LaunchProfile) -> Result<CommandPreview, String> {
     // Cheap provisional composition only: no runtime probes, no artifact
     // hashing, no trust checks (audit FE-04 I2). Every authoritative check
-    // still runs at validation and launch.
-    core::compose_provisional_command(&profile)
+    // still runs at validation and launch. The preview names its shell and
+    // offers a lossless argv form (audit S-14.I1).
+    let raw_args = profile.build_args()?;
+    let power_shell =
+        profile.escaped_command_with_args(&raw_args, core::CommandShell::PowerShell)?;
+    let argv = profile.argv_json_with_args(&raw_args)?;
+    let (cmd, cmd_notice) =
+        match profile.escaped_command_with_args(&raw_args, core::CommandShell::Cmd) {
+            Ok(cmd) => (Some(cmd), None),
+            Err(error) => (None, Some(error)),
+        };
+    Ok(CommandPreview {
+        power_shell,
+        argv,
+        cmd,
+        cmd_notice,
+    })
+}
+
+/// The provisional launch line for the interface (audit S-14): each form
+/// names its shell or is a lossless argv array.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CommandPreview {
+    power_shell: String,
+    argv: String,
+    cmd: Option<String>,
+    cmd_notice: Option<String>,
 }
 
 #[tauri::command]
