@@ -2227,18 +2227,18 @@ These packages preserve actionable recommendations outside the 72-item findings 
 
 **Verify authenticated redirect and proxy behavior**
 
-**Status:** Not started · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
 **Audit trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims)  
 **Prerequisites:** [V06-DC-02](#v06-dc-02)
 
 **Implementation**
 
-- [ ] **V06-S-08.I1** — Define allowed redirect schemes/hosts and proxy expectations for fixed GitHub/HF endpoints; retain TLS verification and avoid accepting arbitrary frontend URLs. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
-- [ ] **V06-S-08.I2** — Test sensitive-header handling across same-origin, cross-origin and scheme-changing redirects using synthetic credentials and a controlled transport fixture. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
+- [x] **V06-S-08.I1** — Define allowed redirect schemes/hosts and proxy expectations for fixed GitHub/HF endpoints; retain TLS verification and avoid accepting arbitrary frontend URLs. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
+- [x] **V06-S-08.I2** — Test sensitive-header handling across same-origin, cross-origin and scheme-changing redirects using synthetic credentials and a controlled transport fixture. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
 
 **Verification**
 
-- [ ] **V06-S-08.V1** — Prove Authorization reaches only intended endpoints and disallowed redirects fail with a safe diagnostic; repeat relevant resume and final-hash checks after legitimate redirects. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
+- [x] **V06-S-08.V1** — Prove Authorization reaches only intended endpoints and disallowed redirects fail with a safe diagnostic; repeat relevant resume and final-hash checks after legitimate redirects. **Trace:** [Catalog additional observations](./localmotive-comprehensive-audit.md#additional-defensive-gaps-and-observations-not-separate-high-severity-claims).
 
 **Complete when:** Network policy is documented and tested without assuming default redirects already leak tokens.
 
@@ -3724,3 +3724,11 @@ Revalidated at the candidate source (`065248a1` + the G-07 test addition) on Win
 - V1: `s07_hf_token_input_is_bounded_before_validation_and_never_echoed` (real token, exactly-at-bound, one-over rejection with no echo, trimmed padding) and `s07_legacy_cleanup_failures_become_a_visible_notice` (success keeps the notice away; failure surfaces the shared wording without the underlying error text). The live Credential Manager vault is untouched by tests.
 - Mutations: OX1 (length bound removed) and OX2 (cleanup failure swallowed) each failed their guarding test and passed after restore.
 - Commands: `cargo fmt --check` PASS; clippy `-D warnings` 0 errors; `cargo test` 547 passed / 0 failed / 2 ignored (545 + the two S-07 tests); `npm run check` PASS (338.06 kB, `tsc --noEmit` PASS); Vitest 93.
+
+#### S-08 closure record — redirect and proxy policy with fixture proof
+
+- I1: `download::allowed_redirect_target` defines the policy: production transfers are https-only on `huggingface.co`, `hf.co`, `github.com` and `githubusercontent.com` with dot-boundary suffix matching (covers `cdn-lfs.huggingface.co`, `cas-bridge.xethub.hf.co`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com`); lookalikes, scheme changes, non-HTTP schemes and non-loopback private addresses are refused; loopback (127.0.0.0/8, `::1`, `localhost`) stays allowed so fixtures can serve local HTTP. `redirect_policy()` applies it to the catalog download client and the runtime GitHub client (max 10 hops, restated because a custom policy owns the count). A refused hop carries the safe diagnostic "the download redirected to a host outside the allowed set". The frontend never supplies a transfer URL (catalog authority split from DC-04/DC-05/DC-06; runtime catalog endpoints are compiled). The policy is documented in `docs/SUPPLY-CHAIN.md`. TLS verification is unchanged (rustls + webpki roots); no proxy is configured or accepted from the frontend, and documented proxy expectations are: none — system proxy variables are not consulted for the pinned HTTPS endpoints.
+- I2: synthetic-token fixtures prove header behavior: `g07_an_authenticated_redirect_does_not_forward_the_token_to_another_host` (same machine, different host name) shows the Authorization header reaches the first host and not the redirect target, and the download still completes with a verified digest (final-hash after a legitimate redirect); `s08_a_redirect_outside_the_allowed_set_fails_with_a_safe_diagnostic` shows a 302 to `example.invalid` is refused before any connection, publishes no file and the error carries no credentials; the 12-case scheme/host matrix covers same- and cross-origin and scheme rules.
+- V1: the two new tests plus the retained g07 regression (1 passed) and the policy matrix (2 passed). Resume across a redirect: chunk state is keyed by the original URL and the chain re-resolves per request; the DC-02/DC-12 suites remain the direct-URL resume proof, and no redirect-specific resume difference exists in the code path.
+- Mutations: OY1 (policy always follows) and OY2 (host set emptied) each failed their guarding test and passed after restore.
+- Commands: `cargo fmt --check` PASS; clippy `-D warnings` 0 errors; `cargo test` 549 passed / 0 failed / 2 ignored (547 + the two S-08 tests); `npm run check` PASS.

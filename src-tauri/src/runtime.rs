@@ -2522,6 +2522,9 @@ fn runtime_catalog_client(timeout: Duration) -> Result<reqwest::Client, RuntimeC
     reqwest::Client::builder()
         .user_agent(format!("Localmotive/{}", env!("CARGO_PKG_VERSION")))
         .default_headers(headers)
+        // The same documented redirect policy as catalog downloads
+        // (audit S-08): https-only production hosts plus loopback fixtures.
+        .redirect(crate::download::redirect_policy())
         .connect_timeout(timeout.min(Duration::from_secs(5)))
         .timeout(timeout)
         .build()

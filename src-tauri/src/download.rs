@@ -728,6 +728,56 @@ fn sync_part_data(entries: &DownloadEntries) -> Result<(), String> {
 /// plus on completion or stop (audit DC-12 I2).
 const CHECKPOINT_INTERVAL_SECS: u64 = 2;
 
+/// The documented network policy for catalog and runtime transfers
+/// (audit S-08): production endpoints are always HTTPS, and a redirect may
+/// only stay on Hugging Face, GitHub or their content-delivery hosts
+/// (suffix match on a dot boundary). Loopback addresses are the one
+/// exception, so repository and verifier fixtures can use local servers.
+pub fn allowed_redirect_target(scheme: &str, host: &str) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    if host.is_empty() {
+        return false;
+    }
+    let loopback = host == "localhost"
+        || host == "::1"
+        || host
+            .parse::<std::net::Ipv4Addr>()
+            .map(|address| address.is_loopback())
+            .unwrap_or(false);
+    if loopback {
+        return scheme == "http" || scheme == "https";
+    }
+    if scheme != "https" {
+        return false;
+    }
+    const ALLOWED: [&str; 4] = [
+        "huggingface.co",
+        "hf.co",
+        "github.com",
+        "githubusercontent.com",
+    ];
+    ALLOWED
+        .iter()
+        .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
+}
+
+/// The reqwest redirect policy built from [`allowed_redirect_target`]. A
+/// refusal carries a safe diagnostic; sensitive headers are additionally
+/// stripped by reqwest on any cross-host hop.
+pub(crate) fn redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() >= 10 {
+            return attempt.error("the download redirected too many times");
+        }
+        let url = attempt.url();
+        if allowed_redirect_target(url.scheme(), url.host_str().unwrap_or_default()) {
+            attempt.follow()
+        } else {
+            attempt.error("the download redirected to a host outside the allowed set")
+        }
+    })
+}
+
 fn client(
     token: Option<&str>,
     request_timeout: Duration,
@@ -744,6 +794,7 @@ fn client(
     reqwest::blocking::Client::builder()
         .user_agent(format!("Localmotive/{}", env!("CARGO_PKG_VERSION")))
         .default_headers(headers)
+        .redirect(redirect_policy())
         .connect_timeout(Duration::from_secs(20))
         .timeout(request_timeout)
         .build()
@@ -2899,6 +2950,112 @@ mod tests {
             downloaded,
             |_, _| {},
         )
+    }
+
+    #[test]
+    fn s08_redirect_policy_defines_schemes_and_hosts() {
+        // Production hosts, including their content-delivery subdomains.
+        for (scheme, host) in [
+            ("https", "huggingface.co"),
+            ("https", "cdn-lfs.huggingface.co"),
+            ("https", "cas-bridge.xethub.hf.co"),
+            ("https", "hf.co"),
+            ("https", "github.com"),
+            ("https", "objects.githubusercontent.com"),
+            ("https", "release-assets.githubusercontent.com"),
+            ("https", "HUGGINGFACE.CO"),
+            ("https", "huggingface.co."),
+        ] {
+            assert!(allowed_redirect_target(scheme, host), "{scheme}://{host}");
+        }
+        // Lookalikes, schemes and prefixes must never pass.
+        for (scheme, host) in [
+            ("http", "huggingface.co"),
+            ("https", "huggingface.co.evil.example"),
+            ("https", "evil-huggingface.co"),
+            ("https", "huggingface.co.evil.example/huggingface.co"),
+            ("https", "notgithub.com"),
+            ("https", "github.com.evil.example"),
+            ("https", "example.com"),
+            ("ftp", "huggingface.co"),
+            ("https", ""),
+        ] {
+            assert!(!allowed_redirect_target(scheme, host), "{scheme}://{host}");
+        }
+        // Loopback is allowed for repository and verifier fixtures only.
+        for (scheme, host) in [
+            ("http", "127.0.0.1"),
+            ("http", "localhost"),
+            ("https", "127.0.0.2"),
+            ("http", "::1"),
+        ] {
+            assert!(allowed_redirect_target(scheme, host), "{scheme}://{host}");
+        }
+        assert!(!allowed_redirect_target("http", "10.0.0.5"));
+        assert!(!allowed_redirect_target("https", "192.168.1.10"));
+    }
+
+    #[test]
+    fn s08_a_redirect_outside_the_allowed_set_fails_with_a_safe_diagnostic() {
+        use std::io::{BufRead as _, BufReader, Write as _};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut request_line = String::new();
+            let _ = reader.read_line(&mut request_line);
+            loop {
+                let mut line = String::new();
+                match reader.read_line(&mut line) {
+                    Ok(0) => break,
+                    Ok(_) if line == "\r\n" => break,
+                    Ok(_) => {}
+                    Err(_) => break,
+                }
+            }
+            let response = "HTTP/1.1 302 Found\r\nLocation: https://example.invalid/model.gguf\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.flush();
+        });
+
+        let root = std::env::temp_dir().join(format!(
+            "localmotive-s08-redirect-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let target = root.join("model.gguf");
+        let result = download_file(
+            &format!("http://127.0.0.1:{port}/model.gguf"),
+            &target,
+            "fixture/repo",
+            16,
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            None,
+            1,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicU64::new(0)),
+            |_, _| {},
+        );
+        let error = result.expect_err("a redirect outside the allowed set must fail");
+        assert!(
+            error.contains("outside the allowed set") || error.contains("redirect"),
+            "{error}"
+        );
+        // The diagnostic must not carry credentials or a full URL dump.
+        assert!(!error.contains("Bearer"), "{error}");
+        assert!(
+            !target.exists(),
+            "no file may be published from a refused redirect"
+        );
+        let _ = server.join();
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
