@@ -304,6 +304,10 @@ export type CalibrationModel = {
   anchorCount: number;
   createdAtMs: number;
   expiresAtMs: number;
+  // Provenance and freshness added with the unified validator (audit MT-14).
+  sourceEvidenceAtMs?: number;
+  estimator?: string;
+  sourceRunIds?: string[];
 };
 
 export type CalibrationRecords = {
@@ -435,8 +439,17 @@ export function qualityPassRate(result: QualitySuiteResult | null): number | nul
   return scored.filter((item) => item.status === "passed").length / scored.length;
 }
 
-export type CalibrationState = "compatible" | "expired" | "incompatible" | "unavailable";
+export type CalibrationState =
+  | "compatible"
+  | "expired"
+  | "incompatible"
+  | "scheduled"
+  | "staleEvidence"
+  | "unavailable";
 
+/** Mirrors the backend evaluation in calibration_model_state (audit MT-14):
+ * exact expiry, a creation time ahead of the clock is not yet applicable,
+ * and freshness is measured from the source-run evidence, not rebuild time. */
 export function calibrationState(
   model: CalibrationModel | null,
   compatibilityKey: string,
@@ -444,7 +457,12 @@ export function calibrationState(
 ): CalibrationState {
   if (!model) return "unavailable";
   if (model.compatibilityKey !== compatibilityKey) return "incompatible";
-  return nowMs > model.expiresAtMs ? "expired" : "compatible";
+  if (nowMs < model.createdAtMs) return "scheduled";
+  if (nowMs >= model.expiresAtMs) return "expired";
+  const evidence = model.sourceEvidenceAtMs ?? 0;
+  const maxEvidenceAgeMs = 90 * 24 * 60 * 60 * 1_000;
+  if (evidence > 0 && nowMs - evidence > maxEvidenceAgeMs) return "staleEvidence";
+  return "compatible";
 }
 
 export function derivedEvidence<T>(

@@ -2813,6 +2813,22 @@ fn add_benchmark_calibration_anchor(
     )
 }
 
+/// Backend evaluation of a stored calibration model (audit MT-14 I4): the
+/// same rules apply uses, exposed for display so frontend and backend
+/// cannot disagree about expiry or freshness.
+#[tauri::command]
+fn evaluate_calibration_model(
+    model: calibration::CalibrationModel,
+    compatibility_key: String,
+    now_ms: u64,
+) -> Result<calibration::CalibrationState, String> {
+    Ok(calibration::calibration_model_state(
+        &model,
+        &compatibility_key,
+        now_ms,
+    ))
+}
+
 #[tauri::command]
 fn store_calibration_model(
     app: tauri::AppHandle,
@@ -4073,6 +4089,7 @@ pub fn run() {
             store_calibration_anchor,
             add_benchmark_calibration_anchor,
             store_calibration_model,
+            evaluate_calibration_model,
             load_calibration_records,
             import_external_evidence,
             review_external_evidence,

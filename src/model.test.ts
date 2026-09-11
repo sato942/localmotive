@@ -342,6 +342,21 @@ describe("v0.3 calibration decisions", () => {
     expect(calibrationState(model, model.compatibilityKey, 150)).toBe("compatible");
     expect(calibrationState(model, model.compatibilityKey, 201)).toBe("expired");
     expect(calibrationState(model, "b".repeat(64), 150)).toBe("incompatible");
+    // Audit MT-14: a model created after the clock is not yet applicable,
+    // and freshness follows the source evidence, not the rebuild time.
+    expect(calibrationState(model, model.compatibilityKey, 50)).toBe("scheduled");
+    const dayMs = 24 * 60 * 60 * 1_000;
+    const staleModel: CalibrationModel = {
+      ...model,
+      sourceEvidenceAtMs: 1_000,
+      expiresAtMs: 1_000 + 200 * dayMs,
+    };
+    expect(
+      calibrationState(staleModel, staleModel.compatibilityKey, 1_000 + 91 * dayMs),
+    ).toBe("staleEvidence");
+    expect(
+      calibrationState(staleModel, staleModel.compatibilityKey, 1_000 + 89 * dayMs),
+    ).toBe("compatible");
     expect(calibrationState(null, model.compatibilityKey, 150)).toBe("unavailable");
   });
 });

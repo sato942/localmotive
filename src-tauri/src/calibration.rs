@@ -356,6 +356,61 @@ pub struct CalibrationModel {
     pub anchor_count: usize,
     pub created_at_ms: u64,
     pub expires_at_ms: u64,
+    /// The newest source-run observation behind this model: freshness is
+    /// measured from the evidence, not from the rebuild time (audit MT-14).
+    #[serde(default)]
+    pub source_evidence_at_ms: u64,
+    /// The estimator identity all anchors shared (audit MT-14 I3).
+    #[serde(default)]
+    pub estimator: String,
+    /// The distinct source-run identities behind the model.
+    #[serde(default)]
+    pub source_run_ids: Vec<String>,
+}
+
+/// The longest accepted calibration TTL and evidence age (audit MT-14).
+pub const MAX_CALIBRATION_TTL_MS: u64 = 365 * 24 * 60 * 60 * 1_000;
+pub const MAX_EVIDENCE_AGE_MS: u64 = 90 * 24 * 60 * 60 * 1_000;
+
+/// Estimators whose output semantics this build understands.
+pub const SUPPORTED_ESTIMATORS: &[&str] = &["manual-estimate.v1"];
+
+/// How a stored calibration model relates to the current configuration and
+/// time (audit MT-14 I4): one backend evaluation shared by apply and display.
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum CalibrationState {
+    Compatible,
+    Expired,
+    Incompatible,
+    Scheduled,
+    StaleEvidence,
+    Invalid,
+}
+
+pub fn calibration_model_state(
+    model: &CalibrationModel,
+    compatibility_key: &str,
+    now_ms: u64,
+) -> CalibrationState {
+    if validate_calibration_model(model).is_err() {
+        return CalibrationState::Invalid;
+    }
+    if model.compatibility_key != compatibility_key {
+        return CalibrationState::Incompatible;
+    }
+    if now_ms < model.created_at_ms {
+        return CalibrationState::Scheduled;
+    }
+    if now_ms >= model.expires_at_ms {
+        return CalibrationState::Expired;
+    }
+    if model.source_evidence_at_ms > 0
+        && now_ms.saturating_sub(model.source_evidence_at_ms) > MAX_EVIDENCE_AGE_MS
+    {
+        return CalibrationState::StaleEvidence;
+    }
+    CalibrationState::Compatible
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -468,7 +523,7 @@ pub fn build_calibration(
     if !factor.is_finite() || !variance.is_finite() {
         return Err("Calibration arithmetic exceeded the finite numeric range".into());
     }
-    Ok(CalibrationModel {
+    let model = CalibrationModel {
         compatibility_key: key.into(),
         factor,
         residual_standard_deviation: variance.sqrt(),
@@ -477,7 +532,26 @@ pub fn build_calibration(
         expires_at_ms: created_at_ms
             .checked_add(ttl_ms)
             .ok_or("Calibration expiry overflowed")?,
-    })
+        // Freshness comes from the source runs, not from the rebuild time
+        // (audit MT-14 I2), and the estimator/provenance travel with it.
+        source_evidence_at_ms: anchors
+            .iter()
+            .map(|anchor| anchor.observed_at_ms)
+            .max()
+            .unwrap_or(0),
+        estimator: estimator.to_string(),
+        source_run_ids: {
+            let mut runs = anchors
+                .iter()
+                .map(|anchor| anchor.source_run_id.clone())
+                .collect::<Vec<_>>();
+            runs.sort();
+            runs.dedup();
+            runs
+        },
+    };
+    validate_calibration_model(&model)?;
+    Ok(model)
 }
 
 pub fn apply_calibration(
@@ -487,31 +561,47 @@ pub fn apply_calibration(
     now_ms: u64,
 ) -> Result<CalibratedEstimate, String> {
     validate_compatibility_key(compatibility_key)?;
-    validate_compatibility_key(&model.compatibility_key)?;
+    validate_calibration_model(model)?;
     if compatibility_key != model.compatibility_key {
         return Err("Calibration compatibility key does not match".into());
     }
-    if now_ms == 0 || now_ms >= model.expires_at_ms {
+    if now_ms == 0 {
+        return Err("Calibration requires a nonzero current time".into());
+    }
+    if now_ms < model.created_at_ms {
+        return Err(
+            "Calibration model was created after the current time; check the system clock".into(),
+        );
+    }
+    if now_ms >= model.expires_at_ms {
         return Err("Calibration has expired".into());
+    }
+    if model.source_evidence_at_ms > 0
+        && now_ms.saturating_sub(model.source_evidence_at_ms) > MAX_EVIDENCE_AGE_MS
+    {
+        return Err(
+            "Calibration evidence is older than the supported freshness window; rebuild it from new measurements"
+                .into(),
+        );
     }
     if !estimated_value.is_finite() || estimated_value <= 0.0 || estimated_value > 1_000_000_000.0 {
         return Err("Estimated value must be positive and finite".into());
     }
     let value = estimated_value * model.factor;
     let uncertainty = estimated_value * model.residual_standard_deviation * 1.96;
-    if !model.factor.is_finite()
-        || model.factor <= 0.0
-        || !model.residual_standard_deviation.is_finite()
-        || model.residual_standard_deviation < 0.0
-        || !value.is_finite()
+    let lower_bound = (value - uncertainty).max(0.0);
+    let upper_bound = value + uncertainty;
+    if !value.is_finite()
         || !uncertainty.is_finite()
+        || !lower_bound.is_finite()
+        || !upper_bound.is_finite()
     {
         return Err("Calibration model produced a non-finite result".into());
     }
     Ok(CalibratedEstimate {
         value,
-        lower_bound: (value - uncertainty).max(0.0),
-        upper_bound: value + uncertainty,
+        lower_bound,
+        upper_bound,
         evidence_level: EvidenceLevel::Derived,
         compatibility_key: model.compatibility_key.clone(),
         expires_at_ms: model.expires_at_ms,
@@ -644,11 +734,14 @@ fn validate_persisted_anchor(anchor: &CalibrationAnchor) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_persisted_model(model: &CalibrationModel) -> Result<(), String> {
+/// The single calibration-model validator used by build, persist, load and
+/// apply (audit MT-14 I1): anchor count, creation/expiry ordering, the TTL
+/// bound, finite metrics, and provenance shapes.
+pub fn validate_calibration_model(model: &CalibrationModel) -> Result<(), String> {
     validate_compatibility_key(&model.compatibility_key)?;
     if model.created_at_ms == 0
         || model.expires_at_ms <= model.created_at_ms
-        || model.expires_at_ms - model.created_at_ms > 365 * 24 * 60 * 60 * 1_000
+        || model.expires_at_ms - model.created_at_ms > MAX_CALIBRATION_TTL_MS
     {
         return Err("Calibration model timestamps are outside the supported range".into());
     }
@@ -661,6 +754,26 @@ fn validate_persisted_model(model: &CalibrationModel) -> Result<(), String> {
         || model.residual_standard_deviation < 0.0
     {
         return Err("Calibration model metrics are invalid".into());
+    }
+    if !model.estimator.is_empty() && !SUPPORTED_ESTIMATORS.contains(&model.estimator.as_str()) {
+        return Err(format!(
+            "Calibration model estimator {} is not supported by this build",
+            model.estimator
+        ));
+    }
+    if !model.source_run_ids.is_empty() {
+        let unique = model
+            .source_run_ids
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        if unique.len() != model.source_run_ids.len()
+            || model.source_run_ids.iter().any(|run| run.trim().is_empty())
+        {
+            return Err("Calibration model source-run identities are invalid".into());
+        }
+    }
+    if model.source_evidence_at_ms != 0 && model.source_evidence_at_ms > model.created_at_ms {
+        return Err("Calibration model evidence postdates its creation".into());
     }
     Ok(())
 }
@@ -829,7 +942,7 @@ pub fn load_calibration_anchors(
 }
 
 pub fn persist_calibration_model(root: &Path, model: &CalibrationModel) -> Result<PathBuf, String> {
-    validate_persisted_model(model)?;
+    validate_calibration_model(model)?;
     persist_record(
         root,
         "models",
@@ -850,7 +963,7 @@ pub fn load_calibration_models(
     let mut records = Vec::new();
     for path in record_paths(root, "models")? {
         let record: CalibrationModel = read_bounded_record(&path)?;
-        validate_persisted_model(&record)?;
+        validate_calibration_model(&record)?;
         if record.compatibility_key == compatibility_key {
             records.push(record);
         }
@@ -1018,6 +1131,169 @@ mod tests {
             measured,
             at,
         )
+    }
+
+    #[test]
+    fn mt14_apply_enforces_creation_expiry_and_evidence_freshness() {
+        let key = test_key('a');
+        let anchors = vec![
+            test_anchor(&key, "run-1", 100.0, 110.0, 10),
+            test_anchor(&key, "run-2", 200.0, 220.0, 20),
+            test_anchor(&key, "run-3", 300.0, 330.0, 30),
+        ];
+        // The TTL outlives the evidence-freshness window so the freshness
+        // rule itself is exercised, not the earlier expiry rule.
+        let model = build_calibration(&anchors, 1_000, MAX_CALIBRATION_TTL_MS).unwrap();
+        assert_eq!(model.source_evidence_at_ms, 30);
+        assert_eq!(model.estimator, "manual-estimate.v1");
+        assert_eq!(model.source_run_ids.len(), 3);
+
+        // A clock behind the creation time refuses application.
+        let error = apply_calibration(&model, &key, 400.0, 500).unwrap_err();
+        assert!(error.contains("created after the current time"), "{error}");
+
+        // Exact expiry: at the expiry instant the model is expired.
+        let error = apply_calibration(&model, &key, 400.0, model.expires_at_ms).unwrap_err();
+        assert!(error.contains("expired"), "{error}");
+
+        // Freshness is measured from the source runs, not the rebuild time:
+        // long after the runs, the model stops being applicable even inside
+        // its nominal TTL.
+        let long_after = model.created_at_ms + MAX_EVIDENCE_AGE_MS + 1;
+        assert!(
+            long_after < model.expires_at_ms,
+            "the fixture must outlive the freshness window"
+        );
+        let error = apply_calibration(&model, &key, 400.0, long_after).unwrap_err();
+        assert!(error.contains("freshness"), "{error}");
+
+        // A fresh application still works.
+        let applied = apply_calibration(&model, &key, 400.0, 5_000).unwrap();
+        assert!(applied.lower_bound.is_finite() && applied.upper_bound.is_finite());
+    }
+
+    #[test]
+    fn mt14_one_validator_rejects_bad_models_at_every_entry_point() {
+        let key = test_key('a');
+        let valid = build_calibration(
+            &[
+                test_anchor(&key, "run-1", 100.0, 110.0, 10),
+                test_anchor(&key, "run-2", 200.0, 220.0, 20),
+                test_anchor(&key, "run-3", 300.0, 330.0, 30),
+            ],
+            40,
+            1_000,
+        )
+        .unwrap();
+        validate_calibration_model(&valid).unwrap();
+
+        // Inverted timestamps.
+        let mut inverted = valid.clone();
+        inverted.expires_at_ms = inverted.created_at_ms;
+        assert!(apply_calibration(&inverted, &key, 400.0, 100).is_err());
+        assert!(validate_calibration_model(&inverted).is_err());
+
+        // Overlong TTL.
+        let mut overlong = valid.clone();
+        overlong.expires_at_ms = overlong.created_at_ms + MAX_CALIBRATION_TTL_MS + 1;
+        assert!(validate_calibration_model(&overlong).is_err());
+
+        // Insufficient anchor count.
+        let mut few = valid.clone();
+        few.anchor_count = 2;
+        assert!(validate_calibration_model(&few).is_err());
+
+        // An estimator this build does not understand.
+        let mut foreign = valid.clone();
+        foreign.estimator = "mystery-estimator.v9".into();
+        assert!(validate_calibration_model(&foreign)
+            .unwrap_err()
+            .contains("not supported"));
+
+        // Duplicate source-run provenance.
+        let mut duplicated = valid.clone();
+        duplicated.source_run_ids = vec!["run-1".into(), "run-1".into(), "run-3".into()];
+        assert!(validate_calibration_model(&duplicated).is_err());
+
+        // Evidence that postdates creation.
+        let mut paradoxical = valid.clone();
+        paradoxical.source_evidence_at_ms = paradoxical.created_at_ms + 1;
+        assert!(validate_calibration_model(&paradoxical).is_err());
+
+        // Persist and load both reject an invalid model: the validator is
+        // shared, not a load-only epilogue.
+        let root = std::env::temp_dir().join(format!(
+            "localmotive-mt14-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        assert!(persist_calibration_model(&root, &overlong).is_err());
+        persist_calibration_model(&root, &valid).unwrap();
+        // A record tampered on disk fails the same validator at load.
+        let path = record_paths(&root, "models").unwrap().pop().unwrap();
+        let mut tampered = valid.clone();
+        tampered.factor = f64::INFINITY;
+        std::fs::write(&path, serde_json::to_vec_pretty(&tampered).unwrap()).unwrap();
+        assert!(load_calibration_models(&root, &key).is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn mt14_state_evaluation_matches_apply_semantics() {
+        let key = test_key('a');
+        let model = build_calibration(
+            &[
+                test_anchor(&key, "run-1", 100.0, 110.0, 10),
+                test_anchor(&key, "run-2", 200.0, 220.0, 20),
+                test_anchor(&key, "run-3", 300.0, 330.0, 30),
+            ],
+            1_000,
+            MAX_CALIBRATION_TTL_MS,
+        )
+        .unwrap();
+        assert_eq!(
+            calibration_model_state(&model, &key, 5_000),
+            CalibrationState::Compatible
+        );
+        assert_eq!(
+            calibration_model_state(&model, &key, 500),
+            CalibrationState::Scheduled
+        );
+        assert_eq!(
+            calibration_model_state(&model, &key, model.expires_at_ms),
+            CalibrationState::Expired
+        );
+        assert_eq!(
+            calibration_model_state(&model, &test_key('b'), 5_000),
+            CalibrationState::Incompatible
+        );
+        assert_eq!(
+            calibration_model_state(&model, &key, model.created_at_ms + MAX_EVIDENCE_AGE_MS + 1),
+            CalibrationState::StaleEvidence
+        );
+        let mut foreign = model.clone();
+        foreign.estimator = "mystery-estimator.v9".into();
+        assert_eq!(
+            calibration_model_state(&foreign, &key, 5_000),
+            CalibrationState::Invalid
+        );
+
+        // Every non-Compatible state is refused by apply with a matching
+        // message category.
+        assert!(apply_calibration(&model, &key, 400.0, 500).is_err());
+        assert!(apply_calibration(&model, &key, 400.0, model.expires_at_ms).is_err());
+        assert!(apply_calibration(&model, &test_key('b'), 400.0, 5_000).is_err());
+        assert!(apply_calibration(
+            &model,
+            &key,
+            400.0,
+            model.created_at_ms + MAX_EVIDENCE_AGE_MS + 1
+        )
+        .is_err());
+        assert!(apply_calibration(&foreign, &key, 400.0, 5_000).is_err());
     }
 
     #[test]
