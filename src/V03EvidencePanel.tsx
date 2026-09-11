@@ -8,7 +8,10 @@ import {
   type ReactNode,
   type SelectHTMLAttributes,
 } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import {
+  tauriEvidenceAdapter,
+  type EvidenceAdapter,
+} from "./evidence-adapter";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
   evidenceTone,
@@ -25,7 +28,6 @@ import {
   type CandidateEvidence,
   type CalibrationAnchor,
   type CalibrationModel,
-  type CalibrationRecords,
   type CalibratedEstimate,
   type ExternalEvidenceBundle,
   type ExternalEvidenceState,
@@ -40,7 +42,6 @@ import {
   validateWorkload,
   type ObjectiveWeights,
   type ServerStatus,
-  type ShareBundle,
   type Workload,
 } from "./model";
 
@@ -160,6 +161,9 @@ type Props = {
   /** FE-05: publishes the active evidence run so the whole app can show its
    * status and offer the same cancellation handle on any screen. */
   onRunStateChange?: (state: { kind: "benchmark" | "quality"; cancel: (() => void) | null } | null) => void;
+  /// Injection seam (audit S-27.I2): acquisition and persistence arrive
+  /// through this adapter; tests can substitute it freely.
+  adapter?: EvidenceAdapter;
 };
 
 export function V03EvidencePanel({
@@ -168,7 +172,9 @@ export function V03EvidencePanel({
   serverStatus,
   initialHardware,
   onRunStateChange,
+  adapter: injectedAdapter,
 }: Props) {
+  const adapter = injectedAdapter ?? tauriEvidenceAdapter;
   const [artifact, setArtifact] = useState<ArtifactInspection | null>(null);
   const [hardware, setHardware] = useState<HardwareInfo | null>(initialHardware);
   const [selectedAdapterIds, setSelectedAdapterIds] = useState<string[]>([]);
@@ -294,7 +300,7 @@ export function V03EvidencePanel({
     const compatibilityKey = benchmark?.compatibilityKey;
     if (!compatibilityKey) return;
     let active = true;
-    void invoke<CalibrationRecords>("load_calibration_records", { compatibilityKey })
+    void adapter.loadCalibrationRecords(compatibilityKey)
       .then((records) => {
         if (!active) return;
         setAnchors(records.anchors);
@@ -345,7 +351,7 @@ export function V03EvidencePanel({
   }
 
   async function refreshHardware() {
-    const result = await runAction("hardware", () => invoke<HardwareInfo>("detect_hardware"));
+    const result = await runAction("hardware", () => adapter.detectHardware());
     if (result) {
       setHardware(result);
       const knownIds = new Set(result.adapters.map((adapter) => adapter.adapterId));
@@ -361,7 +367,7 @@ export function V03EvidencePanel({
     }
     const capturedRevision = inputRevisionRef.current;
     const result = await runAction("artifact", () =>
-      invoke<ArtifactInspection>("inspect_model_artifact", {
+      adapter.inspectModelArtifact({
         firstShard: model.firstShard,
         companions: model.companions.map((item) => item.path),
         hashFiles: false,
@@ -402,7 +408,7 @@ export function V03EvidencePanel({
     const capturedRevision = inputRevisionRef.current;
     const capturedInputs = preflightInputs;
     const result = await runAction("preflight", () =>
-      invoke<PreflightResult>("preflight_model", {
+      adapter.preflightModel({
         profile,
         selectedAdapterIds,
         manualOverrides,
@@ -440,7 +446,7 @@ export function V03EvidencePanel({
     setQuality(null);
     setShareConfirmed(false);
     const result = await runAction("benchmark", () =>
-      invoke<BenchmarkRunResult>("benchmark_v2", { workload: nextWorkload }),
+      adapter.benchmarkV2(nextWorkload),
     );
     if (result) {
       setBenchmark(result);
@@ -462,7 +468,7 @@ export function V03EvidencePanel({
     if (cancelPending) return;
     setCancelPending(true);
     try {
-      await invoke<void>("cancel_benchmark");
+      await adapter.cancelBenchmark();
       setMessage("Benchmark cancellation requested; the run ends after the current attempt.");
     } catch (error) {
       setMessage(errorText(error));
@@ -474,9 +480,7 @@ export function V03EvidencePanel({
   async function replayBenchmark() {
     if (!benchmark) return;
     const replayed = await runAction("replay", () =>
-      invoke<Workload>("replay_benchmark_manifest", {
-        manifest: benchmark.manifest,
-      }),
+      adapter.replayBenchmarkManifest(benchmark.manifest),
     );
     if (replayed) {
       setWorkload(replayed);
@@ -490,7 +494,7 @@ export function V03EvidencePanel({
       return;
     }
     const result = await runAction("quality", () =>
-      invoke<QualitySuiteResult>("run_quality_suite"),
+      adapter.runQualitySuite(),
     );
     if (result) {
       setQuality(result);
@@ -510,7 +514,7 @@ export function V03EvidencePanel({
     for (const [index, item] of history.entries()) {
       const attached = item === benchmark ? quality : null;
       try {
-        const candidate = await invoke<CandidateEvidence>("join_quality_candidate", {
+        const candidate = await adapter.joinQualityCandidate({
           id: `${item.compatibilityKey}:${index + 1}`,
           manifest: item.manifest,
           resultClass: item.resultClass,
@@ -523,7 +527,7 @@ export function V03EvidencePanel({
       }
     }
     const result = await runAction("ranking", () =>
-      invoke<RankedCandidate[]>("rank_candidates", {
+      adapter.rankCandidates({
         candidates,
         constraints,
         weights,
@@ -547,7 +551,7 @@ export function V03EvidencePanel({
     // measured value and observation time come from the saved manifest, and
     // one run can contribute at most one sample (audit MT-08).
     const records = await runAction("calibration-anchor", () =>
-      invoke<CalibrationRecords>("add_benchmark_calibration_anchor", {
+      adapter.addBenchmarkCalibrationAnchor({
         manifestPath: benchmark.manifestPath,
         estimatedValue: estimated,
         estimator: "manual-estimate.v1",
@@ -581,7 +585,7 @@ export function V03EvidencePanel({
     if (!benchmark) return;
     const compatible = compatibleAnchors();
     const result = await runAction("calibration", () =>
-      invoke<CalibrationModel>("build_calibration_model", {
+      adapter.buildCalibrationModel({
         anchors: compatible,
         createdAtMs: Date.now(),
         ttlMs: 90 * 24 * 60 * 60 * 1_000,
@@ -589,7 +593,7 @@ export function V03EvidencePanel({
     );
     if (result) {
       const records = await runAction("calibration-store", () =>
-        invoke<CalibrationRecords>("store_calibration_model", { model: result }),
+        adapter.storeCalibrationModel(result),
       );
       if (records) {
         setCalibration(result);
@@ -607,7 +611,7 @@ export function V03EvidencePanel({
       return;
     }
     const result = await runAction("calibrated", () =>
-      invoke<CalibratedEstimate>("apply_calibration_model", {
+      adapter.applyCalibrationModel({
         model: calibration,
         compatibilityKey: benchmark.compatibilityKey,
         estimatedValue: value,
@@ -623,12 +627,12 @@ export function V03EvidencePanel({
   async function clearCalibrationHistory() {
     const compatibilityKey = benchmark?.compatibilityKey;
     const removed = await runAction("calibration-clear", () =>
-      invoke<number>("clear_calibration_history", {}),
+      adapter.clearCalibrationHistory(),
     );
     if (removed === null) return;
     if (compatibilityKey) {
       const records = await runAction("calibration-reload", () =>
-        invoke<CalibrationRecords>("load_calibration_records", { compatibilityKey }),
+        adapter.loadCalibrationRecords(compatibilityKey),
       );
       if (records) {
         setAnchors(records.anchors);
@@ -654,7 +658,7 @@ export function V03EvidencePanel({
       return;
     }
     const result = await runAction("external", () =>
-      invoke<ExternalEvidenceBundle>("import_external_evidence", { bundle: parsed }),
+      adapter.importExternalEvidence(parsed),
     );
     if (result) {
       setExternalEvidence(result);
@@ -665,7 +669,7 @@ export function V03EvidencePanel({
   async function reviewExternal(state: Exclude<ExternalEvidenceState, "pending">) {
     if (!externalEvidence) return;
     const result = await runAction("external-review", () =>
-      invoke<ExternalEvidenceBundle>("review_external_evidence", {
+      adapter.reviewExternalEvidence({
         bundle: externalEvidence,
         state,
         confirmed: true,
@@ -693,7 +697,7 @@ export function V03EvidencePanel({
     if (!target) return;
 
     const bundle = await runAction("share-build", () =>
-      invoke<ShareBundle>("build_share_export", {
+      adapter.buildShareExport({
         manifest: benchmark.manifest,
         summary: benchmark.summary,
         quality,
@@ -705,7 +709,7 @@ export function V03EvidencePanel({
     if (!bundle) return;
 
     const written = await runAction("share-write", () =>
-      invoke<string>("write_share_export", {
+      adapter.writeShareExport({
         path: target,
         bundle,
         confirmed: true,

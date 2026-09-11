@@ -39,8 +39,11 @@ async function frontendSources() {
   const screens = [
     "AboutScreen.tsx",
     "BenchmarkScreen.tsx",
+    "CatalogScreen.tsx",
     "DashboardScreen.tsx",
     "InventoryScreen.tsx",
+    "ProfileEmptyScreen.tsx",
+    "ProfileScreen.tsx",
     "RuntimeScreen.tsx",
     "TuneScreen.tsx",
   ];
@@ -1267,7 +1270,14 @@ test("FE-07 cancellation state is separate from the run lifecycle", async () => 
   // (audit FE-07).
   assert.match(panel, /const \[cancelPending, setCancelPending\] = useState\(false\)/);
   assert.doesNotMatch(panel, /runAction\("cancel"/);
-  assert.match(panel, /await invoke<void>\("cancel_benchmark"\)/);
+  // Cancellation crosses the evidence adapter (S-27.I2); the adapter
+  // forwards to the cancel_benchmark command it replaces here.
+  assert.match(panel, /await adapter\.cancelBenchmark\(\)/);
+  const adapterSource = await readFile(
+    join(process.cwd(), "src", "evidence-adapter.ts"),
+    "utf8",
+  );
+  assert.match(adapterSource, /invoke\("cancel_benchmark"\)/);
   assert.match(panel, /busy !== "benchmark" \|\| cancelPending/);
 });
 

@@ -11,11 +11,13 @@ import type {
   ServerStatus,
 } from "../model";
 import type { EvidenceRun } from "./evidence-run";
+import type { EvidenceAdapter } from "../evidence-adapter";
 
 /// Presentational contract for the benchmark screen (audit S-27.I2). The
 /// screen stays mounted for the app's lifetime (audit FE-05); `App.tsx` keeps
 /// the mount and visibility, this component renders the content.
 export interface BenchmarkScreenProps {
+  adapter?: EvidenceAdapter;
   benchmark: BenchmarkSummary | null;
   busy: string;
   evidenceRun: EvidenceRun | null;
@@ -73,6 +75,7 @@ export function BenchmarkScreen(props: BenchmarkScreenProps) {
       </article>
     </div>
     <V03EvidencePanel
+              adapter={props.adapter}
       model={props.selected ?? null}
       profile={props.profile}
       serverStatus={props.status}
