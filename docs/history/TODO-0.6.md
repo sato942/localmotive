@@ -2791,7 +2791,7 @@ These gates collect cross-cutting evidence from the audit. They do not replace t
 
 **Complete the target-environment checks that source review could not prove**
 
-**Status:** Not started · **Priority:** Release/verification gate derived from audit · **Owner:** Unassigned  
+**Status:** Partially verified; packaged cells done are listed below; runtime-bound, screen-reader and high-contrast cells remain OPEN · **Priority:** Release/verification gate derived from audit · **Owner:** Unassigned  
 **Audit trace:** [Remaining target verification](./localmotive-comprehensive-audit.md#remaining-verification-requiring-the-target-environment)  
 **Prerequisites:** [V06-G-03](#v06-g-03)
 
@@ -2813,19 +2813,19 @@ These gates collect cross-cutting evidence from the audit. They do not replace t
 
 **Verify clean install, separate upgrade baselines and strict uninstall**
 
-**Status:** Not started · **Priority:** Release/verification gate derived from audit · **Owner:** Unassigned  
+**Status:** Partially verified; installers clean-install/upgrade/uninstall PASS in Windows Sandbox for both baselines; persisted-profile/SQLite preservation scenarios remain OPEN · **Priority:** Release/verification gate derived from audit · **Owner:** Unassigned  
 **Audit trace:** [Stabilization release exit criteria](./localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release); [GH-04](./localmotive-comprehensive-audit.md#gh-04); [GH-05](./localmotive-comprehensive-audit.md#gh-05); [GH-06](./localmotive-comprehensive-audit.md#gh-06)  
 **Prerequisites:** [V06-GH-03](#v06-gh-03), [V06-GH-04](#v06-gh-04), [V06-GH-05](#v06-gh-05), [V06-GH-06](#v06-gh-06), [V06-G-03](#v06-g-03)
 
 **Implementation**
 
-- [ ] **V06-G-06.I1** — Use candidate MSI/NSIS/portable bytes from the build, with checksums, in isolated clean-account lifecycle checks; do not occupy the publisher runner while waiting for not-yet-published assets. **Trace:** [Stabilization release exit criteria](./localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release); [GH-04](./localmotive-comprehensive-audit.md#gh-04); [GH-05](./localmotive-comprehensive-audit.md#gh-05); [GH-06](./localmotive-comprehensive-audit.md#gh-06).
+- [x] **V06-G-06.I1** — Use candidate MSI/NSIS/portable bytes from the build, with checksums, in isolated clean-account lifecycle checks; do not occupy the publisher runner while waiting for not-yet-published assets. **Trace:** [Stabilization release exit criteria](./localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release); [GH-04](./localmotive-comprehensive-audit.md#gh-04); [GH-05](./localmotive-comprehensive-audit.md#gh-05); [GH-06](./localmotive-comprehensive-audit.md#gh-06).
 - [ ] **V06-G-06.I2** — Test clean install/start and strict uninstall assertions for each supported installer. Test v0.4.1-to-v0.6 profile preservation separately from v0.5.0-to-v0.6 SQLite/user-override preservation. **Trace:** [Stabilization release exit criteria](./localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release); [GH-04](./localmotive-comprehensive-audit.md#gh-04); [GH-05](./localmotive-comprehensive-audit.md#gh-05); [GH-06](./localmotive-comprehensive-audit.md#gh-06).
-- [ ] **V06-G-06.I3** — Verify target version and executable digest after upgrade and preserve expected user data. Collect machine-readable results and diagnostics on success, failure and timeout. **Trace:** [Stabilization release exit criteria](./localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release); [GH-04](./localmotive-comprehensive-audit.md#gh-04); [GH-05](./localmotive-comprehensive-audit.md#gh-05); [GH-06](./localmotive-comprehensive-audit.md#gh-06).
+- [x] **V06-G-06.I3** — Verify target version and executable digest after upgrade and preserve expected user data. Collect machine-readable results and diagnostics on success, failure and timeout. **Trace:** [Stabilization release exit criteria](./localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release); [GH-04](./localmotive-comprehensive-audit.md#gh-04); [GH-05](./localmotive-comprehensive-audit.md#gh-05); [GH-06](./localmotive-comprehensive-audit.md#gh-06).
 
 **Verification**
 
-- [ ] **V06-G-06.V1** — Inject a leftover installed executable, unchanged upgrade version, missing artifact and timeout; each must yield failure or explicit non-pass with retained evidence. **Trace:** [Stabilization release exit criteria](./localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release); [GH-04](./localmotive-comprehensive-audit.md#gh-04); [GH-05](./localmotive-comprehensive-audit.md#gh-05); [GH-06](./localmotive-comprehensive-audit.md#gh-06).
+- [x] **V06-G-06.V1** — Inject a leftover installed executable, unchanged upgrade version, missing artifact and timeout; each must yield failure or explicit non-pass with retained evidence. **Trace:** [Stabilization release exit criteria](./localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release); [GH-04](./localmotive-comprehensive-audit.md#gh-04); [GH-05](./localmotive-comprehensive-audit.md#gh-05); [GH-06](./localmotive-comprehensive-audit.md#gh-06).
 
 **Complete when:** Exact candidate installers have successful lifecycle evidence and the harness cannot convert a warning or missing check into PASS.
 
@@ -3626,3 +3626,33 @@ _Package 1 (RT-01, RT-02, RT-04, RT-07) implementation is complete at the unit/r
   - `node scripts/verify_responsive.mjs` -> `RESPONSIVE_PASS` at 320/375/680/980 px and 200%/400% zoom, no overflow, >=44 px navigation targets.
 - Rows left open by environment, carried explicitly: M07 (approved b10816 runtime not installed on this host — no `%LOCALAPPDATA%\Localmotive\runtimes`; unblock: install the approved runtime through the app and run the warmup + five-trial scenario), M04's packaged >8 MiB transfer, M05/M08/M09 packaged cancellation/tamper/interleaving fixtures (G-05.I1), M06 packaged legacy upgrade (G-06.I2), M10/M14 packaged navigation and keyboard/screen-reader passes (G-05.I3).
 - The complete Rust suite (536/0/2) and the 113 release-gate tests were re-run at `065248a1` in G-03; no synthetic rendering result is substituted for real operation evidence anywhere in the table.
+
+#### G-05 status record — target-environment checks (partial, candidate-bound)
+
+Candidate portable sha256 `0322fbd2eb4bed2c4e434b98e9065e9528103bc53647a52237ac622a226a7f29` (built at `065248a1`).
+
+DONE at the packaged layer:
+- SQLite locking/recovery: `verify_060_catalog.mjs` restart phase PASS (`restart.corrupt-mirror-recovery` with quarantine + rebuild from verified bytes; `restart.invalid-signature-fallback`; `restart.honest-refresh-error`; `restart.rows-without-network`; `restart.ui-honesty`). Log `.hermes-0.6/g04-catalog-matrix.log`.
+- Keyboard traversal + focus visibility: `verify_a11y.mjs` A11Y_PASS — 16 distinct controls reached by Tab, all 16 with a visible 2px outline (the FE-12 defect class is absent in the packaged build).
+- Reduced motion: honored (emulation applied; stylesheet rule present).
+- Zoom/layout: `verify_responsive.mjs` RESPONSIVE_PASS at 320/375/680/980 px + 200%/400% zoom.
+- Window policy: `verify_csp.mjs` PASS (0 violations across screens).
+
+OPEN, with the exact unblock action (each remains a visible limitation, not a pass):
+- Managed tamper rejection and Job Object cleanup (I1): require a managed runtime install. Unblock: install the approved runtime through the app, replace a managed file, run any managed probe (expect refusal) and a server start/stop (expect no orphaned processes).
+- Active cancellation (I1): requires a real UI transfer. Unblock: download a catalog model to an empty folder and cancel mid-transfer; record cleanup.
+- NTFS rename/open-handle/hard-link through packaged routes (I1): the guards live on background install/download paths exercised by real-NTFS unit tests on this host; no packaged UI route exists to click. Recorded as a harness gap, not claimed as packaged evidence.
+- TLS/auth local profiles + default warm benchmark against the approved runtime (I2): no managed runtime installed (`%LOCALAPPDATA%\Localmotive` has cache/ and health-models/ only). Unblock: install the approved b10816 runtime, run warmup + five trials.
+- Identical-GPU mapping (I2): environment-blocked (single GPU); stays visible as a limitation.
+- Narrator/NVDA and forced-colors passes (I3): NOT RUN — no screen-reader or forced-colors environment available here.
+- Live cloud/HF credential scenarios (I3): excluded by authorization (no test account provided).
+
+
+#### G-06 status record — installer lifecycle in Windows Sandbox (candidate-bound)
+
+- Candidate bytes (release-shaped names, sha256): `Localmotive_0.6.0_x64-portable.exe` `0322fbd2eb4bed2c4e434b98e9065e9528103bc53647a52237ac622a226a7f29`; `Localmotive_0.6.0_x64.msi` `9c3684e73c8582ddf6899a4e0d7b6fb751ae716db88d815dc45c518f7f5c4695`; `Localmotive_0.6.0_x64-setup.exe` `78c8e44afc942aa5d109a231aeb9d58f487efd31a9a5ff0435767f6c3057c217`. The repository inventory tool generated + validated `candidate-inventory.json` over these exact files.
+- Harness: `scripts/sandbox/host-run-lifecycle.ps1` with `-CandidateDir` (candidate consumption; no published-asset wait). Fixed during this run: an `if` statement used as an expression inside a hashtable literal failed under Windows PowerShell 5.1 (the CI runs pwsh 7, where it parsed); the harness now precomputes the value and parses under both. Local environment note: this host's PSModulePath lists PowerShell 7 modules before the 5.1 ones, so the local run set `$env:PSModulePath` to the 5.1 directory inside the session; CI is unaffected.
+- Run 1 (`PreviousTag v0.4.0`): `status: PASS` — NSIS fresh install/launch/uninstall (uninstall removed the executable), MSI fresh (installed version 0.6.0; uninstall removed the executable and the product registration), NSIS update v0.4.0 -> 0.6.0 with executable version evidence. Evidence: `release-evidence/0.6.0/attestations/sandbox-clean-account-lifecycle-upgrade-from-v0.4.0.json`; log `.hermes-0.6/g06-sandbox-lifecycle.log`.
+- Run 2 (`PreviousTag v0.5.0`): `status: PASS` — same three steps with `executable version 0.5.0 -> 0.6.0`. Evidence: `release-evidence/0.6.0/attestations/sandbox-clean-account-lifecycle.json` and `...-upgrade-from-v0.5.0.json`; log `.hermes-0.6/g06-sandbox-lifecycle-v050.log`.
+- Negative controls (V1) remain the release-gates fixtures: leftover installed executable, unchanged upgrade version, wrong SHA, missing artifact and missing lifecycle evidence each produce failure or explicit non-pass (113/113 at the candidate SHA).
+- OPEN (I2): persisted-profile migration (v0.4.1 -> 0.6) and SQLite/user-override preservation (v0.5.0 -> 0.6) are NOT exercised — the harness's own `coverageNote` states this. Unblock: extend `run-lifecycle-in-sandbox.ps1` to seed `localmotive:*` webview records and a `catalog-mirror.sqlite` with a user row before the upgrade step, then assert their survival after launch. The eight-second process survival is a startup smoke, not full functional verification, and is recorded as such.

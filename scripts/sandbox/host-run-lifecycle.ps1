@@ -38,6 +38,10 @@ function Write-FailureEvidence([string]$Status, [string]$Message) {
   # Every terminal outcome leaves retrievable structured evidence that
   # identifies the stage, source revision, candidate digests and timing
   # (audit GH-06). The original error still propagates afterwards.
+  # Windows PowerShell 5.1 does not allow an `if` statement as an expression
+  # inside a hashtable literal; compute it first so the harness runs under the
+  # default host shell as well as pwsh.
+  $sourceRevision = if ($env:LOCALMOTIVE_SOURCE_REVISION) { $env:LOCALMOTIVE_SOURCE_REVISION } else { $null }
   $doc = [ordered]@{
     schema = "localmotive.sandbox-lifecycle.v0"
     status = $Status
@@ -46,7 +50,7 @@ function Write-FailureEvidence([string]$Status, [string]$Message) {
     tag = $Tag
     version = $Version
     previousTag = $PreviousTag
-    sourceRevision = (if ($env:LOCALMOTIVE_SOURCE_REVISION) { $env:LOCALMOTIVE_SOURCE_REVISION } else { $null })
+    sourceRevision = $sourceRevision
     startedAtUtc = $startedAt.ToString("o")
     finishedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
     candidateDigests = $candidateDigests
