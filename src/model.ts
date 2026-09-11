@@ -274,6 +274,11 @@ export type RankedCandidate = {
   violations: string[];
   pareto: boolean;
   dominatedBy: string[];
+  // Added with the complete-set dominance policy (audit MT-10): the fraction
+  // of configured weight the candidate measured, and whether the bounded
+  // dominator list hides further entries. Optional for stored results.
+  dominatorsTruncated?: boolean;
+  evidenceCoverage?: number;
   preferenceScore: number | null;
   scoreComponents: ScoreComponent[];
 };

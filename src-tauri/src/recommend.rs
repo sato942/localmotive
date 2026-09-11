@@ -316,6 +316,15 @@ pub struct RankedCandidate {
     pub violations: Vec<String>,
     pub pareto: bool,
     pub dominated_by: Vec<String>,
+    /// True when more dominators exist than the bounded list reports
+    /// (audit MT-10 I4).
+    #[serde(default)]
+    pub dominators_truncated: bool,
+    /// Fraction of the configured objective weight this candidate measured;
+    /// scores are divided by the full weight sum, so partial coverage cannot
+    /// inflate a score (audit MT-10 I2).
+    #[serde(default)]
+    pub evidence_coverage: f64,
     pub preference_score: Option<f64>,
     pub score_components: Vec<ScoreComponent>,
 }
@@ -384,8 +393,14 @@ fn violations(candidate: &CandidateEvidence, limits: &RecommendationConstraints)
     result
 }
 
+/// Strict Pareto dominance over the COMPLETE objective set (audit MT-10).
+///
+/// A pair is compared only when every objective has a value on both sides;
+/// a missing value makes the pair incomparable instead of silently dropping
+/// that dimension. Because every comparison then uses the same objective
+/// set, the relation is a partial order: A > B > C > A cycles cannot occur,
+/// and "this candidate dominates that one" is comparable across pairs.
 fn dominates(left: &CandidateEvidence, right: &CandidateEvidence) -> bool {
-    let mut compared = false;
     let mut strictly_better = false;
     for (left, right, maximize) in [
         (left.decode_tps, right.decode_tps, true),
@@ -404,16 +419,19 @@ fn dominates(left: &CandidateEvidence, right: &CandidateEvidence) -> bool {
         ),
     ] {
         let (Some(left), Some(right)) = (left, right) else {
-            continue;
+            return false;
         };
-        compared = true;
         if (maximize && left < right) || (!maximize && left > right) {
             return false;
         }
         strictly_better |= left != right;
     }
-    compared && strictly_better
+    strictly_better
 }
+
+/// Upper bound on the returned dominator list per candidate (audit MT-10
+/// I4): the ranking stays bounded at the 10,000-candidate limit.
+const MAX_DOMINATORS_REPORTED: usize = 32;
 
 fn normalized(value: f64, minimum: f64, maximum: f64, maximize: bool) -> f64 {
     if maximum == minimum {
@@ -496,6 +514,15 @@ pub fn rank_candidates(
     for candidate in candidates {
         validate_candidate(candidate)?;
     }
+    // Deterministic identity: duplicate ids would make the report ambiguous
+    // (audit MT-10 I3).
+    let unique_ids = candidates
+        .iter()
+        .map(|candidate| candidate.id.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    if unique_ids.len() != candidates.len() {
+        return Err("Candidate ids must be unique".into());
+    }
     let weight_values = [
         weights.decode_tps,
         weights.prefill_tps,
@@ -522,17 +549,6 @@ pub fn rank_candidates(
         .enumerate()
         .filter_map(|(index, items)| items.is_empty().then_some(index))
         .collect::<Vec<_>>();
-    let ranges = |extract: fn(&CandidateEvidence) -> Option<f64>| {
-        let values = feasible_indices
-            .iter()
-            .filter_map(|index| extract(&candidates[*index]))
-            .collect::<Vec<_>>();
-        values
-            .iter()
-            .copied()
-            .reduce(f64::min)
-            .zip(values.iter().copied().reduce(f64::max))
-    };
     let objectives: [ObjectiveSpec; 6] = [
         ("decodeTps", weights.decode_tps, true, |item| {
             item.decode_tps
@@ -553,6 +569,31 @@ pub fn rank_candidates(
             item.storage_bytes.map(|value| value as f64)
         }),
     ];
+    // Objective ranges are computed ONCE from the feasible set (audit MT-10
+    // I4): the previous implementation rebuilt each range per candidate.
+    let mut ranges: [(f64, f64); 6] = [(0.0, 0.0); 6];
+    for (slot, (_, _, _, extract)) in objectives.iter().enumerate() {
+        let mut minimum = f64::INFINITY;
+        let mut maximum = f64::NEG_INFINITY;
+        for index in &feasible_indices {
+            if let Some(value) = extract(&candidates[*index]) {
+                minimum = minimum.min(value);
+                maximum = maximum.max(value);
+            }
+        }
+        ranges[slot] = if minimum.is_finite() {
+            (minimum, maximum)
+        } else {
+            (0.0, 0.0)
+        };
+    }
+    // The scoring denominator is the FULL configured weight sum, so leaving
+    // an objective unmeasured depresses the score instead of raising it
+    // (audit MT-10 I2); the available fraction is reported as coverage.
+    let full_weight = objectives
+        .iter()
+        .map(|(_, weight, _, _)| *weight)
+        .sum::<f64>();
     let mut ranked = Vec::with_capacity(candidates.len());
     for (index, candidate) in candidates.iter().enumerate() {
         let feasible = violations[index].is_empty();
@@ -566,37 +607,47 @@ pub fn rank_candidates(
             Vec::new()
         };
         dominated_by.sort();
+        let dominators_total = dominated_by.len();
+        dominated_by.truncate(MAX_DOMINATORS_REPORTED);
+        let dominators_truncated = dominators_total > dominated_by.len();
         let mut score_components = Vec::new();
+        let mut available_weight = 0.0_f64;
         if feasible {
-            for (name, weight, maximize, extract) in objectives {
-                if weight == 0.0 {
+            for (slot, (name, weight, maximize, extract)) in objectives.iter().enumerate() {
+                if *weight == 0.0 {
                     continue;
                 }
-                if let (Some(value), Some((minimum, maximum))) =
-                    (extract(candidate), ranges(extract))
-                {
-                    let normalized = normalized(value, minimum, maximum, maximize);
+                if let Some(value) = extract(candidate) {
+                    let (minimum, maximum) = ranges[slot];
+                    let normalized = normalized(value, minimum, maximum, *maximize);
+                    available_weight += *weight;
                     score_components.push(ScoreComponent {
-                        objective: name.into(),
+                        objective: (*name).into(),
                         normalized,
-                        weight,
-                        contribution: normalized * weight,
+                        weight: *weight,
+                        contribution: normalized * *weight,
                     });
                 }
             }
         }
-        let total_weight = score_components.iter().map(|item| item.weight).sum::<f64>();
-        let preference_score = (total_weight > 0.0).then(|| {
+        let evidence_coverage = if full_weight > 0.0 {
+            (available_weight / full_weight).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let preference_score = (feasible && full_weight > 0.0).then(|| {
             score_components
                 .iter()
                 .map(|item| item.contribution)
                 .sum::<f64>()
-                / total_weight
+                / full_weight
         });
         ranked.push(RankedCandidate {
             id: candidate.id.clone(),
             feasible,
             violations: violations[index].clone(),
+            evidence_coverage,
+            dominators_truncated,
             pareto: feasible && dominated_by.is_empty(),
             dominated_by,
             preference_score,
@@ -621,6 +672,182 @@ pub fn rank_candidates(
 
 #[cfg(test)]
 mod tests {
+
+    fn mt10_candidate(
+        id: &str,
+        decode: Option<f64>,
+        prefill: Option<f64>,
+        p95: Option<f64>,
+        quality: Option<f64>,
+    ) -> CandidateEvidence {
+        CandidateEvidence {
+            id: id.into(),
+            result_class: crate::evidence::FitClass::Measured,
+            decode_tps: decode,
+            prefill_tps: prefill,
+            p95_latency_ms: p95,
+            peak_memory_bytes: Some(1_000_000),
+            quality_pass_rate: quality,
+            storage_bytes: Some(1_000),
+        }
+    }
+
+    #[test]
+    fn mt10_missing_metrics_make_pairs_incomparable_not_cyclic() {
+        // The exact counterexample from the audit: pairwise dominance that
+        // skipped missing objectives produced A>B>C>A. With the complete-set
+        // policy the three are mutually incomparable.
+        let candidates = vec![
+            mt10_candidate("A", Some(100.0), Some(100.0), None, Some(0.5)),
+            mt10_candidate("B", Some(100.0), Some(90.0), Some(10.0), None),
+            mt10_candidate("C", Some(100.0), None, Some(20.0), Some(0.9)),
+        ];
+        let ranked = rank_candidates(
+            &candidates,
+            &RecommendationConstraints::default(),
+            &ObjectiveWeights::default(),
+        )
+        .unwrap();
+        let by_id = |id: &str| ranked.iter().find(|item| item.id == id).unwrap();
+        for id in ["A", "B", "C"] {
+            assert!(
+                by_id(id).dominated_by.is_empty(),
+                "{id} must have no dominator under the complete-set policy: {:?}",
+                by_id(id).dominated_by
+            );
+            assert!(by_id(id).pareto, "{id} belongs to the frontier");
+        }
+        // All three are feasible with the default (null) constraints.
+        assert!(ranked.iter().all(|item| item.feasible));
+
+        // A fully measured pair still dominates: E beats D on every objective.
+        let candidates = vec![
+            mt10_candidate("D", Some(90.0), Some(80.0), Some(30.0), Some(0.4)),
+            mt10_candidate("E", Some(100.0), Some(100.0), Some(10.0), Some(0.9)),
+        ];
+        let ranked = rank_candidates(
+            &candidates,
+            &RecommendationConstraints::default(),
+            &ObjectiveWeights::default(),
+        )
+        .unwrap();
+        let d = ranked.iter().find(|item| item.id == "D").unwrap();
+        assert_eq!(d.dominated_by, vec!["E".to_string()]);
+        assert!(!d.pareto);
+        // Deterministic ordering: the same input ranks identically.
+        let again = rank_candidates(
+            &candidates,
+            &RecommendationConstraints::default(),
+            &ObjectiveWeights::default(),
+        )
+        .unwrap();
+        assert_eq!(ranked, again);
+    }
+
+    #[test]
+    fn mt10_partial_coverage_cannot_inflate_a_score() {
+        // F measured everything; G skipped prefill. G must not outscore F by
+        // paying only for the objectives it filled in.
+        let candidates = vec![
+            mt10_candidate("F", Some(100.0), Some(50.0), Some(40.0), Some(0.5)),
+            mt10_candidate("G", Some(100.0), None, Some(40.0), Some(0.5)),
+        ];
+        let ranked = rank_candidates(
+            &candidates,
+            &RecommendationConstraints::default(),
+            &ObjectiveWeights::default(),
+        )
+        .unwrap();
+        let f = ranked.iter().find(|item| item.id == "F").unwrap();
+        let g = ranked.iter().find(|item| item.id == "G").unwrap();
+        assert_eq!(f.evidence_coverage, 1.0);
+        assert!(g.evidence_coverage < 1.0, "{}", g.evidence_coverage);
+        assert!(
+            f.preference_score.unwrap() > g.preference_score.unwrap(),
+            "full coverage must outscore partial coverage: {:?} vs {:?}",
+            f.preference_score,
+            g.preference_score
+        );
+    }
+
+    #[test]
+    fn mt10_duplicate_ids_are_rejected_and_dominators_are_bounded() {
+        let duplicates = vec![
+            mt10_candidate("same", Some(100.0), Some(100.0), Some(10.0), Some(0.9)),
+            mt10_candidate("same", Some(90.0), Some(90.0), Some(20.0), Some(0.8)),
+        ];
+        let error = rank_candidates(
+            &duplicates,
+            &RecommendationConstraints::default(),
+            &ObjectiveWeights::default(),
+        )
+        .unwrap_err();
+        assert!(error.contains("unique"), "{error}");
+
+        // One strong candidate dominating 40 weaker ones reports a bounded,
+        // flagged dominator list.
+        // 40 candidates each strictly better than the weak one on every
+        // measured objective, so every one of them is a dominator.
+        let mut candidates = vec![mt10_candidate(
+            "weak-00",
+            Some(90.0),
+            Some(90.0),
+            Some(50.0),
+            Some(0.1),
+        )];
+        for index in 0..40 {
+            let bump = index as f64;
+            candidates.push(mt10_candidate(
+                &format!("dom-{index:02}"),
+                Some(200.0 + bump),
+                Some(200.0 + bump),
+                Some(40.0 - bump * 0.1),
+                Some(0.2 + bump * 0.01),
+            ));
+        }
+        let ranked = rank_candidates(
+            &candidates,
+            &RecommendationConstraints::default(),
+            &ObjectiveWeights::default(),
+        )
+        .unwrap();
+        let weak = ranked.iter().find(|item| item.id == "weak-00").unwrap();
+        assert_eq!(weak.dominated_by.len(), MAX_DOMINATORS_REPORTED);
+        assert!(weak.dominators_truncated);
+        assert!(!weak.pareto);
+    }
+
+    #[test]
+    fn mt10_ranking_scales_to_ten_thousand_candidates() {
+        let mut candidates = Vec::with_capacity(10_000);
+        for index in 0..10_000_u32 {
+            let base = 50.0 + (index % 500) as f64 * 0.1;
+            candidates.push(mt10_candidate(
+                &format!("candidate-{index:05}"),
+                Some(base),
+                Some(base * 10.0),
+                Some(100.0 - base * 0.1),
+                Some(0.5 + (index % 5) as f64 * 0.1),
+            ));
+        }
+        let started = std::time::Instant::now();
+        let ranked = rank_candidates(
+            &candidates,
+            &RecommendationConstraints::default(),
+            &ObjectiveWeights::default(),
+        )
+        .unwrap();
+        let elapsed = started.elapsed();
+        println!("mt10: ranked 10000 candidates in {elapsed:?}");
+        assert_eq!(ranked.len(), 10_000);
+        assert_eq!(
+            ranked[0].id, "candidate-00499",
+            "the fully best candidate ranks first"
+        );
+        // Deterministic ordering is pinned on the small fixture above; here
+        // the scale bound itself is the subject.
+        assert!(ranked.iter().all(|item| item.feasible));
+    }
 
     fn mt09_manifest_fixture(launch_key: Option<String>) -> crate::evidence::BenchmarkManifest {
         use crate::evidence::{

@@ -960,8 +960,9 @@ export function V03EvidencePanel({
                 <div className="evidence-status-card" key={item.id}>
                   <strong>#{index + 1} · {item.id}</strong>
                   <span>{item.feasible ? "Feasible" : `Rejected: ${item.violations.join("; ")}`}</span>
-                  <span>{item.pareto ? "Pareto frontier" : `Dominated by ${item.dominatedBy.join(", ") || "unknown"}`}</span>
+                  <span>{item.pareto ? "Pareto frontier" : `Dominated by ${item.dominatedBy.join(", ") || "unknown"}${item.dominatorsTruncated ? " (list truncated)" : ""}`}</span>
                   <span>Preference score: {item.preferenceScore === null ? "Unknown" : item.preferenceScore.toFixed(3)}</span>
+                  <span>Evidence coverage: {item.evidenceCoverage === undefined ? "Unknown" : `${Math.round(item.evidenceCoverage * 100)}% of weighted objectives`}</span>
                 </div>
               ))}
             </div>
