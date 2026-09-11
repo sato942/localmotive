@@ -814,7 +814,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 - [x] **V06-MT-04.V1** — Cancel during preparation, health wait, response wait, between repetitions, between advisor calls, and while the advisor emits only no-ops; assert the final cancellation reason and no subsequent advisor call. **Trace:** [Audit MT-04](./localmotive-comprehensive-audit.md#mt-04).
 - [ ] **V06-MT-04.V2** — Inject process cleanup failure and confirm it is preserved rather than silently returning a successful tuning result. **Trace:** [Audit MT-04](./localmotive-comprehensive-audit.md#mt-04).
-- [ ] **V06-MT-04.V3** — Run packaged Windows cancellation scenarios and record stop latency, surviving child processes, listener ownership, port release, and ability to start the next operation. **Trace:** [Audit MT-04](./localmotive-comprehensive-audit.md#mt-04).
+- [x] **V06-MT-04.V3** — Run packaged Windows cancellation scenarios and record stop latency, surviving child processes, listener ownership, port release, and ability to start the next operation. **Trace:** [Audit MT-04](./localmotive-comprehensive-audit.md#mt-04).
 
 **Complete when:** Stop prevents additional paid proposals and ends in-flight local work within the documented bound, or returns an explicit cleanup failure with retained ownership information. A cancelled session leaves no silently abandoned runtime tree and reports cancellation separately from failed configurations.
 
@@ -1688,7 +1688,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Verification**
 
-- [ ] **V06-GH-02.V1** — Simulate moving the tag between quality, package and publish in isolated repository/workflow fixtures; every job must retain the resolved SHA or fail before promoting mismatched artifacts. **Trace:** [Audit GH-02](./localmotive-comprehensive-audit.md#gh-02).
+- [x] **V06-GH-02.V1** — Simulate moving the tag between quality, package and publish in isolated repository/workflow fixtures; every job must retain the resolved SHA or fail before promoting mismatched artifacts. **Trace:** [Audit GH-02](./localmotive-comprehensive-audit.md#gh-02).
 - [x] **V06-GH-02.V2** — Supply inventories or packaged records with a different source SHA, missing artifact or changed digest; verify publication validation rejects each case without overwriting the original evidence. **Trace:** [Audit GH-02](./localmotive-comprehensive-audit.md#gh-02).
 - [ ] **V06-GH-02.V3** — Run a complete candidate flow and compare checkout revisions, inventory, packaged evidence and publication metadata; read back the effective tag-update/deletion protection. **Trace:** [Audit GH-02](./localmotive-comprehensive-audit.md#gh-02).
 
@@ -1715,7 +1715,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 **Verification**
 
 - [ ] **V06-GH-03.V1** — Exercise a fresh-version release in a single-runner configuration; the lifecycle job must start only after candidate artifacts exist, without release-not-found polling blocking the producer. **Trace:** [Audit GH-03](./localmotive-comprehensive-audit.md#gh-03).
-- [ ] **V06-GH-03.V2** — Provide missing or mismatched candidate installers and confirm verification fails with an explicit identity error rather than attempting installation or reporting PASS. **Trace:** [Audit GH-03](./localmotive-comprehensive-audit.md#gh-03).
+- [x] **V06-GH-03.V2** — Provide missing or mismatched candidate installers and confirm verification fails with an explicit identity error rather than attempting installation or reporting PASS. **Trace:** [Audit GH-03](./localmotive-comprehensive-audit.md#gh-03).
 - [ ] **V06-GH-03.V3** — Run the selected lifecycle path against the exact candidate bytes and confirm publication behavior matches the documented required/non-gating policy, including failure and cancellation outcomes. **Trace:** [Audit GH-03](./localmotive-comprehensive-audit.md#gh-03).
 
 **Complete when:** No required lifecycle job waits for a public release whose producer is queued behind it. Each lifecycle result identifies available candidate artifacts and its status is represented accurately in the release decision.
@@ -1735,14 +1735,14 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 - [x] **V06-GH-04.I1** — Replace the MSI leftover-executable warning-and-continue branch with a failed uninstall verdict when the expected application remains; verify the intended installation scope and registry/product identity instead of relying on a generic executable search. **Trace:** [Audit GH-04](./localmotive-comprehensive-audit.md#gh-04).
 - [x] **V06-GH-04.I2** — After an upgrade, verify the installed executable's expected version and digest against the candidate inventory, and retain evidence identifying old and new installer/executable versions. **Trace:** [Audit GH-04](./localmotive-comprehensive-audit.md#gh-04).
-- [ ] **V06-GH-04.I3** — Add separate migration scenarios for v0.4.1 profiles and settings and for v0.5.0 SQLite/user-override data. Populate realistic isolated persisted fixtures before upgrade and assert the documented preservation or migration behavior afterward. **Trace:** [Audit GH-04](./localmotive-comprehensive-audit.md#gh-04).
+- [x] **V06-GH-04.I3** — Add separate migration scenarios for v0.4.1 profiles and settings and for v0.5.0 SQLite/user-override data. Populate realistic isolated persisted fixtures before upgrade and assert the documented preservation or migration behavior afterward. **Trace:** [Audit GH-04](./localmotive-comprehensive-audit.md#gh-04).
 - [x] **V06-GH-04.I4** — Cover appropriate NSIS and MSI fresh-install, upgrade and uninstall paths; replace the permanently hardcoded v0.4.0 baseline with an explicit supported-baseline matrix, and label eight-second process survival as startup smoke rather than full functional verification. **Trace:** [Audit GH-04](./localmotive-comprehensive-audit.md#gh-04).
 
 **Verification**
 
 - [x] **V06-GH-04.V1** — Inject an MSI uninstall outcome that leaves the expected executable or product registration; prove the scenario cannot emit uninstall PASS. **Trace:** [Audit GH-04](./localmotive-comprehensive-audit.md#gh-04).
-- [ ] **V06-GH-04.V2** — Simulate an upgrade that keeps the old executable despite a successful installer exit code; verify the version/digest assertion catches it. **Trace:** [Audit GH-04](./localmotive-comprehensive-audit.md#gh-04).
-- [ ] **V06-GH-04.V3** — Run clean-account installer scenarios and both version-specific migration fixtures on Windows; compare exact installed identity, retained data, uninstall outcomes and structured per-scenario verdicts. **Trace:** [Audit GH-04](./localmotive-comprehensive-audit.md#gh-04).
+- [x] **V06-GH-04.V2** — Simulate an upgrade that keeps the old executable despite a successful installer exit code; verify the version/digest assertion catches it. **Trace:** [Audit GH-04](./localmotive-comprehensive-audit.md#gh-04).
+- [x] **V06-GH-04.V3** — Run clean-account installer scenarios and both version-specific migration fixtures on Windows; compare exact installed identity, retained data, uninstall outcomes and structured per-scenario verdicts. **Trace:** [Audit GH-04](./localmotive-comprehensive-audit.md#gh-04).
 
 **Complete when:** A leftover expected installation or unchanged upgrade executable cannot produce a successful corresponding lifecycle verdict. The recorded installer matrix distinguishes startup, migration, removal and supported baselines, with version-appropriate persistence checks.
 
@@ -1792,7 +1792,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Verification**
 
-- [ ] **V06-GH-06.V1** — Inject a Sandbox FAIL result and verify the job remains failed while its exact result JSON and diagnostic log are retained in the uploaded evidence. **Trace:** [Audit GH-06](./localmotive-comprehensive-audit.md#gh-06).
+- [x] **V06-GH-06.V1** — Inject a Sandbox FAIL result and verify the job remains failed while its exact result JSON and diagnostic log are retained in the uploaded evidence. **Trace:** [Audit GH-06](./localmotive-comprehensive-audit.md#gh-06).
 - [ ] **V06-GH-06.V2** — Exercise timeout, missing or malformed result, early installer-download failure and cancellation paths; each must leave a bounded structured outcome with the correct stage and candidate identity. **Trace:** [Audit GH-06](./localmotive-comprehensive-audit.md#gh-06).
 - [ ] **V06-GH-06.V3** — Inspect the completed workflow's artifact collection, not just its upload-step conclusion, and confirm the summary accurately reports both verification outcome and evidence availability. **Trace:** [Audit GH-06](./localmotive-comprehensive-audit.md#gh-06).
 
@@ -1900,7 +1900,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 - [x] **V06-GH-10.V1** — Feed the host-record generator matching CPU/GPU observations and confirm only the corresponding expected host rows are marked matched, with the actual observations retained. **Trace:** [Audit GH-10](./localmotive-comprehensive-audit.md#gh-10).
 - [x] **V06-GH-10.V2** — Exercise mismatched CPU, mismatched GPU, missing/ambiguous GPU and stale-runner-label fixtures; verify none emits an unsupported HOST_MATCH and the intended host-proof outcome reflects the mismatch or uncertainty. **Trace:** [Audit GH-10](./localmotive-comprehensive-audit.md#gh-10).
-- [ ] **V06-GH-10.V3** — Run on the intended Windows host and compare emitted identity fields to directly observed hardware/driver/source values; verify no host-only record claims successful CUDA/Vulkan inference or complete L4 support. **Trace:** [Audit GH-10](./localmotive-comprehensive-audit.md#gh-10).
+- [x] **V06-GH-10.V3** — Run on the intended Windows host and compare emitted identity fields to directly observed hardware/driver/source values; verify no host-only record claims successful CUDA/Vulkan inference or complete L4 support. **Trace:** [Audit GH-10](./localmotive-comprehensive-audit.md#gh-10).
 
 **Complete when:** Each emitted host status is justified by the recorded observation and mismatched or unknown hardware cannot silently receive HOST_MATCH. Host proof and packaged runtime/product qualification remain separate, accurately labeled evidence classes.
 
@@ -2811,7 +2811,7 @@ These gates collect cross-cutting evidence from the audit. They do not replace t
 
 **Implementation**
 
-- [ ] **V06-G-05.I1** — Run packaged Windows tests for managed tamper rejection, NTFS rename/open-handle/hard-link behavior, legacy runtime migration, SQLite locking/recovery, active cancellation and Job Object cleanup. **Trace:** [Remaining target verification](./localmotive-comprehensive-audit.md#remaining-verification-requiring-the-target-environment).
+- [x] **V06-G-05.I1** — Run packaged Windows tests for managed tamper rejection, NTFS rename/open-handle/hard-link behavior, legacy runtime migration, SQLite locking/recovery, active cancellation and Job Object cleanup. **Trace:** [Remaining target verification](./localmotive-comprehensive-audit.md#remaining-verification-requiring-the-target-environment).
 - [x] **V06-G-05.I2** — Verify accepted TLS/auth local profiles and default warm benchmarks against the actual approved runtime. Test stable mapping on identical GPUs when hardware is available; otherwise retain that row as untested. **Trace:** [Remaining target verification](./localmotive-comprehensive-audit.md#remaining-verification-requiring-the-target-environment).
 - [ ] **V06-G-05.I3** — Perform keyboard/Narrator or NVDA, high-DPI/zoom/high-contrast and reduced-motion checks. Perform live cloud/HF credential scenarios only where an explicitly authorized test account and suitable environment are available. **Trace:** [Remaining target verification](./localmotive-comprehensive-audit.md#remaining-verification-requiring-the-target-environment).
 

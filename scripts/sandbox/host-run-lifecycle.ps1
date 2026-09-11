@@ -182,7 +182,14 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
       Get-Process -Name "WindowsSandbox","WindowsSandboxClient","WindowsSandboxRemoteSession" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
       if ($result.status -ne "PASS") {
         if (Test-Path (Join-Path $Shared "lifecycle.log")) { Get-Content (Join-Path $Shared "lifecycle.log") | Write-Host }
-        Copy-Item $resultPath $EvidencePath -Force
+        # Retain host-side identity binding on failure too (audit GH-06 I1):
+        # the in-sandbox document cannot carry the source revision or the
+        # candidate digests it never saw. Without this the FAIL evidence was
+        # retrievable but not attributable.
+        $failDoc = Get-Content $resultPath -Raw | ConvertFrom-Json
+        $failDoc | Add-Member -NotePropertyName sourceRevision -NotePropertyValue $env:LOCALMOTIVE_SOURCE_REVISION -Force
+        $failDoc | Add-Member -NotePropertyName candidateDigests -NotePropertyValue $candidateDigests -Force
+        ($failDoc | ConvertTo-Json -Depth 8) | Set-Content -Path $EvidencePath -Encoding UTF8
         $logPath = Join-Path $Shared "lifecycle.log"
         if (Test-Path $logPath) { Copy-Item $logPath $EvidenceLog -Force }
         throw "Clean-account lifecycle FAILED: $($result.error)"
