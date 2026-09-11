@@ -271,6 +271,12 @@ Localmotive does not encrypt these local-storage values.
 
 Server logs use the operating system temporary directory.
 The server log subdirectory is `localmotive`.
+Each run writes a uniquely named log and is capped at 8 MiB of retained output.
+The newest ten runs per prefix and 64 MiB in total are kept.
+The three newest failure records beside their logs survive that cleanup.
+Delete the `localmotive` subdirectory to clear all logs immediately.
+The runtime writes these logs; a runtime can include local paths and model
+names in its own output, so review a log before you share it.
 
 Cloud credentials and the Hugging Face token do not use local storage.
 They use Windows Credential Manager.

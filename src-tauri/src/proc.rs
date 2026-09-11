@@ -101,6 +101,18 @@ impl ContainedProcess {
     pub fn terminate_and_wait(&mut self) -> bool {
         terminate_and_wait(&mut self.child)
     }
+
+    /// Take the child's piped stdout/stderr so a drain thread can copy them
+    /// into a bounded sink without the child ever blocking (audit OPS-01).
+    /// Both are `None` when the command did not request pipes.
+    pub fn take_pipes(
+        &mut self,
+    ) -> (
+        Option<std::process::ChildStdout>,
+        Option<std::process::ChildStderr>,
+    ) {
+        (self.child.stdout().take(), self.child.stderr().take())
+    }
 }
 
 impl Drop for ContainedProcess {

@@ -9,6 +9,7 @@ pub mod evidence;
 mod gguf;
 mod health;
 mod local_client;
+mod log_sink;
 pub mod measurement;
 pub mod preflight;
 mod proc;
@@ -42,6 +43,9 @@ struct ManagedServer {
     /// stopped or replaced.
     #[allow(dead_code)]
     runtime_lease: Option<runtime::ManagedExecutionLease>,
+    /// The bounded log drain threads for this run (audit OPS-01). Joined
+    /// after the child exits so the log file is complete before retention.
+    log_drains: Vec<std::thread::JoinHandle<()>>,
 }
 
 trait HealthProcess {
@@ -680,18 +684,17 @@ fn validate_profile_paths(profile: &LaunchProfile) -> Result<(), String> {
     Ok(())
 }
 
-fn spawn_server(
-    profile: &LaunchProfile,
-    log_name: &str,
-) -> Result<
-    (
-        proc::ContainedProcess,
-        LaunchValidation,
-        String,
-        Option<runtime::ManagedExecutionLease>,
-    ),
+/// One spawned server run: the contained child, its validation, the bounded
+/// log path, the optional execution lease, and the log drain threads.
+type SpawnedServer = (
+    proc::ContainedProcess,
+    LaunchValidation,
     String,
-> {
+    Option<runtime::ManagedExecutionLease>,
+    Vec<std::thread::JoinHandle<()>>,
+);
+
+fn spawn_server(profile: &LaunchProfile, log_name: &str) -> Result<SpawnedServer, String> {
     let validation = prepare_launch(profile)
         .map_err(|message| launch_failure("validation", message, "", None, false))?;
     // Acquire the execution-identity lease after verification and before the
@@ -713,35 +716,29 @@ fn spawn_server(
             false,
         )
     })?;
-    let log_path = log_dir.join(format!("{log_name}.log"));
-    let log_path_text = log_path.to_string_lossy().to_string();
+    // Retention runs before the new run is created; failure evidence from
+    // the newest runs survives pruning (audit OPS-01 I2/I3).
+    let _ = log_sink::prune_log_directory(&log_dir);
+    // Each run gets its own identity; a collision or a planted link fails
+    // creation instead of truncating someone else's evidence (OPS-01 I1).
+    let run_id = log_sink::new_run_id();
+    let mut sink = log_sink::LogSink::create(&log_dir, log_name, &run_id).map_err(|error| {
+        let path = log_dir
+            .join(format!("{log_name}-{run_id}.log"))
+            .to_string_lossy()
+            .to_string();
+        launch_failure("log_setup", error, &path, None, false)
+    })?;
+    let log_path_text = sink.path().to_string_lossy().to_string();
     core::probe_port_available(&profile.host, profile.port)
         .map_err(|error| launch_failure("port_probe", error, &log_path_text, None, false))?;
-    let stdout = File::create(&log_path).map_err(|error| {
-        launch_failure(
-            "log_setup",
-            format!("Could not create the launch log: {error}"),
-            &log_path_text,
-            None,
-            false,
-        )
-    })?;
-    let stderr = stdout.try_clone().map_err(|error| {
-        launch_failure(
-            "log_setup",
-            format!("Could not prepare the launch log: {error}"),
-            &log_path_text,
-            None,
-            false,
-        )
-    })?;
     let mut command = proc::hidden_command(&profile.runtime);
     command
         .args(&validation.arguments.effective_args)
         .stdin(Stdio::null())
-        .stdout(Stdio::from(stdout))
-        .stderr(Stdio::from(stderr));
-    let child = proc::spawn_contained_process(&mut command).map_err(|error| {
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = proc::spawn_contained_process(&mut command).map_err(|error| {
         launch_failure(
             "spawn",
             format!("Could not start llama-server: {error}"),
@@ -750,7 +747,38 @@ fn spawn_server(
             false,
         )
     })?;
-    Ok((child, validation, log_path_text, execution_lease))
+    // Drain threads copy the child's output into the bounded sink and keep
+    // consuming past the quota so a chatty runtime never blocks (OPS-01 I2).
+    let (stdout, stderr) = child.take_pipes();
+    let mut drains = Vec::new();
+    match (stdout, stderr) {
+        (Some(stdout), Some(stderr)) => {
+            let mut second = sink
+                .second_writer()
+                .map_err(|error| launch_failure("log_setup", error, &log_path_text, None, false))?;
+            drains.push(std::thread::spawn(move || {
+                let _ = sink.drain(stdout);
+            }));
+            drains.push(std::thread::spawn(move || {
+                let _ = second.drain(stderr);
+            }));
+        }
+        (Some(stdout), None) => {
+            drains.push(std::thread::spawn(move || {
+                let _ = sink.drain(stdout);
+            }));
+        }
+        (None, Some(stderr)) => {
+            let mut second = sink
+                .second_writer()
+                .map_err(|error| launch_failure("log_setup", error, &log_path_text, None, false))?;
+            drains.push(std::thread::spawn(move || {
+                let _ = second.drain(stderr);
+            }));
+        }
+        (None, None) => {}
+    }
+    Ok((child, validation, log_path_text, execution_lease, drains))
 }
 
 fn connect_host(host: &str) -> &str {
@@ -1117,7 +1145,7 @@ fn launch_failure_evidence(
     exit_code: Option<i32>,
     timed_out: bool,
 ) -> LaunchFailureEvidence {
-    LaunchFailureEvidence {
+    let evidence = LaunchFailureEvidence {
         schema: 1,
         phase: phase.into(),
         exit_code,
@@ -1125,7 +1153,13 @@ fn launch_failure_evidence(
         cancelled: false,
         message,
         log_tail: bounded_log_tail(log_path),
+    };
+    // Persist the failure identity beside the run log before retention can
+    // prune it (audit OPS-01 I3): the newest failure files survive cleanup.
+    if let Ok(serialized) = serde_json::to_string(&evidence) {
+        let _ = log_sink::write_failure_evidence(log_path, &serialized);
     }
+    evidence
 }
 
 /// Block until `/health` answers 200, the child exits, or the deadline passes.
@@ -1738,7 +1772,7 @@ fn start_server_worker(
             }
         }
     };
-    let (mut child, mut validation, log_path, execution_lease) =
+    let (mut child, mut validation, log_path, execution_lease, mut log_drains) =
         match spawn_server(&profile, &format!("server-{}", profile.port)) {
             Ok(spawned) => spawned,
             Err(error) => {
@@ -1797,6 +1831,7 @@ fn start_server_worker(
         log_path,
         started_at,
         runtime_lease: execution_lease,
+        log_drains: std::mem::take(&mut log_drains),
     });
     clear_starting(&state);
     Ok(status_from(&mut slot))
@@ -1849,6 +1884,18 @@ async fn stop_server(
         if let Some(server) = slot.as_mut() {
             if !server.child.terminate_and_wait() {
                 return Err("The contained llama-server process tree did not stop".into());
+            }
+            // The child holds no more output: join the bounded-log drains so
+            // the retained file is complete (audit OPS-01). A drain that
+            // somehow lingers is detached rather than blocking Stop.
+            let deadline = Instant::now() + Duration::from_secs(2);
+            for drain in server.log_drains.drain(..) {
+                while !drain.is_finished() && Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                if drain.is_finished() {
+                    let _ = drain.join();
+                }
             }
         }
         *slot = None;
@@ -2234,7 +2281,8 @@ fn run_benchmark_snapshot(
             }
             // The lease binding pins the verified runtime content for the whole
             // cold attempt (audit RT-04); it drops with this scope.
-            let (mut child, _, log_path, _lease) = spawn_server(&profile, "benchmark-cold")?;
+            let (mut child, _, log_path, _lease, _drains) =
+                spawn_server(&profile, "benchmark-cold")?;
             let attempt = wait_until_healthy_cancellable(
                 &mut child,
                 &local_client(&profile)?,
@@ -3217,7 +3265,8 @@ impl tune::Bench for LiveBench<'_> {
         );
         // The lease binding pins the verified runtime content for the whole
         // tuning session (audit RT-04); it drops when the session ends.
-        let (mut child, mut validation, log_path, _lease) = spawn_server(profile, "tuning")?;
+        let (mut child, mut validation, log_path, _lease, _drains) =
+            spawn_server(profile, "tuning")?;
         let command = validation.arguments.command.clone();
         let result = (|| {
             // The cancellable health wait converts Stop into a prompt failure
