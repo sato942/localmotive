@@ -66,6 +66,21 @@ pub struct QualitySuiteResult {
     pub observed_at_ms: Option<u64>,
     pub model_logical_id: Option<String>,
     pub runtime_sha256: Option<String>,
+    /// Full model-content identity (first-shard SHA-256) captured before the
+    /// requests; quality attaches only to runs with the same content
+    /// (audit MT-09).
+    #[serde(default)]
+    pub model_content_sha256: Option<String>,
+    /// The launch-scope execution-snapshot key of the serving configuration
+    /// (audit MT-09).
+    #[serde(default)]
+    pub compatibility_key: Option<String>,
+    /// The suite's structural scope; `structural-smoke.v1` means the two
+    /// format/obedience cases only (audit MT-09 I4).
+    #[serde(default)]
+    pub suite_version: String,
+    #[serde(default)]
+    pub cases_planned: u16,
     pub status: QualityStatus,
     pub cases: Vec<QualityCaseResult>,
 }
@@ -111,9 +126,129 @@ where
         observed_at_ms: None,
         model_logical_id: None,
         runtime_sha256: None,
+        model_content_sha256: None,
+        compatibility_key: None,
+        suite_version: "structural-smoke.v1".into(),
+        cases_planned: cases.len() as u16,
         status,
         cases,
     }
+}
+
+/// The identity policy for attaching quality evidence to a measured run
+/// (audit MT-09): full model content, runtime executable, and the
+/// launch-scope execution identity must all match. Missing identities are
+/// refusals, not assumptions.
+pub fn quality_attachment_decision(
+    manifest: &crate::evidence::BenchmarkManifest,
+    quality: &QualitySuiteResult,
+) -> Result<(), String> {
+    let launch_key = manifest
+        .launch_compatibility_key
+        .as_deref()
+        .filter(|key| !key.is_empty())
+        .ok_or(
+            "This benchmark manifest does not carry a launch-scope execution identity; quality evidence cannot attach to it",
+        )?;
+    let quality_key = quality
+        .compatibility_key
+        .as_deref()
+        .filter(|key| !key.is_empty())
+        .ok_or("The quality result does not carry an execution identity")?;
+    if launch_key != quality_key {
+        return Err(format!(
+            "Quality evidence was measured on a different configuration (quality {quality_key}, run {launch_key})"
+        ));
+    }
+    let model_sha = manifest
+        .model
+        .as_ref()
+        .and_then(|model| model.shards.first())
+        .and_then(|shard| shard.sha256.as_deref())
+        .filter(|digest| !digest.is_empty())
+        .ok_or("The benchmark manifest does not carry full model content identity")?;
+    let quality_model_sha = quality
+        .model_content_sha256
+        .as_deref()
+        .filter(|digest| !digest.is_empty())
+        .ok_or("The quality result does not carry full model content identity")?;
+    if model_sha != quality_model_sha {
+        return Err("Quality evidence came from different model content than the run".into());
+    }
+    let runtime_sha = manifest
+        .runtime
+        .as_ref()
+        .and_then(|runtime| runtime.executable_sha256.as_deref())
+        .filter(|digest| !digest.is_empty())
+        .ok_or("The benchmark manifest does not carry the runtime executable identity")?;
+    let quality_runtime_sha = quality
+        .runtime_sha256
+        .as_deref()
+        .filter(|digest| !digest.is_empty())
+        .ok_or("The quality result does not carry the runtime executable identity")?;
+    if runtime_sha != quality_runtime_sha {
+        return Err("Quality evidence came from a different runtime than the run".into());
+    }
+    Ok(())
+}
+
+/// Build a ranking candidate from a persisted benchmark manifest. Quality
+/// evidence attaches only through [`quality_attachment_decision`]; a refused
+/// attachment is an error, never a silent omission (audit MT-09 I3).
+pub fn candidate_from_manifest(
+    id: &str,
+    manifest: &crate::evidence::BenchmarkManifest,
+    result_class: crate::evidence::FitClass,
+    quality: Option<&QualitySuiteResult>,
+) -> Result<CandidateEvidence, String> {
+    manifest
+        .validate_complete()
+        .map_err(|error| error.to_string())?;
+    let summary = crate::measurement::summarize_observations(&manifest.observations)?;
+    let peak_memory_bytes = manifest
+        .observations
+        .iter()
+        .filter_map(|observation| observation.peak_process_rss_bytes.value)
+        .max();
+    let storage_bytes = manifest.model.as_ref().map(|model| {
+        model
+            .shards
+            .iter()
+            .chain(model.companions.iter())
+            .map(|file| file.bytes)
+            .sum::<u64>()
+    });
+    let quality_pass_rate = match quality {
+        Some(quality) => {
+            quality_attachment_decision(manifest, quality)?;
+            let scored = quality
+                .cases
+                .iter()
+                .filter(|case| matches!(case.status, QualityStatus::Passed | QualityStatus::Failed))
+                .count();
+            if scored == 0 {
+                None
+            } else {
+                let passed = quality
+                    .cases
+                    .iter()
+                    .filter(|case| case.status == QualityStatus::Passed)
+                    .count();
+                Some(passed as f64 / scored as f64)
+            }
+        }
+        None => None,
+    };
+    Ok(CandidateEvidence {
+        id: id.into(),
+        result_class,
+        decode_tps: Some(summary.decode_tps.mean),
+        prefill_tps: summary.prefill_tps.as_ref().map(|stats| stats.mean),
+        p95_latency_ms: summary.first_token_ms.as_ref().map(|stats| stats.p95),
+        peak_memory_bytes,
+        quality_pass_rate,
+        storage_bytes,
+    })
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -486,6 +621,221 @@ pub fn rank_candidates(
 
 #[cfg(test)]
 mod tests {
+
+    fn mt09_manifest_fixture(launch_key: Option<String>) -> crate::evidence::BenchmarkManifest {
+        use crate::evidence::{
+            AttemptOutcome, BenchmarkManifest, BenchmarkObservation, Evidence, EvidenceSource,
+            EvidenceSourceKind, RuntimeFact,
+        };
+        let mut manifest = BenchmarkManifest {
+            compatibility_key: Some(format!("v2:{}", "c".repeat(64))),
+            launch_compatibility_key: launch_key,
+            execution_snapshot_schema: crate::calibration::EXECUTION_SNAPSHOT_SCHEMA.into(),
+            runtime: Some(RuntimeFact {
+                path: "runtime.exe".into(),
+                version: "1".into(),
+                build: "1".into(),
+                executable_sha256: Some("f".repeat(64)),
+                help_sha256: "b".repeat(64),
+                backend: "cpu".into(),
+            }),
+            model: Some(crate::evidence::ModelFact {
+                logical_id: "fixture".into(),
+                architecture: "llama".into(),
+                shards: vec![crate::evidence::FileFact {
+                    path: "model.gguf".into(),
+                    bytes: 1,
+                    sha256: Some("d".repeat(64)),
+                }],
+                companions: Vec::new(),
+                gguf_header_sha256: "e".repeat(64),
+            }),
+            launch: Some(crate::evidence::LaunchFact {
+                requested_context: 4_096,
+                effective_context: Evidence {
+                    value: Some(4_096),
+                    level: crate::evidence::EvidenceLevel::Observed,
+                    source: EvidenceSource {
+                        kind: EvidenceSourceKind::Runtime,
+                        detail: "fixture".into(),
+                    },
+                    observed_at_ms: 1,
+                    notes: Vec::new(),
+                },
+                parallel: 1,
+                batch: 512,
+                ubatch: 128,
+                gpu_layers: "all".into(),
+                cache_type_k: "f16".into(),
+                cache_type_v: "f16".into(),
+                split_mode: "none".into(),
+                ..crate::evidence::LaunchFact::default()
+            }),
+            ..BenchmarkManifest::default()
+        };
+        manifest.workload.trials = 2;
+        for trial in 1..=2u16 {
+            manifest.observations.push(BenchmarkObservation {
+                trial,
+                started_at_ms: 100 + u64::from(trial),
+                duration_ms: 100.0,
+                prompt_tokens: 8,
+                cached_prompt_tokens: 0,
+                generated_tokens: 16,
+                prefill_tps: Some(10.0),
+                decode_tps: Some(50.0),
+                first_token_ms: Some(5.0),
+                derived_ttft_ms: None,
+                peak_process_rss_bytes: Evidence::unknown(
+                    EvidenceSource {
+                        kind: EvidenceSourceKind::Runtime,
+                        detail: "fixture".into(),
+                    },
+                    100 + u64::from(trial),
+                    "fixture",
+                ),
+                outcome: AttemptOutcome::Succeeded,
+                error: None,
+            });
+        }
+        manifest
+    }
+
+    fn mt09_quality_fixture(key: &str, model_sha: &str, runtime_sha: &str) -> QualitySuiteResult {
+        QualitySuiteResult {
+            suite_id: "localmotive-structural-v1".into(),
+            seed: 42,
+            observed_at_ms: Some(1),
+            model_logical_id: Some("fixture".into()),
+            runtime_sha256: Some(runtime_sha.into()),
+            model_content_sha256: Some(model_sha.into()),
+            compatibility_key: Some(key.into()),
+            suite_version: "structural-smoke.v1".into(),
+            cases_planned: 2,
+            status: QualityStatus::Passed,
+            cases: vec![
+                QualityCaseResult {
+                    case_id: "exact-ready-v1".into(),
+                    status: QualityStatus::Passed,
+                    detail: "ok".into(),
+                },
+                QualityCaseResult {
+                    case_id: "json-status-v1".into(),
+                    status: QualityStatus::Passed,
+                    detail: "ok".into(),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn mt09_quality_joins_only_with_matching_identity() {
+        let launch_key = format!("v2:{}", "a".repeat(64));
+        let manifest = mt09_manifest_fixture(Some(launch_key.clone()));
+        let matching = mt09_quality_fixture(&launch_key, &"d".repeat(64), &"f".repeat(64));
+        let candidate = candidate_from_manifest(
+            "fixture",
+            &manifest,
+            crate::evidence::FitClass::Measured,
+            Some(&matching),
+        )
+        .expect("a fully matching quality result attaches");
+        assert_eq!(candidate.quality_pass_rate, Some(1.0));
+
+        // A different launch identity (changed KV precision, speculation,
+        // LoRA, companions, or effective args) refuses attachment.
+        let other_key = format!("v2:{}", "9".repeat(64));
+        let other_launch = mt09_quality_fixture(&other_key, &"d".repeat(64), &"f".repeat(64));
+        let error = candidate_from_manifest(
+            "fixture",
+            &manifest,
+            crate::evidence::FitClass::Measured,
+            Some(&other_launch),
+        )
+        .unwrap_err();
+        assert!(error.contains("different configuration"), "{error}");
+
+        // Changed model tensor bytes with the same header and size.
+        let other_model = mt09_quality_fixture(&launch_key, &"1".repeat(64), &"f".repeat(64));
+        let error = candidate_from_manifest(
+            "fixture",
+            &manifest,
+            crate::evidence::FitClass::Measured,
+            Some(&other_model),
+        )
+        .unwrap_err();
+        assert!(error.contains("different model content"), "{error}");
+
+        // Another runtime executable.
+        let other_runtime = mt09_quality_fixture(&launch_key, &"d".repeat(64), &"2".repeat(64));
+        let error = candidate_from_manifest(
+            "fixture",
+            &manifest,
+            crate::evidence::FitClass::Measured,
+            Some(&other_runtime),
+        )
+        .unwrap_err();
+        assert!(error.contains("different runtime"), "{error}");
+
+        // A quality result without an identity never attaches.
+        let mut anonymous = mt09_quality_fixture(&launch_key, &"d".repeat(64), &"f".repeat(64));
+        anonymous.compatibility_key = None;
+        let error = candidate_from_manifest(
+            "fixture",
+            &manifest,
+            crate::evidence::FitClass::Measured,
+            Some(&anonymous),
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("does not carry an execution identity"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn mt09_manifests_without_a_launch_identity_refuse_quality() {
+        let manifest = mt09_manifest_fixture(None);
+        let quality = mt09_quality_fixture(
+            &format!("v2:{}", "a".repeat(64)),
+            &"d".repeat(64),
+            &"f".repeat(64),
+        );
+        let error = candidate_from_manifest(
+            "fixture",
+            &manifest,
+            crate::evidence::FitClass::Measured,
+            Some(&quality),
+        )
+        .unwrap_err();
+        assert!(error.contains("launch-scope execution identity"), "{error}");
+
+        // Without quality the candidate still builds.
+        let candidate = candidate_from_manifest(
+            "fixture",
+            &manifest,
+            crate::evidence::FitClass::Measured,
+            None,
+        )
+        .expect("quality-free candidates still rank");
+        assert_eq!(candidate.quality_pass_rate, None);
+    }
+
+    #[test]
+    fn mt09_suite_is_labelled_as_structural_smoke() {
+        let suite = run_quality_suite_with(|_, prompt| {
+            if prompt.contains("READY") {
+                Ok("READY".into())
+            } else {
+                Ok("{\"status\":\"ok\"}".into())
+            }
+        });
+        assert_eq!(suite.suite_version, "structural-smoke.v1");
+        assert_eq!(suite.cases_planned, 2);
+        assert_eq!(suite.status, QualityStatus::Passed);
+        assert_eq!(suite.cases.len(), 2);
+    }
+
     use super::*;
 
     #[test]

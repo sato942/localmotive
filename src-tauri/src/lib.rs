@@ -1972,7 +1972,7 @@ fn benchmark_execution_snapshot_from_profile(
     runtime_identity: &runtime::RuntimeIdentity,
     executable_sha256: &str,
     hardware: &runtime::HardwareInfo,
-    workload: &evidence::Workload,
+    workload: Option<&evidence::Workload>,
 ) -> Result<ExecutionSnapshotOutcome, String> {
     let main = artifacts
         .first()
@@ -2070,8 +2070,19 @@ fn benchmark_execution_snapshot_from_profile(
     unknown_identities.sort();
     unknown_identities.dedup();
 
+    // The scope is part of the identity: `launch` snapshots carry no
+    // workload digest and identify a configuration for quality attachment,
+    // `launch+workload` snapshots identify a measured run (audit MT-09).
+    let (scope, workload_sha256) = match workload {
+        Some(workload) => (
+            calibration::SNAPSHOT_SCOPE_LAUNCH_WORKLOAD,
+            calibration::workload_sha256(workload)?,
+        ),
+        None => (calibration::SNAPSHOT_SCOPE_LAUNCH, String::new()),
+    };
     let snapshot = calibration::ExecutionSnapshotV2 {
         schema_version: calibration::EXECUTION_SNAPSHOT_SCHEMA.into(),
+        scope: scope.into(),
         effective_args: calibration::sanitize_effective_args(&validation.arguments.effective_args),
         model_content_sha256,
         model_architecture,
@@ -2090,7 +2101,7 @@ fn benchmark_execution_snapshot_from_profile(
         draft_model_sha256,
         mmproj_sha256,
         lora_sha256,
-        workload_sha256: calibration::workload_sha256(workload)?,
+        workload_sha256,
         harness_version: env!("CARGO_PKG_VERSION").into(),
         estimator_version: calibration::ESTIMATOR_VERSION.into(),
         unknown_identities,
@@ -2169,9 +2180,21 @@ fn run_benchmark_snapshot(
         &runtime_identity,
         &executable_sha256,
         &hardware,
-        &workload,
+        Some(&workload),
     )?;
     let compatibility_key = snapshot_outcome.compatibility_key.clone();
+    // The launch-scope identity of the same configuration lets quality
+    // evidence attach to measured runs without a workload (audit MT-09).
+    let launch_compatibility_key = benchmark_execution_snapshot_from_profile(
+        &profile,
+        &validation,
+        &artifacts,
+        &runtime_identity,
+        &executable_sha256,
+        &hardware,
+        None,
+    )?
+    .compatibility_key;
     let launch_fact = evidence::LaunchFact {
         requested_context: profile.context,
         effective_context: validation.effective_context.clone(),
@@ -2257,6 +2280,7 @@ fn run_benchmark_snapshot(
         schema: evidence::BENCHMARK_SCHEMA_VERSION,
         harness_version,
         compatibility_key: Some(compatibility_key.clone()),
+        launch_compatibility_key: Some(launch_compatibility_key),
         execution_snapshot_schema: snapshot_outcome.schema_version.clone(),
         execution_snapshot_unknowns: snapshot_outcome.unknown_identities.clone(),
         runtime: Some(evidence::RuntimeFact {
@@ -2482,7 +2506,7 @@ fn replay_benchmark_manifest_worker(
         &runtime_identity,
         &executable_sha256,
         &hardware,
-        &manifest.workload,
+        Some(&manifest.workload),
     )?
     .compatibility_key;
     measurement::validate_replay_compatibility(
@@ -2502,7 +2526,7 @@ async fn run_quality_suite(
     // operations reservation and must not finalize against a replacement
     // (audit MT-05).
     let reservation = reserve_operation(&state.operations, OperationOwner::Quality)?;
-    let (profile, runtime_path, model_logical_id) = {
+    let (profile, runtime_path, model_logical_id, validation) = {
         let mut slot = state
             .server
             .lock()
@@ -2518,10 +2542,46 @@ async fn run_quality_suite(
             server.profile.clone(),
             server.profile.runtime.clone(),
             model_logical_id,
+            server.validation.clone(),
         )
     };
     let joined = tauri::async_runtime::spawn_blocking(
         move || -> Result<recommend::QualitySuiteResult, String> {
+            // Full identity is captured BEFORE the quality requests
+            // (audit MT-09 I1): model content, runtime executable, and the
+            // launch-scope execution snapshot of the serving configuration.
+            let (model_content_sha256, launch_compatibility_key) = {
+                let inspection = artifact::inspect_artifact(
+                    Path::new(
+                        validation
+                            .artifacts
+                            .first()
+                            .map(|artifact| artifact.first_shard.as_str())
+                            .ok_or("Validated model identity is unavailable")?,
+                    ),
+                    &[],
+                    true,
+                )?;
+                let content = inspection
+                    .shards
+                    .first()
+                    .and_then(|shard| shard.sha256.clone())
+                    .ok_or("Model content identity is unavailable")?;
+                let runtime_identity = runtime::describe_runtime(Path::new(&runtime_path));
+                let executable_sha256 = artifact::sha256_path(Path::new(&runtime_path))?;
+                let hardware = runtime::detect_hardware();
+                let key = benchmark_execution_snapshot_from_profile(
+                    &profile,
+                    &validation,
+                    &[inspection],
+                    &runtime_identity,
+                    &executable_sha256,
+                    &hardware,
+                    None,
+                )?
+                .compatibility_key;
+                (content, key)
+            };
             let client = crate::local_client::LocalHttpClient::from_profile(&profile)?;
             let mut result = recommend::run_quality_suite_with(|_, prompt| {
                 measurement::quality_completion_request(&client, prompt)
@@ -2536,6 +2596,8 @@ async fn run_quality_suite(
             );
             result.model_logical_id = Some(model_logical_id);
             result.runtime_sha256 = Some(artifact::sha256_path(Path::new(&runtime_path))?);
+            result.model_content_sha256 = Some(model_content_sha256);
+            result.compatibility_key = Some(launch_compatibility_key);
             Ok(result)
         },
     )
@@ -2549,6 +2611,19 @@ async fn run_quality_suite(
         );
     }
     Ok(result)
+}
+
+/// Join quality evidence to a measured run in Rust: the compatibility and
+/// content checks happen at this boundary, never in the frontend
+/// (audit MT-09 I3).
+#[tauri::command]
+fn join_quality_candidate(
+    id: String,
+    manifest: evidence::BenchmarkManifest,
+    result_class: evidence::FitClass,
+    quality: Option<recommend::QualitySuiteResult>,
+) -> Result<recommend::CandidateEvidence, String> {
+    recommend::candidate_from_manifest(&id, &manifest, result_class, quality.as_ref())
 }
 
 #[tauri::command]
@@ -3991,6 +4066,7 @@ pub fn run() {
             replay_benchmark_manifest,
             run_quality_suite,
             rank_candidates,
+            join_quality_candidate,
             build_compatibility_key,
             build_calibration_model,
             apply_calibration_model,

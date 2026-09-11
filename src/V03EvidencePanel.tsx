@@ -12,12 +12,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
   calibrationState,
-  candidateFromBenchmark,
   errorText,
   manualGpuOverride,
   qualityPassRate,
   type ArtifactInspection,
   type BenchmarkRunResult,
+  type CandidateEvidence,
   type CalibrationAnchor,
   type CalibrationModel,
   type CalibrationRecords,
@@ -494,13 +494,25 @@ export function V03EvidencePanel({
       setMessage("Run at least one measured benchmark before ranking.");
       return;
     }
-    const candidates = history.map((item, index) =>
-      candidateFromBenchmark(
-        `${item.compatibilityKey}:${index + 1}`,
-        item,
-        item === benchmark ? quality : null,
-      ),
-    );
+    // The candidate join happens in Rust (audit MT-09 I3): quality evidence
+    // attaches only when the launch identity, model content and runtime
+    // match. A refused attachment is surfaced, never silently dropped.
+    const candidates: CandidateEvidence[] = [];
+    for (const [index, item] of history.entries()) {
+      const attached = item === benchmark ? quality : null;
+      try {
+        const candidate = await invoke<CandidateEvidence>("join_quality_candidate", {
+          id: `${item.compatibilityKey}:${index + 1}`,
+          manifest: item.manifest,
+          resultClass: item.resultClass,
+          quality: attached,
+        });
+        candidates.push(candidate);
+      } catch (error) {
+        setMessage(`Quality evidence was not attached: ${errorText(error)}`);
+        return;
+      }
+    }
     const result = await runAction("ranking", () =>
       invoke<RankedCandidate[]>("rank_candidates", {
         candidates,
@@ -510,7 +522,9 @@ export function V03EvidencePanel({
     );
     if (result) {
       setRanking(result);
-      setMessage("Candidates were ranked with hard constraints and Pareto dominance.");
+      setMessage(
+        "Candidates were ranked with hard constraints and Pareto dominance; a quality rate of 1.0 means both structural smoke cases passed.",
+      );
     }
   }
 

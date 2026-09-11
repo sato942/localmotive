@@ -222,6 +222,12 @@ export type QualitySuiteResult = {
   observedAtMs: number | null;
   modelLogicalId: string | null;
   runtimeSha256: string | null;
+  // Full identity captured with the suite (audit MT-09). Optional so results
+  // stored by older builds still load.
+  modelContentSha256?: string | null;
+  compatibilityKey?: string | null;
+  suiteVersion?: string;
+  casesPlanned?: number;
   status: QualityStatus;
   cases: QualityCaseResult[];
 };
@@ -422,30 +428,6 @@ export function qualityPassRate(result: QualitySuiteResult | null): number | nul
   const scored = result.cases.filter((item) => item.status === "passed" || item.status === "failed");
   if (!scored.length) return null;
   return scored.filter((item) => item.status === "passed").length / scored.length;
-}
-
-export function candidateFromBenchmark(
-  id: string,
-  run: BenchmarkRunResult,
-  quality: QualitySuiteResult | null,
-): CandidateEvidence {
-  const files = run.manifest.model
-    ? [...run.manifest.model.shards, ...run.manifest.model.companions]
-    : [];
-  const peakMemory = run.manifest.observations
-    .map((item) => item.peakProcessRssBytes.value ?? null)
-    .filter((value): value is number => value !== null)
-    .reduce<number | null>((maximum, value) => maximum === null ? value : Math.max(maximum, value), null);
-  return {
-    id,
-    resultClass: run.resultClass,
-    decodeTps: run.summary?.decodeTps.mean ?? null,
-    prefillTps: run.summary?.prefillTps?.mean ?? null,
-    p95LatencyMs: run.summary?.firstTokenMs?.p95 ?? null,
-    peakMemoryBytes: peakMemory,
-    qualityPassRate: qualityPassRate(quality),
-    storageBytes: files.length ? files.reduce((total, file) => total + file.bytes, 0) : null,
-  };
 }
 
 export type CalibrationState = "compatible" | "expired" | "incompatible" | "unavailable";

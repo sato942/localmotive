@@ -595,6 +595,56 @@ pub fn build_share_bundle(
             if runtime_sha256 != executable_sha256 {
                 return Err("Quality evidence runtime identity does not match the manifest".into());
             }
+            // Full identity when the records carry it (audit MT-09): the
+            // launch-scope execution key and the model content digest must
+            // match the manifest too, not only the logical filename identity.
+            if let Some(quality_key) = suite
+                .compatibility_key
+                .as_deref()
+                .filter(|key| !key.is_empty())
+            {
+                let launch_key = manifest
+                    .launch_compatibility_key
+                    .as_deref()
+                    .filter(|key| !key.is_empty())
+                    .ok_or(
+                        "Quality evidence carries an execution identity, but the manifest does not",
+                    )?;
+                if quality_key != launch_key {
+                    return Err(
+                        "Quality evidence configuration identity does not match the manifest"
+                            .into(),
+                    );
+                }
+            } else {
+                return Err(
+                    "Quality evidence is missing its execution identity; re-run the quality suite"
+                        .into(),
+                );
+            }
+            if let Some(content_sha) = suite
+                .model_content_sha256
+                .as_deref()
+                .filter(|digest| !digest.is_empty())
+            {
+                let manifest_content = manifest
+                    .model
+                    .as_ref()
+                    .and_then(|model| model.shards.first())
+                    .and_then(|shard| shard.sha256.as_deref())
+                    .filter(|digest| !digest.is_empty())
+                    .ok_or("Sharing requires the manifest model content digest")?;
+                if content_sha != manifest_content {
+                    return Err(
+                        "Quality evidence model content does not match the manifest".into(),
+                    );
+                }
+            } else {
+                return Err(
+                    "Quality evidence is missing its model content identity; re-run the quality suite"
+                        .into(),
+                );
+            }
             Ok(ShareQuality {
                 suite_id: suite.suite_id.clone(),
                 seed: suite.seed,
@@ -786,6 +836,68 @@ mod tests {
             }],
             ..BenchmarkManifest::default()
         }
+    }
+
+    fn quality_suite_fixture(compatibility_key: Option<String>) -> QualitySuiteResult {
+        crate::recommend::QualitySuiteResult {
+            suite_id: "localmotive-structural-v1".into(),
+            seed: 42,
+            observed_at_ms: Some(43),
+            model_logical_id: Some("model-structural-id".into()),
+            runtime_sha256: Some("a".repeat(64)),
+            model_content_sha256: Some("c".repeat(64)),
+            compatibility_key,
+            suite_version: "structural-smoke.v1".into(),
+            cases_planned: 2,
+            status: QualityStatus::Passed,
+            cases: vec![
+                crate::recommend::QualityCaseResult {
+                    case_id: "exact-ready-v1".into(),
+                    status: QualityStatus::Passed,
+                    detail: "ok".into(),
+                },
+                crate::recommend::QualityCaseResult {
+                    case_id: "json-status-v1".into(),
+                    status: QualityStatus::Passed,
+                    detail: "ok".into(),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn mt09_share_export_requires_full_quality_identity() {
+        // The audited gap: a share bundle accepted quality evidence that only
+        // matched the logical filename identity. It must now match the launch
+        // execution key and model content digest too (audit MT-09).
+        let mut manifest = manifest_fixture();
+        let launch_key = format!("v2:{}", "e".repeat(64));
+        manifest.launch_compatibility_key = Some(launch_key.clone());
+
+        let mut suite = quality_suite_fixture(Some(launch_key.clone()));
+        let export = build_share_bundle(&manifest, None, Some(&suite), launch_key.clone(), 42)
+            .expect("a fully matching quality suite exports");
+        assert!(export.quality.is_some());
+
+        // Another configuration (changed KV precision, speculation, LoRA or
+        // args) refuses export.
+        suite.compatibility_key = Some(format!("v2:{}", "9".repeat(64)));
+        let error =
+            build_share_bundle(&manifest, None, Some(&suite), launch_key.clone(), 42).unwrap_err();
+        assert!(error.contains("configuration identity"), "{error}");
+
+        // Changed tensor bytes with an unchanged header and size refuse too.
+        let mut suite = quality_suite_fixture(Some(launch_key.clone()));
+        suite.model_content_sha256 = Some("1".repeat(64));
+        let error =
+            build_share_bundle(&manifest, None, Some(&suite), launch_key.clone(), 42).unwrap_err();
+        assert!(error.contains("model content"), "{error}");
+
+        // A suite without a launch identity cannot ride along.
+        let mut suite = quality_suite_fixture(None);
+        suite.model_content_sha256 = Some("c".repeat(64));
+        let error = build_share_bundle(&manifest, None, Some(&suite), launch_key, 42).unwrap_err();
+        assert!(error.contains("missing its execution identity"), "{error}");
     }
 
     #[test]

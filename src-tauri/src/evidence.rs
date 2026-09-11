@@ -617,6 +617,11 @@ pub struct BenchmarkManifest {
     pub schema: u32,
     pub harness_version: String,
     pub compatibility_key: Option<String>,
+    /// The launch-scope execution-snapshot key of the same configuration: the
+    /// identity quality evidence must match to attach to this run (audit
+    /// MT-09). Empty for manifests written before scoped identities existed.
+    #[serde(default)]
+    pub launch_compatibility_key: Option<String>,
     /// Schema of the execution snapshot behind `compatibility_key` (empty for
     /// manifests written before the snapshot identity existed).
     #[serde(default)]
@@ -641,6 +646,7 @@ impl Default for BenchmarkManifest {
             schema: BENCHMARK_SCHEMA_VERSION,
             harness_version: env!("CARGO_PKG_VERSION").into(),
             compatibility_key: None,
+            launch_compatibility_key: None,
             execution_snapshot_schema: String::new(),
             execution_snapshot_unknowns: Vec::new(),
             runtime: None,

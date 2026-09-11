@@ -3,7 +3,6 @@ import * as modelModule from "./model";
 import {
   artifactReadyForLaunch,
   calibrationState,
-  candidateFromBenchmark,
   catalogRevision,
   conflictingCapacityMetrics,
   defaultWorkload,
@@ -37,7 +36,6 @@ import {
   suggestedProfile,
   validateWorkload,
   type ArtifactInspection,
-  type BenchmarkRunResult,
   type CalibrationModel,
   type DeviceAllocationPlan,
   type Evidence,
@@ -47,7 +45,6 @@ import {
   type ManagedRuntimeRecord,
   type RuntimeIdentity,
   type RuntimeOption,
-  type QualitySuiteResult,
   type StorageVolumeEvidence,
 } from "./model";
 
@@ -315,111 +312,6 @@ describe("v0.3 artifact contracts", () => {
 });
 
 describe("v0.3 measurement decisions", () => {
-  const memoryEvidence = (value: number | null) => ({
-    value,
-    level: "observed" as const,
-    source: { kind: "windowsApi" as const, detail: "GetProcessMemoryInfo(PeakWorkingSetSize)" },
-    observedAtMs: 42,
-    notes: [] as string[],
-  });
-  const run: BenchmarkRunResult = {
-    manifest: {
-      schema: 1,
-      harnessVersion: "0.3.0",
-      compatibilityKey: "c".repeat(64),
-      runtime: null,
-      hardware: [],
-      model: {
-        logicalId: "model",
-        architecture: "llama",
-        shards: [{ path: "C:/private/model.gguf", bytes: 100, sha256: "a".repeat(64) }],
-        companions: [{ path: "C:/private/mmproj.gguf", bytes: 20, sha256: "b".repeat(64) }],
-        ggufHeaderSha256: "c".repeat(64),
-      },
-      launch: null,
-      workload: defaultWorkload(),
-      warmups: [],
-      observations: [
-        {
-          trial: 1,
-          startedAtMs: 1,
-          durationMs: 100,
-          promptTokens: 32,
-          generatedTokens: 16,
-          prefillTps: 120,
-          decodeTps: 60,
-          firstTokenMs: 25,
-          derivedTtftMs: 20,
-          peakProcessRssBytes: memoryEvidence(1_000),
-          outcome: "succeeded",
-          error: null,
-        },
-        {
-          trial: 2,
-          startedAtMs: 2,
-          durationMs: 110,
-          promptTokens: 32,
-          generatedTokens: 16,
-          prefillTps: 100,
-          decodeTps: 50,
-          firstTokenMs: null,
-          derivedTtftMs: 22,
-          peakProcessRssBytes: memoryEvidence(1_200),
-          outcome: "succeeded",
-          error: null,
-        },
-      ],
-      terminalOutcome: null,
-    },
-    summary: {
-      resultClass: "measured",
-      successfulTrials: 2,
-      failedTrials: 0,
-      prefillTps: { count: 2, mean: 110, median: 110, p50: 100, p95: 120, min: 100, max: 120, standardDeviation: 10 },
-      decodeTps: { count: 2, mean: 55, median: 55, p50: 50, p95: 60, min: 50, max: 60, standardDeviation: 5 },
-      firstTokenMs: { count: 1, mean: 25, median: 25, p50: 25, p95: 25, min: 25, max: 25, standardDeviation: 0 },
-      derivedTtftMs: { count: 2, mean: 21, median: 21, p50: 20, p95: 22, min: 20, max: 22, standardDeviation: 1 },
-      failures: [],
-    },
-    manifestPath: "C:/private/benchmark.json",
-    compatibilityKey: "d".repeat(64),
-    resultClass: "measured",
-    failure: null,
-  };
-
-  const quality: QualitySuiteResult = {
-    suiteId: "localmotive-structural-v1",
-    seed: 42,
-    observedAtMs: 42,
-    modelLogicalId: "model-a",
-    runtimeSha256: "d".repeat(64),
-    status: "failed",
-    cases: [
-      { caseId: "one", status: "passed", detail: "ok" },
-      { caseId: "two", status: "failed", detail: "mismatch" },
-    ],
-  };
-
-  it("keeps direct latency separate from derived TTFT when building a candidate", () => {
-    const candidate = candidateFromBenchmark("candidate", run, quality);
-
-    expect(candidate).toMatchObject({
-      id: "candidate",
-      resultClass: "measured",
-      decodeTps: 55,
-      prefillTps: 110,
-      p95LatencyMs: 25,
-      peakMemoryBytes: 1_200,
-      qualityPassRate: 0.5,
-      storageBytes: 120,
-    });
-  });
-
-  it("derives peak benchmark memory from evidence values only", () => {
-    const candidate = candidateFromBenchmark("candidate", run, quality);
-
-    expect(candidate.peakMemoryBytes).toBe(1_200);
-  });
 
   it("leaves quality unknown when the suite did not produce scored cases", () => {
     expect(qualityPassRate(null)).toBeNull();

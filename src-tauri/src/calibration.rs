@@ -66,6 +66,10 @@ pub fn selected_artifact_set_sha256(content_ids: &[String]) -> Result<String, St
 /// snapshot JSON, so legacy keys cannot silently masquerade as a current
 /// complete identity.
 pub const EXECUTION_SNAPSHOT_SCHEMA: &str = "localmotive.execution-snapshot.v2";
+
+/// Snapshot scopes.
+pub const SNAPSHOT_SCOPE_LAUNCH: &str = "launch";
+pub const SNAPSHOT_SCOPE_LAUNCH_WORKLOAD: &str = "launch+workload";
 pub const EXECUTION_KEY_PREFIX: &str = "v2:";
 /// Estimator/metric identity: bump when the calibration arithmetic or the
 /// measured statistic changes meaning.
@@ -78,6 +82,11 @@ pub const ESTIMATOR_VERSION: &str = "decode-tps-mean.v1";
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionSnapshotV2 {
     pub schema_version: String,
+    /// What the snapshot scope covers: `launch` for launch-only identities
+    /// (quality evidence) or `launch+workload` for measured-run identities
+    /// (benchmarks). The scope is part of the canonical key, so a launch
+    /// identity and a workload identity can never collide (audit MT-09).
+    pub scope: String,
     /// The effective launch arguments after capability filtering, with secret
     /// values and volatile paths replaced by identity tokens.
     pub effective_args: Vec<String>,
@@ -122,14 +131,24 @@ pub fn execution_snapshot_key(snapshot: &ExecutionSnapshotV2) -> Result<String, 
             snapshot.schema_version
         ));
     }
+    if snapshot.scope != SNAPSHOT_SCOPE_LAUNCH && snapshot.scope != SNAPSHOT_SCOPE_LAUNCH_WORKLOAD {
+        return Err(format!(
+            "Unsupported execution snapshot scope: {}",
+            snapshot.scope
+        ));
+    }
     crate::evidence::validate_sha256("modelContentSha256", &snapshot.model_content_sha256)
         .map_err(|error| error.to_string())?;
     crate::evidence::validate_sha256("runtimeSha256", &snapshot.runtime_sha256)
         .map_err(|error| error.to_string())?;
     crate::evidence::validate_sha256("runtimeHelpSha256", &snapshot.runtime_help_sha256)
         .map_err(|error| error.to_string())?;
-    crate::evidence::validate_sha256("workloadSha256", &snapshot.workload_sha256)
-        .map_err(|error| error.to_string())?;
+    if snapshot.scope == SNAPSHOT_SCOPE_LAUNCH_WORKLOAD {
+        crate::evidence::validate_sha256("workloadSha256", &snapshot.workload_sha256)
+            .map_err(|error| error.to_string())?;
+    } else if !snapshot.workload_sha256.is_empty() {
+        return Err("A launch-scope execution snapshot must not carry a workload digest".into());
+    }
     if snapshot.model_architecture.trim().is_empty()
         || snapshot.runtime_backend.trim().is_empty()
         || snapshot.runtime_version.trim().is_empty()
@@ -1092,6 +1111,7 @@ mod tests {
     fn snapshot_fixture() -> ExecutionSnapshotV2 {
         ExecutionSnapshotV2 {
             schema_version: EXECUTION_SNAPSHOT_SCHEMA.into(),
+            scope: SNAPSHOT_SCOPE_LAUNCH_WORKLOAD.into(),
             effective_args: vec![
                 "-m".into(),
                 "[model]".into(),
