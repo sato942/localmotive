@@ -198,6 +198,94 @@ function render(initialHardware: HardwareInfo | null) {
   });
 }
 
+describe("workload drafts and the production validator (FE-17)", () => {
+  function renderRunning() {
+    act(() => {
+      root.render(
+        <V03EvidencePanel
+          model={model}
+          profile={profile}
+          serverStatus={
+            {
+              running: true,
+              phase: "healthy",
+              pid: 1,
+              profileName: "fixture",
+              alias: null,
+              port: 8080,
+              command: null,
+              logPath: null,
+              startedAt: 1,
+              exitCode: null,
+              resultClass: "unknown",
+              validation: null,
+              failure: null,
+            } as never
+          }
+          initialHardware={hardwareFixture(["gpu-A"])}
+          onRunStateChange={() => undefined}
+        />,
+      );
+    });
+  }
+
+  function fieldInput(label: string): HTMLInputElement {
+    const field = Array.from(container.querySelectorAll("label")).find((candidate) =>
+      candidate.textContent?.includes(label),
+    );
+    const input = field?.querySelector<HTMLInputElement>("input");
+    if (!input) throw new Error(`input not found: ${label}`);
+    return input;
+  }
+
+  function setInputValue(input: HTMLInputElement, value: string) {
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    setter?.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  it("shows field errors, blocks dispatch, and dispatches once the draft is valid", async () => {
+    handlers.set("benchmark_v2", () => ({
+      manifest: { schema: 2, harnessVersion: "0.5.0", warmups: [], observations: [], terminalOutcome: null },
+      summary: null,
+      manifestPath: "C:/runs/x.json",
+      compatibilityKey: `v2:${"c".repeat(64)}`,
+      resultClass: "unknown",
+      failure: null,
+    }));
+    renderRunning();
+    await flush();
+
+    // The tested factory seeds the panel: default values, no errors.
+    expect(fieldInput("Prompt tokens").value).toBe("512");
+    expect(fieldInput("Trials").value).toBe("5");
+
+    act(() => setInputValue(fieldInput("Trials"), "2.5"));
+    await flush();
+    expect(container.textContent).toContain("workload.trials");
+    expect(container.textContent).toContain("whole number");
+    const runButton = buttonByText("Run v2 benchmark");
+    expect(runButton.disabled).toBe(true);
+    runButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    expect(invokeCalls.some((call) => call.command === "benchmark_v2")).toBe(false);
+
+    act(() => setInputValue(fieldInput("Trials"), "3"));
+    await flush();
+    expect(container.textContent).not.toContain("whole number");
+    expect(buttonByText("Run v2 benchmark").disabled).toBe(false);
+    act(() => clickByText("Run v2 benchmark"));
+    await flush();
+    const dispatched = invokeCalls.find((call) => call.command === "benchmark_v2");
+    expect(dispatched).toBeTruthy();
+    const workload = (dispatched?.args.workload ?? {}) as { trials?: number };
+    expect(workload.trials).toBe(3);
+  });
+});
+
 describe("preflight staleness and adapter selection (FE-06)", () => {
   it("marks a preflight result stale after an adapter change and clears it on re-run", async () => {
     render(hardwareFixture(["gpu-A", "gpu-B"]));

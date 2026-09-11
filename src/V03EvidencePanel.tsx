@@ -12,6 +12,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
   calibrationState,
+  defaultWorkload,
   errorText,
   manualGpuOverride,
   qualityPassRate,
@@ -32,6 +33,7 @@ import {
   type QualitySuiteResult,
   type RankedCandidate,
   type RecommendationConstraints,
+  validateWorkload,
   type ObjectiveWeights,
   type ServerStatus,
   type ShareBundle,
@@ -72,19 +74,6 @@ function Input(props: InputHTMLAttributes<HTMLInputElement>) {
 function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
   return <select {...props} />;
 }
-
-const DEFAULT_WORKLOAD: Workload = {
-  id: "technical-explanation-v1",
-  promptTokens: 512,
-  generationTokens: 256,
-  warmups: 1,
-  trials: 5,
-  seed: 42,
-  concurrency: 1,
-  stream: false,
-  cacheMode: "warm",
-  timeoutMs: 600_000,
-};
 
 const DEFAULT_CONSTRAINTS: RecommendationConstraints = {
   minDecodeTps: null,
@@ -182,7 +171,8 @@ export function V03EvidencePanel({
   const [manualCapacityGiB, setManualCapacityGiB] = useState("");
   const [manualCapacityNote, setManualCapacityNote] = useState("");
   const [preflight, setPreflight] = useState<PreflightResult | null>(null);
-  const [workload, setWorkload] = useState<Workload>(DEFAULT_WORKLOAD);
+  // Audit FE-17 I1: the tested factory is the single default source.
+  const [workload, setWorkload] = useState<Workload>(() => defaultWorkload());
   const [benchmark, setBenchmark] = useState<BenchmarkRunResult | null>(null);
   const [history, setHistory] = useState<BenchmarkRunResult[]>([]);
   const [quality, setQuality] = useState<QualitySuiteResult | null>(null);
@@ -273,6 +263,10 @@ export function V03EvidencePanel({
       return reconciled.length === current.length ? current : reconciled;
     });
   }, [hardware]);
+
+  // Audit FE-17 I2: the production-used validator gates dispatch and shows
+  // field-level errors; dispatch never relies on input attributes alone.
+  const workloadErrors = useMemo(() => validateWorkload(workload), [workload]);
 
   // Audit FE-06 I1/I2: whether the displayed preflight result still matches
   // the inputs it was computed from.
@@ -426,6 +420,15 @@ export function V03EvidencePanel({
   async function executeBenchmark(nextWorkload: Workload) {
     if (!serverStatus.running) {
       setMessage("Start and health-validate the selected profile before benchmarking.");
+      return;
+    }
+    const issues = validateWorkload(nextWorkload);
+    if (issues.length > 0) {
+      setMessage(
+        `Fix the workload before benchmarking: ${issues
+          .map((issue) => `${issue.field} — ${issue.message}`)
+          .join("; ")}`,
+      );
       return;
     }
     setQuality(null);
@@ -862,7 +865,7 @@ export function V03EvidencePanel({
             <div className="actions compact-actions">
               <Button
                 onClick={() => void executeBenchmark(workload)}
-                disabled={!serverStatus.running || busy !== null}
+                disabled={!serverStatus.running || busy !== null || workloadErrors.length > 0}
               >
                 {busy === "benchmark" ? "Benchmarking…" : "Run v2 benchmark"}
               </Button>
@@ -877,12 +880,19 @@ export function V03EvidencePanel({
 
           <div className="grid cols-3 evidence-controls">
             <Field label="Workload ID"><Input value={workload.id} onChange={(event) => setWorkload({ ...workload, id: event.target.value })} aria-label="Benchmark workload ID" /></Field>
-            <Field label="Prompt tokens"><Input type="number" min={1} value={workload.promptTokens} onChange={(event) => setWorkload({ ...workload, promptTokens: numericInput(event.target.value, 0) })} aria-label="Benchmark prompt tokens" /></Field>
-            <Field label="Generated tokens"><Input type="number" min={1} value={workload.generationTokens} onChange={(event) => setWorkload({ ...workload, generationTokens: numericInput(event.target.value, 0) })} aria-label="Benchmark generated tokens" /></Field>
-            <Field label="Warmups"><Input type="number" min={0} value={workload.warmups} onChange={(event) => setWorkload({ ...workload, warmups: numericInput(event.target.value, 0) })} aria-label="Benchmark warmups" /></Field>
-            <Field label="Trials"><Input type="number" min={1} value={workload.trials} onChange={(event) => setWorkload({ ...workload, trials: numericInput(event.target.value, 0) })} aria-label="Benchmark trials" /></Field>
+            <Field label="Prompt tokens"><Input type="number" min={1} max={1_048_576} step={1} value={workload.promptTokens} onChange={(event) => setWorkload({ ...workload, promptTokens: numericInput(event.target.value, 0) })} aria-label="Benchmark prompt tokens" /></Field>
+            <Field label="Generated tokens"><Input type="number" min={1} max={65_536} step={1} value={workload.generationTokens} onChange={(event) => setWorkload({ ...workload, generationTokens: numericInput(event.target.value, 0) })} aria-label="Benchmark generated tokens" /></Field>
+            <Field label="Warmups"><Input type="number" min={0} max={10} step={1} value={workload.warmups} onChange={(event) => setWorkload({ ...workload, warmups: numericInput(event.target.value, 0) })} aria-label="Benchmark warmups" /></Field>
+            <Field label="Trials"><Input type="number" min={1} max={100} step={1} value={workload.trials} onChange={(event) => setWorkload({ ...workload, trials: numericInput(event.target.value, 0) })} aria-label="Benchmark trials" /></Field>
             <Field label="Cache mode"><Select value={workload.cacheMode} onChange={(event) => setWorkload({ ...workload, cacheMode: event.target.value as Workload["cacheMode"] })} aria-label="Benchmark cache mode"><option value="warm">Warm</option><option value="cold">Cold (requires a fresh runtime)</option></Select></Field>
           </div>
+          {workloadErrors.length > 0 && (
+            <ul className="evidence-list" role="alert" aria-label="Workload validation errors">
+              {workloadErrors.map((issue) => (
+                <li key={`${issue.field}-${issue.code}`}>{issue.field}: {issue.message}</li>
+              ))}
+            </ul>
+          )}
 
           <div className="evidence-grid">
             <div className="evidence-status-card">

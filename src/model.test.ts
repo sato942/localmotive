@@ -46,6 +46,7 @@ import {
   type RuntimeIdentity,
   type RuntimeOption,
   type StorageVolumeEvidence,
+  type Workload,
 } from "./model";
 
 describe("runtime catalog presentation", () => {
@@ -283,6 +284,56 @@ describe("v0.3 evidence contracts", () => {
       "workload.trials",
       "workload.concurrency",
     ]);
+  });
+
+  it("mirrors the Rust workload defaults exactly (contract fixture)", () => {
+    // Literal mirror of evidence.rs Workload::default() with its serde
+    // camelCase names (audit FE-17 I4): if either side changes, this fails.
+    const rustDefaultWorkload: Workload = {
+      id: "technical-explanation-v1",
+      promptTokens: 512,
+      generationTokens: 256,
+      warmups: 1,
+      trials: 5,
+      seed: 42,
+      concurrency: 1,
+      stream: false,
+      cacheMode: "warm",
+      timeoutMs: 600_000,
+    };
+    expect(defaultWorkload()).toEqual(rustDefaultWorkload);
+    expect(validateWorkload(rustDefaultWorkload)).toEqual([]);
+  });
+
+  it("requires whole numbers where Rust deserializes integers", () => {
+    const fractional = validateWorkload({
+      ...defaultWorkload(),
+      trials: 2.5,
+      promptTokens: 511.5,
+    });
+    expect(fractional.map((error) => error.field)).toEqual([
+      "workload.promptTokens",
+      "workload.trials",
+    ]);
+    expect(fractional.every((error) => error.message === "Value must be a whole number")).toBe(true);
+
+    // Complete maxima and a blank identity surface as field errors.
+    const over = validateWorkload({
+      ...defaultWorkload(),
+      promptTokens: 1_048_577,
+      generationTokens: 65_537,
+      warmups: 11,
+      timeoutMs: 3_600_001,
+      id: "   ",
+    });
+    expect(over.map((error) => error.field)).toEqual([
+      "workload.id",
+      "workload.promptTokens",
+      "workload.generationTokens",
+      "workload.warmups",
+      "workload.timeoutMs",
+    ]);
+    expect(over.every((error) => error.code === "limitExceeded" || error.code === "emptyIdentity")).toBe(true);
   });
 });
 

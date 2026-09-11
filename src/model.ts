@@ -509,8 +509,16 @@ export function validateWorkload(workload: Workload): DomainError[] {
       message: "Workload identity is required",
     });
   }
+  // Rust deserializes these fields into integer types (u16/u32/u64), so the
+  // validator enforces whole numbers as well as the ranges (audit FE-17 I3).
   const bounded = (field: string, value: number, minimum: number, maximum: number) => {
-    if (!Number.isFinite(value) || value < minimum) {
+    if (!Number.isFinite(value) || !Number.isInteger(value)) {
+      errors.push({
+        code: "invalidRange",
+        field,
+        message: "Value must be a whole number",
+      });
+    } else if (value < minimum) {
       errors.push({ code: "invalidRange", field, message: `Value must be at least ${minimum}` });
     } else if (value > maximum) {
       errors.push({ code: "limitExceeded", field, message: `Value cannot exceed ${maximum}` });
@@ -1379,6 +1387,16 @@ export function slugAlias(name: string): string {
     .slice(0, 64);
 }
 
+/**
+ * Presentation-only default proposal (audit FE-17 I5 boundary statement).
+ *
+ * Authority: Rust owns truth. `core::scan_models` ranks and attaches
+ * companions, `core::validate_launch_profile`/`inspect_runtime` own flag
+ * validity, and `lib.rs::preflight_model` re-derives the plan before launch.
+ * This frontend factory only seeds an editable draft so the UI is useful
+ * before the user changes anything; its output is preview, never authority,
+ * and any divergence resolves in favour of the Rust decision.
+ */
 export function suggestedProfile(model: LogicalModel, runtime: string): LaunchProfile {
   const draft = model.companions.find((c) =>
     ["dspark", "mtp", "dflash", "eagle3"].includes(c.role),
