@@ -318,14 +318,15 @@ Review the generated command before launch.
 
 Read the support matrix by evidence type, not by inference (audit GH-07):
 
-- **CPU packaged checks** on this Windows x64 host (Ryzen 9 9950X3D) cover the
-  packaged lifecycle: build, MSI/NSIS install, launch, uninstall, and
-  update-from-0.4.0 checks in Windows Sandbox when release evidence is present
-  for that version.
-- **Accelerator paths** (CUDA on the RTX 5090, Vulkan, and others) are not
-  covered by that lifecycle evidence unless a version's evidence matrix says
-  so explicitly. The v0.5.0 health evidence is CPU only, and its
-  clean-account Sandbox run failed before installation.
+- **The 0.6.0 candidate** passed the packaged lifecycle (MSI and NSIS
+  install, launch, uninstall) and the upgrade checks from both v0.4.1 and
+  v0.5.0 in Windows Sandbox, bound to candidate digests. CUDA inference on
+  the RTX 5090 was measured through the packaged app; tamper refusal, TLS
+  serving, catalog fallback and download resume were exercised packaged.
+- **Do not generalize**: other hardware classes, Windows 10, screen
+  readers, live cloud providers and OS-crash behavior remain untested and
+  unclaimed. The full matrix, row by row with its evidence class, is
+  `docs/SUPPORT-MATRIX.md`.
 - A support claim applies to one version only when release evidence is present
   for that version. See `docs/EVIDENCE-MATRIX.md`.
 
@@ -345,7 +346,7 @@ Windows installers remain honestly unsigned with disclosure. Windows SmartScreen
 ## Current limitations
 
 - The current application release provides Windows x64 artifacts only.
-- Windows 10 and most hardware classes do not have L4 product evidence.
+- Windows 10 and most hardware classes do not have L4 product evidence; `docs/SUPPORT-MATRIX.md` lists what is measured, exercised, or untested.
 - [Microsoft ended normal Windows 10 support on October 14, 2025](https://support.microsoft.com/en-us/help/3207828); use an applicable supported servicing or ESU policy.
 - Missing P0 rows are disclosed and do not receive support claims.
 - This repository does not publish an ARM64 Localmotive application or runtime option.
@@ -355,14 +356,14 @@ Windows installers remain honestly unsigned with disclosure. Windows SmartScreen
 - Catalog downloads support single-file GGUF entries only.
 - Inventory scanning supports split GGUF files already on disk.
 - Application updates require a newer manual installation or executable.
-- Localmotive 0.5.0 ships unsigned under the deferred-signing exception: no Authenticode signatures exist, so no signature match can be claimed. Verify the published SHA-256 checksums before use. SmartScreen can warn on unsigned files.
+- Localmotive 0.6.0 ships unsigned under the deferred-signing exception: no Authenticode signatures exist, so no signature match can be claimed. Verify the published SHA-256 checksums before use. SmartScreen can warn on unsigned files.
 - Signing boxes are deferred, not green, and block no gate.
 
 ## Troubleshooting
 
 ### SmartScreen shows a warning
 
-Localmotive 0.5.0 ships unsigned under the deferred-signing exception: there is no Authenticode signer to verify. Verify the published SHA-256 checksums before use.
+Localmotive 0.6.0 ships unsigned under the deferred-signing exception: there is no Authenticode signer to verify. Verify the published SHA-256 checksums before use.
 
 SmartScreen can warn on unsigned files.
 

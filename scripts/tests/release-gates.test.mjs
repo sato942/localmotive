@@ -1329,7 +1329,13 @@ test("GH-06 lifecycle evidence survives every terminal outcome", async () => {
   assert.match(host, /function Write-FailureEvidence/);
   assert.match(host, /Write-FailureEvidence "TIMEOUT"/);
   assert.match(host, /Write-FailureEvidence "FAIL" \$_\.Exception\.Message/);
-  assert.match(host, /Copy-Item \$resultPath \$EvidencePath/);
+  // The FAIL branch must retain the sandbox's exact result JSON enriched
+  // with host-side identity, not a bare copy: a failed run has to be
+  // attributable (its source revision and candidate digests), not merely
+  // retrievable. The plain copy was replaced after the wrong-candidate
+  // control showed the retained FAIL document carried no host identity.
+  assert.match(host, /\$failDoc \| Add-Member -NotePropertyName sourceRevision/);
+  assert.match(host, /\$failDoc \| Add-Member -NotePropertyName candidateDigests/);
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
   const upload = release.split("Upload lifecycle evidence")[1] ?? "";
   assert.match(upload, /if: always\(\)/);
@@ -1699,8 +1705,12 @@ test("GH-07 the evidence matrix exists and the README reads it", async () => {
   assert.ok(matrix.includes("assets"), "evidence assets must be named");
   const readme = await readFile(join(process.cwd(), "README.md"), "utf8");
   assert.ok(readme.includes("docs/EVIDENCE-MATRIX.md"), "the README points at the matrix");
+  // The README must state what 0.6.0 actually established and explicitly
+  // refuse to generalize it; the accelerator caveat wording moved when the
+  // support matrix was introduced, so accept either explicit phrasing.
   assert.ok(
-    /not\s+covered by that lifecycle evidence unless/.test(readme),
+    /not\s+covered by that lifecycle evidence unless/.test(readme) ||
+      /Do not generalize/.test(readme),
     "accelerator coverage is not inferred",
   );
   assert.ok(

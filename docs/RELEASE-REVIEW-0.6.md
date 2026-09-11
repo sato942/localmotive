@@ -118,3 +118,9 @@ These deferrals do not close their items; the checkboxes stay open until the fol
 | V06-G-09.I1/I2/I3, V1; V06-G-10.I1/I2/I3, V1 | owner | Publication, readback and closeout require the owner's explicit ship decision and authorization | N/A | Preparation completed up to the authorization boundary | G-09 authorization | Publication records |
 
 Owner configuration package (prepared, not applied - repository settings are owner actions): create a main-branch ruleset requiring the `pr-check` check with no bypass actors for ordinary contributions, forbidding force pushes and deletions; create a tag ruleset for `v*` blocking updates and deletions. Exact `gh api` payloads are kept with the G-09 owner package.
+## Batch 4: support matrix and disclosure
+
+| Item | Decision | Basis |
+|---|---|---|
+| V06-G-08.I2 | checked | `docs/SUPPORT-MATRIX.md` published: every row carries its evidence class (MEASURED / EXERCISED / REVIEWED / UNTESTED) with pointers to the release evidence; untested GPU/OS/provider/screen-reader rows stay explicitly unclaimed; the README support section was rewritten to the 0.6.0 candidate's observed behavior and links the matrix. |
+| V06-G-08.I3 | checked | Unsigned distribution policy retained (release name `(unsigned)`, SmartScreen disclosure, SHA256SUMS verification, signing deferred by owner order and blocking no gate); the 0.6.0 changelog is written from finding traces for users; README unsigned references now name 0.6.0. `npm test` 146/146 with the updated gates. |
