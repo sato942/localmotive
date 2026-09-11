@@ -44,6 +44,8 @@ import {
   DEFAULT_FIT_PER_MILLE,
   describeChanges,
   downloadKey,
+  newestDownloadJob,
+  activeDownloadJob,
   formatExtraArgs,
   parseExtraArgs,
   downloadPercent,
@@ -96,6 +98,7 @@ import {
   type TuningTrial,
   type AboutInfo,
   type CatalogFile,
+  type DownloadJob,
   type CatalogModel,
   type CatalogQuery,
   type CatalogSnapshot,
@@ -161,6 +164,9 @@ function App() {
   // the always-mounted evidence panel so any screen can show it.
   const [evidenceRun, setEvidenceRun] = useState<{ kind: "benchmark" | "quality"; cancel: (() => void) | null } | null>(null);
   const [extraArgsDraft, setExtraArgsDraft] = useState<string | null>(null);
+  // FE-11: every download carries the destination and revision captured at
+  // start, so cancel and progress always address the job itself.
+  const [downloadJobs, setDownloadJobs] = useState<DownloadJob[]>([]);
   const [modelRoot, setModelRoot] = useState(MODEL_ROOT);
   const [runtimePath, setRuntimePath] = useState(RUNTIME);
   const [hardware, setHardware] = useState<HardwareInfo | null>(null);
@@ -653,7 +659,15 @@ function App() {
   }
 
   async function startCatalogDownload(model: CatalogModel, file: CatalogFile) {
-    const key = downloadKey(model.repo, file.filename);
+    // Capture the job identity now: a later destination edit must not
+    // retarget this download's progress or cancellation (audit FE-11).
+    const revision = catalogRevision(file);
+    const destination = modelRoot;
+    const key = downloadKey(model.repo, file.filename, destination, revision);
+    setDownloadJobs((current) => [
+      ...current.filter((job) => job.key !== key),
+      { key, repo: model.repo, filename: file.filename, revision, destination, startedAt: Date.now() },
+    ]);
     setDownloads((current) => ({
       ...current,
       [key]: {
@@ -670,8 +684,8 @@ function App() {
       const path = await invoke<string>("download_catalog_file", {
         repo: model.repo,
         filename: file.filename,
-        revision: catalogRevision(file),
-        destination: modelRoot,
+        revision,
+        destination,
         connections: 4,
       });
       setNotice(`Downloaded and verified ${file.filename} to ${path}`);
@@ -694,9 +708,20 @@ function App() {
     }
   }
 
-  async function cancelCatalogDownload(file: CatalogFile) {
-    await invoke<boolean>("cancel_download", { destination: modelRoot, filename: file.filename });
-    setNotice(`Stopping ${file.filename}; downloaded chunks will be kept for resume.`);
+  async function cancelCatalogDownload(job: DownloadJob) {
+    try {
+      const stopped = await invoke<boolean>("cancel_download", {
+        destination: job.destination,
+        filename: job.filename,
+      });
+      setNotice(
+        stopped
+          ? `Stopping ${job.filename}; downloaded chunks will be kept for resume.`
+          : `${job.filename} is not being downloaded (it may have finished); nothing was stopped.`,
+      );
+    } catch (error) {
+      setNotice(`Could not stop ${job.filename}: ${String(error)}`);
+    }
   }
 
   async function chooseExistingRuntime() {
@@ -1494,9 +1519,14 @@ function App() {
                   const filename = catalogFiles[model.id] ?? model.files[0]?.filename ?? "";
                   const file = model.files.find((entry) => entry.filename === filename) ?? model.files[0];
                   if (!file) return null;
-                  const key = downloadKey(model.repo, file.filename);
-                  const progress = downloads[key];
-                  const running = progress?.state === "downloading" || progress?.state === "verifying";
+                  // Progress and cancellation follow the running job for
+                  // this file, not the currently edited destination (FE-11).
+                  const activeJob = activeDownloadJob(downloadJobs, downloads, model.repo, file.filename);
+                  const latestJob = newestDownloadJob(downloadJobs, model.repo, file.filename);
+                  const progressKey = (activeJob ?? latestJob)?.key
+                    ?? downloadKey(model.repo, file.filename, modelRoot, catalogRevision(file));
+                  const progress = downloads[progressKey];
+                  const running = activeJob !== undefined;
                   const alreadyOnDisk = inventoryHasFile(file.filename) || progress?.state === "done";
                   const readiness = downloadReadiness({ destination: modelRoot, running, alreadyOnDisk, gated: model.gated, hasToken: hfToken.configured });
                   return (
@@ -1520,7 +1550,7 @@ function App() {
                         <label>Build<select value={file.filename} onChange={(event) => setCatalogFiles((current) => ({ ...current, [model.id]: event.target.value }))}>{model.files.map((entry) => <option key={entry.filename} value={entry.filename}>{entry.quant} · {bytesLabel(entry.sizeBytes)}</option>)}</select></label>
                         <div className="catalog-filename"><span>{file.filename}</span>{file.userSourced && <span className="state-tag">USER FILE · LOCAL DIGEST</span>}<small>{bytesLabel(file.sizeBytes)} · 4 PARALLEL RANGES</small></div>
                         {running ? (
-                          <button className="button danger" onClick={() => cancelCatalogDownload(file)}><CircleStop size={15} /> Keep & stop</button>
+                          <button className="button danger" onClick={() => cancelCatalogDownload(activeJob!)}><CircleStop size={15} /> Keep & stop</button>
                         ) : (
                           <button className={alreadyOnDisk ? "button is-current" : "button primary"} disabled={!readiness.canStart} title={readiness.reason} onClick={() => startCatalogDownload(model, file)}>
                             {alreadyOnDisk ? <><BadgeCheck size={15} /> Verify file</> : <><Download size={15} /> {progress?.state === "error" ? "Resume" : "Download"}</>}

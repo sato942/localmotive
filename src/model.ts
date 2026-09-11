@@ -1918,8 +1918,60 @@ export type DownloadEvent = {
 };
 
 /** Key identifying one downloadable file across the catalog. */
-export function downloadKey(repo: string, filename: string): string {
-  return `${repo}/${filename}`;
+export function downloadKey(
+  repo: string,
+  filename: string,
+  destination: string,
+  revision: string,
+): string {
+  // Mirrors `download_event_key` in lib.rs (audit FE-11): one job per
+  // (repo, file, revision, destination); the frontend must not merge jobs
+  // that the backend keeps apart.
+  return `${repo}/${filename}@${revision}#${destination}`;
+}
+
+/// A download job as started from the catalog (audit FE-11).
+export type DownloadJob = {
+  key: string;
+  repo: string;
+  filename: string;
+  revision: string;
+  destination: string;
+  startedAt: number;
+};
+
+function jobsForFile(
+  jobs: readonly DownloadJob[],
+  repo: string,
+  filename: string,
+): DownloadJob[] {
+  return jobs
+    .filter((job) => job.repo === repo && job.filename === filename)
+    .sort((left, right) => right.startedAt - left.startedAt);
+}
+
+/// The job whose progress state a card should show: the newest job for the
+/// file, whatever state it is in (FE-11).
+export function newestDownloadJob(
+  jobs: readonly DownloadJob[],
+  repo: string,
+  filename: string,
+): DownloadJob | undefined {
+  return jobsForFile(jobs, repo, filename)[0];
+}
+
+/// The job that is still running for the file — cancellation must bind to
+/// this job, not to the currently edited destination (FE-11).
+export function activeDownloadJob(
+  jobs: readonly DownloadJob[],
+  states: Readonly<Record<string, { state?: string } | undefined>>,
+  repo: string,
+  filename: string,
+): DownloadJob | undefined {
+  return jobsForFile(jobs, repo, filename).find((job) => {
+    const state = states[job.key]?.state;
+    return state === "downloading" || state === "verifying";
+  });
 }
 
 /**

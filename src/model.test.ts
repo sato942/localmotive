@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as modelModule from "./model";
 import {
+  type DownloadJob,
   formatExtraArgs,
   normalizeProfile,
   normalizeTuningReport,
@@ -12,7 +13,9 @@ import {
   conflictingCapacityMetrics,
   defaultWorkload,
   derivedEvidence,
+  activeDownloadJob,
   downloadKey,
+  newestDownloadJob,
   downloadPercent,
   downloadReadiness,
   errorText,
@@ -704,11 +707,35 @@ describe("HF catalog download rules", () => {
     expect(result.reason).toBe("");
   });
 
-  it("builds a stable key per repo and file", () => {
-    expect(downloadKey("unsloth/Qwen3.8-27B-GGUF", "a.gguf")).toBe(
-      "unsloth/Qwen3.8-27B-GGUF/a.gguf",
+  it("builds a job key from repo, file, revision and destination", () => {
+    expect(downloadKey("unsloth/Qwen3.8-27B-GGUF", "a.gguf", "C:/models", "main")).toBe(
+      "unsloth/Qwen3.8-27B-GGUF/a.gguf@main#C:/models",
     );
-    expect(downloadKey("a/b", "x.gguf")).not.toBe(downloadKey("a/b", "y.gguf"));
+    expect(downloadKey("a/b", "x.gguf", "C:/m", "main")).not.toBe(
+      downloadKey("a/b", "y.gguf", "C:/m", "main"),
+    );
+    // FE-11: the same file elsewhere or at another revision is another job.
+    expect(downloadKey("a/b", "x.gguf", "D:/other", "main")).not.toBe(
+      downloadKey("a/b", "x.gguf", "C:/m", "main"),
+    );
+    expect(downloadKey("a/b", "x.gguf", "C:/m", "rev2")).not.toBe(
+      downloadKey("a/b", "x.gguf", "C:/m", "main"),
+    );
+  });
+
+  it("binds cancellation to the running job, not the edited destination", () => {
+    const jobs: DownloadJob[] = [
+      { key: "k-old", repo: "a/b", filename: "x.gguf", revision: "main", destination: "C:/m", startedAt: 1 },
+      { key: "k-new", repo: "a/b", filename: "x.gguf", revision: "main", destination: "D:/other", startedAt: 2 },
+    ];
+    const states = { "k-old": { state: "done" }, "k-new": { state: "downloading" } };
+    expect(newestDownloadJob(jobs, "a/b", "x.gguf")?.key).toBe("k-new");
+    const active = activeDownloadJob(jobs, states, "a/b", "x.gguf");
+    expect(active?.key).toBe("k-new");
+    expect(active?.destination).toBe("D:/other");
+    // With no running job, nothing can be cancelled.
+    expect(activeDownloadJob(jobs, { "k-old": { state: "done" }, "k-new": { state: "error" } }, "a/b", "x.gguf")).toBeUndefined();
+    expect(activeDownloadJob(jobs, states, "a/b", "other.gguf")).toBeUndefined();
   });
 });
 

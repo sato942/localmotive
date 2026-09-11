@@ -585,3 +585,80 @@ describe("ErrorBoundary (audit FE-09)", () => {
     boundaryContainer.remove();
   });
 });
+
+describe("download job identity (audit FE-11)", () => {
+  it("keeps cancel bound to the running job after the destination is edited", async () => {
+    localStorage.setItem("localmotive:model-root", "C:/models/first");
+    const rows = [model("m1", "alpha")];
+    useRows(rows);
+    handlers.set("load_model_catalog", () => snapshot(rows));
+    handlers.set("fetch_model_catalog", () => snapshot(rows, { origin: "network" }));
+    // The transfer never settles: the job stays running for the assertions.
+    handlers.set("download_catalog_file", () => new Promise(() => {}));
+    handlers.set("cancel_download", () => false);
+
+    await mount();
+    // The destination lives on the Inventory screen; set it before the job.
+    const inventoryTab = [...container.querySelectorAll("button")].find((button) =>
+      (button.textContent ?? "").trim() === "Inventory",
+    );
+    await act(async () => {
+      inventoryTab!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await settle();
+    const rootInput = document.querySelector('input[aria-label="Model root"]') as HTMLInputElement;
+    expect(rootInput, "the model root field must render").toBeTruthy();
+    await act(async () => {
+      const proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!;
+      proto.set!.call(rootInput, "C:/models/first");
+      rootInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await settle();
+    await openCatalogTab();
+    await settle();
+
+    const downloadButton = [...container.querySelectorAll("button")].find((button) =>
+      (button.textContent ?? "").trim() === "Download",
+    );
+    expect(downloadButton, "the Download action must render").toBeTruthy();
+    expect((downloadButton as HTMLButtonElement).disabled, "Download must be enabled").toBe(false);
+    await act(async () => {
+      downloadButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await settle();
+    expect(invokeCalls.map((call) => call.command)).toContain("download_catalog_file");
+
+    // The user edits the destination while the job runs: navigate back to
+    // the live Inventory screen so the controlled input is attached.
+    await act(async () => {
+      inventoryTab!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await settle();
+    const liveRoot = document.querySelector('input[aria-label="Model root"]') as HTMLInputElement;
+    expect(liveRoot, "the model root field must be live again").toBeTruthy();
+    await act(async () => {
+      const proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!;
+      proto.set!.call(liveRoot, "D:/elsewhere");
+      liveRoot.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await settle();
+    expect((liveRoot as HTMLInputElement).value).toBe("D:/elsewhere");
+    await openCatalogTab();
+    await settle();
+
+    const stopButton = [...container.querySelectorAll("button")].find((button) =>
+      (button.textContent ?? "").includes("Keep & stop"),
+    );
+    expect(stopButton, "the running job must still offer cancellation").toBeTruthy();
+    await act(async () => {
+      stopButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await settle();
+
+    const cancelCall = invokeCalls.find((call) => call.command === "cancel_download");
+    expect(cancelCall, "cancel_download must be invoked").toBeTruthy();
+    expect((cancelCall!.args as { destination: string }).destination).toBe("C:/models/first");
+    // The boolean result is surfaced: false means nothing was stopped.
+    expect(text()).toContain("not being downloaded");
+  });
+});

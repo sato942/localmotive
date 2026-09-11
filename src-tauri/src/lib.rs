@@ -3908,6 +3908,18 @@ fn resolve_catalog_download(
 
 /// Start a download. Progress is emitted as `download:progress` events so a
 /// multi-gigabyte transfer never blocks the interface.
+/// Identity of a download job for UI progress and cancellation (audit
+/// FE-11): the same file downloaded to a different destination, or resolved
+/// at a different revision, is a different job and must not share state.
+pub(crate) fn download_event_key(
+    repo: &str,
+    filename: &str,
+    revision: &str,
+    destination: &str,
+) -> String {
+    format!("{repo}/{filename}@{revision}#{destination}")
+}
+
 #[tauri::command]
 async fn download_catalog_file(
     app: tauri::AppHandle,
@@ -3937,7 +3949,7 @@ async fn download_catalog_file(
         "Download complete and checksum verified."
     };
     let (target, lock_key) = download_target(&destination, &filename)?;
-    let event_key = format!("{repo}/{filename}");
+    let event_key = download_event_key(&repo, &filename, &revision, &destination);
     let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     {
         let mut running = state.downloads.lock().unwrap();
@@ -5516,6 +5528,35 @@ mod catalog_command_tests {
 }
 
 #[cfg(test)]
+mod fe11_download_identity_tests {
+    use super::download_event_key;
+
+    #[test]
+    fn fe11_download_job_identity_includes_destination_and_revision() {
+        let a = download_event_key("org/repo", "model.gguf", "main", "C:/models");
+        let b = download_event_key("org/repo", "model.gguf", "main", "D:/other");
+        let c = download_event_key("org/repo", "model.gguf", "abc123", "C:/models");
+        assert_ne!(a, b, "the same file at another destination is another job");
+        assert_ne!(a, c, "the same file at another revision is another job");
+        assert_eq!(a, "org/repo/model.gguf@main#C:/models");
+    }
+
+    #[test]
+    fn fe11_progress_emits_use_the_job_identity_helper() {
+        // The event key must come from the helper so the frontend contract
+        // cannot drift from the backend identity.
+        let source = include_str!("lib.rs");
+        let emit_site = source
+            .find("let event_key = download_event_key(&repo, &filename, &revision, &destination);")
+            .expect("the progress key must use the helper");
+        assert!(emit_site > 0);
+        assert!(
+            !source.contains("let event_key = format!(\"{repo}/{filename}\")"),
+            "the bare repo/filename key must not return"
+        );
+    }
+}
+
 mod catalog_persistence_source_tests {
     #[test]
     fn dc03_fetch_mirrors_healthy_databases_and_only_recovers_after_migration_failure() {
