@@ -1,0 +1,22 @@
+﻿
+[2026-09-11T04:35:32.8752273Z] Sandbox lifecycle starting
+[2026-09-11T04:35:33.1289287Z] NSIS install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.6.0_x64-setup.exe
+[2026-09-11T04:36:16.7105896Z] Launch smoke: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-11T04:36:26.9513077Z] Startup smoke OK: the process survived 8 seconds; this is a startup smoke, not full functional verification
+[2026-09-11T04:36:26.9830400Z] NSIS uninstall: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\uninstall.exe
+[2026-09-11T04:36:31.2167437Z] NSIS fresh path PASS
+[2026-09-11T04:36:31.2287937Z] MSI install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.6.0_x64.msi
+[2026-09-11T04:38:35.2897119Z] MSI fresh install executable version 0.6.0 at C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-11T04:38:35.2897119Z] Launch smoke: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-11T04:38:45.5256820Z] Startup smoke OK: the process survived 8 seconds; this is a startup smoke, not full functional verification
+[2026-09-11T04:38:45.5272261Z] MSI uninstall via package: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.6.0_x64.msi
+[2026-09-11T04:38:51.4057419Z] MSI fresh path PASS
+[2026-09-11T04:38:51.4214643Z] NSIS install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.5.0_x64-setup.exe
+[2026-09-11T04:38:54.5439433Z] Pre-update install executable version 0.5.0 at C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-11T04:38:54.5463662Z] NSIS install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.6.0_x64-setup.exe
+[2026-09-11T04:38:57.6543108Z] Post-update install executable version 0.6.0 at C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-11T04:38:57.6543108Z] Launch smoke: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-11T04:39:07.8670974Z] Startup smoke OK: the process survived 8 seconds; this is a startup smoke, not full functional verification
+[2026-09-11T04:39:07.8683764Z] NSIS uninstall: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\uninstall.exe
+[2026-09-11T04:39:11.6570900Z] NSIS update path PASS
+[2026-09-11T04:39:11.6941418Z] ALL PASS

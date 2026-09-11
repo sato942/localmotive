@@ -8,7 +8,8 @@ param(
   [string]$Repo = "sato942/localmotive",
   [string]$CandidateDir = "",
   [int]$ReleaseWaitMinutes = 5,
-  [int]$TimeoutMinutes = 45
+  [int]$TimeoutMinutes = 45,
+  [string]$EvidenceName = "sandbox-clean-account-lifecycle"
 )
 $ErrorActionPreference = "Stop"
 
@@ -20,8 +21,8 @@ if (-not $env:GH_TOKEN -and $env:GITHUB_TOKEN) { $env:GH_TOKEN = $env:GITHUB_TOK
 $Root = Join-Path $env:TEMP ("localmotive-sandbox-" + $Version + "-" + (Get-Date -Format "yyyyMMddHHmmss"))
 $Shared = Join-Path $Root "shared"
 $OutDir = Join-Path $PWD "release-evidence\$Version\attestations"
-$EvidencePath = Join-Path $OutDir "sandbox-clean-account-lifecycle.json"
-$EvidenceLog = Join-Path $OutDir "sandbox-clean-account-lifecycle.log"
+$EvidencePath = Join-Path $OutDir "$EvidenceName.json"
+$EvidenceLog = Join-Path $OutDir "$EvidenceName.log"
 New-Item -ItemType Directory -Force -Path $Shared | Out-Null
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 Write-Host "Work dir: $Root"
@@ -121,6 +122,13 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
 
   Download-Asset $PreviousTag $previousSetup (Join-Path $Shared $previousSetup)
 
+  $stage = "stage-canaries"
+  $fixtureDir = Join-Path $PWD "scripts\sandbox"
+  $b64 = (Get-Content (Join-Path $fixtureDir "canary-mirror.sqlite.b64") -Raw).Trim()
+  [IO.File]::WriteAllBytes((Join-Path $Shared "canary-mirror.sqlite"), [Convert]::FromBase64String($b64))
+  Copy-Item (Join-Path $fixtureDir "canary-userdata.txt") (Join-Path $Shared "canary-userdata.txt") -Force
+  Set-Content -Path (Join-Path $Shared "preserve.json") -Value '{"version":1}' -Encoding UTF8
+
   $stage = "prepare-sandbox"
   $here = $PSScriptRoot
   $inScriptSrc = Join-Path $here "run-lifecycle-in-sandbox.ps1"
@@ -179,11 +187,43 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
         if (Test-Path $logPath) { Copy-Item $logPath $EvidenceLog -Force }
         throw "Clean-account lifecycle FAILED: $($result.error)"
       }
-      Copy-Item $resultPath $EvidencePath -Force
+      # Host-side preservation verification: the collected mirror must still
+      # carry its canary marker and the user-data canary must match
+      # (G-06.I2). Failure flips the run verdict; evidence is written first.
+      $collectedMirror = Join-Path $Shared "collected-mirror.sqlite"
+      $collectedUserdata = Join-Path $Shared "collected-userdata.txt"
+      $preservationStatus = "missing-files"
+      $preservationOutput = "collected files absent; the preservation step did not run"
+      if ((Test-Path $collectedMirror) -and (Test-Path $collectedUserdata)) {
+        $py = Get-Command python -ErrorAction SilentlyContinue
+        if ($py) {
+          $verifyOut = & $py.Source (Join-Path $PWD "scripts\sandbox\verify_preservation.py") $collectedMirror $collectedUserdata 2>&1
+          $verifyCode = $LASTEXITCODE
+          $preservationOutput = ($verifyOut | Out-String).Trim()
+          if ($verifyCode -eq 0) { $preservationStatus = "PASS" } else { $preservationStatus = "FAIL" }
+        } else {
+          $preservationStatus = "UNVERIFIED"
+          $preservationOutput = "python unavailable on this host; verifier not run"
+        }
+        Copy-Item $collectedMirror (Join-Path $OutDir "$EvidenceName-collected-mirror.sqlite") -Force
+        Copy-Item $collectedUserdata (Join-Path $OutDir "$EvidenceName-collected-userdata.txt") -Force
+        $preservationOutput | Set-Content (Join-Path $OutDir "$EvidenceName-verify.log") -Encoding UTF8
+      }
+      $doc = Get-Content $resultPath -Raw | ConvertFrom-Json
+      $preservation = [ordered]@{ status = $preservationStatus; output = $preservationOutput }
+      $doc | Add-Member -NotePropertyName preservation -NotePropertyValue $preservation -Force
+      # Bind the pass verdict to the immutable source revision and candidate
+      # digests (GH-03/GH-06): the in-sandbox document alone cannot carry them.
+      $doc | Add-Member -NotePropertyName sourceRevision -NotePropertyValue $env:LOCALMOTIVE_SOURCE_REVISION -Force
+      $doc | Add-Member -NotePropertyName candidateDigests -NotePropertyValue $candidateDigests -Force
+      ($doc | ConvertTo-Json -Depth 8) | Set-Content -Path $EvidencePath -Encoding UTF8
       if (Test-Path (Join-Path $Shared "lifecycle.log")) {
         Copy-Item (Join-Path $Shared "lifecycle.log") $EvidenceLog -Force
       }
-      Write-Host "PASS - evidence copied to $OutDir"
+      if ($preservationStatus -eq "FAIL") {
+        throw "Host preservation verification FAILED: $preservationOutput"
+      }
+      Write-Host "PASS - evidence copied to $OutDir (preservation: $preservationStatus)"
       exit 0
     }
     Start-Sleep -Seconds 5

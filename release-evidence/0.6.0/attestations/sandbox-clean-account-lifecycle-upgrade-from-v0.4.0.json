@@ -1,0 +1,26 @@
+﻿{
+    "version":  "0.6.0",
+    "finishedAtUtc":  "2026-09-11T04:33:37.7538825Z",
+    "schema":  "localmotive.sandbox-lifecycle.v0",
+    "status":  "PASS",
+    "steps":  [
+                  {
+                      "detail":  "uninstall removed the executable",
+                      "status":  "PASS",
+                      "name":  "nsis-fresh-install-launch-uninstall"
+                  },
+                  {
+                      "detail":  "installed version 0.6.0; uninstall removed the executable and the product registration",
+                      "status":  "PASS",
+                      "name":  "msi-fresh-install-launch-uninstall"
+                  },
+                  {
+                      "detail":  "executable version 0.4.0 -\u003e 0.6.0",
+                      "status":  "PASS",
+                      "name":  "nsis-update-from-previous-launch-uninstall"
+                  }
+              ],
+    "coverageNote":  "NSIS and MSI fresh install/launch/uninstall and the NSIS update path with executable version evidence. Eight-second process survival is a startup smoke, not full functional verification. Persisted-profile migration scenarios are not exercised in this harness.",
+    "tag":  "candidate-0.6.0",
+    "previousTag":  "v0.4.0"
+}
