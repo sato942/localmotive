@@ -1247,23 +1247,23 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Invalidate preflight evidence when assumptions change and preserve deliberate empty adapter selection**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented + component-verified · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit FE-06](./localmotive-comprehensive-audit.md#fe-06)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src/V03EvidencePanel.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/V03EvidencePanel.tsx)
 
 **Implementation**
 
-- [ ] **V06-FE-06.I1** — Store the exact selected adapters, hardware observation, manual capacity/note and consequential profile inputs with each preflight result, then derive whether the displayed result is current. **Trace:** [Audit FE-06](./localmotive-comprehensive-audit.md#fe-06).
-- [ ] **V06-FE-06.I2** — Mark prior preflight/allocation evidence stale or clear its current-result presentation after adapter changes, manual-override edits, hardware refresh or any profile input used by preflight changes. **Trace:** [Audit FE-06](./localmotive-comprehensive-audit.md#fe-06).
-- [ ] **V06-FE-06.I3** — Replace the incomplete profile fingerprint with a full preflight-input identity including draft/projector, speculation, KV offload, device, fitting and attention settings where relevant. **Trace:** [Audit FE-06](./localmotive-comprehensive-audit.md#fe-06).
-- [ ] **V06-FE-06.I4** — Distinguish uninitialized adapter selection from the user's deliberate empty selection; initialize defaults once and allow unchecking the final adapter without immediately reselecting another. **Trace:** [Audit FE-06](./localmotive-comprehensive-audit.md#fe-06).
-- [ ] **V06-FE-06.I5** — Align explicit adapter choice between Runtime and the evidence panel, and reject async inspection/preflight responses whose captured input revision is no longer current. **Trace:** [Audit FE-06](./localmotive-comprehensive-audit.md#fe-06).
+- [x] **V06-FE-06.I1** — Store the exact selected adapters, hardware observation, manual capacity/note and consequential profile inputs with each preflight result, then derive whether the displayed result is current. **Trace:** [Audit FE-06](./localmotive-comprehensive-audit.md#fe-06).
+- [x] **V06-FE-06.I2** — Mark prior preflight/allocation evidence stale or clear its current-result presentation after adapter changes, manual-override edits, hardware refresh or any profile input used by preflight changes. **Trace:** [Audit FE-06](./localmotive-comprehensive-audit.md#fe-06).
+- [x] **V06-FE-06.I3** — Replace the incomplete profile fingerprint with a full preflight-input identity including draft/projector, speculation, KV offload, device, fitting and attention settings where relevant. **Trace:** [Audit FE-06](./localmotive-comprehensive-audit.md#fe-06).
+- [x] **V06-FE-06.I4** — Distinguish uninitialized adapter selection from the user's deliberate empty selection; initialize defaults once and allow unchecking the final adapter without immediately reselecting another. **Trace:** [Audit FE-06](./localmotive-comprehensive-audit.md#fe-06).
+- [x] **V06-FE-06.I5** — Align explicit adapter choice between Runtime and the evidence panel, and reject async inspection/preflight responses whose captured input revision is no longer current. **Trace:** [Audit FE-06](./localmotive-comprehensive-audit.md#fe-06).
 
 **Verification**
 
-- [ ] **V06-FE-06.V1** — Run preflight then change an adapter, capacity, note or refreshed hardware observation; assert old budget/allocation output is explicitly stale until recomputed. **Trace:** [Audit FE-06](./localmotive-comprehensive-audit.md#fe-06).
-- [ ] **V06-FE-06.V2** — Uncheck the final adapter and verify the empty choice persists; refresh hardware with removed adapters and confirm selection reconciliation preserves deliberate intent. **Trace:** [Audit FE-06](./localmotive-comprehensive-audit.md#fe-06).
+- [x] **V06-FE-06.V1** — Run preflight then change an adapter, capacity, note or refreshed hardware observation; assert old budget/allocation output is explicitly stale until recomputed. **Trace:** [Audit FE-06](./localmotive-comprehensive-audit.md#fe-06).
+- [x] **V06-FE-06.V2** — Uncheck the final adapter and verify the empty choice persists; refresh hardware with removed adapters and confirm selection reconciliation preserves deliberate intent. **Trace:** [Audit FE-06](./localmotive-comprehensive-audit.md#fe-06).
 - [ ] **V06-FE-06.V3** — Resolve an old preflight after changing inputs, and after FE-05 makes state persistent edit each previously omitted profile field; verify stale evidence is never presented as current. **Trace:** [Audit FE-06](./localmotive-comprehensive-audit.md#fe-06).
 
 **Complete when:** Each displayed current preflight result matches the inputs and hardware observation shown to the user. Intentional no-adapter selection survives render/effect cycles and navigation policy.
@@ -3335,4 +3335,12 @@ _Package 1 (RT-01, RT-02, RT-04, RT-07) implementation is complete at the unit/r
 - Regression tests: `mt11_reduced_or_unobserved_effective_context_cannot_win`, `mt11_winner_needs_material_improvement_beyond_observed_variation`, `mt11_objective_label_and_quality_affecting_changes_are_reported` (3 tests, scripted bench). Mutations MF1 (context gate removed) / MF2 (material bar removed) / MF3 (quality flags dropped) each failed their matching test and passed after restore. Existing tune tests updated for the two verification measurements (21 tune tests green).
 - Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 497 pass / 0 fail / 2 ignored; `npm run check` EXIT 0; `npx tsc --noEmit` EXIT 0.
 - Residual: the retained harness still measures a short fixed prompt; the V2 long-prompt workload path is not wired into tuning, and the objective label states this explicitly. `specType` winner changes are reported, not quality-gated in-session (the quality suite stays user-run).
+
+### V06-FE-06 — preflight staleness and adapter-selection intent (commit `f1e0c9d`)
+
+- Status: Implemented I1-I5; V1/V2 component-verified.
+- Regression before fix: the displayed preflight result stayed "current" after adapter/capacity/hardware/profile changes, the fingerprint omitted draft/projector, speculation, KV offload, fitting, device and attention fields, unchecking the final adapter was silently undone by the auto-select effect, and a slow preflight response could land after its inputs changed.
+- Verification after fix: every preflight response stores the full input identity it was computed under (whole profile via `profileFingerprintOf`, model artifacts, adapter selection, manual capacity/note, hardware signature); the panel derives `preflightStale` and shows an explicit "Stale: … Re-run preflight" line until recalculation. Adapter defaults initialize once and a deliberate empty selection persists (`adaptersTouched`); refreshed hardware reconciles the selection by intersection and never repopulates it behind the user. Async inspection/preflight responses carry the input revision they were requested under and are discarded when it moved (`Preflight result discarded: …`).
+- Regression tests: `src/V03EvidencePanel.preflight.test.tsx` (3 jsdom tests): staleness appears after an adapter change and clears on re-run with the new inputs; the deliberate empty selection persists through preflight and a hardware refresh; a deferred response released after an input change is discarded and not displayed. Mutations MG1 (stale marker disabled) / MG2 (auto-reselect overrides deliberate empty) / MG3 (revision discard removed) each failed their matching tests and passed after restore.
+- Commands: `npm run check` EXIT 0 (74 vitest tests / 4 files, tsc, catalog, branding, research anchor, qualification, icon, build); `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 497 pass / 0 fail / 2 ignored.
 
