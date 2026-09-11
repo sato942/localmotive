@@ -330,6 +330,15 @@ export type CalibratedEstimate = {
   expiresAtMs: number;
 };
 
+export type DisclosureSection = {
+  category: string;
+  detail: string;
+  fields: string[];
+  sentInMinimal: boolean;
+};
+
+export type BriefDisclosure = "full" | "minimal";
+
 export type ExternalEvidenceState = "pending" | "verified" | "flagged" | "rejected";
 
 export type ExternalObservation = {

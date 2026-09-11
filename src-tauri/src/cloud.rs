@@ -791,7 +791,7 @@ impl<S: SecretStore> Advisor for CloudAdvisor<'_, S> {
     fn propose(&mut self, brief: &TuningBrief) -> Result<Proposal, String> {
         let user = format!(
             "Here is the tuning brief as JSON. Propose the next configuration to measure.\n\n{}",
-            serde_json::to_string_pretty(brief).map_err(|error| error.to_string())?
+            serde_json::to_string_pretty(&brief.wire).map_err(|error| error.to_string())?
         );
         let reply = chat(
             self.store,

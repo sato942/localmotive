@@ -1066,4 +1066,62 @@ describe("Bounded discovery diagnostics (audit S-15)", () => {
     // Valid discovered models survive alongside the diagnostics.
     expect(text()).toContain("fixture");
   });
+
+  it("shows the cloud data disclosure before tuning and records the chosen mode (S-20)", async () => {
+    handlers.set("tune_disclosure_list", () =>
+      [
+        {
+          category: "Hardware",
+          detail: "CPU architecture, GPU names and VRAM, driver version, system memory.",
+          fields: ["hardware", "systemRamBytes"],
+          sentInMinimal: true,
+        },
+        {
+          category: "Launch profile",
+          detail: "Every launch flag and value, including model, runtime and companion paths.",
+          fields: ["baselineProfile"],
+          sentInMinimal: false,
+        },
+      ],
+    );
+    await mount();
+    const nav = [...container.querySelectorAll("button")].find(
+      (button) => (button.textContent ?? "").trim() === "AI Tune",
+    );
+    await act(async () => {
+      nav!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await settle();
+    const rendered = text();
+    expect(
+      container.querySelector('[aria-label="Cloud data disclosure"]'),
+      "the disclosure block must be visible on the tuning screen",
+    ).toBeTruthy();
+    expect(rendered, "the disclosure block content must render").toContain(
+      "What the brief carries",
+    );
+    expect(rendered, "local inference and export must be named separately").toContain(
+      "Local inference and local share export never send data anywhere",
+    );
+    expect(rendered, "the section list comes from Rust").toContain("Hardware");
+    expect(rendered, "full-only sections must say so").toContain("(full mode only)");
+    expect(rendered, "credentials must be explicitly excluded").toContain(
+      "Stored cloud credentials are never part of the brief",
+    );
+
+    const radios = [
+      ...container.querySelectorAll('input[name="tune-disclosure"]'),
+    ] as HTMLInputElement[];
+    expect(radios.length, "both disclosure modes must be selectable").toBe(2);
+    expect(radios[0].checked, "full is the default").toBe(true);
+    await act(async () => {
+      radios[1].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await settle();
+    expect(localStorage.getItem("localmotive:tune-disclosure")).toBe("minimal");
+    const minimalRadio = [
+      ...container.querySelectorAll('input[name="tune-disclosure"]'),
+    ][1] as HTMLInputElement;
+    expect(minimalRadio.checked, "the chosen mode must stay selected").toBe(true);
+  });
 });

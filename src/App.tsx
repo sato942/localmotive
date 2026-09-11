@@ -111,6 +111,8 @@ import {
   type DownloadEvent,
   type FitBudget,
   type TokenStatus,
+  type DisclosureSection,
+  type BriefDisclosure,
 } from "./model";
 import { V03EvidencePanel } from "./V03EvidencePanel";
 
@@ -268,6 +270,13 @@ function App() {
   const [tuneTokens, setTuneTokens] = useState(256);
   const [tuneRepeats, setTuneRepeats] = useState(2);
   const [tuning, setTuning] = useState(false);
+  // Cloud disclosure (audit S-20): what the brief carries and how much of it
+  // leaves the machine. Local inference and local exports are unaffected.
+  const [disclosureSections, setDisclosureSections] = useState<DisclosureSection[]>([]);
+  const [briefDisclosure, setBriefDisclosure] = useState<BriefDisclosure>(() => {
+    const stored = localStorage.getItem("localmotive:tune-disclosure");
+    return stored === "minimal" ? "minimal" : "full";
+  });
   const [tuneProgress, setTuneProgress] = useState<TuningProgress | null>(null);
   const [tuneLive, setTuneLive] = useState<TuningTrial[]>([]);
   const [tuneReport, setTuneReport] = useState<TuningReport | null>(null);
@@ -961,6 +970,25 @@ function App() {
     }
   }
 
+  useEffect(() => {
+    let cancelled = false;
+    invoke<DisclosureSection[]>("tune_disclosure_list")
+      .then((sections) => {
+        if (!cancelled) setDisclosureSections(Array.isArray(sections) ? sections : []);
+      })
+      .catch(() => {
+        if (!cancelled) setDisclosureSections([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function changeDisclosure(mode: BriefDisclosure) {
+    setBriefDisclosure(mode);
+    localStorage.setItem("localmotive:tune-disclosure", mode);
+  }
+
   async function startTuning() {
     if (!profile || !selected) return;
     // FE-02: capture the originating identity at dispatch; nothing later can
@@ -990,6 +1018,7 @@ function App() {
           tokens: tuneTokens,
           repeats: tuneRepeats,
           companions: selected.companions.map((c) => `${c.role}: ${c.path}`),
+          disclosure: briefDisclosure,
         },
       });
       setTuneReport(report);
@@ -2355,6 +2384,45 @@ function App() {
                   <button className="button primary" onClick={startTuning} disabled={!canTune}><Sparkles size={16} /> Auto-tune {selected ? selected.name : "model"}</button>
                 )}
               </div>
+            </div>
+
+            <div className="panel" aria-label="Cloud data disclosure">
+              <p className="muted">
+                Cloud tuning sends a brief to the selected provider. Local inference and local
+                share export never send data anywhere — this setting affects cloud tuning only.
+              </p>
+              <fieldset className="disclosure-choice">
+                <legend>What the brief carries</legend>
+                <label>
+                  <input
+                    type="radio"
+                    name="tune-disclosure"
+                    checked={briefDisclosure === "full"}
+                    onChange={() => changeDisclosure("full")}
+                  />
+                  Full — every measured value, including local paths
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="tune-disclosure"
+                    checked={briefDisclosure === "minimal"}
+                    onChange={() => changeDisclosure("minimal")}
+                  />
+                  Minimal — directories and user names removed; file names, flags and measurements stay
+                </label>
+              </fieldset>
+              <ul className="disclosure-list">
+                {disclosureSections.map((section) => (
+                  <li key={section.category}>
+                    <strong>{section.category}</strong> — {section.detail}
+                    {!section.sentInMinimal ? " (full mode only)" : ""}
+                  </li>
+                ))}
+              </ul>
+              <p className="muted">
+                Stored cloud credentials are never part of the brief, in either mode.
+              </p>
             </div>
 
             <div className="setup-steps" aria-label="Tuning readiness">

@@ -2480,18 +2480,18 @@ These packages preserve actionable recommendations outside the 72-item findings 
 
 **Show cloud data disclosure at the AI Tune action**
 
-**Status:** Not started · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
 **Audit trace:** [Cloud remaining validation](./localmotive-comprehensive-audit.md#cloud-integration-positive-controls-and-remaining-validation); [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations)  
 **Prerequisites:** [V06-MT-02](#v06-mt-02), [V06-MT-03](#v06-mt-03)
 
 **Implementation**
 
-- [ ] **V06-S-20.I1** — Add a concise first-use data-sent list/preview near AI Tune covering profile, hardware, runtime/model/companion paths, measurements, commands and errors; clearly separate cloud tuning from local inference and local share export. **Trace:** [Cloud remaining validation](./localmotive-comprehensive-audit.md#cloud-integration-positive-controls-and-remaining-validation); [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations).
-- [ ] **V06-S-20.I2** — Design an optional minimal/redacted brief that removes unnecessary path/user identifiers while retaining facts required for useful advice; state what remains and preserve the proposal whitelist. **Trace:** [Cloud remaining validation](./localmotive-comprehensive-audit.md#cloud-integration-positive-controls-and-remaining-validation); [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations).
+- [x] **V06-S-20.I1** — Add a concise first-use data-sent list/preview near AI Tune covering profile, hardware, runtime/model/companion paths, measurements, commands and errors; clearly separate cloud tuning from local inference and local share export. **Trace:** [Cloud remaining validation](./localmotive-comprehensive-audit.md#cloud-integration-positive-controls-and-remaining-validation); [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations).
+- [x] **V06-S-20.I2** — Design an optional minimal/redacted brief that removes unnecessary path/user identifiers while retaining facts required for useful advice; state what remains and preserve the proposal whitelist. **Trace:** [Cloud remaining validation](./localmotive-comprehensive-audit.md#cloud-integration-positive-controls-and-remaining-validation); [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations).
 
 **Verification**
 
-- [ ] **V06-S-20.V1** — Use canary paths and synthetic trial errors to inspect the exact full/minimal payloads. Verify disclosure is available before the action and does not expose stored secret values. **Trace:** [Cloud remaining validation](./localmotive-comprehensive-audit.md#cloud-integration-positive-controls-and-remaining-validation); [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations).
+- [x] **V06-S-20.V1** — Use canary paths and synthetic trial errors to inspect the exact full/minimal payloads. Verify disclosure is available before the action and does not expose stored secret values. **Trace:** [Cloud remaining validation](./localmotive-comprehensive-audit.md#cloud-integration-positive-controls-and-remaining-validation); [Frontend additional observations](./localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations).
 
 **Complete when:** Users can understand and choose the cloud disclosure behavior from the application.
 
@@ -3822,3 +3822,11 @@ Revalidated at the candidate source (`065248a1` + the G-07 test addition) on Win
 - Honest note: the first FE campaign draft called `normalizeProfile` without a model (vitest does not type-check), which surfaced as a crash inside `suggestedProfile`. That was a TEST misuse, not a product defect — the test now supplies a valid model, the campaign asserts the real contract, and `tsc` was added to the loop to catch such misuse.
 - Mutations: PM1 (finite-filter removed from `metric_stats` — CAUGHT by the numeric campaign), PM2 (`-md` removed from the sanitizer redaction list — CAUGHT by the canary property), PM3 (FE `extraArgs` isArray guard removed — CAUGHT, reported by the pre-existing FE-09 regression test which the campaign also drives through the same guard).
 - Limits recorded in `docs/EVIDENCE-MATRIX.md`: these are bounded campaigns with deterministic seeds — not exhaustive proof, not coverage-guided fuzzing; a passing run says nothing about inputs outside the generated classes.
+
+#### S-20 closure record — cloud data disclosure at the AI Tune action
+
+- I1: the AI Tuning screen now carries a "Cloud data disclosure" panel: a statement that local inference and local share export never send data anywhere, a Full/Minimal choice, the Rust-owned section list, and an explicit note that stored credentials are never part of the brief. The list comes from `tune::disclosure_sections()` via the new `tune_disclosure_list` command, and `s20_disclosure_sections_cover_every_brief_field` pins the list to the brief's actual top-level wire fields, so a new field cannot ship without a disclosure line.
+- I2: `BriefDisclosure::{Full, Minimal}`; `TuningBrief::apply_disclosure` builds the exact wire JSON before every advisor call, and `cloud.rs` sends `brief.wire`. Minimal redaction replaces the home directory (USERPROFILE) anywhere it appears and reduces path values to file names — prose keeps its sentence with each path token shortened, URLs are left alone, object keys and the tunable whitelist are untouched, and the chosen mode is persisted per user in `localmotive:tune-disclosure`.
+- V1: `s20_minimal_disclosure_redacts_paths_and_user_identifiers` uses canary paths (`C:\\Users\\canary-user\\...`) plus a synthetic trial error: Full mode still contains the canary (transparency), Minimal removes the user identifier and directory prefixes while keeping `alpha-Q4_K_M.gguf`, the error sentence, and `tunableFields`, and no secret-bearing key appears. `s20_run_tuning_sends_the_minimal_wire_when_asked` captures the advisor wire end-to-end and proves the machine-leaving payload is redacted. The component test drives the radio, asserts the disclosure text and section list render before the action, and that the choice persists.
+- Mutations: PS1 (Minimal returns the raw brief) CAUGHT; PS2 (a disclosure section removed) CAUGHT; PS3 (`changeDisclosure` stops persisting) CAUGHT (reported as one failed test; the first score used the wrong summary line and was corrected).
+- Commands: `cargo fmt --check` PASS; clippy `-D warnings` 0 errors; `cargo test` 571 passed / 0 failed / 2 ignored; `npm run check` PASS (344.36 kB); Vitest 108; node tests 143.

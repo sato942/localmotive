@@ -152,6 +152,139 @@ pub struct Proposal {
     pub done: bool,
 }
 
+/// How much detail the cloud brief carries (audit S-20.I2).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum BriefDisclosure {
+    /// Every field as measured, including local paths.
+    #[default]
+    Full,
+    /// The same facts with directory and user identifiers removed: path
+    /// values become file names, and the home directory is replaced anywhere
+    /// it appears (profile, companions, trial errors).
+    Minimal,
+}
+
+/// One line of the data-sent disclosure shown before cloud tuning (S-20.I1).
+/// The `fields` list names the top-level brief keys this line covers; a test
+/// keeps the list and the struct in sync so the disclosure cannot drift.
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DisclosureSection {
+    pub category: &'static str,
+    pub detail: &'static str,
+    pub fields: &'static [&'static str],
+    pub sent_in_minimal: bool,
+}
+
+pub fn disclosure_sections() -> Vec<DisclosureSection> {
+    vec![
+        DisclosureSection {
+            category: "Benchmark objective",
+            detail: "The tokens/second goal and the context length you chose.",
+            fields: &["objective", "targetContext", "remainingTrials"],
+            sent_in_minimal: true,
+        },
+        DisclosureSection {
+            category: "Hardware",
+            detail: "CPU architecture, GPU names and VRAM, driver version, system memory.",
+            fields: &["hardware", "systemRamBytes"],
+            sent_in_minimal: true,
+        },
+        DisclosureSection {
+            category: "Runtime and model",
+            detail: "Runtime build string, GGUF metadata (architecture, quantisation, sizes), companion roles.",
+            fields: &["runtimeBuild", "gguf", "companions"],
+            sent_in_minimal: true,
+        },
+        DisclosureSection {
+            category: "Launch profile",
+            detail: "Every launch flag and value, including model, runtime and companion paths.",
+            fields: &["baselineProfile"],
+            sent_in_minimal: false,
+        },
+        DisclosureSection {
+            category: "Measurements and errors",
+            detail: "Per-trial throughput numbers and any trial error text.",
+            fields: &["trials"],
+            sent_in_minimal: true,
+        },
+        DisclosureSection {
+            category: "Tunable fields",
+            detail: "The whitelist of fields the cloud model may propose (unchanged in both modes).",
+            fields: &["tunableFields", "specTypes"],
+            sent_in_minimal: true,
+        },
+    ]
+}
+
+/// Redact one string for minimal disclosure: replace every occurrence of the
+/// user's home directory, then reduce remaining path-looking values to their
+/// file name (the name still tells the model which model/quant/companion is
+/// in play; the directory and user name do not travel).
+fn redact_string(value: &str, home: Option<&str>) -> String {
+    let mut text = value.to_string();
+    if let Some(home) = home {
+        if !home.is_empty() {
+            text = text.replace(home, "<local>");
+            let normalized = home.replace('\\', "/");
+            if normalized != home {
+                text = text.replace(&normalized, "<local>");
+            }
+        }
+    }
+    let is_url = text.contains("http://") || text.contains("https://");
+    let basename = |token: &str| -> String {
+        token
+            .rsplit(['\\', '/'])
+            .find(|segment| !segment.is_empty())
+            .unwrap_or(token)
+            .to_string()
+    };
+    if !is_url {
+        if text.contains(' ') {
+            // Prose that merely mentions a path: keep the sentence, shorten
+            // each path-looking token (trial error text stays readable).
+            return text
+                .split(' ')
+                .map(|token| {
+                    if token.contains('\\') || token.contains('/') {
+                        basename(token)
+                    } else {
+                        token.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+        }
+        if text.contains('\\') || text.contains('/') {
+            return basename(&text);
+        }
+    }
+    text
+}
+
+/// Walk the serialized brief and apply minimal redaction to every string
+/// leaf. Object keys are never touched, so the wire shape the model sees is
+/// identical in both modes; only values are shortened.
+pub fn redact_for_cloud(value: &serde_json::Value, home: Option<&str>) -> serde_json::Value {
+    match value {
+        serde_json::Value::String(text) => serde_json::Value::String(redact_string(text, home)),
+        serde_json::Value::Array(items) => serde_json::Value::Array(
+            items
+                .iter()
+                .map(|item| redact_for_cloud(item, home))
+                .collect(),
+        ),
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.iter()
+                .map(|(key, item)| (key.clone(), redact_for_cloud(item, home)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
 /// Everything the cloud model is told. Serialized verbatim into the user turn.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -168,6 +301,21 @@ pub struct TuningBrief<'a> {
     pub baseline_profile: serde_json::Value,
     pub trials: &'a [TuningTrial],
     pub remaining_trials: u32,
+    /// The exact JSON sent to the cloud advisor: the brief under the chosen
+    /// disclosure, redacted for minimal mode before it leaves the machine.
+    #[serde(skip)]
+    pub wire: serde_json::Value,
+}
+
+impl<'a> TuningBrief<'a> {
+    /// Apply the disclosure to this brief and store the wire form.
+    pub fn apply_disclosure(&mut self, disclosure: BriefDisclosure, home: Option<&str>) {
+        let raw = serde_json::to_value(&*self).unwrap_or(serde_json::Value::Null);
+        self.wire = match disclosure {
+            BriefDisclosure::Full => raw,
+            BriefDisclosure::Minimal => redact_for_cloud(&raw, home),
+        };
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -469,6 +617,11 @@ pub struct TuningInputs<'a> {
     /// and before every measurement; cancellation is a terminal outcome, not
     /// a candidate failure (audit MT-04).
     pub cancel: Option<&'a std::sync::atomic::AtomicBool>,
+    /// What the cloud brief carries (audit S-20.I2).
+    pub disclosure: BriefDisclosure,
+    /// Test seam for the home directory redacted by minimal disclosure;
+    /// production reads `USERPROFILE`.
+    pub home_dir: Option<String>,
 }
 
 /// Record one bounded rejection (no-op, duplicate, invalid, or oversized) as
@@ -694,7 +847,7 @@ pub fn run_tuning<B: Bench, A: Advisor>(
             break;
         }
         let remaining = inputs.max_trials + 1 - measured_trials;
-        let brief = TuningBrief {
+        let mut brief = TuningBrief {
             objective: inputs.objective,
             target_context: inputs.target_context,
             hardware: inputs.hardware,
@@ -707,7 +860,13 @@ pub fn run_tuning<B: Bench, A: Advisor>(
             baseline_profile: baseline_json.clone(),
             trials: &trials,
             remaining_trials: remaining,
+            wire: serde_json::Value::Null,
         };
+        let home = inputs
+            .home_dir
+            .clone()
+            .or_else(|| std::env::var("USERPROFILE").ok());
+        brief.apply_disclosure(inputs.disclosure, home.as_deref());
         advisor_calls += 1;
         let proposal = match advisor.propose(&brief) {
             Ok(proposal) => {
@@ -1246,6 +1405,8 @@ mod tests {
             measured_repeats: 2,
             budgets: TuningBudgets::default(),
             cancel: None,
+            disclosure: BriefDisclosure::Full,
+            home_dir: None,
         };
         let mut bench = FakeBench { calls: vec![] };
         let mut advisor = ScriptedAdvisor {
@@ -1317,6 +1478,8 @@ mod tests {
             measured_repeats: 2,
             budgets: TuningBudgets::default(),
             cancel: None,
+            disclosure: BriefDisclosure::Full,
+            home_dir: None,
         };
         let mut bench = FakeBench { calls: vec![] };
         let mut advisor = ScriptedAdvisor {
@@ -1365,6 +1528,8 @@ mod tests {
             measured_repeats: 2,
             budgets: TuningBudgets::default(),
             cancel: None,
+            disclosure: BriefDisclosure::Full,
+            home_dir: None,
         };
         let mut bench = FakeBench { calls: vec![] };
         let mut advisor = ScriptedAdvisor {
@@ -1396,6 +1561,7 @@ mod tests {
             baseline_profile: serde_json::json!({}),
             trials: &[],
             remaining_trials: 4,
+            wire: serde_json::Value::Null,
         };
         let json = serde_json::to_value(&brief).unwrap();
         assert_eq!(json["targetContext"], 8192);
@@ -1444,6 +1610,8 @@ mod tests {
             measured_repeats: 2,
             budgets,
             cancel,
+            disclosure: BriefDisclosure::Full,
+            home_dir: None,
         }
     }
 
@@ -1916,5 +2084,172 @@ mod tests {
             "cancellation is not recorded as a candidate failure: {:#?}",
             report.trials
         );
+    }
+    #[test]
+    fn s20_disclosure_sections_cover_every_brief_field() {
+        // Build one brief exactly like run_tuning does, then assert the
+        // disclosure list and the wire shape name the same top-level fields:
+        // an added field cannot ship without a disclosure line (S-20.I1).
+        let base = base_profile();
+        let base_json = serde_json::to_value(&base).unwrap();
+        let trials: Vec<TuningTrial> = Vec::new();
+        let brief = TuningBrief {
+            objective: "max tok/s",
+            target_context: 4096,
+            hardware: &hardware(),
+            system_ram_bytes: Some(1 << 36),
+            gguf: None,
+            runtime_build: "b1-test",
+            spec_types: &[],
+            companions: &[],
+            tunable_fields: tunable_fields(),
+            baseline_profile: base_json,
+            trials: &trials,
+            remaining_trials: 4,
+            wire: serde_json::Value::Null,
+        };
+        let value = serde_json::to_value(&brief).unwrap();
+        let brief_keys: std::collections::BTreeSet<String> =
+            value.as_object().unwrap().keys().cloned().collect();
+        let mut disclosed: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for section in disclosure_sections() {
+            for field in section.fields {
+                disclosed.insert((*field).to_string());
+            }
+        }
+        assert_eq!(
+            brief_keys, disclosed,
+            "disclosure list and brief fields must stay in sync"
+        );
+        assert!(
+            disclosure_sections()
+                .iter()
+                .any(|section| !section.sent_in_minimal),
+            "at least one section must say what minimal mode removes"
+        );
+    }
+
+    #[test]
+    fn s20_minimal_disclosure_redacts_paths_and_user_identifiers() {
+        let canary_home = "C:\\Users\\canary-user";
+        let canary_model = "C:\\Users\\canary-user\\models\\alpha-Q4_K_M.gguf";
+        let base_json = serde_json::json!({
+            "model": canary_model,
+            "runtime": "C:\\Users\\canary-user\\runtime\\llama-server.exe",
+            "extraArgs": ["--chat-template-file", "C:\\Users\\canary-user\\templates\\t.jinja"],
+            "threads": 16,
+            "flashAttention": "auto"
+        });
+        let trials = vec![TuningTrial {
+            index: 1,
+            changes: BTreeMap::new(),
+            rationale: "first".into(),
+            mean_tps: None,
+            median_tps: None,
+            error: Some("model failed to load from C:\\Users\\canary-user\\broken\\x.gguf".into()),
+            command: "cmd".into(),
+            effective_context: None,
+            std_dev: None,
+        }];
+        let mut brief = TuningBrief {
+            objective: "max tok/s",
+            target_context: 4096,
+            hardware: &hardware(),
+            system_ram_bytes: None,
+            gguf: None,
+            runtime_build: "b1-test",
+            spec_types: &[],
+            companions: &["mmproj: C:\\Users\\canary-user\\models\\p.mmproj".to_string()],
+            tunable_fields: tunable_fields(),
+            baseline_profile: base_json,
+            trials: &trials,
+            remaining_trials: 2,
+            wire: serde_json::Value::Null,
+        };
+
+        brief.apply_disclosure(BriefDisclosure::Full, Some(canary_home));
+        let full = serde_json::to_string(&brief.wire).unwrap();
+        assert!(
+            full.contains("canary-user"),
+            "full disclosure carries the measured values, transparency first"
+        );
+
+        brief.apply_disclosure(BriefDisclosure::Minimal, Some(canary_home));
+        let minimal = serde_json::to_string(&brief.wire).unwrap();
+        assert!(
+            !minimal.contains("canary-user"),
+            "minimal disclosure must remove the user identifier: {minimal}"
+        );
+        assert!(
+            !minimal.contains("C:\\Users"),
+            "minimal disclosure must remove directory prefixes: {minimal}"
+        );
+        assert!(
+            minimal.contains("alpha-Q4_K_M.gguf"),
+            "minimal disclosure keeps the file names that make advice useful"
+        );
+        assert!(
+            minimal.contains("failed to load"),
+            "trial error sentences survive redaction"
+        );
+        assert!(
+            minimal.contains("x.gguf"),
+            "path tokens in prose keep their file name"
+        );
+        for key in ["apiKey", "api_key", "secret", "token", "credential"] {
+            assert!(
+                !minimal.contains(&format!("\"{key}\"")),
+                "no secret-bearing field may appear in the brief"
+            );
+        }
+        // The whitelist is untouched by redaction.
+        assert!(minimal.contains("tunableFields"));
+    }
+
+    struct WireCapturingAdvisor {
+        wires: Vec<String>,
+    }
+    impl Advisor for WireCapturingAdvisor {
+        fn propose(&mut self, brief: &TuningBrief) -> Result<Proposal, String> {
+            self.wires.push(serde_json::to_string(&brief.wire).unwrap());
+            Ok(Proposal {
+                changes: BTreeMap::new(),
+                rationale: "converged".into(),
+                done: true,
+            })
+        }
+    }
+
+    #[test]
+    fn s20_run_tuning_sends_the_minimal_wire_when_asked() {
+        let mut base = base_profile();
+        base.model = "C:\\Users\\canary-user\\models\\alpha-Q4_K_M.gguf".into();
+        let inputs = TuningInputs {
+            objective: "max tok/s",
+            target_context: 4096,
+            hardware: &hardware(),
+            system_ram_bytes: None,
+            gguf: None,
+            capabilities: &caps(),
+            companions: &[],
+            max_trials: 1,
+            measured_tokens: 256,
+            measured_repeats: 2,
+            budgets: TuningBudgets::default(),
+            cancel: None,
+            disclosure: BriefDisclosure::Minimal,
+            home_dir: Some("C:\\Users\\canary-user".into()),
+        };
+        let mut bench = FakeBench { calls: vec![] };
+        let mut advisor = WireCapturingAdvisor { wires: vec![] };
+        let _ = run_tuning(&base, &inputs, &mut bench, &mut advisor, |_| {});
+        assert!(!advisor.wires.is_empty(), "the advisor must see one brief");
+        for wire in &advisor.wires {
+            assert!(
+                !wire.contains("canary-user"),
+                "the wire leaving the machine must be redacted: {wire}"
+            );
+            assert!(wire.contains("alpha-Q4_K_M.gguf"));
+        }
     }
 }

@@ -3500,6 +3500,17 @@ struct TuningRequest {
     tokens: u32,
     repeats: u16,
     companions: Vec<String>,
+    /// What the cloud brief carries (audit S-20.I2); absent means Full so
+    /// older callers keep the previous behaviour.
+    #[serde(default)]
+    disclosure: tune::BriefDisclosure,
+}
+
+/// The data-sent disclosure list for cloud tuning (audit S-20.I1): Rust owns
+/// the list and a test keeps it in sync with the brief's wire fields.
+#[tauri::command]
+fn tune_disclosure_list() -> Vec<tune::DisclosureSection> {
+    tune::disclosure_sections()
 }
 
 #[tauri::command]
@@ -3580,6 +3591,8 @@ async fn start_tuning(
                 ),
             },
             cancel: Some(cancel.as_ref()),
+            disclosure: request.disclosure,
+            home_dir: None,
         };
         let mut bench = LiveBench {
             app: &handle,
@@ -4331,6 +4344,7 @@ pub fn run() {
             cloud_probe,
             cloud_openrouter_login,
             start_tuning,
+            tune_disclosure_list,
             cancel_tuning,
             suggest_port,
             about_info,
