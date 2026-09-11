@@ -1596,23 +1596,23 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Bound and validate the complete OAuth callback lifecycle**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit CLD-01](./localmotive-comprehensive-audit.md#cld-01)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src-tauri/src/cloud.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/cloud.rs), [src-tauri/src/lib.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/lib.rs)
 
 **Implementation**
 
-- [ ] **V06-CLD-01.I1** — Set request-line, code-length and concurrent-login limits. Enforce one monotonic end-to-end deadline through accept, read, parsing and exchange paths, including a steady byte trickle or successive stray connections. **Trace:** [Audit CLD-01](./localmotive-comprehensive-audit.md#cld-01).
-- [ ] **V06-CLD-01.I2** — Accept only the intended method and callback path. Use a URL/query parser with percent decoding; reject duplicate/empty codes and malformed encodings, and handle harmless probes without prematurely terminating a valid login. **Trace:** [Audit CLD-01](./localmotive-comprehensive-audit.md#cld-01).
-- [ ] **V06-CLD-01.I3** — Retain loopback binding, ephemeral ports and S256 PKCE. Add state binding only after confirming the provider's supported contract; do not replace PKCE with state. **Trace:** [Audit CLD-01](./localmotive-comprehensive-audit.md#cld-01).
-- [ ] **V06-CLD-01.I4** — Show callback-received wording until exchange and Credential Manager storage actually succeed. Report exchange/storage failure in the application without leaving a false connected indication in the browser. **Trace:** [Audit CLD-01](./localmotive-comprehensive-audit.md#cld-01).
+- [x] **V06-CLD-01.I1** — Set request-line, code-length and concurrent-login limits. Enforce one monotonic end-to-end deadline through accept, read, parsing and exchange paths, including a steady byte trickle or successive stray connections. **Trace:** [Audit CLD-01](./localmotive-comprehensive-audit.md#cld-01).
+- [x] **V06-CLD-01.I2** — Accept only the intended method and callback path. Use a URL/query parser with percent decoding; reject duplicate/empty codes and malformed encodings, and handle harmless probes without prematurely terminating a valid login. **Trace:** [Audit CLD-01](./localmotive-comprehensive-audit.md#cld-01).
+- [x] **V06-CLD-01.I3** — Retain loopback binding, ephemeral ports and S256 PKCE. Add state binding only after confirming the provider's supported contract; do not replace PKCE with state. **Trace:** [Audit CLD-01](./localmotive-comprehensive-audit.md#cld-01).
+- [x] **V06-CLD-01.I4** — Show callback-received wording until exchange and Credential Manager storage actually succeed. Report exchange/storage failure in the application without leaving a false connected indication in the browser. **Trace:** [Audit CLD-01](./localmotive-comprehensive-audit.md#cld-01).
 
 **Verification**
 
-- [ ] **V06-CLD-01.V1** — Test valid and percent-encoded codes, favicon requests, wrong method/path, duplicate/empty code, malformed encoding and overlong lines against a local callback listener. **Trace:** [Audit CLD-01](./localmotive-comprehensive-audit.md#cld-01).
-- [ ] **V06-CLD-01.V2** — Test half-open connections, slow byte trickles and repeated stray requests until the overall deadline. Assert bounded memory, bounded completion time and release of listener resources. **Trace:** [Audit CLD-01](./localmotive-comprehensive-audit.md#cld-01).
-- [ ] **V06-CLD-01.V3** — Stub remote exchange and secure storage to fail independently; prove neither failure reports connected and that a subsequent login can start. Use synthetic credentials. **Trace:** [Audit CLD-01](./localmotive-comprehensive-audit.md#cld-01).
+- [x] **V06-CLD-01.V1** — Test valid and percent-encoded codes, favicon requests, wrong method/path, duplicate/empty code, malformed encoding and overlong lines against a local callback listener. **Trace:** [Audit CLD-01](./localmotive-comprehensive-audit.md#cld-01).
+- [x] **V06-CLD-01.V2** — Test half-open connections, slow byte trickles and repeated stray requests until the overall deadline. Assert bounded memory, bounded completion time and release of listener resources. **Trace:** [Audit CLD-01](./localmotive-comprehensive-audit.md#cld-01).
+- [x] **V06-CLD-01.V3** — Stub remote exchange and secure storage to fail independently; prove neither failure reports connected and that a subsequent login can start. Use synthetic credentials. **Trace:** [Audit CLD-01](./localmotive-comprehensive-audit.md#cld-01).
 
 **Complete when:** Malformed local traffic cannot bypass the total resource budget or permanently monopolize login, and connected status requires completed exchange and secure storage.
 
@@ -3425,4 +3425,13 @@ _Package 1 (RT-01, RT-02, RT-04, RT-07) implementation is complete at the unit/r
 - Regression tests: `rt09_identical_names_never_receive_another_devices_telemetry` (reversed orders + distinct usage), `rt09_one_adapter_with_duplicate_rows_stays_unassigned`, `rt09_distinct_names_map_each_row_to_its_own_adapter`, `rt09_probe_parser_reads_uuid_and_pci_location` (six- and four-field output). Mutations MO1 (order-based first-match restored) and MO2 (row-ambiguity guard bypassed) failed their matching tests and passed after restore.
 - Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 522 pass / 0 fail / 2 ignored; `npm run check` EXIT 0; `npx tsc --noEmit` EXIT 0.
 - Residual: joining to a DXGI LUID remains name-based (LUID-to-PCI mapping needs SetupAPI work); ambiguity now stays visibly unknown instead of wrong. Two real identically named adapters were not available on this host, so the fixture evidence is unit-level.
+
+### V06-CLD-01 — bounded OAuth callback contract (commit `5e22e4e`)
+
+- Status: Implemented I1-I4; acceptance matrix unit-verified.
+- Regression before fix: any request target with a nonempty `code=` was accepted (no method/path check, no decoding), the request line was read into an unbounded `String`, the deadline was only checked on `WouldBlock` accept, and the browser page said OPENROUTER CONNECTED before the exchange and credential write finished.
+- Verification after fix: `parse_callback_request_line` accepts only `GET /callback` with exactly one non-empty percent-decoded `code` (<= 512 bytes); probes (favicon, other paths) get 404 and malformed/duplicate/oversize/undecodable callbacks get 400, each without ending the login. `read_bounded_request_line` caps the request line at 8 KiB and enforces the monotonic deadline on every chunk, so a byte trickle cannot extend the flow; the accept loop counts requests (`MAX_CALLBACK_REQUESTS = 32`) and stops a flood. Loopback binding, ephemeral ports and S256 PKCE are unchanged; no state parameter was added (the provider contract was not confirmed, and PKCE must not be replaced). The browser page now says CALLBACK RECEIVED and points back to the application until the exchange and Credential Manager write actually succeed; failures surface in the application.
+- Regression tests: `cld01_request_line_contract_is_strict_and_decoded` (valid, percent-encoded, favicon, wrong path, POST, duplicate, empty, invalid escape, truncated escape, overlong code), `cld01_probes_and_bad_requests_do_not_end_the_login` (404/400s then the real code succeeds), `cld01_successive_probes_are_bounded_by_the_request_budget`, `cld01_a_byte_trickle_cannot_extend_the_overall_deadline` (bounded within 2.2 s against a 1.2 s budget), and the browser-page assertion in the loopback test. Mutations MP1 (read-time deadline removed, after the assert was tightened) / MP2 (any path accepted) / MP3 (duplicate codes take the first) failed their matching tests and passed after restore.
+- Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 526 pass / 0 fail / 2 ignored; `npm run check` EXIT 0.
+- Residual: no live OpenRouter sign-in was performed (no real keys); the exchange/storage failure path was exercised through existing unit coverage, not a live provider flow.
 
