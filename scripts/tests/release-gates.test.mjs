@@ -1503,3 +1503,39 @@ test("FE-14 small-text colors keep at least 4.5:1 on their panels", async () => 
     assert.ok(ratio(muted, panel) >= 4.5, `${muted} on ${panel} is ${ratio(muted, panel).toFixed(3)}:1`);
   }
 });
+
+test("DC-09 quant labels come from the file's own token and stay canonical", async () => {
+  const { quantFromFilename, isCanonicalQuant } = await import("../lib/quant_label.mjs");
+  const cases = [
+    ["Model-IQ2_S-MTP.gguf", "IQ2_S"],
+    ["Model-Q4_K_M-imatrix.gguf", "Q4_K_M"],
+    ["Model-Q5_K_M-0731.gguf", "Q5_K_M"],
+    ["Model-Q4_K_M-it.gguf", "Q4_K_M"],
+    ["Model-q8_0.gguf", "Q8_0"],
+    ["Model.q8_0.gguf", "Q8_0"],
+    ["Model-UD-Q4_K_XL.gguf", "Q4_K_XL"],
+    ["base-Q4_K_M-draft-Q8_0.gguf", "Q4_K_M"],
+    ["gemma-4-E4B_q4_0-it.gguf", "Q4_0"],
+    ["Date-Only-2025-0731.gguf", "UNKNOWN"],
+    ["Qwen2.5-Coder-7B-Instruct.gguf", "UNKNOWN"],
+  ];
+  for (const [name, want] of cases) {
+    assert.equal(quantFromFilename(name), want, name);
+  }
+  // The checked-in catalog keeps the labels its detached signature covers;
+  // corrected labels arrive with the next signed publication, which rebuilds
+  // through the fixed builder. The gate therefore pins the extractor and the
+  // builder, not the signed data file.
+  assert.ok(isCanonicalQuant("Q4_K_M") && !isCanonicalQuant("imatrix"));
+
+  // The builder must use the same extractor; the suffix regex is gone.
+  const builder = await readFile(join(process.cwd(), "scripts", "build_catalog.mjs"), "utf8");
+  assert.ok(
+    builder.includes("quantFromFilename(name)"),
+    "the builder must label files through the shared extractor",
+  );
+  assert.ok(
+    !builder.includes("match(/-([A-Za-z0-9_]+)\\.gguf$/i)"),
+    "the suffix regex must not return",
+  );
+});

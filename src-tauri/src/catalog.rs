@@ -660,12 +660,20 @@ pub fn facets(models: &[CatalogModel]) -> (Vec<String>, Vec<String>) {
         .into_iter()
         .collect();
     tags.sort();
-    let quants: Vec<String> = models
-        .iter()
-        .flat_map(|m| m.files.iter().map(|f| f.quant.clone()))
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect();
+    // Quant labels differ only by case after the builder normalises them
+    // (audit DC-09): group case-insensitively and keep the canonical
+    // upper-case spelling so the filter list cannot show duplicates.
+    let mut seen = std::collections::BTreeSet::new();
+    let mut quants: Vec<String> = Vec::new();
+    for model in models {
+        for file in &model.files {
+            let upper = file.quant.to_ascii_uppercase();
+            if seen.insert(upper.clone()) {
+                quants.push(upper);
+            }
+        }
+    }
+    quants.sort();
     (tags, quants)
 }
 
@@ -1817,6 +1825,36 @@ mod tests {
             1,
             "publisher is searchable"
         );
+    }
+
+    #[test]
+    fn dc09_quant_facets_dedupe_case_insensitively_and_keep_canonical_casing() {
+        let model = |quant: &str| CatalogModel {
+            id: format!("m-{quant}"),
+            repo: "org/repo".into(),
+            family: "f".into(),
+            parameters: "7B".into(),
+            publisher: "org".into(),
+            summary: String::new(),
+            tags: Vec::new(),
+            gated: false,
+            downloads: 0,
+            likes: 0,
+            user_sourced: false,
+            files: vec![CatalogFile {
+                quant: quant.into(),
+                filename: format!("model-{quant}.gguf"),
+                size_bytes: 1,
+                sha256: "a".repeat(64),
+                revision: "main".into(),
+                last_modified: String::new(),
+                created_at: String::new(),
+                user_sourced: false,
+            }],
+            ..CatalogModel::default()
+        };
+        let (_, quants) = facets(&[model("Q4_K_M"), model("q4_k_m"), model("BF16")]);
+        assert_eq!(quants, vec!["BF16".to_string(), "Q4_K_M".to_string()]);
     }
 
     #[test]

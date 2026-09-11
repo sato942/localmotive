@@ -6,6 +6,7 @@
 //   node scripts/build_catalog.mjs --dry-run             # author/repo/file counts only, no JSON
 //   node scripts/build_catalog.mjs --stdout              # preview JSON on stdout, no write
 import { rename, readFile, writeFile } from "node:fs/promises";
+import { isCanonicalQuant, quantFromFilename } from "./lib/quant_label.mjs";
 
 const providers = JSON.parse(await readFile("catalog/providers.json", "utf8"));
 const ALLOWLIST = providers.allowlist ?? [];
@@ -104,7 +105,13 @@ for (const author of ALLOWLIST) {
           problems.push(`${repo}/${name}: no SHA-256`);
           continue;
         }
-        const quant = (name.match(/-([A-Za-z0-9_]+)\.gguf$/i) || [])[1] || "UNKNOWN";
+        // The file's own quantisation token, not an arbitrary suffix
+        // (audit DC-09): provenance like `-imatrix` or `-MTP` is not a quant.
+        const quant = quantFromFilename(name);
+        if (!isCanonicalQuant(quant) && quant !== "UNKNOWN") {
+          problems.push(`${repo}/${name}: unrecognised quant label ${quant}`);
+          continue;
+        }
         files.push({
           quant,
           filename: name,
