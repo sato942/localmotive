@@ -411,3 +411,81 @@ describe("HF catalog presentation through public interfaces", () => {
     expect(text()).toContain("alpha");
   });
 });
+
+describe("Raw extra arguments field (audit FE-08)", () => {
+  it("keeps typed separators while editing and commits the tokens on blur", async () => {
+    await mount();
+    handlers.set("scan_models", () => [
+      {
+        id: "fixture/model",
+        name: "fixture",
+        directory: "C:/models/fixture",
+        firstShard: "C:/models/fixture/model-Q4_K_M.gguf",
+        sizeBytes: 4_000_000_000,
+        shardCount: 1,
+        expectedShards: 1,
+        complete: true,
+        quant: "Q4_K_M",
+        shards: [],
+        companions: [],
+      },
+    ]);
+    const navButton = (label: string) =>
+      [...container.querySelectorAll("button")].find(
+        (button) => (button.textContent ?? "").trim() === label,
+      );
+    const click = async (target: Element | undefined, why: string) => {
+      expect(target, why).toBeTruthy();
+      await act(async () => {
+        target!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      await settle();
+    };
+    await click(navButton("Inventory"), "the Inventory navigation must exist");
+    const rootInput = container.querySelector(
+      'input[aria-label="Model root"]',
+    ) as HTMLInputElement | null;
+    expect(rootInput, "the model root field must render").toBeTruthy();
+    await act(async () => {
+      const proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!;
+      proto.set!.call(rootInput, "C:/models/fixture-root");
+      rootInput!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(
+      [...container.querySelectorAll("button")].find((button) =>
+        (button.textContent ?? "").includes("Rescan"),
+      ),
+      "the Rescan action must exist",
+    );
+    for (let attempt = 0; attempt < 10 && !text().includes("fixture"); attempt += 1) {
+      await settle();
+    }
+    expect(text(), "the scanned model must appear in the inventory").toContain("fixture");
+    await click(navButton("Profile"), "the Profile navigation must exist");
+    expect(text(), "the Profile screen must render after a selection").toContain("Start");
+    const label = [...container.querySelectorAll("label")].find((candidate) =>
+      (candidate.textContent ?? "").includes("Raw extra arguments"),
+    );
+    expect(label, "the raw arguments field must render on the Profile screen").toBeTruthy();
+    const input = label!.querySelector("input") as HTMLInputElement;
+    const setValue = (value: string) => {
+      const proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!;
+      proto.set!.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    // The bug: trimming and re-splitting on every keystroke swallowed the
+    // separating space, so a second token could never be typed.
+    await act(async () => {
+      setValue("--flash-attn ");
+    });
+    expect(input.value).toBe("--flash-attn ");
+    await act(async () => {
+      setValue("--flash-attn --ctx-size 4096");
+    });
+    expect(input.value).toBe("--flash-attn --ctx-size 4096");
+    await act(async () => {
+      input.dispatchEvent(new FocusEvent("blur", { bubbles: true }));
+    });
+    expect(input.value).toBe("--flash-attn --ctx-size 4096");
+  });
+});

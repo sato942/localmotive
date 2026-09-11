@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import * as modelModule from "./model";
 import {
+  formatExtraArgs,
+  parseExtraArgs,
   artifactReadyForLaunch,
   calibrationState,
   catalogRevision,
@@ -885,5 +887,42 @@ describe("FE-01 and FE-02 selection and run identity", () => {
     expect(
       tuningRunSummary({ modelName: "Llama 3", provider: "openrouter", advisor: "claude", context: 8192 }),
     ).toBe("Llama 3 · openrouter · claude · 8,192 ctx");
+  });
+});
+
+describe("parseExtraArgs (FE-08)", () => {
+  it("keeps separate tokens that were typed one character at a time", () => {
+    // The raw field used to trim and re-split on every keystroke, so typing
+    // "--flash-attn " dropped the separating space and glued the next token.
+    expect(parseExtraArgs("--flash-attn --ctx-size 4096")).toEqual([
+      "--flash-attn",
+      "--ctx-size",
+      "4096",
+    ]);
+  });
+
+  it("supports quoted values that contain spaces", () => {
+    expect(parseExtraArgs('--lora "C:/my models/adapters/x.bin" --seed 7')).toEqual([
+      "--lora",
+      "C:/my models/adapters/x.bin",
+      "--seed",
+      "7",
+    ]);
+    expect(parseExtraArgs('--flag "a \\"quoted\\" value"')).toEqual([
+      "--flag",
+      'a "quoted" value',
+    ]);
+  });
+
+  it("treats empty and whitespace-only drafts as no arguments", () => {
+    expect(parseExtraArgs("")).toEqual([]);
+    expect(parseExtraArgs("   \t ")).toEqual([]);
+  });
+
+  it("round-trips through formatExtraArgs", () => {
+    const tokens = ["--flash-attn", "--lora", "C:/my models/x.bin", "--flag=a b"];
+    const formatted = formatExtraArgs(tokens);
+    expect(formatExtraArgs(parseExtraArgs(formatted))).toBe(formatted);
+    expect(parseExtraArgs(formatted)).toEqual(tokens);
   });
 });

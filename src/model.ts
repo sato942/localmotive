@@ -484,6 +484,67 @@ export function derivedEvidence<T>(
   return { value, level: "derived", source, observedAtMs, notes: [...notes] };
 }
 
+/// Parse a raw extra-arguments field into self-contained tokens (FE-08).
+/// Double quotes group values that contain spaces; a backslash escapes a
+/// quote inside a quoted value. The field is intentionally whitespace
+/// separated, matching what llama-server receives from the command line.
+export function parseExtraArgs(raw: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let quoted = false;
+  let started = false;
+  for (let index = 0; index < raw.length; index += 1) {
+    const character = raw[index];
+    if (character === "\\" && quoted && index + 1 < raw.length) {
+      current += raw[index + 1];
+      index += 1;
+      continue;
+    }
+    if (character === '"') {
+      quoted = !quoted;
+      started = true;
+      continue;
+    }
+    if (!quoted && /\s/.test(character)) {
+      if (started) {
+        tokens.push(current);
+        current = "";
+        started = false;
+      }
+      continue;
+    }
+    current += character;
+    started = true;
+  }
+  if (started) {
+    tokens.push(current);
+  }
+  return tokens.filter((token) => token.length > 0);
+}
+
+/// Render tokens back into the raw field, quoting values that contain
+/// spaces so a round trip through `parseExtraArgs` is stable (FE-08).
+export function formatExtraArgs(tokens: readonly string[]): string {
+  return tokens
+    .map((token) =>
+      /\s/.test(token) || token.includes('"')
+        ? `"${token.replace(/"/g, '\\"')}"`
+        : token,
+    )
+    .join(" ");
+}
+
+/// Parse persisted JSON without throwing (FE-09). Malformed text returns
+/// `undefined` so a caller can quarantine the record instead of crashing
+/// the render tree.
+export function safeJsonParse<T>(raw: string): T | undefined {
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return undefined;
+  }
+}
+
 export function defaultWorkload(): Workload {
   return {
     id: "technical-explanation-v1",

@@ -44,6 +44,8 @@ import {
   DEFAULT_FIT_PER_MILLE,
   describeChanges,
   downloadKey,
+  formatExtraArgs,
+  parseExtraArgs,
   downloadPercent,
   downloadReadiness,
   etaLabel,
@@ -144,6 +146,7 @@ function App() {
   // FE-05: the active evidence run's status and cancel handle, published by
   // the always-mounted evidence panel so any screen can show it.
   const [evidenceRun, setEvidenceRun] = useState<{ kind: "benchmark" | "quality"; cancel: (() => void) | null } | null>(null);
+  const [extraArgsDraft, setExtraArgsDraft] = useState<string | null>(null);
   const [modelRoot, setModelRoot] = useState(MODEL_ROOT);
   const [runtimePath, setRuntimePath] = useState(RUNTIME);
   const [hardware, setHardware] = useState<HardwareInfo | null>(null);
@@ -2061,8 +2064,24 @@ function App() {
                         <label className="toggle-line"><input type="checkbox" checked={profile.logTimestamps} onChange={(e) => setProfile({ ...profile, logTimestamps: e.target.checked })} /> Log timestamps</label>
                         <label className="wide">
                           Raw extra arguments
-                          <input value={profile.extraArgs.join(" ")} onChange={(e) => setProfile({ ...profile, extraArgs: e.target.value.trim() ? e.target.value.trim().split(/\s+/) : [] })} />
-                          <small className="field-help">Use self-contained `--flag` or `--flag=value` tokens. Typed-field overrides and privileged capabilities are rejected.</small>
+                          <input
+                            value={extraArgsDraft ?? formatExtraArgs(profile.extraArgs)}
+                            onChange={(event) => setExtraArgsDraft(event.target.value)}
+                            onFocus={() => setExtraArgsDraft(formatExtraArgs(profile.extraArgs))}
+                            onBlur={() => {
+                              if (extraArgsDraft !== null) {
+                                setProfile({ ...profile, extraArgs: parseExtraArgs(extraArgsDraft) });
+                                setExtraArgsDraft(null);
+                              }
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" && extraArgsDraft !== null) {
+                                setProfile({ ...profile, extraArgs: parseExtraArgs(extraArgsDraft) });
+                                setExtraArgsDraft(null);
+                              }
+                            }}
+                          />
+                          <small className="field-help">Use self-contained `--flag` or `--flag=value` tokens; quote values that contain spaces. The list is applied when you leave the field. Typed-field overrides and privileged capabilities are rejected.</small>
                         </label>
                       </div>
                     </details>
