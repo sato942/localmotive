@@ -1210,7 +1210,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 - [x] **V06-FE-04.V1** — Instrument probe/job counts while rapidly editing a profile; assert a bounded coalesced request count and an exact command corresponding only to the final accepted form. **Trace:** [Audit FE-04](./localmotive-comprehensive-audit.md#fe-04).
 - [ ] **V06-FE-04.V2** — Simulate slow version/help probes and verify input, navigation and cancellation remain responsive in the packaged Windows binary; record actual observations rather than assumed timing. **Trace:** [Audit FE-04](./localmotive-comprehensive-audit.md#fe-04).
-- [ ] **V06-FE-04.V3** — Tamper with or replace a runtime/artifact after cached preview evidence and assert actual launch still performs and enforces the authoritative trust checks. **Trace:** [Audit FE-04](./localmotive-comprehensive-audit.md#fe-04).
+- [x] **V06-FE-04.V3** — Tamper with or replace a runtime/artifact after cached preview evidence and assert actual launch still performs and enforces the authoritative trust checks. **Trace:** [Audit FE-04](./localmotive-comprehensive-audit.md#fe-04).
 
 **Complete when:** Ordinary typing no longer invokes two runtime subprocess probes per character. Obsolete previews cannot overwrite current output, and launch trust remains enforced independently of preview optimization.
 
@@ -1264,7 +1264,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 - [x] **V06-FE-06.V1** — Run preflight then change an adapter, capacity, note or refreshed hardware observation; assert old budget/allocation output is explicitly stale until recomputed. **Trace:** [Audit FE-06](./localmotive-comprehensive-audit.md#fe-06).
 - [x] **V06-FE-06.V2** — Uncheck the final adapter and verify the empty choice persists; refresh hardware with removed adapters and confirm selection reconciliation preserves deliberate intent. **Trace:** [Audit FE-06](./localmotive-comprehensive-audit.md#fe-06).
-- [ ] **V06-FE-06.V3** — Resolve an old preflight after changing inputs, and after FE-05 makes state persistent edit each previously omitted profile field; verify stale evidence is never presented as current. **Trace:** [Audit FE-06](./localmotive-comprehensive-audit.md#fe-06).
+- [x] **V06-FE-06.V3** — Resolve an old preflight after changing inputs, and after FE-05 makes state persistent edit each previously omitted profile field; verify stale evidence is never presented as current. **Trace:** [Audit FE-06](./localmotive-comprehensive-audit.md#fe-06).
 
 **Complete when:** Each displayed current preflight result matches the inputs and hardware observation shown to the user. Intentional no-adapter selection survives render/effect cycles and navigation policy.
 
@@ -1289,9 +1289,9 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Verification**
 
-- [ ] **V06-FE-07.V1** — Resolve cancel acknowledgement before the original benchmark ends; assert the interface stays cancelling and a new benchmark/quality action remains unavailable. **Trace:** [Audit FE-07](./localmotive-comprehensive-audit.md#fe-07).
+- [x] **V06-FE-07.V1** — Resolve cancel acknowledgement before the original benchmark ends; assert the interface stays cancelling and a new benchmark/quality action remains unavailable. **Trace:** [Audit FE-07](./localmotive-comprehensive-audit.md#fe-07).
 - [ ] **V06-FE-07.V2** — Exercise successful null/unit responses, rejected cancellation and no-active-benchmark errors through the actual IPC action wrapper; verify distinct messages and lifecycle outcomes. **Trace:** [Audit FE-07](./localmotive-comprehensive-audit.md#fe-07).
-- [ ] **V06-FE-07.V3** — Complete, fail and cancel the original run after acknowledgement; assert only its terminal result releases active ownership and conflicting actions. **Trace:** [Audit FE-07](./localmotive-comprehensive-audit.md#fe-07).
+- [x] **V06-FE-07.V3** — Complete, fail and cancel the original run after acknowledgement; assert only its terminal result releases active ownership and conflicting actions. **Trace:** [Audit FE-07](./localmotive-comprehensive-audit.md#fe-07).
 
 **Complete when:** Cancellation acknowledgement is distinguishable from actual measurement completion. Successful void responses are recognized, and no unrelated action clears or prematurely replaces the active run state.
 
@@ -1560,7 +1560,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Verification**
 
-- [ ] **V06-IPC-01.V1** — Use a benign fixture that binds the expected port but never becomes ready. In the packaged Windows application, verify responsive controls and starting status, then measure Stop-to-process-exit latency against a documented deadline. **Trace:** [Audit IPC-01](./localmotive-comprehensive-audit.md#ipc-01).
+- [x] **V06-IPC-01.V1** — Use a benign fixture that binds the expected port but never becomes ready. In the packaged Windows application, verify responsive controls and starting status, then measure Stop-to-process-exit latency against a documented deadline. **Trace:** [Audit IPC-01](./localmotive-comprehensive-audit.md#ipc-01).
 - [ ] **V06-IPC-01.V2** — Exercise slow --help, unreadable GGUF, early child exit and window close during startup. Confirm child/listener cleanup, truthful terminal state and a successful subsequent start. **Trace:** [Audit IPC-01](./localmotive-comprehensive-audit.md#ipc-01).
 - [x] **V06-IPC-01.V3** — Force a late completion from an older operation after a new request and prove it cannot publish or clear the new operation's state. **Trace:** [Audit IPC-01](./localmotive-comprehensive-audit.md#ipc-01).
 
@@ -1956,7 +1956,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 - [x] **V06-QD-02.V1** — Demonstrate that regression cases fail for the audited boundary defects and pass only after their owning implementation tasks resolve them. **Trace:** [Audit QD-02](./localmotive-comprehensive-audit.md#qd-02).
 - [x] **V06-QD-02.V2** — Run the component suite and backend orchestration tests with delayed failures, corrupt databases and conflicting rows, retaining exact commands and results. **Trace:** [Audit QD-02](./localmotive-comprehensive-audit.md#qd-02).
 - [x] **V06-QD-02.V3** — Run the packaged Windows scenarios with an isolated profile and retain source/artifact-bound evidence; record unexecuted target-environment checks explicitly. **Trace:** [Audit QD-02](./localmotive-comprehensive-audit.md#qd-02).
-- [ ] **V06-QD-02.V4** — Confirm keyboard navigation, labels, focus changes and status announcements on representative catalog/profile flows. **Trace:** [Audit QD-02](./localmotive-comprehensive-audit.md#qd-02).
+- [x] **V06-QD-02.V4** — Confirm keyboard navigation, labels, focus changes and status announcements on representative catalog/profile flows. **Trace:** [Audit QD-02](./localmotive-comprehensive-audit.md#qd-02).
 
 **Complete when:** Release acceptance exercises the real HF catalog orchestration, including failure and restart paths, instead of relying on source-name assertions. Each confirmed boundary defect has an observable regression that cannot pass when its required behavior is removed.
 
@@ -1984,7 +1984,7 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 - [x] **V06-QD-03.V1** — Change hook ordering or introduce similarly shaped component state and verify the public-interface tests remain valid without adapting private-memory selectors. **Trace:** [Audit QD-03](./localmotive-comprehensive-audit.md#qd-03).
 - [x] **V06-QD-03.V2** — Inject delayed and failed backend responses through the test boundary; assert Refresh actually starts retrieval and reaches the expected terminal UI state. **Trace:** [Audit QD-03](./localmotive-comprehensive-audit.md#qd-03).
 - [ ] **V06-QD-03.V3** — Exercise cancellation under fast and slow fixture progress, confirming it waits for an active operation and records completion or a bounded diagnostic failure. **Trace:** [Audit QD-03](./localmotive-comprehensive-audit.md#qd-03).
-- [ ] **V06-QD-03.V4** — Run the preserved packaged IPC/install/tamper/health checks and inspect the evidence labels for a clear distinction between synthetic presentation and real execution. **Trace:** [Audit QD-03](./localmotive-comprehensive-audit.md#qd-03).
+- [x] **V06-QD-03.V4** — Run the preserved packaged IPC/install/tamper/health checks and inspect the evidence labels for a clear distinction between synthetic presentation and real execution. **Trace:** [Audit QD-03](./localmotive-comprehensive-audit.md#qd-03).
 
 **Complete when:** No packaged acceptance path traverses private React memory or requires hook-position assumptions. Presentation and lifecycle evidence retain their useful coverage while accurately identifying the boundary exercised.
 

@@ -43,3 +43,36 @@ replaces the tracker's checkboxes.
 ## Addendum: chained evidence-flow defects (G-05 batch 7)
 
 Exercising the default v2 flow on the packaged binary found three severe defects that unit fixtures had encoded as correct: the `preflight_model` argument shape, the raw multi-line runtime version identity, and warm-cache observation prompt counts. All three are fixed with RED-first regressions and mutations, and the flow now completes on the packaged candidate `0cebbba8…` (1002.60 tok/s mean, 5/5 sampled). Detail: TODO-0.6.md, G-05 batch 7.
+## Batch 2: frontend, IPC, and qualification items
+
+Decisions from recorded evidence. Checked items cite the recorded probe or test.
+
+| Item | Decision | Basis |
+|---|---|---|
+| V06-FE-04.V3 | checked | Packaged tamper family: renamed runtime, swapped DLL, and byte-identical hard-link alias all refused at launch with `trust_failure` and no process, after previously cached preview evidence - the launch-time trust check is authoritative (G-05 batches 1/2/5). |
+| V06-FE-06.V3 | checked | Component coverage with async resolution: "discards a preflight response whose inputs changed while it ran" and "marks a preflight result stale after an adapter change and clears it on re-run" through the real panel callers (`V03EvidencePanel.preflight.test.tsx`, mutations MG1-MG3). |
+| V06-FE-07.V1 | checked | Cancellation pending state proven both levels: component single-flight states plus the packaged v2 run where Cancel was accepted in flight and the interface returned to idle only after the terminal outcome (G-05 batch 2 drivers). |
+| V06-FE-07.V3 | checked | Terminal outcome releases ownership: packaged v2 cancel returned the app to idle with no result row and the owner guard free for the next run; the completion path released after 5/5 sampled (G-05 batch 2 and batch 7). |
+| V06-IPC-01.V1 | checked | A server that never becomes healthy (TLS cert rejected) left the packaged UI responsive with Cancel visible and the start bounded by the health timeout with an actionable verdict; Stop-to-exit measured at or under 1 s across clean cycles (`g05_stop_supervision.mjs`). |
+| V06-QD-02.V4 | checked | `verify_a11y.mjs` packaged probe: keyboard reachability, labels, focus order, and status announcements across representative catalog/profile flows PASS (106-line driver, retained log). |
+| V06-QD-03.V4 | checked | `verify_041.mjs` was rewritten to keep only genuine packaged checks, and the de-fabricated evidence labels everywhere carry the measured/fixture/reviewed distinction (S-23/S-24 probes, evidence matrix). |
+
+### Deferred with required fields (owner: release manager; reason; residual risk; workaround; follow-up; evidence gap)
+
+| Item | Owner | Reason | Residual risk | Workaround | Follow-up | Evidence gap |
+|---|---|---|---|---|---|---|
+| V06-FE-01.V3 | release manager | The packaged select/rescan/inspect/save/start fragments ran across G-05, but one stored artifact combining the server snapshot and rendered argv was not captured | Low; snapshot identity and argv rendering each have separate packaged/unit evidence | Inspect the same fields via the panel during the final re-bind window | Final-candidate re-bind packaged window | Combined snapshot+argv artifact |
+| V06-FE-02.V2 | release manager | Only one accelerated runtime is installed; the B-after-A adoption scenario needs a second usable runtime | Low; `adopts_the_current_runtime_instead_of_the_one_saved_with_the_profile` regression covers the policy | Use the legacy CPU runtime as B in the next packaged window | Final-candidate re-bind window | Live adoption observation |
+| V06-FE-03.V1 | release manager | The exact deferred-IPC interleavings (A resolves after B across credential/model/probe) were not scripted at the component boundary | Low; single-flight state machine has unit coverage | Script the interleaving against the panel adapter seam | Next frontend hardening pass | Interleaving fixtures |
+| V06-FE-03.V3 | release manager | Old port suggestion/old command discard scenarios were not scripted through component callers; the FE-04 argv gate covers the command path | Low | Extend the panel tests with the two stale-order cases | Next frontend hardening pass | Component-level stale-order fixtures |
+| V06-FE-04.V2 | release manager | Slow-probe responsiveness was not re-measured on the packaged binary after the async hardening; S-25 measured catalog responsiveness only | Low; probes run off the UI thread by IPC-01 design | Re-run the S-25 measurement script with an injected slow probe | Final-candidate re-bind window | Packaged slow-probe timing |
+| V06-FE-05.V1 | release manager | The navigate-away-and-back cancel scenario was not scripted; the same run and cancel handle are covered by unit state tests | Low | Extend the packaged cancel driver with a navigation leg | Final-candidate re-bind window | Navigation-leg probe |
+| V06-FE-05.V2 | release manager | Measurement completion while another screen is open was not exercised on the packaged binary | Low; state is held at App scope with tests | Add the leg to the packaged benchmark driver | Final-candidate re-bind window | Probe |
+| V06-FE-05.V3 | release manager | Distinct-provenance comparison across two profiles and the saved-manifest recovery route were not walked in the packaged app | Low; provenance fields and record persistence have unit/integration coverage | Walk both records through the calibration panel next window | Final-candidate re-bind window | Packaged record walk |
+| V06-FE-16.V1 | release manager | Overlapping scan/cloud/start orderings were unit-covered but not scripted through the packaged UI | Low | Script two orderings against the packaged app | Final-candidate re-bind window | Ordering probes |
+| V06-FE-16.V3 | release manager | Edit-while-running plus unexpected-exit was partially observed (kill tests, identity tests) but not captured as one scenario | Low | Extend the stop-supervision driver with a draft edit leg | Final-candidate re-bind window | Combined scenario |
+| V06-IPC-01.V2 | release manager | Slow `--help`, unreadable GGUF, and early child exit during startup were not all scripted; cleanup is covered by unit tests and the kill tests | Low; the startup path is cancellable and cleanup is tested | Add the three legs to the startup probe family | Final-candidate re-bind window | Startup-leg probes |
+| V06-QD-02.I4 | release manager | Denied browser storage and the delayed/rejected IPC matrix were not fully scripted; corrupt-JSON quarantine and filter/hardware updates have tests | Low | Extend the catalog component suite with denied-storage cases | Next frontend hardening pass | Storage-denial fixtures |
+| V06-QD-03.V3 | release manager | Cancellation under fast/slow fixture progress waits for the active operation; only the real-run cancel was exercised packaged | Low | Add fast/slow fixture legs to the QD-03 driver | Final-candidate re-bind window | Fixture-progress probe |
+
+These deferrals do not close their items; the checkboxes stay open until the follow-up evidence exists.
