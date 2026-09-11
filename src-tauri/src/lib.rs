@@ -2670,6 +2670,16 @@ fn add_benchmark_calibration_anchor_impl(
     if manifest.observations.is_empty() {
         return Err("The benchmark run contains no observations".into());
     }
+    // Partial runs are ineligible too: a run must contain every planned
+    // trial, or its mean is not the mean of the workload it claims.
+    let planned = manifest.workload.trials as usize;
+    if planned == 0 || manifest.observations.len() < planned {
+        return Err(format!(
+            "A partial benchmark run ({} of {} planned trials) cannot become a calibration anchor",
+            manifest.observations.len(),
+            planned
+        ));
+    }
     use sha2::Digest as _;
     let source_run_id = hex::encode(sha2::Sha256::digest(&bytes));
     // Observation time comes from the run itself, not from the click.
@@ -5796,6 +5806,10 @@ mod mt08_anchor_tests {
             },
             ..BenchmarkManifest::default()
         };
+        // The workload validator requires at least one planned trial; the
+        // empty-observation fixture keeps trials=1 so the "no observations"
+        // check is the one that fires.
+        manifest.workload.trials = observations.max(1) as u16;
         for trial in 1..=observations {
             manifest.observations.push(BenchmarkObservation {
                 trial: trial as u16,
@@ -5986,6 +6000,16 @@ mod mt08_anchor_tests {
                 .unwrap_err()
                 .contains("no observations")
         );
+
+        // A partial run (fewer observations than the workload's planned
+        // trials) is ineligible even when it carries no failure outcome.
+        let mut partial = manifest_fixture(&key, 1_000, 50.0, AttemptOutcome::Succeeded, 1);
+        partial.workload.trials = 3;
+        let path = write_manifest(&root, &partial);
+        let error =
+            add_benchmark_calibration_anchor_impl(&root, &path, 100.0, "manual-estimate.v1")
+                .unwrap_err();
+        assert!(error.contains("partial benchmark run"), "{error}");
 
         // Estimator identities cannot mix inside one model.
         let mut anchors = Vec::new();

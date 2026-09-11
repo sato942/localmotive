@@ -902,23 +902,23 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Create calibration anchors from unique persisted benchmark runs**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented + unit/UI-verified · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit MT-08](./localmotive-comprehensive-audit.md#mt-08)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src/V03EvidencePanel.tsx](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src/V03EvidencePanel.tsx), [src-tauri/src/calibration.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/calibration.rs)
 
 **Implementation**
 
-- [ ] **V06-MT-08.I1** — Create anchors in Rust from a persisted, validated benchmark run/manifest identity plus an explicit estimator identity and estimate value, instead of accepting a click-stamped copy of a mean. **Trace:** [Audit MT-08](./localmotive-comprehensive-audit.md#mt-08).
-- [ ] **V06-MT-08.I2** — Derive observation time from the source run, enforce source-run uniqueness, and retain that identity across loading, deletion/reimport, and repeated requests. **Trace:** [Audit MT-08](./localmotive-comprehensive-audit.md#mt-08).
-- [ ] **V06-MT-08.I3** — Define eligibility for partial, failed, or cancelled runs and enforce it independently of the frontend's presence-of-summary check. **Trace:** [Audit MT-08](./localmotive-comprehensive-audit.md#mt-08).
-- [ ] **V06-MT-08.I4** — Display the actual eligible unique-run count, prevent repeated Add anchor actions from manufacturing samples, and document the existing interval formula using the modest Estimated interval label. **Trace:** [Audit MT-08](./localmotive-comprehensive-audit.md#mt-08).
+- [x] **V06-MT-08.I1** — Create anchors in Rust from a persisted, validated benchmark run/manifest identity plus an explicit estimator identity and estimate value, instead of accepting a click-stamped copy of a mean. **Trace:** [Audit MT-08](./localmotive-comprehensive-audit.md#mt-08).
+- [x] **V06-MT-08.I2** — Derive observation time from the source run, enforce source-run uniqueness, and retain that identity across loading, deletion/reimport, and repeated requests. **Trace:** [Audit MT-08](./localmotive-comprehensive-audit.md#mt-08).
+- [x] **V06-MT-08.I3** — Define eligibility for partial, failed, or cancelled runs and enforce it independently of the frontend's presence-of-summary check. **Trace:** [Audit MT-08](./localmotive-comprehensive-audit.md#mt-08).
+- [x] **V06-MT-08.I4** — Display the actual eligible unique-run count, prevent repeated Add anchor actions from manufacturing samples, and document the existing interval formula using the modest Estimated interval label. **Trace:** [Audit MT-08](./localmotive-comprehensive-audit.md#mt-08).
 
 **Verification**
 
-- [ ] **V06-MT-08.V1** — Click Add anchor three times for one benchmark and assert only one eligible anchor exists and the three-run model gate remains closed; repeat with different manually entered estimates. **Trace:** [Audit MT-08](./localmotive-comprehensive-audit.md#mt-08).
-- [ ] **V06-MT-08.V2** — Confirm three independent compatible run identities can build a model, original observation times survive import, and reimporting the same source cannot create another independent sample. **Trace:** [Audit MT-08](./localmotive-comprehensive-audit.md#mt-08).
-- [ ] **V06-MT-08.V3** — Test the explicit failed/cancelled/partial-run policy and verify repeated source samples cannot create a misleading zero-width interval by satisfying the count gate. **Trace:** [Audit MT-08](./localmotive-comprehensive-audit.md#mt-08).
+- [x] **V06-MT-08.V1** — Click Add anchor three times for one benchmark and assert only one eligible anchor exists and the three-run model gate remains closed; repeat with different manually entered estimates. **Trace:** [Audit MT-08](./localmotive-comprehensive-audit.md#mt-08).
+- [x] **V06-MT-08.V2** — Confirm three independent compatible run identities can build a model, original observation times survive import, and reimporting the same source cannot create another independent sample. **Trace:** [Audit MT-08](./localmotive-comprehensive-audit.md#mt-08).
+- [x] **V06-MT-08.V3** — Test the explicit failed/cancelled/partial-run policy and verify repeated source samples cannot create a misleading zero-width interval by satisfying the count gate. **Trace:** [Audit MT-08](./localmotive-comprehensive-audit.md#mt-08).
 
 **Complete when:** The minimum anchor count reflects distinct eligible benchmark runs, not array entries, clicks, or reimport timestamps. Every anchor can be traced to its measured source and estimator, and UI wording does not claim statistically validated confidence or prediction coverage.
 
@@ -3308,3 +3308,22 @@ _Package 1 (RT-01, RT-02, RT-04, RT-07) implementation is complete at the unit/r
 - Regression tests: 12 `local_client` tests over real TLS and plain fixtures (trusted certificate accepted, untrusted rejected, bearer header asserted, missing/empty/multiline key files, chunked JSON, oversized response, slow-writer deadline, cancellation during the wait, IPv6 bracketing, Debug redaction) plus the `core` pre-launch and capability tests; `cargo test` 487 passed / 0 failed / 2 ignored; `npm run check` EXIT 0.
 - Mutation proofs: MC1 (Authorization header skipped), MC2 (profile certificate not trusted), MC3 (transport-file validation skipped) and MC4 (response size bound ignored) each failed the matching test.
 - Residual limits: V3 needs the packaged target-runtime run of an accepted TLS/key profile; the health stage's internal server stays plaintext by construction (it launches its own loopback server) but still routes through the centralized client.
+
+### V06-MT-07 — versioned canonical execution snapshot identity (commit `72bb60b`)
+
+- Status: Implemented I1-I4; V1/V2 table-verified; V3 legacy/unknown paths verified.
+- Regression before fix: the calibration compatibility key was a hand-maintained subset of launch fields; a changed thread count, fit-reduced context, or different LoRA bytes reused the same key, and unknown hardware identity could satisfy it.
+- Verification after fix: `calibration::ExecutionSnapshotV2` (schema `localmotive.execution-snapshot.v2`) derives the identity from the effective launch arguments (secret values and paths replaced by `[configured]`/`[model]`/`[lora]` tokens), content hashes for model/draft/mmproj/LoRA payloads, runtime executables and help text, hardware and driver identities, workload, harness and estimator versions, and the observed effective context. `execution_snapshot_key` hashes the canonical JSON; keys carry the `v2:` prefix and `validate_compatibility_key` rejects legacy 64-hex keys at build, apply, persistence, load and replay. Unknown identities are recorded; `reuse_supported` refuses cross-run reuse and `build_calibration` reports them by name.
+- Regression tests: `mt07_snapshot_key_changes_for_every_material_field` (table mutation across 21 material fields), `mt07_cpu_only_and_hardware_changes_are_distinguished` (CPU-only builds keys; same GPU + different CPU and fit-reduced effective context change the key), `mt07_unknown_identity_blocks_reuse_and_legacy_keys_stay_out`, `mt07_effective_arguments_are_sanitized_of_secrets_and_paths`. Mutations MD1 (unsanitized args) / MD2 (unknown gate bypassed) / MD3 (legacy keys accepted) / MD4 (material field dropped from the key) each failed their matching test and passed after restore.
+- Commands: `cargo fmt --check` PASS; `cargo clippy --all-targets -- -D warnings` 0 errors; `cargo test --lib` 491 pass at the MT-07 gate.
+- Residual: the snapshot records `host_cpu_model` as unobserved on this platform (no CPU-name collector yet); the reuse gate therefore treats driver/os identity as the blocking signals.
+
+### V06-MT-08 — calibration anchors from unique persisted runs (commit `fc02ce6`)
+
+- Status: Implemented I1-I4; V1/V2/V3 unit- and UI-verified.
+- Regression before fix: Add anchor stored a click-stamped `Date.now()` copy of the frontend mean; three clicks on one benchmark manufactured three samples, and failed or cancelled runs were eligible whenever a summary existed.
+- Verification after fix: `add_benchmark_calibration_anchor` reads the persisted manifest bounded (16 MiB), validates it, derives the measured value (`summarize_observations`), the observation time (last observation `started_at_ms`), and the source-run identity (`sha256` of the manifest bytes) in Rust; the estimator identity is explicit (`manual-estimate.v1`). One source run contributes at most one anchor per compatibility key: the record filename derives from the run identity, `persist_record` refuses a different anchor for the same run and treats byte-identical repeats as idempotent. `build_calibration` requires three distinct non-empty source runs and one estimator identity; failures, timeouts, cancellations and partial runs (fewer observations than planned trials) are ineligible; anchors carry the snapshot schema and unknowns from the manifest. The panel counts unique `sourceRunId` values for display and for the build gate, and documents the interval formula as a descriptive spread, not a confidence interval.
+- Regression tests: `mt08_three_adds_on_one_run_keep_one_anchor_and_the_gate_closed`, `mt08_three_distinct_runs_build_and_keep_run_times` (observation times 1002/2002/3002 survive; reimport idempotent; three copies of one run cannot trip the gate), `mt08_failed_or_cancelled_runs_and_estimator_mixes_are_ineligible`, plus two jsdom component tests (`src/V03EvidencePanel.calibration.test.tsx`) that assert the command arguments, the unique-run count with duplicate-run records, and the build-gate enablement. Mutations ME1 (record identity guard removed) / ME2 (distinct-run gate removed) / ME3 (click-stamped observation time) / ME4 (anchor count instead of run count) each failed their matching test and passed after restore.
+- Commands: `cargo fmt --check` PASS; clippy 0 errors; `cargo test` 494 pass / 0 fail / 2 ignored; `npm run check` PASS (tsc, vitest, catalog, branding, research anchor, qualification, icon, build `index-BAqaQx1B.js` 327.62 kB).
+- Flake repaired on the way: `managed_runtime_listing_shows_local_installs_without_a_catalog_fetch` compared process-global hash counters and flaked under parallel load (observed 3 times). It now compares a thread-local mirror (`verification_bytes_hashed_this_thread`); the mutation that removes the mirror increment is caught; three consecutive full-suite runs are green (494/0).
+
