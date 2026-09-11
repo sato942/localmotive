@@ -184,6 +184,7 @@ export function V03EvidencePanel({
   const [constraints, setConstraints] = useState<RecommendationConstraints>(DEFAULT_CONSTRAINTS);
   const [weights] = useState<ObjectiveWeights>(DEFAULT_WEIGHTS);
   const [anchors, setAnchors] = useState<CalibrationAnchor[]>([]);
+  const [calibrationProblems, setCalibrationProblems] = useState<string[]>([]);
   const [estimatedTps, setEstimatedTps] = useState("");
   const [calibration, setCalibration] = useState<CalibrationModel | null>(null);
   const [calibrated, setCalibrated] = useState<CalibratedEstimate | null>(null);
@@ -297,6 +298,7 @@ export function V03EvidencePanel({
       .then((records) => {
         if (!active) return;
         setAnchors(records.anchors);
+        setCalibrationProblems(records.problems ?? []);
         const now = Date.now();
         const activeModels = records.models
           .filter((model) => model.expiresAtMs > now)
@@ -616,6 +618,31 @@ export function V03EvidencePanel({
       setCalibrated(result);
       setMessage("Calibration produced bounded estimated evidence, not a measured result.");
     }
+  }
+
+  async function clearCalibrationHistory() {
+    const compatibilityKey = benchmark?.compatibilityKey;
+    const removed = await runAction("calibration-clear", () =>
+      invoke<number>("clear_calibration_history", {}),
+    );
+    if (removed === null) return;
+    if (compatibilityKey) {
+      const records = await runAction("calibration-reload", () =>
+        invoke<CalibrationRecords>("load_calibration_records", { compatibilityKey }),
+      );
+      if (records) {
+        setAnchors(records.anchors);
+        setCalibrationProblems(records.problems ?? []);
+        const now = Date.now();
+        const activeModels = records.models
+          .filter((model) => model.expiresAtMs > now)
+          .sort((left, right) => left.createdAtMs - right.createdAtMs);
+        setCalibration(activeModels[activeModels.length - 1] ?? null);
+      }
+    }
+    // Set the outcome after the reload: runAction clears the message when a
+    // new action starts.
+    setMessage(`Removed ${removed} stored calibration record${removed === 1 ? "" : "s"}.`);
   }
 
   async function importExternal() {
@@ -1007,6 +1034,13 @@ export function V03EvidencePanel({
               <Button variant="ghost" onClick={addCalibrationAnchor} disabled={!benchmark?.summary || busy !== null}>Add anchor</Button>
               <Button variant="ghost" onClick={() => void buildCalibration()} disabled={compatibleRunCount() < 3 || !benchmark || busy !== null}>Build calibration</Button>
               <Button variant="ghost" onClick={() => void applyCalibration()} disabled={!calibration || latestCalibrationState !== "compatible" || busy !== null}>Apply</Button>
+              <Button
+                variant="ghost"
+                onClick={() => void clearCalibrationHistory()}
+                disabled={busy !== null}
+              >
+                Clear local history
+              </Button>
             </div>
           </div>
           <p className="muted">
@@ -1014,6 +1048,13 @@ export function V03EvidencePanel({
             Calibration: {latestCalibrationState}.
             {calibrated ? ` Estimated interval ${calibrated.lowerBound.toFixed(2)}–${calibrated.upperBound.toFixed(2)} tok/s.` : ""}
           </p>
+          {calibrationProblems.length > 0 && (
+            <p className="muted" role="status">
+              {calibrationProblems.length} stored record{calibrationProblems.length === 1 ? "" : "s"} could not
+              be read and {calibrationProblems.length === 1 ? "was" : "were"} quarantined; the rest of the
+              history loaded normally. {calibrationProblems.slice(0, 3).join(" · ")}
+            </p>
+          )}
           <p className="muted">
             Estimated interval = estimate × (mean measured/estimated ratio ± 1.96 × the ratio spread).
             It is a descriptive spread of saved runs, not a calibrated confidence interval.

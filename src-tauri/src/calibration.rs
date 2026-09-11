@@ -9,6 +9,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 const MAX_CALIBRATION_RECORD_BYTES: u64 = 64 * 1024;
 const MAX_CALIBRATION_RECORDS: usize = 10_000;
+/// Retention bound per category (audit S-16.I1): persisting prunes the oldest
+/// recognized records beyond this count, keeping the enumeration bound far
+/// above it so a load never trips the hard cap. Retention applies to the
+/// calibration record store only; exported bundles and run manifests carry
+/// their own copies and are untouched.
+const MAX_RETAINED_RECORDS_PER_CATEGORY: usize = 4_000;
+/// Retained load diagnostics (audit S-16.I2).
+const MAX_LOAD_PROBLEMS: usize = 32;
 static CALIBRATION_TEMP_NONCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -930,22 +938,91 @@ pub fn persist_calibration_anchor(
     persist_record(root, "anchors", &format!("{file_token}.json"), anchor)
 }
 
+/// Records plus bounded diagnostics from one history load (audit S-16.I2).
+/// A corrupt, oversized or invalid record is quarantined individually and the
+/// load continues, so one bad file can never hide the valid history.
+#[derive(Clone, Debug)]
+pub struct LoadedRecords<T> {
+    pub records: Vec<T>,
+    pub problems: Vec<String>,
+}
+
+impl<T> Default for LoadedRecords<T> {
+    fn default() -> Self {
+        Self {
+            records: Vec::new(),
+            problems: Vec::new(),
+        }
+    }
+}
+
+impl<T> LoadedRecords<T> {
+    fn push_problem(&mut self, problem: String) {
+        if self.problems.len() < MAX_LOAD_PROBLEMS {
+            self.problems.push(problem);
+        } else if let Some(last) = self.problems.last_mut() {
+            *last = "Further record diagnostics were suppressed (limit reached).".into();
+        }
+    }
+}
+
+/// Move a record that failed to load into `<root>/quarantine/` so its bytes
+/// are preserved for inspection instead of deleted or rewritten.
+fn quarantine_record(root: &Path, path: &Path) -> Result<PathBuf, String> {
+    let directory = root.join("quarantine");
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("Could not create the quarantine directory: {error}"))?;
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("record.json");
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    let target = directory.join(format!("{name}.corrupt-{stamp}"));
+    fs::rename(path, &target)
+        .map_err(|error| format!("Could not quarantine the record: {error}"))?;
+    Ok(target)
+}
+
 pub fn load_calibration_anchors(
     root: &Path,
     compatibility_key: &str,
-) -> Result<Vec<CalibrationAnchor>, String> {
+) -> Result<LoadedRecords<CalibrationAnchor>, String> {
     validate_compatibility_key(compatibility_key)?;
-    let mut records = Vec::new();
+    let mut loaded = LoadedRecords::default();
     for path in record_paths(root, "anchors")? {
-        let record: CalibrationAnchor = read_bounded_record(&path)?;
-        validate_persisted_anchor(&record)?;
+        let record: CalibrationAnchor = match read_bounded_record(&path) {
+            Ok(record) => record,
+            Err(error) => {
+                let name = path.display().to_string();
+                let quarantined = quarantine_record(root, &path)
+                    .map(|target| target.display().to_string())
+                    .unwrap_or_else(|quarantine_error| {
+                        format!("(quarantine failed: {quarantine_error})")
+                    });
+                loaded.push_problem(format!("{name}: {error}; moved to {quarantined}"));
+                continue;
+            }
+        };
+        if let Err(error) = validate_persisted_anchor(&record) {
+            let name = path.display().to_string();
+            let quarantined = quarantine_record(root, &path)
+                .map(|target| target.display().to_string())
+                .unwrap_or_else(|quarantine_error| {
+                    format!("(quarantine failed: {quarantine_error})")
+                });
+            loaded.push_problem(format!("{name}: {error}; moved to {quarantined}"));
+            continue;
+        }
         if record.compatibility_key == compatibility_key {
-            records.push(record);
+            loaded.records.push(record);
         }
     }
-    records.sort_by_key(|record| record.observed_at_ms);
-    records.dedup();
-    Ok(records)
+    loaded.records.sort_by_key(|record| record.observed_at_ms);
+    loaded.records.dedup();
+    Ok(loaded)
 }
 
 pub fn persist_calibration_model(root: &Path, model: &CalibrationModel) -> Result<PathBuf, String> {
@@ -965,19 +1042,81 @@ pub fn persist_calibration_model(root: &Path, model: &CalibrationModel) -> Resul
 pub fn load_calibration_models(
     root: &Path,
     compatibility_key: &str,
-) -> Result<Vec<CalibrationModel>, String> {
+) -> Result<LoadedRecords<CalibrationModel>, String> {
     validate_compatibility_key(compatibility_key)?;
-    let mut records = Vec::new();
+    let mut loaded = LoadedRecords::default();
     for path in record_paths(root, "models")? {
-        let record: CalibrationModel = read_bounded_record(&path)?;
-        validate_calibration_model(&record)?;
+        let record: CalibrationModel = match read_bounded_record(&path) {
+            Ok(record) => record,
+            Err(error) => {
+                let name = path.display().to_string();
+                let quarantined = quarantine_record(root, &path)
+                    .map(|target| target.display().to_string())
+                    .unwrap_or_else(|quarantine_error| {
+                        format!("(quarantine failed: {quarantine_error})")
+                    });
+                loaded.push_problem(format!("{name}: {error}; moved to {quarantined}"));
+                continue;
+            }
+        };
+        if let Err(error) = validate_calibration_model(&record) {
+            let name = path.display().to_string();
+            let quarantined = quarantine_record(root, &path)
+                .map(|target| target.display().to_string())
+                .unwrap_or_else(|quarantine_error| {
+                    format!("(quarantine failed: {quarantine_error})")
+                });
+            loaded.push_problem(format!("{name}: {error}; moved to {quarantined}"));
+            continue;
+        }
         if record.compatibility_key == compatibility_key {
-            records.push(record);
+            loaded.records.push(record);
         }
     }
-    records.sort_by_key(|record| record.created_at_ms);
-    records.dedup();
-    Ok(records)
+    loaded.records.sort_by_key(|record| record.created_at_ms);
+    loaded.records.dedup();
+    Ok(loaded)
+}
+
+/// Prune the oldest recognized records beyond the retention bound (audit
+/// S-16.I1). Returns the number of files removed. Only `.json` records in
+/// the named category are candidates; anything else in the directory is
+/// left alone.
+pub fn prune_records(root: &Path, category: &str) -> Result<usize, String> {
+    prune_records_with(root, category, MAX_RETAINED_RECORDS_PER_CATEGORY)
+}
+
+/// [`prune_records`] with an explicit bound, so tests exercise the same code
+/// without creating thousands of files.
+pub fn prune_records_with(root: &Path, category: &str, bound: usize) -> Result<usize, String> {
+    let mut paths = record_paths(root, category)?;
+    if paths.len() <= bound {
+        return Ok(0);
+    }
+    paths.sort();
+    let excess = paths.len() - bound;
+    let mut removed = 0usize;
+    for path in paths.into_iter().take(excess) {
+        if fs::remove_file(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
+/// Explicit user cleanup (audit S-16.I1): remove every calibration record in
+/// both categories and report how many files were removed. Quarantined files
+/// are kept: they are the diagnostic evidence of earlier failures.
+pub fn clear_calibration_history(root: &Path) -> Result<usize, String> {
+    let mut removed = 0usize;
+    for category in ["anchors", "models"] {
+        for path in record_paths(root, category)? {
+            if fs::remove_file(&path).is_ok() {
+                removed += 1;
+            }
+        }
+    }
+    Ok(removed)
 }
 
 #[cfg(test)]
@@ -1239,12 +1378,17 @@ mod tests {
         ));
         assert!(persist_calibration_model(&root, &overlong).is_err());
         persist_calibration_model(&root, &valid).unwrap();
-        // A record tampered on disk fails the same validator at load.
+        // A record tampered on disk fails the same validator at load. Since
+        // audit S-16 the failure is quarantined and reported instead of
+        // failing the whole load: one bad file must not hide valid history.
         let path = record_paths(&root, "models").unwrap().pop().unwrap();
         let mut tampered = valid.clone();
         tampered.factor = f64::INFINITY;
         std::fs::write(&path, serde_json::to_vec_pretty(&tampered).unwrap()).unwrap();
-        assert!(load_calibration_models(&root, &key).is_err());
+        let loaded = load_calibration_models(&root, &key).unwrap();
+        assert!(loaded.records.is_empty());
+        assert_eq!(loaded.problems.len(), 1, "{:?}", loaded.problems);
+        assert!(loaded.problems[0].contains("quarantine"), "{:?}", loaded.problems);
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1385,8 +1529,12 @@ mod tests {
 
         persist_calibration_anchor(&root, &anchor).unwrap();
         persist_calibration_model(&root, &model).unwrap();
-        assert_eq!(load_calibration_anchors(&root, &key).unwrap(), vec![anchor]);
-        assert_eq!(load_calibration_models(&root, &key).unwrap(), vec![model]);
+        let loaded = load_calibration_anchors(&root, &key).unwrap();
+        assert_eq!(loaded.records, vec![anchor]);
+        assert!(loaded.problems.is_empty());
+        let loaded = load_calibration_models(&root, &key).unwrap();
+        assert_eq!(loaded.records, vec![model]);
+        assert!(loaded.problems.is_empty());
 
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -1722,5 +1870,115 @@ mod tests {
         }
         // Non-path values survive untouched.
         assert!(sanitized.windows(2).any(|pair| pair == ["--port", "8080"]));
+    }
+
+    #[test]
+    fn s16_mixed_valid_corrupt_and_oversized_records_still_load_with_valid_history() {
+        let root = std::env::temp_dir().join(format!(
+            "localmotive-s16-mixed-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let key = test_key('a');
+        let anchors = vec![
+            test_anchor(&key, "run-1", 10.0, 11.0, 10),
+            test_anchor(&key, "run-2", 20.0, 22.0, 20),
+            test_anchor(&key, "run-3", 30.0, 33.0, 30),
+        ];
+        let anchor = anchors[0].clone();
+        let model = build_calibration(&anchors, 50, 100).unwrap();
+        persist_calibration_anchor(&root, &anchor).unwrap();
+        persist_calibration_model(&root, &model).unwrap();
+
+        // Corrupt, oversized and schema-invalid records beside the valid ones.
+        std::fs::write(root.join("anchors").join("corrupt.json"), b"{not json").unwrap();
+        std::fs::write(
+            root.join("anchors").join("oversized.json"),
+            vec![b'x'; (MAX_CALIBRATION_RECORD_BYTES + 1) as usize],
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("models").join("wrong-shape.json"),
+            br#"{"compatibilityKey":"v2:","bad":true}"#,
+        )
+        .unwrap();
+
+        let anchors = load_calibration_anchors(&root, &key).unwrap();
+        assert_eq!(anchors.records.len(), 1, "the valid anchor must survive");
+        assert!(
+            anchors.problems.len() >= 2,
+            "each bad anchor must be reported: {:?}",
+            anchors.problems
+        );
+        let models = load_calibration_models(&root, &key).unwrap();
+        assert_eq!(models.records.len(), 1, "the valid model must survive");
+        assert!(!models.problems.is_empty());
+
+        // The bad bytes are preserved in the quarantine directory, not deleted.
+        let quarantined: Vec<String> = std::fs::read_dir(root.join("quarantine"))
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(quarantined.len() >= 3, "{quarantined:?}");
+        assert!(quarantined.iter().any(|name| name.contains("corrupt.json")));
+
+        // A second load no longer sees the bad files and reports no problems.
+        let anchors = load_calibration_anchors(&root, &key).unwrap();
+        assert!(anchors.problems.is_empty());
+
+        // Explicit cleanup removes the calibration records and keeps the
+        // quarantine evidence.
+        let removed = clear_calibration_history(&root).unwrap();
+        assert_eq!(removed, 2, "one anchor and one model record");
+        assert_eq!(
+            load_calibration_anchors(&root, &key).unwrap().records.len(),
+            0
+        );
+        assert_eq!(
+            load_calibration_models(&root, &key).unwrap().records.len(),
+            0
+        );
+        assert!(root.join("quarantine").exists());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn s16_retention_prunes_the_oldest_records_only() {
+        let root = std::env::temp_dir().join(format!(
+            "localmotive-s16-retention-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(root.join("anchors")).unwrap();
+        for index in 0..5 {
+            std::fs::write(root.join("anchors").join(format!("{index:05}.json")), b"{}").unwrap();
+        }
+        std::fs::write(root.join("anchors").join("notes.txt"), b"keep me").unwrap();
+        let removed = prune_records_with(&root, "anchors", 3).unwrap();
+        assert_eq!(removed, 2);
+        let remaining: Vec<String> = std::fs::read_dir(root.join("anchors"))
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(remaining.contains(&"00003.json".to_string()));
+        assert!(remaining.contains(&"00004.json".to_string()));
+        assert!(!remaining.contains(&"00000.json".to_string()));
+        assert!(
+            remaining.contains(&"notes.txt".to_string()),
+            "non-records survive"
+        );
+        // No-op below the bound.
+        assert_eq!(prune_records_with(&root, "anchors", 10).unwrap(), 0);
+        let _ = std::fs::remove_dir_all(root);
     }
 }

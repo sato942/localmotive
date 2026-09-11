@@ -2788,6 +2788,10 @@ fn apply_calibration_model(
 struct CalibrationRecords {
     anchors: Vec<calibration::CalibrationAnchor>,
     models: Vec<calibration::CalibrationModel>,
+    /// Bounded diagnostics from the load (audit S-16): quarantined corrupt or
+    /// invalid records are reported here while valid history keeps loading.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    problems: Vec<String>,
 }
 
 fn calibration_storage_root(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
@@ -2805,6 +2809,7 @@ fn store_calibration_anchor(
 ) -> Result<CalibrationRecords, String> {
     let root = calibration_storage_root(&app)?;
     calibration::persist_calibration_anchor(&root, &anchor)?;
+    calibration::prune_records(&root, "anchors")?;
     load_calibration_records(app, anchor.compatibility_key)
 }
 
@@ -2915,10 +2920,23 @@ fn load_calibration_records_for(
     root: &Path,
     compatibility_key: String,
 ) -> Result<CalibrationRecords, String> {
+    let anchors = calibration::load_calibration_anchors(root, &compatibility_key)?;
+    let models = calibration::load_calibration_models(root, &compatibility_key)?;
+    let mut problems = anchors.problems.clone();
+    problems.extend(models.problems);
+    problems.truncate(32);
     Ok(CalibrationRecords {
-        anchors: calibration::load_calibration_anchors(root, &compatibility_key)?,
-        models: calibration::load_calibration_models(root, &compatibility_key)?,
+        anchors: anchors.records,
+        models: models.records,
+        problems,
     })
+}
+
+/// Explicit cleanup of the local calibration history (audit S-16.I1).
+#[tauri::command]
+fn clear_calibration_history(app: tauri::AppHandle) -> Result<usize, String> {
+    let root = calibration_storage_root(&app)?;
+    calibration::clear_calibration_history(&root)
 }
 
 #[tauri::command]
@@ -2960,6 +2978,7 @@ fn store_calibration_model(
 ) -> Result<CalibrationRecords, String> {
     let root = calibration_storage_root(&app)?;
     calibration::persist_calibration_model(&root, &model)?;
+    calibration::prune_records(&root, "models")?;
     load_calibration_records(app, model.compatibility_key)
 }
 
@@ -2969,10 +2988,7 @@ fn load_calibration_records(
     compatibility_key: String,
 ) -> Result<CalibrationRecords, String> {
     let root = calibration_storage_root(&app)?;
-    Ok(CalibrationRecords {
-        anchors: calibration::load_calibration_anchors(&root, &compatibility_key)?,
-        models: calibration::load_calibration_models(&root, &compatibility_key)?,
-    })
+    load_calibration_records_for(&root, compatibility_key)
 }
 
 #[tauri::command]
@@ -4286,6 +4302,7 @@ pub fn run() {
             store_calibration_model,
             evaluate_calibration_model,
             load_calibration_records,
+            clear_calibration_history,
             import_external_evidence,
             review_external_evidence,
             build_share_export,

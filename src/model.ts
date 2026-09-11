@@ -316,6 +316,9 @@ export type CalibrationModel = {
 export type CalibrationRecords = {
   anchors: CalibrationAnchor[];
   models: CalibrationModel[];
+  /** Bounded load diagnostics (audit S-16): quarantined corrupt records are
+   * reported here while compatible history keeps loading. */
+  problems?: string[];
 };
 
 export type CalibratedEstimate = {

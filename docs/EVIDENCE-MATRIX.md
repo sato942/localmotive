@@ -61,3 +61,21 @@ executed.
   identity used for calibration is sanitized (`[model]`, `[draft-model]`,
   `[lora]`, `[configured]`) for every path-bearing flag, including the short
   `-md` draft form.
+
+## Local calibration history lifecycle (audit S-16)
+
+- **Storage**: one JSON record per file under `<app data>/calibration/anchors`
+  and `.../models`; each record is size-bounded (64 KiB) and the directory
+  enumeration refuses more than 10 000 records.
+- **Retention**: persisting prunes the oldest recognized records beyond 4 000
+  per category; only `.json` records in those directories are candidates, and
+  everything else is untouched. Pruned records are raw local history: exports
+  and share bundles that reference a measurement carry their own copy, so
+  retention never silently invalidates an exported artifact.
+- **Cleanup**: "Clear local history" in the evidence panel removes every
+  stored calibration record and reports the count; quarantined files are kept
+  because they are the diagnostic evidence of earlier failures.
+- **Corruption**: a corrupt, oversized, schema-invalid or unreadable record is
+  moved to `.../calibration/quarantine/<name>.corrupt-<stamp>` and reported as
+  a bounded load problem while the remaining compatible history keeps
+  loading; one bad file never hides the rest.

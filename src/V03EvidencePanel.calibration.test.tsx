@@ -275,4 +275,34 @@ describe("calibration anchors (MT-08)", () => {
     expect(rendered).toContain("Controlled greedy microbenchmark: one fixed prompt.");
     expect(rendered).toContain("excludes dedicated GPU memory");
   });
+
+  it("reports quarantined records and clears the history explicitly (S-16)", async () => {
+    const records = {
+      anchors: [anchorFixture("run-1", 50)],
+      models: [],
+      problems: ["C:/cal/anchors/corrupt.json: Could not parse calibration record; moved to quarantine"],
+    };
+    handlers.set("load_calibration_records", () => records);
+    handlers.set("clear_calibration_history", () => 3);
+
+    await runMeasuredBenchmark();
+    const rendered = container.textContent ?? "";
+    expect(rendered).toContain("could not be read");
+    expect(rendered).toContain("quarantined");
+    expect(rendered).toContain("the rest of the history loaded normally");
+
+    const button = [...container.querySelectorAll("button")].find((candidate) =>
+      (candidate.textContent ?? "").includes("Clear local history"),
+    );
+    expect(button, "the explicit cleanup action must exist").toBeTruthy();
+    await act(async () => {
+      button!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+    const call = invokeCalls.find((entry) => entry.command === "clear_calibration_history");
+    expect(call).toBeTruthy();
+    expect(container.textContent ?? "").toContain("Removed 3 stored calibration records");
+    const reloads = invokeCalls.filter((entry) => entry.command === "load_calibration_records");
+    expect(reloads.length).toBeGreaterThanOrEqual(2);
+  });
 });

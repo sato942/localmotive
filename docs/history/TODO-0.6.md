@@ -2396,18 +2396,18 @@ These packages preserve actionable recommendations outside the 72-item findings 
 
 **Make evidence history recoverable and bounded**
 
-**Status:** Not started · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
 **Audit trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities)  
 **Prerequisites:** [V06-MT-13](#v06-mt-13), [V06-MT-14](#v06-mt-14), [V06-FE-05](#v06-fe-05)
 
 **Implementation**
 
-- [ ] **V06-S-16.I1** — Define benchmark/calibration retention, indexing and quota behavior, including explicit user cleanup and retention of records needed by calibration or exports. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
-- [ ] **V06-S-16.I2** — Quarantine/report individual corrupt calibration records and continue loading valid compatible history; bound enumeration/parsing work rather than failing the complete load on the first bad file. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
+- [x] **V06-S-16.I1** — Define benchmark/calibration retention, indexing and quota behavior, including explicit user cleanup and retention of records needed by calibration or exports. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
+- [x] **V06-S-16.I2** — Quarantine/report individual corrupt calibration records and continue loading valid compatible history; bound enumeration/parsing work rather than failing the complete load on the first bad file. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
 
 **Verification**
 
-- [ ] **V06-S-16.V1** — Load mixed valid/corrupt/oversized records and a large history; verify compatible records remain available and retention does not silently invalidate referenced evidence. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
+- [x] **V06-S-16.V1** — Load mixed valid/corrupt/oversized records and a large history; verify compatible records remain available and retention does not silently invalidate referenced evidence. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
 
 **Complete when:** One bad history file cannot hide all valid history, and storage growth has a documented lifecycle.
 
@@ -3790,3 +3790,12 @@ Revalidated at the candidate source (`065248a1` + the G-07 test addition) on Win
 - Test-integrity notes (recorded, not hidden): the FE-08 prologue originally asserted on the transient notice string, which a concurrent port probe can overwrite once the scan promise gained one hop with the report shape — the prologue now asserts the durable consequence (the profile loads for the scanned model); the first PF2/PF3 mutation attempts were behaviour-preserving no-ops and were replaced with real mutations before counting them.
 - Mutations: PF1 (depth limit removed), PF2 (unreadable-directory diagnostic dropped), PF3 (both cancellation checks removed) each failed their guarding test and passed after restore.
 - Commands: `cargo fmt --check` PASS; clippy `-D warnings` 0 errors; `cargo test` 558 passed / 0 failed / 2 ignored (557 + the S-15 test); `npm run check` PASS (341.82 kB); Vitest 104; node tests 140; impeccable detector unchanged at the four pre-existing advisories.
+
+#### S-16 closure record — recoverable, bounded evidence history
+
+- I1: retention is `MAX_RETAINED_RECORDS_PER_CATEGORY` (4 000 per category) applied by `prune_records` at anchor and model persistence; `prune_records_with` exposes the bound for tests; only `.json` records in the category directories are candidates and non-record files are untouched. `clear_calibration_history` is the explicit user cleanup (a "Clear local history" action in the evidence panel reporting the removed count) and keeps quarantined files, which are the diagnostic evidence of earlier failures. `docs/EVIDENCE-MATRIX.md` documents storage, retention, cleanup and corruption lifecycle; exports carry their own copies of referenced measurements, so retention never silently invalidates an exported artifact.
+- I2: `load_calibration_anchors` / `load_calibration_models` return `LoadedRecords {records, problems}`; a corrupt, oversized, unreadable or schema-invalid record is moved to `calibration/quarantine/<name>.corrupt-<stamp>` (bytes preserved, never deleted) and reported as a bounded problem (32 max, then a suppression notice) while the compatible history keeps loading. `CalibrationRecords.problems` carries the diagnostics to the interface, which reports "N stored records could not be read and were quarantined; the rest of the history loaded normally."
+- V1: `s16_mixed_valid_corrupt_and_oversized_records_still_load_with_valid_history` (valid anchor+model beside a corrupt JSON, a 64 KiB+1 oversized file and a wrong-shape record: valid records survive, ≥2 problems reported, ≥3 files quarantined, a second load is clean, cleanup removes exactly the two valid records and keeps the quarantine) and `s16_retention_prunes_the_oldest_records_only` (5 records with bound 3 removes the two oldest, keeps `notes.txt`, no-op below the bound); component test "reports quarantined records and clears the history explicitly (S-16)" (quarantine message rendered; "Clear local history" reaches the backend, reports "Removed 3 stored calibration records", reloads history).
+- Acceptance update (recorded): `mt14_one_validator_rejects_bad_models_at_every_entry_point` asserted the OLD all-or-nothing load (`is_err()`); per S-16.I2 it now asserts the quarantine-and-continue contract (empty records + one quarantine problem). No other test encoded the old behaviour.
+- Mutations: PG1 (corrupt anchor fails the whole load again), PG2 (quarantine deletes the record) and PG3 (retention prunes the newest) each failed their guarding test and passed after restore.
+- Commands: `cargo fmt --check` PASS; clippy `-D warnings` 0 errors; `cargo test` 560 passed / 0 failed / 2 ignored (558 + the two S-16 tests); `npm run check` PASS (342.64 kB); Vitest 105; node tests 140.
