@@ -1,7 +1,7 @@
 # Localmotive 0.6 — audit remediation TODO
 
 **Target:** `0.6.0` stabilization release  
-**Status:** Planning complete; implementation in progress — Package 9 (secured local transport)  
+**Status:** Planning complete; implementation in progress — Package 10 (measurement identity, calibration and ranking)  
 **Source:** [localmotive-comprehensive-audit.md](./localmotive-comprehensive-audit.md)
 **Audited source SHA:** `e530371b056cd8e049c2246dbb151aa407bf359f`  
 **Release baseline reviewed by the audit:** `v0.5.0`, source `a4b7127f739f7420232d9b6f63da693d39128d0b`  
@@ -850,22 +850,22 @@ Each audit finding appears exactly once as a primary package. All statuses are *
 
 **Honor local TLS and API-key settings in all internal server clients**
 
-**Status:** Not started · **Priority:** Medium · **Owner:** Unassigned  
+**Status:** Implemented I1-I4, V1/V2 verified (commit `8c73679`); V3 packaged-runtime run pending · **Priority:** Medium · **Owner:** sato942  
 **Audit trace:** [Audit MT-06](./localmotive-comprehensive-audit.md#mt-06)  
 **Prerequisites:** None; can begin independently.
 **Source touchpoints:** [src-tauri/src/core.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/core.rs), [src-tauri/src/lib.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/lib.rs), [src-tauri/src/measurement.rs](https://github.com/sato942/localmotive/blob/e530371b056cd8e049c2246dbb151aa407bf359f/src-tauri/src/measurement.rs)
 
 **Implementation**
 
-- [ ] **V06-MT-06.I1** — Centralize a Rust-owned local HTTP client constructed from the validated launch profile, and use it consistently for health, tokenization, benchmark, and quality endpoints. **Trace:** [Audit MT-06](./localmotive-comprehensive-audit.md#mt-06).
-- [ ] **V06-MT-06.I2** — Support configured TLS with an explicit certificate-trust policy and API-key authentication read only by Rust; keep key contents out of frontend state, events, logs, and manifest arguments. **Trace:** [Audit MT-06](./localmotive-comprehensive-audit.md#mt-06).
-- [ ] **V06-MT-06.I3** — Add correct HTTP framing, bounded request/response sizes, and cancellation-aware whole-operation deadlines covering connection, writes, and reads. **Trace:** [Audit MT-06](./localmotive-comprehensive-audit.md#mt-06).
-- [ ] **V06-MT-06.I4** — Until a profile's secured transport is supported, reject that combination before launch with a precise recovery message instead of allowing a ten-minute plaintext health timeout. **Trace:** [Audit MT-06](./localmotive-comprehensive-audit.md#mt-06).
+- [x] **V06-MT-06.I1** — Centralize a Rust-owned local HTTP client constructed from the validated launch profile, and use it consistently for health, tokenization, benchmark, and quality endpoints. **Trace:** [Audit MT-06](./localmotive-comprehensive-audit.md#mt-06).
+- [x] **V06-MT-06.I2** — Support configured TLS with an explicit certificate-trust policy and API-key authentication read only by Rust; keep key contents out of frontend state, events, logs, and manifest arguments. **Trace:** [Audit MT-06](./localmotive-comprehensive-audit.md#mt-06).
+- [x] **V06-MT-06.I3** — Add correct HTTP framing, bounded request/response sizes, and cancellation-aware whole-operation deadlines covering connection, writes, and reads. **Trace:** [Audit MT-06](./localmotive-comprehensive-audit.md#mt-06).
+- [x] **V06-MT-06.I4** — Until a profile's secured transport is supported, reject that combination before launch with a precise recovery message instead of allowing a ten-minute plaintext health timeout. **Trace:** [Audit MT-06](./localmotive-comprehensive-audit.md#mt-06).
 
 **Verification**
 
-- [ ] **V06-MT-06.V1** — Test trusted local TLS, rejected invalid certificates, API-key-protected completion, and missing/wrong keys; assert secret canaries never appear in observable diagnostics. **Trace:** [Audit MT-06](./localmotive-comprehensive-audit.md#mt-06).
-- [ ] **V06-MT-06.V2** — Cover bracketed IPv6, chunked JSON, excessive response size, slow writes/reads, and cancellation during connection and response waits. **Trace:** [Audit MT-06](./localmotive-comprehensive-audit.md#mt-06).
+- [x] **V06-MT-06.V1** — Test trusted local TLS, rejected invalid certificates, API-key-protected completion, and missing/wrong keys; assert secret canaries never appear in observable diagnostics. **Trace:** [Audit MT-06](./localmotive-comprehensive-audit.md#mt-06).
+- [x] **V06-MT-06.V2** — Cover bracketed IPv6, chunked JSON, excessive response size, slow writes/reads, and cancellation during connection and response waits. **Trace:** [Audit MT-06](./localmotive-comprehensive-audit.md#mt-06).
 - [ ] **V06-MT-06.V3** — Run accepted TLS/key profiles against the packaged target runtime and record successful health, benchmark, and quality behavior. **Trace:** [Audit MT-06](./localmotive-comprehensive-audit.md#mt-06).
 
 **Complete when:** Every accepted security-supported profile works through the corresponding internal client, or fails explicitly before launching if its transport is unsupported. Certificate validation remains enabled and request bounds/deadlines apply to the whole operation rather than only response reads.
@@ -3298,3 +3298,13 @@ _Package 1 (RT-01, RT-02, RT-04, RT-07) implementation is complete at the unit/r
 - Status: Implemented I1-I5. Presentation scenarios live in jsdom component tests; `__reactFiber$`, `memoizedState`, hook-shape discovery and `queue.dispatch` are removed and gated; genuine IPC/install/tamper/health checks remain and are described separately; cancellation registers a `health-model-progress` listener and cancels after the first observed phase; release gates assert observable outcomes instead of private strings.
 - Regression before fix (mutation proof): mutations QD4 (fiber walk restored) and QD5 (fixed 250 ms trigger restored) failed their gates; QD6 (component tests removed) failed the environment gate.
 - Residual limits: V3 (fast/slow cancellation fixtures live) and V4 (live packaged run of the preserved checks) ride the next packaged verify with runtime assets.
+
+
+### V06-MT-06 — one Rust-owned local client for TLS, keys, bounds and deadlines (commit `8c73679`)
+
+- Status: Implemented I1-I4; V1/V2 fixture-verified; V3 packaged-runtime run pending.
+- Regression before fix: the health, tokenization, benchmark and quality paths each hand-wrote cleartext HTTP with no Authorization header; a TLS- or key-configured server could be reported unhealthy or fail every measurement with no diagnostic path.
+- Verification after fix: `src-tauri/src/local_client.rs` is the single client, built from the validated profile — the profile certificate is the explicit trust root (verification enabled), the API key is read only in Rust and redacted in Debug, request/response sizes are bounded, deadlines cover the whole operation, and cancellable calls observe the flag during connection and response waits. The startup `/health` probe and the `/props` effective-context probe use the same client; profile validation reads key/certificate files before launch and rejects unusable combinations precisely; managed TLS flags keep the hard capability rejection.
+- Regression tests: 12 `local_client` tests over real TLS and plain fixtures (trusted certificate accepted, untrusted rejected, bearer header asserted, missing/empty/multiline key files, chunked JSON, oversized response, slow-writer deadline, cancellation during the wait, IPv6 bracketing, Debug redaction) plus the `core` pre-launch and capability tests; `cargo test` 487 passed / 0 failed / 2 ignored; `npm run check` EXIT 0.
+- Mutation proofs: MC1 (Authorization header skipped), MC2 (profile certificate not trusted), MC3 (transport-file validation skipped) and MC4 (response size bound ignored) each failed the matching test.
+- Residual limits: V3 needs the packaged target-runtime run of an accepted TLS/key profile; the health stage's internal server stays plaintext by construction (it launches its own loopback server) but still routes through the centralized client.
