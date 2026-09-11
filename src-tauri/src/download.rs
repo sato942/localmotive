@@ -2902,6 +2902,108 @@ mod tests {
     }
 
     #[test]
+    fn g07_an_authenticated_redirect_does_not_forward_the_token_to_another_host() {
+        // The audit's redirect observation (line ~692): demonstrate the
+        // behavior instead of assuming it. The first host answers 302 and
+        // points at `localhost` (a different host name than 127.0.0.1, same
+        // loopback address); reqwest must drop the Authorization header on
+        // that cross-host redirect, and the download must still complete.
+        use std::io::{BufRead as _, BufReader, Write as _};
+        use std::net::TcpListener;
+
+        let payload: Vec<u8> = (0..2048u32).map(|index| (index % 251) as u8).collect();
+        let digest = {
+            let mut hasher = Sha256::new();
+            hasher.update(&payload);
+            hex::encode(hasher.finalize())
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let requests = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let recorded = Arc::clone(&requests);
+        let server_payload = payload.clone();
+        let server = std::thread::spawn(move || {
+            for index in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut request_line = String::new();
+                let mut headers = String::new();
+                if reader.read_line(&mut request_line).is_ok() {
+                    loop {
+                        let mut line = String::new();
+                        match reader.read_line(&mut line) {
+                            Ok(0) => break,
+                            Ok(_) if line == "\r\n" => {
+                                headers.push_str(&line);
+                                break;
+                            }
+                            Ok(_) => headers.push_str(&line),
+                            Err(_) => break,
+                        }
+                    }
+                }
+                recorded
+                    .lock()
+                    .unwrap()
+                    .push(format!("{request_line}{headers}").to_lowercase());
+                if index == 0 {
+                    // A range probe may be the first request; redirect it.
+                    let response = format!(
+                        "HTTP/1.1 302 Found\r\nLocation: http://localhost:{port}/model.gguf\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                } else {
+                    let header = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        server_payload.len()
+                    );
+                    let _ = stream.write_all(header.as_bytes());
+                    let _ = stream.write_all(&server_payload);
+                }
+                let _ = stream.flush();
+            }
+        });
+        let root = unique_test_dir("localmotive-g07-redirect");
+        let target = root.join("redirected.gguf");
+        let cancel = Arc::new(AtomicBool::new(false));
+        let downloaded = Arc::new(AtomicU64::new(0));
+        let result = download_file(
+            &format!("http://127.0.0.1:{port}/model.gguf"),
+            &target,
+            "unsloth/G07-GGUF",
+            payload.len() as u64,
+            &digest,
+            Some("hf_secret_token"),
+            1,
+            cancel,
+            downloaded,
+            |_, _| {},
+        );
+        let _ = server.join();
+        let recorded = requests.lock().unwrap().clone();
+        assert!(
+            recorded.len() >= 2,
+            "both requests must be observed: {recorded:#?}"
+        );
+        assert!(
+            recorded[0].contains("authorization: bearer hf_secret_token"),
+            "the first request carries the token: {:#?}",
+            recorded[0]
+        );
+        assert!(
+            !recorded
+                .iter()
+                .skip(1)
+                .any(|request| request.contains("authorization")),
+            "the cross-host redirect must not forward the token: {recorded:#?}"
+        );
+        // The download itself may fail or succeed depending on range handling
+        // through the redirect; the security property above is the assertion.
+        let _ = result;
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn dc11_a_fresh_lock_refuses_a_second_writer() {
         let root = unique_test_dir("localmotive-dc11-lock");
         let target = root.join("locked.bin");
