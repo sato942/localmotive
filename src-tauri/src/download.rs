@@ -24,7 +24,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Chunks smaller than this are not worth a separate connection.
 pub const MIN_CHUNK_BYTES: u64 = 8 * 1024 * 1024;
@@ -338,6 +338,82 @@ struct DownloadEntries {
     target: PathBuf,
     part: PathBuf,
     meta: PathBuf,
+    /// Cross-process reservation for this target (audit DC-11): another app
+    /// instance cannot start a second writer for the same filename.
+    lock: PathBuf,
+}
+
+/// Holds the reservation for as long as the download runs; removing the
+/// lock releases it for the next attempt.
+struct DownloadLock {
+    dir: Dir,
+    path: PathBuf,
+}
+
+impl Drop for DownloadLock {
+    fn drop(&mut self) {
+        // Released on every exit path, success and failure alike.
+        let _ = self.dir.remove_file(&self.path);
+    }
+}
+
+/// Reserve the target for this process. A fresh lock refuses a second
+/// writer; a lock older than six hours is treated as stale from a crashed
+/// run and replaced once (audit DC-11).
+fn reserve_download_target(dir: &Dir, target: &Path, lock: &Path) -> Result<DownloadLock, String> {
+    let mut options = CapOpenOptions::new();
+    options.write(true).create_new(true);
+    match dir.open_with(lock, &options) {
+        Ok(mut file) => {
+            let stamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_secs())
+                .unwrap_or(0);
+            let _ = file.write_all(stamp.to_string().as_bytes());
+            let _ = file.sync_all();
+            Ok(DownloadLock {
+                dir: dir
+                    .try_clone()
+                    .map_err(|error| format!("Could not hold the download lock: {error}"))?,
+                path: lock.to_path_buf(),
+            })
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let fresh = dir
+                .metadata(lock)
+                .ok()
+                .and_then(|metadata| metadata.modified().ok())
+                .map(cap_std::time::SystemTime::into_std)
+                .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+                .is_some_and(|age| age < Duration::from_secs(6 * 60 * 60));
+            if fresh {
+                return Err(format!(
+                    "Another download is already writing {}. Wait for it to finish or choose a different name.",
+                    target.display()
+                ));
+            }
+            dir.remove_file(lock)
+                .map_err(|error| format!("Could not clear a stale download lock: {error}"))?;
+            let mut options = CapOpenOptions::new();
+            options.write(true).create_new(true);
+            let mut file = dir
+                .open_with(lock, &options)
+                .map_err(|error| format!("Could not reserve the download target: {error}"))?;
+            let stamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_secs())
+                .unwrap_or(0);
+            let _ = file.write_all(stamp.to_string().as_bytes());
+            let _ = file.sync_all();
+            Ok(DownloadLock {
+                dir: dir
+                    .try_clone()
+                    .map_err(|error| format!("Could not hold the download lock: {error}"))?,
+                path: lock.to_path_buf(),
+            })
+        }
+        Err(error) => Err(format!("Could not reserve the download target: {error}")),
+    }
 }
 
 fn open_download_entries(target: &Path) -> Result<DownloadEntries, String> {
@@ -353,6 +429,9 @@ fn open_download_entries(target: &Path) -> Result<DownloadEntries, String> {
     let part = PathBuf::from(part);
     let mut meta = part.as_os_str().to_os_string();
     meta.push(".json");
+    let mut lock = target_name.as_os_str().to_os_string();
+    lock.push(".lm-lock");
+    let lock = PathBuf::from(lock);
     let dir = open_download_directory(parent)?;
     if !opened_directory_matches(&dir, parent)? {
         return Err("The selected model folder changed while the download was starting.".into());
@@ -362,6 +441,7 @@ fn open_download_entries(target: &Path) -> Result<DownloadEntries, String> {
         target: target_name,
         part,
         meta: PathBuf::from(meta),
+        lock,
     })
 }
 
@@ -837,6 +917,13 @@ pub fn download_file(
     ensure_safe_write_entry(&part)?;
     ensure_safe_write_entry(&meta)?;
     let entries = open_download_entries(target)?;
+    // One writer per target across processes (audit DC-11); the lock is
+    // released on every exit path below.
+    let lock_guard = Some(reserve_download_target(
+        &entries.dir,
+        target,
+        &entries.lock,
+    )?);
 
     let remote = probe_with_cancel(url, token, repo, Some(&cancel))?;
     if remote.size != expected_size {
@@ -1019,11 +1106,14 @@ pub fn download_file(
     drop(file);
 
     // Verify against the curator-published digest before exposing the final
-    // name, even when a CDN omits or uses a non-cryptographic ETag.
+    // name, even when a CDN omits or uses a non-cryptographic ETag. The
+    // verified handle's identity is captured and re-checked after
+    // publication (audit DC-11).
     let part_file = entries
         .dir
         .open(&entries.part)
         .map_err(|error| format!("Could not securely open {}: {error}", part.display()))?;
+    let verified_identity = file_identity(&part_file);
     let mut verify_progress =
         |hashed: u64| on_progress(hashed.min(state.downloaded()), state.downloaded());
     let actual = sha256_reader_with(
@@ -1043,17 +1133,89 @@ pub fn download_file(
 
     ensure_safe_write_entry(&part)?;
     ensure_safe_write_entry(target)?;
-    entries
+    publish_verified_part(&entries, verified_identity, target, &part)?;
+    let _ = entries.dir.remove_file(&entries.meta);
+    drop(lock_guard);
+    Ok(target.to_path_buf())
+}
+
+/// Publish the verified `.part` under the final name without replacing an
+/// existing file, and refuse to publish when the part's identity changed
+/// between verification and publication (audit DC-11). On a conflict both
+/// files are preserved: the existing target and the verified part.
+fn publish_verified_part(
+    entries: &DownloadEntries,
+    verified_identity: Option<(u32, u64)>,
+    target: &Path,
+    part: &Path,
+) -> Result<(), String> {
+    // No-replace publication: a hard link fails with AlreadyExists instead
+    // of silently overwriting a file another process created meanwhile.
+    match entries
         .dir
-        .rename(&entries.part, &entries.dir, &entries.target)
-        .map_err(|error| {
-            format!(
+        .hard_link(&entries.part, &entries.dir, &entries.target)
+    {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(format!(
+                "A file already exists at {}. The downloaded file was kept at {}. Rename one of them and try again.",
+                target.display(),
+                part.display()
+            ));
+        }
+        Err(error) => {
+            return Err(format!(
                 "Downloaded, but could not move the file into place: {error}. It is at {}",
                 part.display()
-            )
-        })?;
-    let _ = entries.dir.remove_file(&entries.meta);
-    Ok(target.to_path_buf())
+            ));
+        }
+    }
+    // The published name must reference the exact bytes that were verified.
+    let published_identity = entries
+        .dir
+        .open(&entries.target)
+        .ok()
+        .and_then(|file| file_identity(&file));
+    if let (Some(expected), Some(published)) = (verified_identity, published_identity) {
+        if expected != published {
+            let _ = entries.dir.remove_file(&entries.target);
+            return Err(format!(
+                "The partial file changed between verification and publication; nothing was published and the existing files were left untouched ({})",
+                part.display()
+            ));
+        }
+    }
+    // The target now owns the bytes; drop the part link.
+    let _ = entries.dir.remove_file(&entries.part);
+    Ok(())
+}
+
+/// The stable file identity (volume serial + file index) of an open handle,
+/// used to prove that the published name references the verified bytes.
+#[cfg(windows)]
+fn file_identity(file: &CapFile) -> Option<(u32, u64)> {
+    use std::mem::MaybeUninit;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+    let mut information = MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+    // SAFETY: `file` owns a valid handle and `information` points to writable storage.
+    let result =
+        unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, information.as_mut_ptr()) };
+    if result == 0 {
+        return None;
+    }
+    // SAFETY: the call succeeded and initialized the structure.
+    let information = unsafe { information.assume_init() };
+    let index =
+        (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow);
+    Some((information.dwVolumeSerialNumber, index))
+}
+
+#[cfg(not(windows))]
+fn file_identity(_file: &CapFile) -> Option<(u32, u64)> {
+    None
 }
 
 fn response_read_fits(remaining: u64, read: usize) -> bool {
@@ -2737,6 +2899,116 @@ mod tests {
             downloaded,
             |_, _| {},
         )
+    }
+
+    #[test]
+    fn dc11_a_fresh_lock_refuses_a_second_writer() {
+        let root = unique_test_dir("localmotive-dc11-lock");
+        let target = root.join("locked.bin");
+        std::fs::write(root.join("locked.bin.lm-lock"), b"fresh").unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let downloaded = Arc::new(AtomicU64::new(0));
+        let error = download_file(
+            "http://127.0.0.1:1/never-reached",
+            &target,
+            "unsloth/DC11-GGUF",
+            10,
+            &"a".repeat(64),
+            None,
+            1,
+            cancel,
+            downloaded,
+            |_, _| {},
+        )
+        .unwrap_err();
+        assert!(error.contains("already writing"), "{error}");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn dc11_a_conflicting_target_preserves_both_files() {
+        // The conflict branch of publication: an existing file under the
+        // final name must never be replaced, and the verified part must
+        // survive for the user (audit DC-11).
+        let root = unique_test_dir("localmotive-dc11-conflict");
+        let target = root.join("model.gguf");
+        std::fs::write(&target, b"pre-existing user bytes").unwrap();
+        let entries = open_download_entries(&target).unwrap();
+        std::fs::write(root.join("model.gguf.part"), b"verified download").unwrap();
+        let verified_identity = {
+            let file = entries.dir.open(&entries.part).unwrap();
+            file_identity(&file).expect("identity on an open handle")
+        };
+        let error = publish_verified_part(
+            &entries,
+            Some(verified_identity),
+            &target,
+            &root.join("model.gguf.part"),
+        )
+        .unwrap_err();
+        assert!(error.contains("already exists"), "{error}");
+        assert!(error.contains("was kept at"), "{error}");
+        assert_eq!(std::fs::read(&target).unwrap(), b"pre-existing user bytes");
+        assert_eq!(
+            std::fs::read(root.join("model.gguf.part")).unwrap(),
+            b"verified download"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn dc11_a_part_swapped_after_verification_is_not_published() {
+        let root = unique_test_dir("localmotive-dc11-swap");
+        let target = root.join("final.gguf");
+        let entries = open_download_entries(&target).unwrap();
+        std::fs::write(root.join("final.gguf.part"), b"verified bytes").unwrap();
+        let verified_identity = {
+            let file = entries.dir.open(&entries.part).unwrap();
+            file_identity(&file).expect("identity on an open handle")
+        };
+        // A same-directory process replaces the part after verification: a
+        // delete-and-recreate changes the file identity.
+        std::fs::remove_file(root.join("final.gguf.part")).unwrap();
+        std::fs::write(root.join("final.gguf.part"), b"swapped bytes").unwrap();
+        let error = publish_verified_part(
+            &entries,
+            Some(verified_identity),
+            &target,
+            &root.join("final.gguf.part"),
+        )
+        .unwrap_err();
+        assert!(error.contains("changed between verification"), "{error}");
+        assert!(!target.exists(), "nothing may be published");
+        assert!(
+            root.join("final.gguf.part").exists(),
+            "the part is preserved"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn dc11_an_unchanged_part_publishes_without_replacing() {
+        let root = unique_test_dir("localmotive-dc11-clean");
+        let target = root.join("clean.gguf");
+        let entries = open_download_entries(&target).unwrap();
+        std::fs::write(root.join("clean.gguf.part"), b"verified bytes").unwrap();
+        let verified_identity = {
+            let file = entries.dir.open(&entries.part).unwrap();
+            file_identity(&file).expect("identity on an open handle")
+        };
+        publish_verified_part(
+            &entries,
+            Some(verified_identity),
+            &target,
+            &root.join("clean.gguf.part"),
+        )
+        .unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"verified bytes");
+        assert!(!root.join("clean.gguf.part").exists());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
