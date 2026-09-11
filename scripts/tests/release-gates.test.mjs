@@ -36,7 +36,7 @@ async function versionFixture(overrides = {}) {
 /// App.tsx alone silently stop matching. Splits find real component bodies
 /// before any test-text mention because the screens come first.
 async function frontendSources() {
-  const screens = ["AboutScreen.tsx", "RuntimeScreen.tsx"];
+  const screens = ["AboutScreen.tsx", "RuntimeScreen.tsx", "TuneScreen.tsx"];
   const parts = [];
   for (const name of screens) {
     try {
