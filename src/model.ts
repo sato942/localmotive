@@ -537,6 +537,51 @@ export function formatExtraArgs(tokens: readonly string[]): string {
 /// Parse persisted JSON without throwing (FE-09). Malformed text returns
 /// `undefined` so a caller can quarantine the record instead of crashing
 /// the render tree.
+/// Validate a persisted tuning report (FE-09). A record that is not the
+/// expected shape returns `undefined` so the caller can quarantine it
+/// instead of letting `.reduce`/`.map` throw during render.
+export function normalizeTuningReport(stored: unknown): TuningReport | undefined {
+  if (typeof stored !== "object" || stored === null) return undefined;
+  const report = stored as Record<string, unknown>;
+  if (!Array.isArray(report.trials)) return undefined;
+  const numberOrNull = (value: unknown): number | null =>
+    typeof value === "number" && Number.isFinite(value) ? value : null;
+  const stringOrNull = (value: unknown): string | null => (typeof value === "string" ? value : null);
+  const trials: TuningTrial[] = [];
+  for (const candidate of report.trials) {
+    if (typeof candidate !== "object" || candidate === null) return undefined;
+    const trial = candidate as Record<string, unknown>;
+    const changes =
+      typeof trial.changes === "object" && trial.changes !== null
+        ? (trial.changes as Record<string, unknown>)
+        : {};
+    trials.push({
+      index: typeof trial.index === "number" ? trial.index : trials.length,
+      changes,
+      rationale: typeof trial.rationale === "string" ? trial.rationale : "",
+      meanTps: numberOrNull(trial.meanTps),
+      medianTps: numberOrNull(trial.medianTps),
+      error: stringOrNull(trial.error),
+      command: typeof trial.command === "string" ? trial.command : "",
+      effectiveContext: numberOrNull(trial.effectiveContext),
+      stdDev: numberOrNull(trial.stdDev),
+    });
+  }
+  if (report.bestIndex !== null && typeof report.bestIndex !== "number") return undefined;
+  if (typeof report.bestProfile !== "object" || report.bestProfile === null) return undefined;
+  return {
+    baselineTps: numberOrNull(report.baselineTps),
+    bestIndex: numberOrNull(report.bestIndex),
+    bestTps: numberOrNull(report.bestTps),
+    bestProfile: report.bestProfile as TuningReport["bestProfile"],
+    trials,
+    stoppedReason: typeof report.stoppedReason === "string" ? report.stoppedReason : "",
+    objective: typeof report.objective === "string" ? report.objective : undefined,
+    requiredEffectiveContext: numberOrNull(report.requiredEffectiveContext) ?? undefined,
+    finalVerification: report.finalVerification as TuningReport["finalVerification"],
+  };
+}
+
 export function safeJsonParse<T>(raw: string): T | undefined {
   try {
     return JSON.parse(raw) as T;
@@ -1592,7 +1637,18 @@ export function normalizeProfile(
           ? "on"
           : "off"
         : merged.flashAttention,
-    extraArgs: (merged.extraArgs ?? []).filter((arg) => arg !== "--jinja"),
+    // FE-09: a corrupt persisted record must not reach `.filter` as a
+    // string; salvage what can be parsed and fall back to no arguments.
+    extraArgs: (() => {
+      const raw = merged.extraArgs as unknown;
+      if (Array.isArray(raw)) {
+        return raw.filter((arg): arg is string => typeof arg === "string" && arg !== "--jinja");
+      }
+      if (typeof raw === "string") {
+        return parseExtraArgs(raw).filter((arg) => arg !== "--jinja");
+      }
+      return [];
+    })(),
   };
 }
 

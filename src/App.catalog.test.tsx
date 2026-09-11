@@ -63,6 +63,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({ open: () => Promise.resolve(null) 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: () => Promise.resolve() }));
 
 import App from "./App";
+import { ErrorBoundary } from "./ErrorBoundary";
 
 const file = (filename: string) => ({
   filename,
@@ -487,5 +488,100 @@ describe("Raw extra arguments field (audit FE-08)", () => {
       input.dispatchEvent(new FocusEvent("blur", { bubbles: true }));
     });
     expect(input.value).toBe("--flash-attn --ctx-size 4096");
+  });
+});
+
+describe("corrupt persisted records (audit FE-09)", () => {
+  it("quarantines an unreadable profile instead of crashing the render", async () => {
+    localStorage.setItem("localmotive:profile:fixture/model", "{not json at all");
+    localStorage.setItem("localmotive:tuning:fixture/model", "[]");
+    await mount();
+    handlers.set("scan_models", () => [
+      {
+        id: "fixture/model",
+        name: "fixture",
+        directory: "C:/models/fixture",
+        firstShard: "C:/models/fixture/model-Q4_K_M.gguf",
+        sizeBytes: 4_000_000_000,
+        shardCount: 1,
+        expectedShards: 1,
+        complete: true,
+        quant: "Q4_K_M",
+        shards: [],
+        companions: [],
+      },
+    ]);
+    const navButton = (label: string) =>
+      [...container.querySelectorAll("button")].find(
+        (button) => (button.textContent ?? "").trim() === label,
+      );
+    const click = async (target: Element | undefined, why: string) => {
+      expect(target, why).toBeTruthy();
+      await act(async () => {
+        target!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      await settle();
+    };
+    await click(navButton("Inventory"), "the Inventory navigation must exist");
+    const rootInput = container.querySelector('input[aria-label="Model root"]') as HTMLInputElement;
+    await act(async () => {
+      const proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!;
+      proto.set!.call(rootInput, "C:/models/fixture-root");
+      rootInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(
+      [...container.querySelectorAll("button")].find((button) =>
+        (button.textContent ?? "").includes("Rescan"),
+      ),
+      "the Rescan action must exist",
+    );
+    for (let attempt = 0; attempt < 10 && !text().includes("fixture"); attempt += 1) {
+      await settle();
+    }
+    await click(navButton("Profile"), "the Profile navigation must exist");
+    // The window still renders, the bad records are quarantined, and the
+    // user is told what happened.
+    expect(text()).toContain("Raw extra arguments");
+    const quarantined = Object.keys(localStorage).filter((key) =>
+      key.startsWith("localmotive:quarantine:profile:fixture/model"),
+    );
+    expect(quarantined, "the unreadable profile must be quarantined").toHaveLength(1);
+    expect(localStorage.getItem("localmotive:profile:fixture/model")).toBeNull();
+    expect(text().toLowerCase()).toContain("quarantine");
+  });
+});
+
+describe("ErrorBoundary (audit FE-09)", () => {
+  it("shows a recovery screen and clears application state", async () => {
+    localStorage.setItem("localmotive:model-root", "C:/models");
+    localStorage.setItem("localmotive:quarantine:profile:x:1", "keep me");
+    const boundaryContainer = document.createElement("div");
+    document.body.appendChild(boundaryContainer);
+    const boundaryRoot = createRoot(boundaryContainer);
+    const Boom = () => {
+      throw new Error("synthetic render failure");
+    };
+    await act(async () => {
+      boundaryRoot.render(
+        <ErrorBoundary>
+          <Boom />
+        </ErrorBoundary>,
+      );
+    });
+    expect(boundaryContainer.textContent).toContain("display error");
+    expect(boundaryContainer.textContent).toContain("synthetic render failure");
+    const reset = [...boundaryContainer.querySelectorAll("button")].find((button) =>
+      (button.textContent ?? "").includes("Reset saved state"),
+    );
+    expect(reset, "the reset action must be offered").toBeTruthy();
+    await act(async () => {
+      reset!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(localStorage.getItem("localmotive:model-root")).toBeNull();
+    expect(localStorage.getItem("localmotive:quarantine:profile:x:1")).toBe("keep me");
+    await act(async () => {
+      boundaryRoot.unmount();
+    });
+    boundaryContainer.remove();
   });
 });

@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import * as modelModule from "./model";
 import {
   formatExtraArgs,
+  normalizeProfile,
+  normalizeTuningReport,
   parseExtraArgs,
+  safeJsonParse,
   artifactReadyForLaunch,
   calibrationState,
   catalogRevision,
@@ -27,7 +30,6 @@ import {
   modelHiddenByFitRule,
   retainOrDisposeListener,
   etaLabel,
-  normalizeProfile,
   originLabel,
   qualityPassRate,
   rateLabel,
@@ -924,5 +926,45 @@ describe("parseExtraArgs (FE-08)", () => {
     const formatted = formatExtraArgs(tokens);
     expect(formatExtraArgs(parseExtraArgs(formatted))).toBe(formatted);
     expect(parseExtraArgs(formatted)).toEqual(tokens);
+  });
+});
+
+describe("persisted record validation (FE-09)", () => {
+  it("salvages extraArgs from a corrupt profile record instead of crashing", () => {
+    const fromString = normalizeProfile({ extraArgs: "--flash-attn --ctx-size 4096" as never }, model, "C:/llama/llama-server.exe");
+    expect(fromString.extraArgs).toEqual(["--flash-attn", "--ctx-size", "4096"]);
+    const fromMixed = normalizeProfile({ extraArgs: ["--flash-attn", 42, "--jinja", null] as never }, model, "");
+    expect(fromMixed.extraArgs).toEqual(["--flash-attn"]);
+    const fromJunk = normalizeProfile({ extraArgs: { nope: true } as never }, model, "");
+    expect(fromJunk.extraArgs).toEqual([]);
+  });
+
+  it("rejects tuning records that do not match the expected shape", () => {
+    expect(normalizeTuningReport(null)).toBeUndefined();
+    expect(normalizeTuningReport("text")).toBeUndefined();
+    expect(normalizeTuningReport({})).toBeUndefined();
+    expect(normalizeTuningReport({ trials: "not-an-array" })).toBeUndefined();
+    expect(normalizeTuningReport({ trials: [null] })).toBeUndefined();
+    // A valid report keeps its numbers and coerces the rest deterministically.
+    const report = normalizeTuningReport({
+      baselineTps: "fast",
+      bestIndex: 1,
+      bestTps: 42.5,
+      bestProfile: { name: "p" },
+      trials: [
+        { index: 0, changes: {}, rationale: "r", meanTps: 10, medianTps: 9.5, error: null, command: "cmd" },
+        { index: 1, changes: {}, rationale: "r2", meanTps: 20, medianTps: 19, error: "boom", command: "cmd2" },
+      ],
+      stoppedReason: "done",
+    });
+    expect(report?.baselineTps).toBeNull();
+    expect(report?.bestTps).toBe(42.5);
+    expect(report?.trials).toHaveLength(2);
+    expect(report?.trials[1].error).toBe("boom");
+  });
+
+  it("parses JSON without throwing", () => {
+    expect(safeJsonParse("{not json")).toBeUndefined();
+    expect(safeJsonParse('{"ok":1}')).toEqual({ ok: 1 });
   });
 });

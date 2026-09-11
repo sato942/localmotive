@@ -23,7 +23,11 @@ const HISTORICAL_FILES = new Set([
 ]);
 
 const MIGRATION_LINES = new Map([
-  ["src/App.tsx", [["localStorage.getItem(`", LEGACY_NAMES[1], ":${key}`)"].join("")]],
+  ["src/App.tsx", [
+    ["localStorage.getItem(`", LEGACY_NAMES[1], ":${key}`)"].join(""),
+    ["localStorage.removeItem(`", LEGACY_NAMES[1], ":${key}`)"].join(""),
+  ]],
+  ["src/ErrorBoundary.tsx", [`key.startsWith("${LEGACY_NAMES[1]}:")`]],
   ["src-tauri/src/catalog.rs", ["LEGACY_HF_KEYRING_SERVICE", `${LEGACY_NAMES[0]} HF`]],
   ["src-tauri/src/cloud.rs", ["LEGACY_KEYRING_SERVICE", LEGACY_NAMES[0]]],
   ["src-tauri/src/core.rs", [`base.join(\"${LEGACY_NAMES[0]}\")`]],

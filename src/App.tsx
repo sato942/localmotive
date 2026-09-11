@@ -61,6 +61,8 @@ import {
   managedHealthRequest,
   managedHealthOutcome,
   normalizeProfile,
+  normalizeTuningReport,
+  safeJsonParse,
   originLabel,
   rateLabel,
   retainOrDisposeListener,
@@ -117,6 +119,18 @@ const readRecord = (key: string): string | null => {
     return null;
   }
 };
+/// Move a record that cannot be parsed or validated out of the way
+/// (audit FE-09): the raw text is kept under a quarantine key, the live
+/// key is cleared, and the caller shows a notice instead of crashing.
+function quarantineRecord(key: string, raw: string) {
+  try {
+    localStorage.setItem(`localmotive:quarantine:${key}:${Date.now()}`, raw);
+    localStorage.removeItem(`localmotive:${key}`);
+    localStorage.removeItem(`gguf-pilot:${key}`);
+  } catch {
+    // Storage may be unavailable; the caller still falls back safely.
+  }
+}
 
 const readSetting = (key: string): string => readRecord(key) ?? "";
 
@@ -928,8 +942,15 @@ function App() {
     // A new selection invalidates any pending preview for the old profile.
     previewSeq.current += 1;
     const stored = readRecord(`profile:${model.id}`);
-    const next = stored
-      ? normalizeProfile(JSON.parse(stored), model, runtimePath)
+    const parsedStored = stored === null ? undefined : safeJsonParse<Partial<LaunchProfile>>(stored);
+    if (stored !== null && parsedStored === undefined) {
+      quarantineRecord(`profile:${model.id}`, stored);
+      setNotice(
+        `The saved profile for ${model.name} was unreadable and was moved to quarantine; recommended defaults were loaded.`,
+      );
+    }
+    const next = parsedStored !== undefined
+      ? normalizeProfile(parsedStored, model, runtimePath)
       : suggestedProfile(model, runtimePath);
     setProfile(next);
     setSelectedId(model.id);
@@ -1133,7 +1154,14 @@ function App() {
     loadGguf(selected);
     if (selected) {
       const stored = readRecord(`tuning:${selected.id}`);
-      setTuneReport(stored ? (JSON.parse(stored) as TuningReport) : null);
+      const parsed = stored === null ? undefined : normalizeTuningReport(safeJsonParse(stored));
+      if (stored !== null && parsed === undefined) {
+        quarantineRecord(`tuning:${selected.id}`, stored);
+        setNotice(
+          `The saved tuning report for ${selected.name} did not match the expected shape and was moved to quarantine.`,
+        );
+      }
+      setTuneReport(parsed ?? null);
       setTuneLive([]);
     }
   }, [selected?.id]);
