@@ -1922,6 +1922,27 @@ export function modelHiddenByFitRule(
  * microbenchmark, not a workload-class guarantee. Mirrors the Rust constant
  * carried by exported manifests.
  */
+/**
+ * Keep the retained draft companion consistent with the selected speculative
+ * method (audit S-13.I2). Companion discovery is a filename/quantised-size
+ * heuristic, so a path retained across a method change could silently point
+ * at an incompatible file; any method that does not use a draft model clears
+ * it, and the caller reports that the path was cleared.
+ */
+export function reconcileDraftCompanion(
+  specType: string,
+  draftModelPath: string | null,
+): { draftModelPath: string | null; cleared: boolean } {
+  const method = (specType ?? "").trim().toLowerCase();
+  if (method.startsWith("draft-")) {
+    return { draftModelPath, cleared: false };
+  }
+  const retained = (draftModelPath ?? "").trim().length > 0;
+  return retained
+    ? { draftModelPath: null, cleared: true }
+    : { draftModelPath, cleared: false };
+}
+
 export const WORKLOAD_SCOPE_NOTE =
   "Controlled greedy microbenchmark: one fixed prompt, temperature 0, one request at a time on a warm server. It does not represent every workload class; speculative-decoding gains measured here do not generalize to other prompts.";
 

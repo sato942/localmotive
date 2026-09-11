@@ -41,6 +41,7 @@ import {
   bytesLabel,
   catalogBuildFit,
   catalogRevision,
+  reconcileDraftCompanion,
   conflictingCapacityMetrics,
   contextChoices,
   DEFAULT_FIT_PER_MILLE,
@@ -2088,7 +2089,13 @@ function App() {
                 <fieldset>
                   <legend>Acceleration & model features</legend>
                   <label className="wide">Speculative method
-                    <select value={profile.specType} onChange={(e) => setProfile({ ...profile, specType: e.target.value })}>
+                    <select value={profile.specType} onChange={(e) => {
+                      const reconciled = reconcileDraftCompanion(e.target.value, profile.draftModel ?? null);
+                      setProfile({ ...profile, specType: e.target.value, draftModel: reconciled.draftModelPath });
+                      if (reconciled.cleared) {
+                        setNotice(`${e.target.value} does not use a draft model; the retained companion path was cleared.`);
+                      }
+                    }}>
                       {(runtime?.specTypes ?? ["none", "draft-mtp", "draft-dspark", "ngram-mod", "ngram-simple", "ngram-map-k", "ngram-map-k4v"]).map((type) => <option key={type}>{type}</option>)}
                       {!runtime && <small className="field-help">Not inspected — this list is provisional until the selected runtime is inspected.</small>}
                     </select>

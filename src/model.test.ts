@@ -12,6 +12,7 @@ import {
   calibrationState,
   catalogBuildFit,
   describeSamples,
+  reconcileDraftCompanion,
   catalogRevision,
   conflictingCapacityMetrics,
   defaultWorkload,
@@ -1064,5 +1065,29 @@ describe("describeSamples", () => {
     expect(describeSamples(undefined)).toBe("sample count unknown");
     expect(describeSamples({ count: 0 })).toBe("sample count unknown");
     expect(describeSamples({ count: Number.NaN })).toBe("sample count unknown");
+  });
+});
+
+describe("reconcileDraftCompanion", () => {
+  it("keeps a retained draft only while the method uses one", () => {
+    expect(reconcileDraftCompanion("draft-dspark", "C:/models/dspark.gguf")).toEqual({
+      draftModelPath: "C:/models/dspark.gguf",
+      cleared: false,
+    });
+    expect(reconcileDraftCompanion("DRAFT-MTP", "C:/models/mtp.gguf").cleared).toBe(false);
+  });
+
+  it("clears a retained draft when the selected method cannot use it", () => {
+    expect(reconcileDraftCompanion("none", "C:/models/dspark.gguf")).toEqual({
+      draftModelPath: null,
+      cleared: true,
+    });
+    expect(reconcileDraftCompanion("ngram-mod", "C:/models/mtp.gguf").cleared).toBe(true);
+    expect(reconcileDraftCompanion("ngram-simple", "C:/models/mtp.gguf").cleared).toBe(true);
+  });
+
+  it("reports no change when there was nothing retained", () => {
+    expect(reconcileDraftCompanion("none", null)).toEqual({ draftModelPath: null, cleared: false });
+    expect(reconcileDraftCompanion("none", "  ")).toEqual({ draftModelPath: "  ", cleared: false });
   });
 });

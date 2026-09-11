@@ -569,7 +569,161 @@ impl Default for LaunchProfile {
 }
 
 impl LaunchProfile {
+    /// Domain validation for profile values (audit S-13.I1): the selected
+    /// runtime contract proves an argument exists, but not that its value is a
+    /// legal member of its domain. Every list and range here comes from the
+    /// pinned `docs/LLAMA-SERVER-README.md` option map. An impossible value fails
+    /// early with an actionable message instead of reaching a server launch or a
+    /// paid advisor measurement.
+    pub fn validate_domains(&self) -> Result<(), String> {
+        let profile = self;
+        const CACHE_TYPES: [&str; 9] = [
+            "f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1",
+        ];
+        for (name, value) in [
+            ("Cache type K", &profile.cache_type_k),
+            ("Cache type V", &profile.cache_type_v),
+            ("Draft cache type K", &profile.draft_cache_type_k),
+            ("Draft cache type V", &profile.draft_cache_type_v),
+        ] {
+            if !value.is_empty() && !CACHE_TYPES.contains(&value.as_str()) {
+                return Err(format!(
+                    "{name} `{value}` is not one of {}.",
+                    CACHE_TYPES.join(", ")
+                ));
+            }
+        }
+        for (name, value, allowed) in [
+            (
+                "Flash attention",
+                &profile.flash_attention,
+                &["on", "off", "auto"][..],
+            ),
+            (
+                "Load mode",
+                &profile.load_mode,
+                &["auto", "none", "mmap", "mlock", "mmap+mlock", "dio"][..],
+            ),
+            ("Lazy mode", &profile.lazy_mode, &["on", "auto", "off"][..]),
+            (
+                "Split mode",
+                &profile.split_mode,
+                &["none", "layer", "row", "tensor"][..],
+            ),
+        ] {
+            if !value.is_empty() && !allowed.contains(&value.as_str()) {
+                return Err(format!(
+                    "{name} `{value}` is not one of {}.",
+                    allowed.join(", ")
+                ));
+            }
+        }
+        const SPEC_TYPES: [&str; 11] = [
+            "none",
+            "draft-simple",
+            "draft-eagle3",
+            "draft-mtp",
+            "draft-dflash",
+            "draft-dspark",
+            "ngram-simple",
+            "ngram-map-k",
+            "ngram-map-k4v",
+            "ngram-mod",
+            "ngram-cache",
+        ];
+        for token in profile
+            .spec_type
+            .split(',')
+            .map(str::trim)
+            .filter(|token| !token.is_empty())
+        {
+            if !SPEC_TYPES.contains(&token) {
+                return Err(format!(
+                    "Speculative type `{token}` is not one of {}.",
+                    SPEC_TYPES.join(", ")
+                ));
+            }
+        }
+        for (name, value, minimum, maximum) in [
+            ("Threads", i64::from(profile.threads), -1, 1024),
+            ("Batch threads", i64::from(profile.threads_batch), -1, 1024),
+            ("HTTP threads", i64::from(profile.threads_http), -1, 1024),
+            ("Top-k", i64::from(profile.top_k), -1, 1_000_000),
+            (
+                "Repeat last n",
+                i64::from(profile.repeat_last_n),
+                -1,
+                100_000,
+            ),
+            (
+                "Reasoning budget",
+                i64::from(profile.reasoning_budget),
+                -1,
+                1_000_000,
+            ),
+            (
+                "Sleep idle seconds",
+                i64::from(profile.sleep_idle_seconds),
+                -1,
+                86_400,
+            ),
+            ("Timeout seconds", i64::from(profile.timeout), 1, 86_400),
+            ("Main GPU", i64::from(profile.main_gpu), 0, 64),
+            ("Batch size", i64::from(profile.batch), 1, 1_048_576),
+            ("Micro batch size", i64::from(profile.ubatch), 1, 1_048_576),
+            ("Context", i64::from(profile.context), 1, 4_194_304),
+            ("Slots", i64::from(profile.parallel), 1, 1024),
+        ] {
+            if value < minimum || value > maximum {
+                return Err(format!(
+                    "{name} must be between {minimum} and {maximum} (got {value})."
+                ));
+            }
+        }
+        for (name, value, minimum, maximum) in [
+            ("Temperature", f64::from(profile.temperature), 0.0, 5.0),
+            ("Top-p", f64::from(profile.top_p), 0.0, 1.0),
+            ("Min-p", f64::from(profile.min_p), 0.0, 1.0),
+            (
+                "Repeat penalty",
+                f64::from(profile.repeat_penalty),
+                0.0,
+                4.0,
+            ),
+            (
+                "DRY multiplier",
+                f64::from(profile.dry_multiplier),
+                0.0,
+                4.0,
+            ),
+            ("DRY base", f64::from(profile.dry_base), 0.0, 4.0),
+            (
+                "Draft minimum probability",
+                f64::from(profile.draft_p_min),
+                0.0,
+                1.0,
+            ),
+            (
+                "Draft split probability",
+                f64::from(profile.draft_p_split),
+                0.0,
+                1.0,
+            ),
+        ] {
+            if !value.is_finite() || value < minimum || value > maximum {
+                return Err(format!(
+                    "{name} must be between {minimum} and {maximum} (got {value})."
+                ));
+            }
+        }
+        if profile.ngram_size_n == 0 {
+            return Err("N-gram size must be at least 1.".into());
+        }
+        Ok(())
+    }
+
     pub fn build_args(&self) -> Result<Vec<String>, String> {
+        self.validate_domains()?;
         validate_profile_input_bounds(self)?;
         if self.alias.trim().is_empty() {
             return Err("Model alias is required".into());
@@ -3425,5 +3579,190 @@ fn main() {
             error.contains("does not advertise"),
             "authoritative validation must filter against real capabilities: {error}"
         );
+    }
+
+    #[test]
+    fn s13_impossible_profile_domains_fail_before_launch_and_name_the_value() {
+        let base = || LaunchProfile {
+            name: "fixture".into(),
+            runtime: "C:/runtime/llama-server.exe".into(),
+            model: "C:/models/a.gguf".into(),
+            draft_model: None,
+            mmproj: None,
+            host: "127.0.0.1".into(),
+            port: 8080,
+            alias: "fixture".into(),
+            context: 4096,
+            parallel: 1,
+            gpu_layers: "auto".into(),
+            cpu_moe: 0,
+            cpu_ffn: 0,
+            threads: -1,
+            threads_batch: -1,
+            batch: 2048,
+            ubatch: 512,
+            flash_attention: "auto".into(),
+            fit: false,
+            fit_target: String::new(),
+            fit_ctx: 0,
+            kv_offload: true,
+            cache_type_k: "f16".into(),
+            cache_type_v: "f16".into(),
+            load_mode: "auto".into(),
+            lazy_mode: "auto".into(),
+            split_mode: "layer".into(),
+            tensor_split: String::new(),
+            main_gpu: 0,
+            device: String::new(),
+            continuous_batching: true,
+            cache_prompt: true,
+            cache_reuse: 0,
+            cache_ram: 0,
+            context_checkpoints: 0,
+            context_shift: false,
+            warmup: true,
+            sleep_idle_seconds: -1,
+            timeout: 600,
+            threads_http: -1,
+            sse_ping_interval: -1,
+            metrics: false,
+            slots: true,
+            web_ui: false,
+            cors_origins: "http://127.0.0.1".into(),
+            api_key_file: String::new(),
+            ssl_key_file: String::new(),
+            ssl_cert_file: String::new(),
+            jinja: false,
+            reasoning: "auto".into(),
+            reasoning_effort: "default".into(),
+            reasoning_budget: -1,
+            reasoning_preserve: false,
+            chat_template_file: String::new(),
+            temperature: 0.8,
+            top_k: 40,
+            top_p: 0.95,
+            min_p: 0.05,
+            repeat_penalty: 1.0,
+            repeat_last_n: 64,
+            seed: -1,
+            dry_multiplier: 0.0,
+            dry_base: 1.75,
+            spec_type: "none".into(),
+            draft_max: 5,
+            draft_min: 0,
+            draft_p_min: 0.0,
+            draft_p_split: 0.1,
+            draft_gpu_layers: "auto".into(),
+            draft_cache_type_k: "f16".into(),
+            draft_cache_type_v: "f16".into(),
+            ngram_match: 24,
+            ngram_min: 48,
+            ngram_max: 64,
+            ngram_size_n: 12,
+            ..LaunchProfile::default()
+        };
+        // The baseline itself must be legal, including the full argument build.
+        base().validate_domains().unwrap();
+        base().build_args().expect("baseline must build");
+
+        type ProfileMutation = Box<dyn Fn(&mut LaunchProfile)>;
+        let cases: Vec<(&str, ProfileMutation)> = vec![
+            (
+                "Cache type K",
+                Box::new(|p: &mut LaunchProfile| p.cache_type_k = "q3_k".into()),
+            ),
+            (
+                "Draft cache type V",
+                Box::new(|p: &mut LaunchProfile| p.draft_cache_type_v = "float".into()),
+            ),
+            (
+                "Flash attention",
+                Box::new(|p: &mut LaunchProfile| p.flash_attention = "yes".into()),
+            ),
+            (
+                "Load mode",
+                Box::new(|p: &mut LaunchProfile| p.load_mode = "fast".into()),
+            ),
+            (
+                "Lazy mode",
+                Box::new(|p: &mut LaunchProfile| p.lazy_mode = "sometimes".into()),
+            ),
+            (
+                "Split mode",
+                Box::new(|p: &mut LaunchProfile| p.split_mode = "vertical".into()),
+            ),
+            (
+                "Speculative type",
+                Box::new(|p: &mut LaunchProfile| p.spec_type = "draft-simple,nonsense".into()),
+            ),
+            (
+                "Threads",
+                Box::new(|p: &mut LaunchProfile| p.threads = 5000),
+            ),
+            (
+                "HTTP threads",
+                Box::new(|p: &mut LaunchProfile| p.threads_http = -7),
+            ),
+            (
+                "Top-k",
+                Box::new(|p: &mut LaunchProfile| p.top_k = 2_000_000),
+            ),
+            (
+                "Timeout seconds",
+                Box::new(|p: &mut LaunchProfile| p.timeout = 0),
+            ),
+            (
+                "Main GPU",
+                Box::new(|p: &mut LaunchProfile| p.main_gpu = 65),
+            ),
+            ("Top-p", Box::new(|p: &mut LaunchProfile| p.top_p = 1.5)),
+            ("Min-p", Box::new(|p: &mut LaunchProfile| p.min_p = -0.1)),
+            (
+                "Repeat penalty",
+                Box::new(|p: &mut LaunchProfile| p.repeat_penalty = 9.0),
+            ),
+            (
+                "DRY base",
+                Box::new(|p: &mut LaunchProfile| p.dry_base = -1.0),
+            ),
+            (
+                "Draft split probability",
+                Box::new(|p: &mut LaunchProfile| p.draft_p_split = 2.0),
+            ),
+            (
+                "Draft minimum probability",
+                Box::new(|p: &mut LaunchProfile| p.draft_p_min = -0.5),
+            ),
+            (
+                "Temperature",
+                Box::new(|p: &mut LaunchProfile| p.temperature = f32::NAN),
+            ),
+            (
+                "N-gram size",
+                Box::new(|p: &mut LaunchProfile| p.ngram_size_n = 0),
+            ),
+        ];
+        for (expected, mutate) in cases {
+            let mut profile = base();
+            mutate(&mut profile);
+            let error = profile
+                .validate_domains()
+                .expect_err(&format!("{expected} must be rejected"));
+            assert!(
+                error.contains(expected),
+                "message for {expected} must name the field: {error}"
+            );
+            // The launch path enforces the same domain before any process.
+            assert!(
+                profile.build_args().is_err(),
+                "{expected} must fail build_args"
+            );
+        }
+
+        // Relationship rules stay enforced alongside the domains.
+        let mut inverted = base();
+        inverted.batch = 256;
+        inverted.ubatch = 512;
+        assert!(inverted.build_args().unwrap_err().contains("uBatch"));
     }
 }

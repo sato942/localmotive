@@ -2333,18 +2333,18 @@ These packages preserve actionable recommendations outside the 72-item findings 
 
 **Validate profile values and companion compatibility before expensive work**
 
-**Status:** Not started · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
+**Status:** Implemented + unit-verified · **Priority:** Unscored audit recommendation · **Owner:** Unassigned  
 **Audit trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities)  
 **Prerequisites:** [V06-MT-03](#v06-mt-03), [V06-MT-11](#v06-mt-11)
 
 **Implementation**
 
-- [ ] **V06-S-13.I1** — Validate enum/numeric domains, relationships and sentinels for cache, attention, split, draft probabilities, threads and allocation counts using the selected runtime contract; argument existence alone is insufficient. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
-- [ ] **V06-S-13.I2** — Describe filename/folder/quant-based companion matching as a heuristic and use available metadata/provenance for stronger matching. Clear or reject a retained draft path when the newly selected method has no compatible companion. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
+- [x] **V06-S-13.I1** — Validate enum/numeric domains, relationships and sentinels for cache, attention, split, draft probabilities, threads and allocation counts using the selected runtime contract; argument existence alone is insufficient. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
+- [x] **V06-S-13.I2** — Describe filename/folder/quant-based companion matching as a heuristic and use available metadata/provenance for stronger matching. Clear or reject a retained draft path when the newly selected method has no compatible companion. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
 
 **Verification**
 
-- [ ] **V06-S-13.V1** — Reject invalid direct IPC profiles and advisor proposals before launch or another paid call. Test mixed-family folders, ambiguous companions and changing draft methods without a matching file. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
+- [x] **V06-S-13.V1** — Reject invalid direct IPC profiles and advisor proposals before launch or another paid call. Test mixed-family folders, ambiguous companions and changing draft methods without a matching file. **Trace:** [Measurement additional limits](./localmotive-comprehensive-audit.md#additional-limits-and-hardening-opportunities).
 
 **Complete when:** Impossible values and incompatible retained companions fail early with actionable messages.
 
@@ -3765,3 +3765,11 @@ Revalidated at the candidate source (`065248a1` + the G-07 test addition) on Win
 - V1: Rust `s12_scope_notes_survive_the_manifest_round_trip_and_default_honestly` (default carries the note; serialize→parse keeps it; a legacy empty note still parses and is never invented; the working-set wording asserted); `model.test.ts` `describeSamples` cases (5/19/20/100/0/NaN/null); component test "labels sample counts, derived TTFT and working-set scope honestly (S-12)" with a five-trial, warm-process, missing-direct-observation fixture (both sample lines counted exactly, derived TTFT caveat, working-set wording, `2/2 sampled`, and the manifest scope note rendered).
 - Mutations: PC1 (the decode sample-count line removed) and PC2 (working-set wording reverted) failed the component test; both restored green.
 - Commands: `cargo fmt --check` PASS; clippy `-D warnings` 0 errors; `cargo test` 554 passed / 0 failed / 2 ignored (553 + the S-12 test); `npm run check` PASS (340.01 kB); Vitest 100 passed; node tests 140 passed.
+
+#### S-13 closure record — domains before launch, companions reconciled
+
+- I1: `LaunchProfile::validate_domains` enforces the value domain of every enumerated and ranged profile field from the pinned option map: cache types (f32/f16/bf16/q8_0/q4_0/q4_1/iq4_nl/q5_0/q5_1 for K, V and both draft caches), flash attention (on/off/auto), load mode (auto/none/mmap/mlock/mmap+mlock/dio), lazy mode (on/auto/off), split mode (none/layer/row/tensor), speculative types (the eleven documented tokens, comma-separated), thread counts (-1 sentinel or 1..=1024), batch/ubatch/context/slots ranges (with the existing ubatch ≤ batch relationship), top-k, repeat-last-n, reasoning budget, sleep, timeout, main GPU, temperature, top-p, min-p, repeat penalty, DRY multiplier/base, draft probabilities, and the n-gram size floor. `build_args` calls it first, so every launch path AND the tuning advisor's `profile.build_args()?` guard (tune.rs:369) reject impossible values before a process starts or a paid measurement runs; each error names the field and the offending value.
+- I2: `reconcileDraftCompanion` clears a retained draft path (with a user-visible notice in the profile form) whenever the newly selected method does not start with `draft-`; a `draft-*` method with no path keeps failing before launch as before. `docs/ARTIFACT-IDENTITY.md` documents companion matching as a filename/quantisation heuristic that does not read companion headers during a scan, and names the stronger available signals (explicit user selection, displayed role, runtime contract).
+- V1: `s13_impossible_profile_domains_fail_before_launch_and_name_the_value` runs 20 invalid-domain cases (including NaN temperature and a zero n-gram size) plus the relationship case; the baseline profile is asserted to build fully (`build_args().expect(...)`) — a fix made after PD1 initially passed through a vacuous assertion (`Wildcard CORS requires an API key file` broke every case), which is recorded rather than hidden. JS `reconcileDraftCompanion` cases cover draft methods kept, ngram/none cleared, and no-op when nothing was retained.
+- Mutations: PD1 (domain validation disabled in build_args), PD2 (cache-type membership check removed) and PD3 (companion reconciliation disabled) each failed their guarding test after the vacuous-assert fix and passed after restore.
+- Commands: `cargo fmt --check` PASS; clippy `-D warnings` 0 errors (one `type_complexity` fixed by a local type alias); `cargo test` 555 passed / 0 failed / 2 ignored (554 + the S-13 test); `npm run check` PASS (340.38 kB); Vitest 103 passed; node tests 140 passed.

@@ -56,3 +56,20 @@ for a stronger one (audit S-02).
 - `artifact::tests::s02_split_verdict_agrees_or_reports_mismatch_and_unknown`
 - MT-15 parity tests (filename plan vs shard analyzer) and DC-11 publication
   identity tests (content digest + file index).
+
+## Companion matching is a heuristic (audit S-13.I2)
+
+Companion discovery uses filename and quantised-size evidence: the family
+prefix, the role token in the name, and ranking by quantisation closeness to
+the selected target build. It does **not** read companion GGUF headers during
+a scan, so it can rank an unrelated file first in a mixed-family folder. The
+available stronger signal is explicit provenance: the user's own selection in
+the profile, the role shown next to each candidate, and the runtime's
+`--help` contract, which rejects a method/companion combination the selected
+build does not support.
+
+A retained draft path is reconciled with the selected speculative method:
+`reconcileDraftCompanion` clears the path (and the interface says so) whenever
+the newly selected method does not use a draft model, so a companion chosen
+for one method can never be silently reused with another. A `draft-*` method
+with an empty path fails before launch with "… requires a draft model".
