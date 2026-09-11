@@ -64,7 +64,14 @@ const value = await evaluate(`(() => {
 })()`);
 check(
   "the truncated directory keeps its full value in title and aria-label",
-  Boolean(value && value.title && value.title.includes("s24-fixtures") && value.aria.includes(value.title)),
+  Boolean(
+    value &&
+      value.title &&
+      // The rendered title must carry the FULL passed fixture path, whatever
+      // its final segment is (the probe is run with different folders).
+      value.title.includes(fixtureFolder.replace(/\\/g, "/").split("/").filter(Boolean).pop()) &&
+      value.aria.includes(value.title),
+  ),
   value ? value.title : "no path-text-value rendered",
 );
 check("the path value is keyboard reachable", Boolean(value && value.tab >= 0));
