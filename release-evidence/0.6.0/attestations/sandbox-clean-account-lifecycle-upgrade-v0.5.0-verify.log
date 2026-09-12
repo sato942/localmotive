@@ -1,0 +1,4 @@
+﻿PRESERVE_PASS mirror: schema version 1 intact
+PRESERVE_PASS mirror: user override model row recovered with user_sourced=1
+PRESERVE_PASS mirror: user override file row recovered with user_sourced=1
+PRESERVE_PASS userdata: canary content intact

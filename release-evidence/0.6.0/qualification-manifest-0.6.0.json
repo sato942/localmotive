@@ -1,0 +1,137 @@
+{
+  "schema": "localmotive.qualification-manifest.v1",
+  "release": "0.6.0",
+  "generatedAt": "2026-09-12T17:26:27.999449+00:00",
+  "repositoryHeadAtGeneration": "eb84e184c3841ec11d14873b9701df19bb1c0e67",
+  "sourceRevision": "85edee63d060c43d05df3770d168a81b7421d6df",
+  "artifacts": [
+    {
+      "name": "Localmotive_0.6.0_x64-portable.exe",
+      "sizeBytes": 21019136,
+      "sha256": "095b153663aaef71f91a0dc7f67c5ac119c523b81521b00c82d67d32cb5f02ed"
+    },
+    {
+      "name": "Localmotive_0.6.0_x64-setup.exe",
+      "sizeBytes": 5316366,
+      "sha256": "533b669c3cde3dfdea14865105ff3212b2390d8a7b2527ec6f8af85689ae933c"
+    },
+    {
+      "name": "Localmotive_0.6.0_x64.msi",
+      "sizeBytes": 9080832,
+      "sha256": "9dac49aa3e66c15fb592ccd613885b5088a4838e0b4328b301dfa46e39d899bc"
+    }
+  ],
+  "records": {
+    "packaged_verification": {
+      "path": "release-evidence\\0.6.0\\attestations\\packaged-verification-0.6.0.json",
+      "exists": true,
+      "sha256": "fd7cdd4c5f757b9e12c0f48f1a8eedd46e0466127be6d01357b05d4bc2df8dc9",
+      "overall_status": "PASS",
+      "checks": "25/25"
+    },
+    "lifecycle_upgrade_v0.4.0": {
+      "path": "release-evidence\\0.6.0\\attestations\\sandbox-clean-account-lifecycle-upgrade-v0.4.0.json",
+      "exists": true,
+      "sha256": "da9d013c41a974835f98e7d1c541f8543797a3a3a7a6f18ea987c72192c7631c",
+      "status": "PASS",
+      "stage": "preservation-verification",
+      "sourceRevision": "85edee63d060c43d05df3770d168a81b7421d6df",
+      "harnessRevision": "bc11417b2a4be540ab255d9dd6913579d3d334a8"
+    },
+    "lifecycle_upgrade_v0.5.0": {
+      "path": "release-evidence\\0.6.0\\attestations\\sandbox-clean-account-lifecycle-upgrade-v0.5.0.json",
+      "exists": true,
+      "sha256": "0e6cbd9e96ccad7433f441d2740284a78461ef01c5c988a2eb6bba4e43378d72",
+      "status": "PASS",
+      "stage": "preservation-verification",
+      "sourceRevision": "85edee63d060c43d05df3770d168a81b7421d6df",
+      "harnessRevision": "eb84e184c3841ec11d14873b9701df19bb1c0e67"
+    },
+    "lifecycle_preservation_v0.4.1": {
+      "path": "release-evidence\\0.6.0\\attestations\\sandbox-clean-account-lifecycle-preservation-v0.4.1.json",
+      "exists": true,
+      "sha256": "fa4daa8bd9d1f4f0234a5916973800bdfeb7e5470e1a3b6ede5c7cd7c8973e74",
+      "status": "PASS",
+      "stage": "preservation-verification",
+      "sourceRevision": "85edee63d060c43d05df3770d168a81b7421d6df",
+      "harnessRevision": "eb84e184c3841ec11d14873b9701df19bb1c0e67"
+    },
+    "lifecycle_preservation_v0.5.0": {
+      "path": "release-evidence\\0.6.0\\attestations\\sandbox-clean-account-lifecycle-preservation-v0.5.0.json",
+      "exists": true,
+      "sha256": "1c3b4835a05d81322f395419ddd42c7b7e95c7c158ff5600d2a28100eb4779c0",
+      "status": "PASS",
+      "stage": "preservation-verification",
+      "sourceRevision": "85edee63d060c43d05df3770d168a81b7421d6df",
+      "harnessRevision": "eb84e184c3841ec11d14873b9701df19bb1c0e67"
+    },
+    "witness_missing_assets": {
+      "path": "release-evidence\\0.6.0\\attestations\\witness-missing-assets.json",
+      "exists": true,
+      "sha256": "21a3184791fae2e0b505ad526fbdf90cdfc18f4468e246f39ae69925bf02c251",
+      "status": "FAIL",
+      "stage": "resolve-installers",
+      "sourceRevision": null,
+      "harnessRevision": "eb84e184c3841ec11d14873b9701df19bb1c0e67"
+    },
+    "witness_timeout": {
+      "path": "release-evidence\\0.6.0\\attestations\\witness-timeout.json",
+      "exists": true,
+      "sha256": "2d32bdae229cdcd4583731a3f824e5b102a80391a1a9e32e86e61fb5a2d5f505",
+      "status": "TIMEOUT",
+      "stage": "sandbox-timeout",
+      "sourceRevision": "7c32fa90b9dd04057ba3c089392b0642f3b0545c",
+      "harnessRevision": "eb84e184c3841ec11d14873b9701df19bb1c0e67"
+    },
+    "witness_malformed_result": {
+      "path": "release-evidence\\0.6.0\\attestations\\witness-malformed-result.json",
+      "exists": true,
+      "sha256": "76f07f938f5a4342dafb960e0bb1a5813f1b50d6a6ff824fde76623fc909cfec",
+      "status": "FAIL",
+      "stage": "sandbox-run",
+      "sourceRevision": "7c32fa90b9dd04057ba3c089392b0642f3b0545c",
+      "harnessRevision": "eb84e184c3841ec11d14873b9701df19bb1c0e67"
+    },
+    "witness_preservation_missing": {
+      "path": "release-evidence\\0.6.0\\attestations\\witness-preservation-missing.json",
+      "exists": true,
+      "sha256": "754f608a0165b74263e18e7e3eb57807ef4e9cc2db84dc19d55ac04889bd8f66",
+      "status": "FAIL",
+      "stage": "preservation-verification",
+      "sourceRevision": "7c32fa90b9dd04057ba3c089392b0642f3b0545c",
+      "harnessRevision": "eb84e184c3841ec11d14873b9701df19bb1c0e67"
+    },
+    "mt06_cancellation": {
+      "path": ".hermes-0.6\\mt06-cycles-result.json",
+      "exists": true,
+      "sha256": "bf61efc8f2c62746f22e7623ab8248c464c08f11614382fe764628fd4cf82d4c",
+      "sourceRevision": "0618c9f63a27b60648af2467caaa2dc362ccc6f4",
+      "summary": "33/33 checks PASS",
+      "checks": "33/33"
+    },
+    "dc04_command_path": {
+      "path": "release-evidence\\0.6.0\\attestations\\dc04-v2-command-path-verification.log",
+      "exists": true,
+      "sha256": "0f0c1e9f090def3104d79aa81874bbe873588de71771d7a3fc0294013e32623c"
+    },
+    "rt04_delayed_download": {
+      "path": "release-evidence\\0.6.0\\attestations\\rt04v2-delayed-download-verification.log",
+      "exists": true,
+      "sha256": "140c005f89b75244c53f15609f4cc78272766bbd434e28f8223bb325173da254"
+    },
+    "negative_control_refusal": {
+      "path": "release-evidence\\0.6.0\\attestations\\sandbox-clean-account-lifecycle-negative.json",
+      "exists": true,
+      "sha256": "2c0807f2efeba8d46f616f49669d94f997f7d6fbfd67ae995e9c289e167549bd",
+      "status": "FAIL",
+      "sourceRevision": "7c32fa90b9dd04057ba3c089392b0642f3b0545c",
+      "harnessRevision": "eb84e184c3841ec11d14873b9701df19bb1c0e67"
+    }
+  },
+  "supersededRecords": [
+    {
+      "description": "Qualification records produced at earlier candidate revisions (3a2b06e / 7c32fa9 / 57bde64) remain in history under their original bindings; they are NOT evidence for this candidate and are referenced only as history.",
+      "note": "Never rewritten."
+    }
+  ]
+}

@@ -732,6 +732,4 @@ The candidate was re-cut at freeze `85edee63d060c43d05df3770d168a81b7421d6df`
 because R01-R05 and R10-R15 changed shipped code. Packaged campaign at that
 freeze: packaged verification 25/25 `overall_status=PASS` (`source_dirty`
 false), MT-06 cancellation 33/33, DC-04 command path 13/13, RT-04.V2 17/17,
-supervision/tamper/FE-16/FE-05.V3/catalog/churn clean, lifecycle matrix per
-R07. All scores, digests and records are in the tracker's fifth-pass
-reconciliation section and the qualification manifest.
+supervision/tamper/FE-16/FE-05.V3/catalog/churn clean, lifecycle matrix 4/4 PASS with the R07 flavors (preservation=PASS on every leg), witnesses 5/5, packaged health 7/7, MT-01d decode 867.25 tok/s (p95 878.93), and both negative controls (historical doctored installer FAIL-with-identity; freeze-6 byte-doctored setup refused at `resolve-installers` naming both digests). All scores, digests and records are in the tracker's fifth-pass reconciliation section and the canonical qualification manifest `.hermes-0.6/qualification-manifest-0.6.0.json`.
