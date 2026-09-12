@@ -391,11 +391,13 @@ jobs:
   # Clean-account lifecycle verification, rewritten per audit GH-03: it
   # consumes the candidate installers the package job just built
   # (-CandidateDir), so no job ever waits for public release assets that the
-  # producer has not published. Policy decision (GH-03 I3): this job is NOT
-  # a publication gate — Sandbox availability depends on an interactive
-  # Windows feature, and the release does not silently claim its result.
-  # The summary and evidence state plainly whether it ran, passed, failed or
-  # was skipped, and publication proceeds with that status visible.
+  # producer has not published. Policy updated on 2026-09-12 (fail-closed,
+  # superseding GH-03 I3's original note): `publish` now needs this job, so
+  # absent or failed lifecycle evidence blocks publication instead of
+  # shipping with a visible-but-ignored status. The evidence binds to the
+  # full source SHA recorded in the candidate inventory (never a substituted
+  # HEAD) and records the harness revision separately; the summary states
+  # plainly whether it ran, passed, failed or was skipped.
   clean-account-lifecycle:
     needs: [resolve, package]
     runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]

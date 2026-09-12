@@ -96,7 +96,7 @@ fixtures, probes), 5 `.github/` (workflows).
 ### 3.1 Rust core (`src-tauri/src`)
 
 - **Runtime trust and lifecycle** (RT): new installs publish into the primary
-  `Localmotive` root while legacy `GGUF Pilot` installs are discovered and reused
+  `Localmotive` root while legacy installs are discovered and reused
   only after compiled-content verification; a centralized managed-execution
   authorization gate with a sentinel test; archive extraction bound to the
   approved file identity through a single handle; an execution-identity lease so

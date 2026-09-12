@@ -1956,6 +1956,59 @@ test("S-26: no workflow carries a literal release version and gates stay fail-fa
   );
 });
 
+test("publication consumes the retained candidate inventory and validates it (2026-09-12 review)", async () => {
+  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  const publish = release.split("\n  publish:")[1];
+  assert.match(publish, /Retrieve verified release candidates/, "publish downloads the retained verified artifact");
+  assert.match(publish, /localmotive-\$\{\{ needs\.quality\.outputs\.version \}\}-verified/);
+  assert.match(
+    publish,
+    /RESOLVED_SHA: \$\{\{ needs\.resolve\.outputs\.sha \}\}/,
+    "the source identity checked against the inventory is the resolved tag SHA",
+  );
+  assert.match(
+    publish,
+    /verify_candidate_inventory\.mjs --verify/,
+    "publish validates the producer inventory (source identity + every digest and size) before uploading",
+  );
+  assert.match(publish, /sha256sum -c/);
+  assert.doesNotMatch(publish, /tauri build/, "publication never rebuilds; a rebuild would be a new candidate");
+});
+
+test("the RT-04.V2 health-model delay seam is loopback-only and verifier-gated", async () => {
+  const source = await readFile(join(process.cwd(), "src-tauri", "src", "download.rs"), "utf8");
+  assert.match(source, /rebase_download_url_with/);
+  assert.match(source, /rebase_download_url_rewrites_the_health_model_path_onto_the_loopback_fixture/);
+  assert.match(source, /rebase_download_url_preserves_the_canonical_url_without_the_profile/);
+  const runtime = await readFile(join(process.cwd(), "src-tauri", "src", "runtime.rs"), "utf8");
+  assert.match(
+    runtime,
+    /rebase_download_url\(&pin\.url\)/,
+    "the pinned health-model fetch is the rebased call",
+  );
+});
+
+test("lifecycle evidence binds to the candidate inventory, never a substituted HEAD", async () => {
+  const harness = await readFile(join(process.cwd(), "scripts", "sandbox", "host-run-lifecycle.ps1"), "utf8");
+  assert.match(harness, /candidate-inventory-\$Version\.json/);
+  assert.match(harness, /Never substitute HEAD for the candidate source/);
+  assert.match(harness, /harnessRevision/);
+  assert.match(harness, /git -C \$PSScriptRoot rev-parse HEAD/);
+});
+
+test("MT-06 extension pins worker ownership and duplicate-free cancellation", async () => {
+  const source = await readFile(join(process.cwd(), "src-tauri", "src", "local_client.rs"), "utf8");
+  for (const name of [
+    "a_cancelled_body_read_resolves_worker_ownership_without_duplicate_requests",
+    "a_cancelled_call_lets_a_short_body_finish_on_the_owned_connection_once",
+    "repeated_cancel_restart_cycles_keep_workers_bounded_and_requests_exact",
+  ]) {
+    assert.match(source, new RegExp(name));
+  }
+  assert.match(source, /serve_slow_body/);
+  assert.match(source, /active_cancellable_workers/);
+});
+
 test("publish promotes the verified bytes only after every material gate (G-06/G-09)", async () => {
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
   const publish = release.split("\n  publish:")[1];

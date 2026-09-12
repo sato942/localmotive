@@ -4649,8 +4649,14 @@ pub(crate) fn ensure_pinned_health_model(
     if !metadata.is_dir() || metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
         return Err("The health model directory is a link or reparse point".into());
     }
+    // RT-04.V2 verification seam: inside the verifier profile the fetch can
+    // be pointed at a loopback fixture (same gate as the catalog downloads,
+    // loopback-only), which lets a controlled delay be injected between
+    // context preparation and runtime execution. Production runs take the
+    // canonical URL unchanged.
+    let url = crate::download::rebase_download_url(&pin.url);
     crate::download::download_file(
-        &pin.url,
+        &url,
         &target,
         &pin.repository,
         pin.bytes,

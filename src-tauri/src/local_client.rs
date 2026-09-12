@@ -33,6 +33,21 @@ struct Inner {
     port: u16,
     api_key: Option<String>,
     client: reqwest::blocking::Client,
+    /// Cancellable requests run on worker threads; this counts the workers
+    /// that have not exited yet. A cancelled call abandons its worker, which
+    /// exits by itself at the whole-operation deadline - the counter is the
+    /// packaged/unit-observable bound on that ownership.
+    active_workers: std::sync::atomic::AtomicUsize,
+}
+
+/// Decrements the worker counter when the worker thread exits, including on
+/// unwind, so an abandoned worker is never double-counted or leaked.
+struct WorkerLease(Arc<Inner>);
+
+impl Drop for WorkerLease {
+    fn drop(&mut self) {
+        self.0.active_workers.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 /// Cloneable handle to the centralized local-server client.
@@ -227,6 +242,7 @@ impl LocalHttpClient {
                 port,
                 api_key,
                 client,
+                active_workers: std::sync::atomic::AtomicUsize::new(0),
             }),
         })
     }
@@ -245,6 +261,12 @@ impl LocalHttpClient {
 
     pub fn api_key_configured(&self) -> bool {
         self.inner.api_key.is_some()
+    }
+
+    /// Test-only view of the abandoned-worker bound (MT-06 extension).
+    #[cfg(test)]
+    pub(crate) fn active_cancellable_workers(&self) -> usize {
+        self.inner.active_workers.load(Ordering::Relaxed)
     }
 
     /// The request URL, with IPv6 hosts bracketed.
@@ -343,9 +365,12 @@ impl LocalHttpClient {
                 let worker_url = url.clone();
                 let worker_body = body_bytes.clone();
                 let has_body = body.is_some();
+                self.inner.active_workers.fetch_add(1, Ordering::Relaxed);
+                let lease_inner = Arc::clone(&self.inner);
                 std::thread::Builder::new()
                     .name("localmotive-local-request".into())
                     .spawn(move || {
+                        let _lease = WorkerLease(lease_inner);
                         let _ = sender.send(run_local_request(
                             &inner,
                             &worker_method,
@@ -356,6 +381,7 @@ impl LocalHttpClient {
                         ));
                     })
                     .map_err(|error| {
+                        self.inner.active_workers.fetch_sub(1, Ordering::Relaxed);
                         format!("The local request worker could not start: {error}")
                     })?;
                 loop {
@@ -782,6 +808,87 @@ ab1VTmVlluUDakDfjhwCcnE=
         (port, requests)
     }
 
+    /// HTTP fixture that answers headers immediately and dribbles the body
+    /// over `total`, counting requests, live connections, completed and
+    /// aborted responses. The MT-06 extension uses it so cancellation is
+    /// judged by resources (workers, sockets, duplicate requests) instead of
+    /// caller-return latency alone.
+    pub(crate) struct SlowBodyFixture {
+        pub port: u16,
+        pub requests: Arc<std::sync::atomic::AtomicUsize>,
+        pub active: Arc<std::sync::atomic::AtomicUsize>,
+        pub completed: Arc<std::sync::atomic::AtomicUsize>,
+        pub aborted: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    pub(crate) fn serve_slow_body(total: Duration, chunks: usize) -> SlowBodyFixture {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let active = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let completed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let aborted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (r, a, c, ab) = (
+            requests.clone(),
+            active.clone(),
+            completed.clone(),
+            aborted.clone(),
+        );
+        thread::spawn(move || {
+            for incoming in listener.incoming() {
+                let Ok(mut stream) = incoming else { break };
+                r.fetch_add(1, Ordering::Relaxed);
+                a.fetch_add(1, Ordering::Relaxed);
+                stream
+                    .set_read_timeout(Some(Duration::from_millis(500)))
+                    .ok();
+                let mut buffer = [0u8; 8192];
+                let _ = stream.read(&mut buffer);
+                let body = b"{\"content\":\"dribbled response body for the MT-06 extension\"}";
+                let headers = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    body.len()
+                );
+                let mut wrote_ok = stream.write_all(headers.as_bytes()).is_ok();
+                let pause = total / chunks as u32;
+                let size = body.len().div_ceil(chunks);
+                for start in (0..body.len()).step_by(size) {
+                    if !wrote_ok {
+                        break;
+                    }
+                    let end = (start + size).min(body.len());
+                    wrote_ok = stream.write_all(&body[start..end]).is_ok();
+                    thread::sleep(pause);
+                }
+                let _ = stream.flush();
+                if wrote_ok {
+                    c.fetch_add(1, Ordering::Relaxed);
+                } else {
+                    ab.fetch_add(1, Ordering::Relaxed);
+                }
+                a.fetch_sub(1, Ordering::Relaxed);
+            }
+        });
+        SlowBodyFixture {
+            port,
+            requests,
+            active,
+            completed,
+            aborted,
+        }
+    }
+
+    fn settle_until(mut predicate: impl FnMut() -> bool, timeout: Duration) -> bool {
+        let started = std::time::Instant::now();
+        while started.elapsed() < timeout {
+            if predicate() {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        predicate()
+    }
+
     /// One-shot TLS fixture speaking HTTP/1.1 through rustls.
     pub(crate) fn serve_tls(cert: &str, key: &str, response: Vec<u8>) -> u16 {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1101,6 +1208,175 @@ ab1VTmVlluUDakDfjhwCcnE=
             requests.load(Ordering::Relaxed),
             1,
             "no duplicate request may follow the completed response"
+        );
+    }
+
+    #[test]
+    fn a_cancelled_body_read_resolves_worker_ownership_without_duplicate_requests() {
+        // MT-06 extension: a cancelled call returns on the caller thread, but
+        // the abandoned worker must still exit - at the latest when its own
+        // whole-operation deadline expires - and the half-read connection must
+        // be torn down exactly once. The fixture streams far longer than the
+        // budget so the worker's exit is deadline-driven, and any retry would
+        // show up as a second request.
+        let fixture = serve_slow_body(Duration::from_millis(4000), 40);
+        let client = LocalHttpClient::plain("127.0.0.1", fixture.port).unwrap();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&cancelled);
+        let caller_client = client.clone();
+        let caller = thread::spawn(move || {
+            caller_client.post_json_cancellable(
+                "/completion",
+                &serde_json::json!({"prompt": [1], "n_predict": 4}),
+                Duration::from_millis(1200),
+                &flag,
+            )
+        });
+        assert!(settle_until(
+            || fixture.requests.load(Ordering::Relaxed) == 1,
+            Duration::from_secs(2)
+        ));
+        thread::sleep(Duration::from_millis(250));
+        cancelled.store(true, Ordering::Relaxed);
+        let cancel_seen = std::time::Instant::now();
+        let outcome = caller.join().unwrap();
+        assert!(
+            outcome.is_err(),
+            "a cancelled call must not report a response"
+        );
+        assert!(
+            cancel_seen.elapsed() < Duration::from_millis(700),
+            "the caller returns within one cancel slice"
+        );
+        assert!(
+            settle_until(
+                || client.active_cancellable_workers() == 0,
+                Duration::from_secs(4)
+            ),
+            "the abandoned worker exits by its deadline"
+        );
+        assert!(
+            settle_until(
+                || fixture.aborted.load(Ordering::Relaxed) == 1,
+                Duration::from_secs(2)
+            ),
+            "the deadline aborts the half-read connection exactly once"
+        );
+        assert_eq!(
+            fixture.requests.load(Ordering::Relaxed),
+            1,
+            "a cancelled request is never re-issued"
+        );
+        assert_eq!(fixture.completed.load(Ordering::Relaxed), 0);
+        assert!(
+            settle_until(
+                || fixture.active.load(Ordering::Relaxed) == 0,
+                Duration::from_secs(2)
+            ),
+            "no connection may stay open after the abort"
+        );
+    }
+
+    #[test]
+    fn a_cancelled_call_lets_a_short_body_finish_on_the_owned_connection_once() {
+        // The abandoned worker owns its in-flight request: a body that
+        // finishes inside the worker's deadline completes normally (no abort,
+        // no retry) and the worker still exits. The body must outlast the
+        // caller's cancel-return (one 500 ms slice), so it streams for about
+        // 1.8 s while the caller cancels after ~100 ms.
+        let fixture = serve_slow_body(Duration::from_millis(1800), 18);
+        let client = LocalHttpClient::plain("127.0.0.1", fixture.port).unwrap();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&cancelled);
+        let caller_client = client.clone();
+        let caller = thread::spawn(move || {
+            caller_client.post_json_cancellable(
+                "/completion",
+                &serde_json::json!({"prompt": [2]}),
+                Duration::from_secs(5),
+                &flag,
+            )
+        });
+        assert!(settle_until(
+            || fixture.requests.load(Ordering::Relaxed) == 1,
+            Duration::from_secs(2)
+        ));
+        thread::sleep(Duration::from_millis(100));
+        cancelled.store(true, Ordering::Relaxed);
+        assert!(caller.join().unwrap().is_err());
+        assert!(
+            settle_until(
+                || fixture.completed.load(Ordering::Relaxed) == 1,
+                Duration::from_secs(3)
+            ),
+            "the owned connection finishes its short body"
+        );
+        assert!(
+            settle_until(
+                || client.active_cancellable_workers() == 0,
+                Duration::from_secs(2)
+            ),
+            "the worker exits once its request resolves"
+        );
+        assert_eq!(fixture.requests.load(Ordering::Relaxed), 1);
+        assert_eq!(fixture.aborted.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn repeated_cancel_restart_cycles_keep_workers_bounded_and_requests_exact() {
+        // Six cancel/restart cycles against one fixture: every cycle issues
+        // exactly one request, the abandoned worker is reaped by its deadline,
+        // and the live-worker count never exceeds the one in-flight call. Any
+        // duplicate request would also break the exact request count.
+        let fixture = serve_slow_body(Duration::from_millis(3000), 30);
+        let client = LocalHttpClient::plain("127.0.0.1", fixture.port).unwrap();
+        for cycle in 0..6usize {
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let flag = Arc::clone(&cancelled);
+            let cycle_client = client.clone();
+            let caller = thread::spawn(move || {
+                cycle_client.post_json_cancellable(
+                    "/completion",
+                    &serde_json::json!({"prompt": [cycle]}),
+                    Duration::from_millis(1000),
+                    &flag,
+                )
+            });
+            assert!(
+                settle_until(
+                    || fixture.requests.load(Ordering::Relaxed) == cycle + 1,
+                    Duration::from_secs(2)
+                ),
+                "cycle {cycle} reaches the server"
+            );
+            thread::sleep(Duration::from_millis(150));
+            cancelled.store(true, Ordering::Relaxed);
+            assert!(caller.join().unwrap().is_err());
+            assert!(
+                client.active_cancellable_workers() <= 1,
+                "cycle {cycle} must never stack workers beyond its own call"
+            );
+            assert!(
+                settle_until(
+                    || client.active_cancellable_workers() == 0,
+                    Duration::from_secs(3)
+                ),
+                "cycle {cycle} reaps its worker by the deadline"
+            );
+        }
+        assert_eq!(
+            fixture.requests.load(Ordering::Relaxed),
+            6,
+            "one request per cycle, never duplicated"
+        );
+        assert_eq!(fixture.completed.load(Ordering::Relaxed), 0);
+        assert_eq!(client.active_cancellable_workers(), 0);
+        assert!(
+            settle_until(
+                || fixture.active.load(Ordering::Relaxed) == 0,
+                Duration::from_secs(2)
+            ),
+            "no connection survives the cycles"
         );
     }
 

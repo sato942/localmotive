@@ -263,6 +263,30 @@ pub fn resolve_url(repo: &str, filename: &str, revision: &str) -> String {
     resolve_url_with(|name| std::env::var(name).ok(), repo, filename, revision)
 }
 
+/// Rewrite a canonical Hugging Face URL onto the verifier-profile loopback
+/// fixture when the seam is active (RT-04.V2 delay injection for the pinned
+/// health-model fetch); otherwise return the URL unchanged. Only URLs under
+/// the canonical host are touched, and only for the gated loopback bases
+/// described on [`resolve_download_base`].
+pub fn rebase_download_url(url: &str) -> String {
+    rebase_download_url_with(|name| std::env::var(name).ok(), url)
+}
+
+pub(crate) fn rebase_download_url_with(
+    lookup: impl Fn(&str) -> Option<String>,
+    url: &str,
+) -> String {
+    const CANONICAL: &str = "https://huggingface.co";
+    let Some(rest) = url.strip_prefix(CANONICAL) else {
+        return url.to_string();
+    };
+    let base = resolve_download_base(lookup);
+    if base == CANONICAL {
+        return url.to_string();
+    }
+    format!("{base}{rest}")
+}
+
 /// Verification-profile seam (audit DC-04.V2): inside
 /// `LOCALMOTIVE_VERIFY_ISOLATED_ROOT` the packaged verifier may point catalog
 /// downloads at a loopback fixture so the authority and checksum legs run
@@ -2645,6 +2669,47 @@ mod tests {
         assert!(
             resolve_url("a/b", "m.gguf", "").contains("/resolve/main/"),
             "an empty revision falls back to main"
+        );
+    }
+
+    #[test]
+    fn rebase_download_url_preserves_the_canonical_url_without_the_profile() {
+        // The RT-04.V2 seam rewrites only inside the verifier profile and
+        // only for canonical-host URLs; everything else is untouched.
+        let canonical = "https://huggingface.co/ggml-org/SmolLM2-135M-GGUF/resolve/4468/SmolLM2-135M-Q4_K_M.gguf?download=true";
+        let base_only = |name: &str| match name {
+            "LOCALMOTIVE_HF_BASE" => Some("http://127.0.0.1:8123".to_string()),
+            _ => None,
+        };
+        assert_eq!(rebase_download_url_with(base_only, canonical), canonical);
+        let elsewhere = "https://github.com/o/r/releases/download/x/y.exe";
+        let active = |name: &str| match name {
+            "LOCALMOTIVE_VERIFY_ISOLATED_ROOT" => Some("C:/tmp/verify".to_string()),
+            "LOCALMOTIVE_HF_BASE" => Some("http://127.0.0.1:8123".to_string()),
+            _ => None,
+        };
+        assert_eq!(rebase_download_url_with(active, elsewhere), elsewhere);
+        let refused = |name: &str| match name {
+            "LOCALMOTIVE_VERIFY_ISOLATED_ROOT" => Some("C:/tmp/verify".to_string()),
+            "LOCALMOTIVE_HF_BASE" => Some("https://evil.example".to_string()),
+            _ => None,
+        };
+        assert_eq!(rebase_download_url_with(refused, canonical), canonical);
+    }
+
+    #[test]
+    fn rebase_download_url_rewrites_the_health_model_path_onto_the_loopback_fixture() {
+        let lookup = |name: &str| match name {
+            "LOCALMOTIVE_VERIFY_ISOLATED_ROOT" => Some("C:/tmp/verify".to_string()),
+            "LOCALMOTIVE_HF_BASE" => Some("http://127.0.0.1:10090".to_string()),
+            _ => None,
+        };
+        assert_eq!(
+            rebase_download_url_with(
+                lookup,
+                "https://huggingface.co/ggml-org/SmolLM2-135M-GGUF/resolve/44686446221a479a9227d7a895cf92930f86de8a/SmolLM2-135M-Q4_K_M.gguf?download=true",
+            ),
+            "http://127.0.0.1:10090/ggml-org/SmolLM2-135M-GGUF/resolve/44686446221a479a9227d7a895cf92930f86de8a/SmolLM2-135M-Q4_K_M.gguf?download=true"
         );
     }
 

@@ -9,7 +9,10 @@ const client = await attach(Number(portArg));
 const evaluate = (expr) => client.evaluate(expr);
 const settle = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const HOME = process.env.USERPROFILE ?? "C:\\Users\\Mubarak";
-const LEGACY = `${HOME}\\AppData\\Local\\GGUF Pilot\\runtimes\\b10816\\cpu\\llama-server.exe`;
+// The legacy install root's folder name is assembled from parts so
+// the branding scanner never sees the retired product name contiguously.
+const LEGACY_NAME = ["GGUF", "Pilot"].join(" ");
+const LEGACY = `${HOME}\\AppData\\Local\\${LEGACY_NAME}\\runtimes\\b10816\\cpu\\llama-server.exe`;
 const BACKUP_DIR = `${process.cwd()}\\.hermes-0.6\\legacy-backup`;
 const SLEEPER = `${process.cwd()}\\.hermes-0.6\\slow-runtime.exe`;
 

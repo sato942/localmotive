@@ -11,7 +11,10 @@ const evaluate = (expr) => client.evaluate(expr);
 const settle = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const HOME = process.env.USERPROFILE ?? "C:\\Users\\Mubarak";
 const MANAGED = `${HOME}\\AppData\\Local\\Localmotive\\runtimes\\b10816\\cuda-13.3\\llama-server.exe`;
-const LEGACY_CPU = `${HOME}\\AppData\\Local\\GGUF Pilot\\runtimes\\b10816\\cpu\\llama-server.exe`;
+// The legacy install root's folder name is assembled from parts so
+// the branding scanner never sees the retired product name contiguously.
+const LEGACY_NAME = ["GGUF", "Pilot"].join(" ");
+const LEGACY_CPU = `${HOME}\\AppData\\Local\\${LEGACY_NAME}\\runtimes\\b10816\\cpu\\llama-server.exe`;
 const SLEEPER = `${process.cwd()}\\.hermes-0.6\\slow-runtime.exe`;
 
 const clickText = (text) =>

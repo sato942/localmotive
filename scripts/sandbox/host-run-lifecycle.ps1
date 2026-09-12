@@ -27,6 +27,34 @@ if (-not $env:GH_TOKEN -and $env:GITHUB_TOKEN) { $env:GH_TOKEN = $env:GITHUB_TOK
 $Root = Join-Path $env:TEMP ("localmotive-sandbox-" + $Version + "-" + (Get-Date -Format "yyyyMMddHHmmss"))
 $Shared = Join-Path $Root "shared"
 $OutDir = Join-Path $PWD "release-evidence\$Version\attestations"
+
+# --- Candidate-inventory binding (2026-09-12 review) ------------------------
+# Lifecycle evidence binds to the ORIGINAL candidate inventory's full source
+# SHA. The environment may not substitute the current HEAD: a mismatch is a
+# hard refusal. The harness revision is recorded separately so the evidence
+# identifies both the candidate source and the tooling that produced it.
+if ($CandidateDir) {
+  $inventoryPath = Join-Path $CandidateDir "candidate-inventory-$Version.json"
+  if (-not (Test-Path $inventoryPath)) {
+    throw "The candidate inventory is missing: $inventoryPath. Lifecycle evidence binds to the inventory's full source SHA; refusing to run without it."
+  }
+  $inventory = Get-Content $inventoryPath -Raw | ConvertFrom-Json
+  $candidateSourceRevision = [string]$inventory.sourceRevision
+  if ($candidateSourceRevision -notmatch '^[0-9a-f]{40}$') {
+    throw "The candidate inventory records an invalid source revision '$candidateSourceRevision'."
+  }
+  if ($env:LOCALMOTIVE_SOURCE_REVISION -and $env:LOCALMOTIVE_SOURCE_REVISION -ne $candidateSourceRevision) {
+    throw "LOCALMOTIVE_SOURCE_REVISION '$($env:LOCALMOTIVE_SOURCE_REVISION)' does not match the candidate inventory's '$candidateSourceRevision'. Never substitute HEAD for the candidate source."
+  }
+  $env:LOCALMOTIVE_SOURCE_REVISION = $candidateSourceRevision
+} else {
+  $candidateSourceRevision = if ($env:LOCALMOTIVE_SOURCE_REVISION) { $env:LOCALMOTIVE_SOURCE_REVISION } else { $null }
+}
+$harnessRevision = "unknown"
+try {
+  $harnessRevision = (git -C $PSScriptRoot rev-parse HEAD 2>$null).Trim()
+  if (-not $harnessRevision) { $harnessRevision = "unknown" }
+} catch { $harnessRevision = "unknown" }
 $EvidencePath = Join-Path $OutDir "$EvidenceName.json"
 $EvidenceLog = Join-Path $OutDir "$EvidenceName.log"
 New-Item -ItemType Directory -Force -Path $Shared | Out-Null
@@ -58,6 +86,7 @@ function Write-FailureEvidence([string]$Status, [string]$Message) {
     version = $Version
     previousTag = $PreviousTag
     sourceRevision = $sourceRevision
+    harnessRevision = $harnessRevision
     startedAtUtc = $startedAt.ToString("o")
     finishedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
     candidateDigests = $candidateDigests
@@ -220,6 +249,7 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
         # retrievable but not attributable.
         $failDoc = Get-Content $resultPath -Raw | ConvertFrom-Json
         $failDoc | Add-Member -NotePropertyName sourceRevision -NotePropertyValue $env:LOCALMOTIVE_SOURCE_REVISION -Force
+      $failDoc | Add-Member -NotePropertyName harnessRevision -NotePropertyValue $harnessRevision -Force
         $failDoc | Add-Member -NotePropertyName candidateDigests -NotePropertyValue $candidateDigests -Force
         ($failDoc | ConvertTo-Json -Depth 8) | Set-Content -Path $EvidencePath -Encoding UTF8
         $logPath = Join-Path $Shared "lifecycle.log"
@@ -254,6 +284,7 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
       # Bind the pass verdict to the immutable source revision and candidate
       # digests (GH-03/GH-06): the in-sandbox document alone cannot carry them.
       $doc | Add-Member -NotePropertyName sourceRevision -NotePropertyValue $env:LOCALMOTIVE_SOURCE_REVISION -Force
+      $doc | Add-Member -NotePropertyName harnessRevision -NotePropertyValue $harnessRevision -Force
       $doc | Add-Member -NotePropertyName candidateDigests -NotePropertyValue $candidateDigests -Force
       ($doc | ConvertTo-Json -Depth 8) | Set-Content -Path $EvidencePath -Encoding UTF8
       if (Test-Path (Join-Path $Shared "lifecycle.log")) {
