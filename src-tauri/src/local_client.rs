@@ -63,10 +63,7 @@ impl BoundedVec {
 impl std::io::Write for BoundedVec {
     fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
         if self.buffer.len() + data.len() > self.limit {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "request body exceeds the limit",
-            ));
+            return Err(std::io::Error::other("request body exceeds the limit"));
         }
         self.buffer.extend_from_slice(data);
         Ok(data.len())
