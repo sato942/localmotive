@@ -105,7 +105,8 @@
         "publish": [
           "quality",
           "rust-audit",
-          "package"
+          "package",
+          "clean-account-lifecycle"
         ]
       }
     },

@@ -7,7 +7,7 @@ import { test } from "node:test";
 import Ajv from "ajv";
 import { verifyVersions } from "../verify_versions.mjs";
 import { validatePinnedUses } from "../verify_workflow_pins.mjs";
-import { validateWorkflowGates } from "../verify_workflow_gates.mjs";
+import { loadWorkflows, validateWorkflowGates } from "../verify_workflow_gates.mjs";
 import { inspectIcoSizes, validateIconConfiguration } from "../verify_icons.mjs";
 import { validateBrandingEntries } from "../verify_branding.mjs";
 import { validateQualification } from "../verify_qualification.mjs";
@@ -1205,9 +1205,14 @@ test("release publish verification avoids hosted-only shell dependencies", async
 
 test("tag-push publish runs the same gates as the dispatch path", async () => {
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
-  // Preferred ship path: pushing the version tag publishes after package
-  // PASS, so no second parallel package run ever shares the runner CDP.
-  assert.match(release, /github\.ref == 'refs\/tags\/v0\.5\.0'/);
+  // Preferred ship path: pushing the version tag publishes after package and
+  // the lifecycle verdict, so no second parallel package run ever shares the
+  // runner CDP. Audit S-26: the guard binds the RESOLVED tag - the original
+  // `== 'v0.5.0'` literal silently skipped publication for every later
+  // version; the dispatch republish path stays behind its explicit input.
+  assert.match(release, /needs\.quality\.outputs\.tag == github\.ref_name/);
+  assert.match(release, /startsWith\(github\.ref, 'refs\/tags\/v'\)/);
+  assert.match(release, /github\.event_name == 'workflow_dispatch' && inputs\.publish/);
 });
 
 test("branding history set covers the archived docs layout", async () => {
@@ -1334,7 +1339,12 @@ test("GH-03 the lifecycle consumes candidates instead of waiting for publication
   assert.match(lifecycle, /-CandidateDir "artifacts"/);
   assert.doesNotMatch(lifecycle, /ReleaseWaitMinutes/);
   const publishHead = release.split("\n  publish:")[1].split("steps:")[0];
-  assert.doesNotMatch(publishHead, /clean-account-lifecycle/, "publication must not gate on the interactive Sandbox feature");
+  // Fail-closed supersession of the original "must not gate on the
+  // interactive Sandbox feature" note: absent or failed lifecycle evidence
+  // blocks publication (G-06.I1, G-09.V1 negative control). The lifecycle
+  // itself still consumes CANDIDATE bytes rather than waiting for published
+  // assets, which is this test's subject.
+  assert.match(publishHead, /clean-account-lifecycle/, "publication waits for the lifecycle verdict (fail-closed)");
   assert.doesNotMatch(hardware, /clean-account-lifecycle/, "the lifecycle job belongs to release.yml");
 });
 
@@ -1936,6 +1946,56 @@ test("S-26: no workflow carries a literal release version and gates stay fail-fa
     /fail-fast; repeated by npm run check/,
     "the release quality job documents the fail-fast pairing",
   );
+  // Audit S-26 I2 replaced the resolve-job literal; the publish ship guard
+  // must bind the RESOLVED tag the same way - a `== 'v0.5.0'`-style equality
+  // silently skips publication for every later version.
+  assert.doesNotMatch(
+    release,
+    /'v\d+\.\d+\.\d+'|"v\d+\.\d+\.\d+"/,
+    "release.yml must not compare against a literal version",
+  );
+});
+
+test("publish promotes the verified bytes only after every material gate (G-06/G-09)", async () => {
+  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  const publish = release.split("\n  publish:")[1];
+  assert.ok(publish, "release.yml has a publish job");
+  // Publication promotes the artifact the package job verified - it never
+  // rebuilds and never rewrites the checksum inventory.
+  assert.match(publish, /Retrieve verified release candidates/, "publish retrieves the verified candidate artifact");
+  assert.match(
+    publish,
+    /localmotive-\$\{\{ needs\.quality\.outputs\.version \}\}-verified/,
+    "publish consumes the -verified artifact uploaded by the package job",
+  );
+  assert.match(publish, /sha256sum -c/, "publish verifies the producer checksums");
+  assert.doesNotMatch(publish, /tauri build|sha256sum Localmotive/, "publish must not rebuild or rewrite the inventory");
+  // Absent or failed lifecycle evidence blocks publication (G-06.I1); a job
+  // that only waits for `package` would ship without the sandbox verdict.
+  assert.match(
+    release,
+    /needs: \[rust-audit, quality, package, clean-account-lifecycle\]/,
+    "publish depends on the clean-account lifecycle gate",
+  );
+  assert.match(
+    publish,
+    /needs\.quality\.outputs\.tag == github\.ref_name/,
+    "the ship guard binds the resolved tag, not a literal version",
+  );
+  assert.ok(
+    !/needs\.quality\.outputs\.tag == '/.test(publish),
+    "the ship guard must not compare the resolved tag against a literal",
+  );
+  // The workflow-gates policy must bind publish to the lifecycle gate too,
+  // so the checker fails any regression that drops the dependency.
+  const policy = JSON.parse(await readFile(join(process.cwd(), ".github", "workflow-gates.json"), "utf8"));
+  const required = policy.workflows["release.yml"].publicationJobs.publish;
+  assert.ok(
+    required.includes("clean-account-lifecycle"),
+    "workflow-gates policy binds publish to clean-account-lifecycle",
+  );
+  const result = validateWorkflowGates(await loadWorkflows(process.cwd()), policy);
+  assert.equal(result.ok, true, result.failures.join("\n"));
 });
 
 test("S-26: the hardware probe runs only in its explicit qualification job", async () => {

@@ -461,14 +461,17 @@ jobs:
           if-no-files-found: error
 
   publish:
-    # Preferred ship path: pushing the version tag publishes after package
-    # PASS in the same run, so no second parallel package ever shares the
-    # runner CDP. Dispatch + publish=true stays for republish only.
+    # Preferred ship path: pushing the version tag publishes after the package
+    # job and the clean-account lifecycle PASS in the same run, so no second
+    # parallel package ever shares the runner CDP and nothing publishes
+    # without the sandbox verdict. Dispatch + publish=true stays for republish
+    # only. Audit S-26: this guard binds the RESOLVED tag - it must never
+    # compare against a literal version, which would silently skip
+    # publication for every other release.
     if: >-
-      needs.quality.outputs.tag == 'v0.5.0' &&
-      (github.ref == 'refs/tags/v0.5.0' ||
-        (github.event_name == 'workflow_dispatch' && inputs.publish))
-    needs: [rust-audit, quality, package]
+      startsWith(github.ref, 'refs/tags/v') && needs.quality.outputs.tag == github.ref_name ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish)
+    needs: [rust-audit, quality, package, clean-account-lifecycle]
     runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]
     permissions:
       contents: write
