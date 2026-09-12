@@ -447,6 +447,19 @@ jobs:
             & ".\scripts\sandbox\host-run-lifecycle.ps1" -Tag "${{ needs.resolve.outputs.tag }}" -Version "${{ needs.quality.outputs.version }}" -PreviousTag $leg.Previous -CandidateDir "artifacts" -EvidenceName $leg.Name -PreservationFlavor $leg.Flavor
           }
 
+      # R13 (follow-up review): a failing leg still leaves its structured
+      # evidence retrievable from the run itself, not only from the checkout
+      # of a machine that happened to run it.
+      - name: Retain lifecycle evidence for every outcome
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: localmotive-${{ needs.quality.outputs.version }}-lifecycle-evidence
+          path: |
+            release-evidence/${{ needs.quality.outputs.version }}/attestations/sandbox-clean-account-lifecycle-*
+          if-no-files-found: ignore
+          retention-days: 90
+
       - name: Lifecycle evidence summary
         if: always()
         shell: pwsh
@@ -549,6 +562,24 @@ jobs:
             echo "This full release is honestly unsigned: Authenticode is DEFERRED_BY_OWNER, no signature is claimed, and Windows SmartScreen may warn. Verify the published SHA-256 checksums before use."
           } > release-notes.md
 
+      - name: Re-resolve the remote tag immediately before publication (drift gate)
+        shell: bash
+        env:
+          TAG: ${{ needs.quality.outputs.tag }}
+          RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          # R13 (follow-up review): the tag was resolved once at the start of
+          # the run. Re-resolve its peeled commit here so a retargeted or
+          # re-created tag can never publish a differently-sourced release
+          # than the one every gate in this run verified.
+          peeled=$(git ls-remote origin "refs/tags/${TAG}^{}" | awk '{print $1}')
+          if [ -z "$peeled" ]; then
+            peeled=$(git ls-remote origin "refs/tags/${TAG}" | awk '{print $1}')
+          fi
+          test -n "$peeled" || { echo "::error::tag ${TAG} is not visible on the remote"; exit 1; }
+          test "$peeled" = "$RESOLVED_SHA"             || { echo "::error::tag ${TAG} now points at $peeled, expected $RESOLVED_SHA; refusing to publish drifted source"; exit 1; }
+          echo "Tag ${TAG} still points at the resolved revision $RESOLVED_SHA."
+
       - name: Publish the explicitly approved honestly unsigned full release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
@@ -571,6 +602,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.quality.outputs.tag }}
           VERSION: ${{ needs.quality.outputs.version }}
+          RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
         run: |
           rm -rf public-readback
           mkdir public-readback
@@ -590,6 +622,11 @@ jobs:
             test -s "public-readback/$name"
           done
           cmp "artifacts/SHA256SUMS-${VERSION}.txt" "public-readback/SHA256SUMS-${VERSION}.txt"
+          # R13: the public inventory must be byte-identical to the producer's
+          # retained copy and must verify against the public artifact set - a
+          # nonempty JSON download is not evidence.
+          cmp "artifacts/candidate-inventory-${VERSION}.json" "public-readback/candidate-inventory-${VERSION}.json"
+          LOCALMOTIVE_SOURCE_REVISION="$RESOLVED_SHA" node scripts/verify_candidate_inventory.mjs --verify "public-readback/candidate-inventory-${VERSION}.json" "$VERSION"
           (cd public-readback && sha256sum -c "SHA256SUMS-${VERSION}.txt")
 
       - name: Retain public release read-back evidence
@@ -599,3 +636,17 @@ jobs:
           path: public-readback/*
           if-no-files-found: error
           retention-days: 90
+
+      # R13 (follow-up review): a failed read-back must still leave its
+      # diagnostics retrievable - the release itself is already public, so the
+      # partial readback and the release notes are the investigation record.
+      - name: Retain publish diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: localmotive-${{ needs.quality.outputs.version }}-publish-diagnostics
+          path: |
+            public-readback/
+            release-notes.md
+          if-no-files-found: ignore
+          retention-days: 30

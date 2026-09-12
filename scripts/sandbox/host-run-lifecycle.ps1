@@ -34,37 +34,6 @@ $Root = Join-Path $env:TEMP ("localmotive-sandbox-" + $Version + "-" + (Get-Date
 $Shared = Join-Path $Root "shared"
 $OutDir = Join-Path $PWD "release-evidence\$Version\attestations"
 
-# --- Candidate-inventory binding (2026-09-12 review) ------------------------
-# Lifecycle evidence binds to the ORIGINAL candidate inventory's full source
-# SHA. The environment may not substitute the current HEAD: a mismatch is a
-# hard refusal. The harness revision is recorded separately so the evidence
-# identifies both the candidate source and the tooling that produced it.
-if ($CandidateDir) {
-  $inventoryPath = Join-Path $CandidateDir "candidate-inventory-$Version.json"
-  if (-not (Test-Path $inventoryPath)) {
-    if ($FaultSimulation -ne "none") {
-      # Fault legs may run without staged candidates (the missing-assets
-      # fixture is an absent directory by design); their evidence records a
-      # null candidate binding instead of a substituted revision.
-      $candidateSourceRevision = $null
-    } else {
-      throw "The candidate inventory is missing: $inventoryPath. Lifecycle evidence binds to the inventory's full source SHA; refusing to run without it."
-    }
-  } else {
-    $inventory = Get-Content $inventoryPath -Raw | ConvertFrom-Json
-    $candidateInventorySha256 = (Get-FileHash -Path $inventoryPath -Algorithm SHA256).Hash.ToLower()
-    $candidateSourceRevision = [string]$inventory.sourceRevision
-    if ($candidateSourceRevision -notmatch '^[0-9a-f]{40}$') {
-      throw "The candidate inventory records an invalid source revision '$candidateSourceRevision'."
-    }
-    if ($env:LOCALMOTIVE_SOURCE_REVISION -and $env:LOCALMOTIVE_SOURCE_REVISION -ne $candidateSourceRevision) {
-      throw "LOCALMOTIVE_SOURCE_REVISION '$($env:LOCALMOTIVE_SOURCE_REVISION)' does not match the candidate inventory's '$candidateSourceRevision'. Never substitute HEAD for the candidate source."
-    }
-    $env:LOCALMOTIVE_SOURCE_REVISION = $candidateSourceRevision
-  }
-} else {
-  $candidateSourceRevision = if ($env:LOCALMOTIVE_SOURCE_REVISION) { $env:LOCALMOTIVE_SOURCE_REVISION } else { $null }
-}
 $harnessRevision = "unknown"
 try {
   $harnessRevision = (git -C $PSScriptRoot rev-parse HEAD 2>$null).Trim()
@@ -127,6 +96,40 @@ try {
   # GH-06.V2 witness: an early installer-asset failure must leave a bounded
   # structured outcome at this stage, before any sandbox work.
   $runStarted = Get-Date
+
+  # --- Candidate-inventory binding (2026-09-12 review; R13: inside the try
+  # so a preflight refusal still produces structured failure evidence) ------
+  # --- Candidate-inventory binding (2026-09-12 review) ------------------------
+  # Lifecycle evidence binds to the ORIGINAL candidate inventory's full source
+  # SHA. The environment may not substitute the current HEAD: a mismatch is a
+  # hard refusal. The harness revision is recorded separately so the evidence
+  # identifies both the candidate source and the tooling that produced it.
+  if ($CandidateDir) {
+    $inventoryPath = Join-Path $CandidateDir "candidate-inventory-$Version.json"
+    if (-not (Test-Path $inventoryPath)) {
+      if ($FaultSimulation -ne "none") {
+        # Fault legs may run without staged candidates (the missing-assets
+        # fixture is an absent directory by design); their evidence records a
+        # null candidate binding instead of a substituted revision.
+        $candidateSourceRevision = $null
+      } else {
+        throw "The candidate inventory is missing: $inventoryPath. Lifecycle evidence binds to the inventory's full source SHA; refusing to run without it."
+      }
+    } else {
+      $inventory = Get-Content $inventoryPath -Raw | ConvertFrom-Json
+      $candidateInventorySha256 = (Get-FileHash -Path $inventoryPath -Algorithm SHA256).Hash.ToLower()
+      $candidateSourceRevision = [string]$inventory.sourceRevision
+      if ($candidateSourceRevision -notmatch '^[0-9a-f]{40}$') {
+        throw "The candidate inventory records an invalid source revision '$candidateSourceRevision'."
+      }
+      if ($env:LOCALMOTIVE_SOURCE_REVISION -and $env:LOCALMOTIVE_SOURCE_REVISION -ne $candidateSourceRevision) {
+        throw "LOCALMOTIVE_SOURCE_REVISION '$($env:LOCALMOTIVE_SOURCE_REVISION)' does not match the candidate inventory's '$candidateSourceRevision'. Never substitute HEAD for the candidate source."
+      }
+      $env:LOCALMOTIVE_SOURCE_REVISION = $candidateSourceRevision
+    }
+  } else {
+    $candidateSourceRevision = if ($env:LOCALMOTIVE_SOURCE_REVISION) { $env:LOCALMOTIVE_SOURCE_REVISION } else { $null }
+  }
   $stage = "resolve-installers"
   if ($FaultSimulation -eq "missing-assets") {
     throw "installer assets are unavailable (fault simulation)"

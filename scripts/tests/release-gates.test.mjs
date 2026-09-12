@@ -1141,6 +1141,28 @@ test("R07: preservation fixtures carry real released-version data, not markers",
   assert.doesNotMatch(release, /non-gating policy/, "the stale summary claim is gone");
 });
 
+test("R13: publication rechecks the tag and trusts exact bytes, with failure diagnostics", async () => {
+  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  const publish = release.split("\n  publish:")[1];
+  // The remote tag is re-resolved immediately before publication.
+  assert.match(publish, /Re-resolve the remote tag immediately before publication/);
+  assert.match(publish, /refs\/tags\/\$\{TAG\}\^\{\}/);
+  assert.match(publish, /refusing to publish drifted source/);
+  // The public inventory is byte-checked and re-verified, never trusted
+  // because it is nonempty.
+  assert.match(publish, /cmp "artifacts\/candidate-inventory-\$\{VERSION\}\.json" "public-readback\/candidate-inventory-\$\{VERSION\}\.json"/);
+  assert.match(publish, /verify_candidate_inventory\.mjs --verify "public-readback\/candidate-inventory/);
+  // A failed read-back still leaves diagnostics.
+  assert.match(publish, /publish-diagnostics/);
+  const lifecycle = release.split("\n  clean-account-lifecycle:")[1].split("\n  publish:")[0];
+  assert.match(lifecycle, /lifecycle-evidence/);
+  assert.match(lifecycle, /if: always\(\)/);
+  // The review text no longer conflates workflow artifacts with release assets.
+  const review = await readFile(join(process.cwd(), "docs", "RELEASE-REVIEW-0.6.md"), "utf8");
+  assert.doesNotMatch(review, /Expected assets: the MSI, NSIS setup, portable exe, `SHA256SUMS`, the SBOM/);
+  assert.match(review, /WORKFLOW ARTIFACTS retained for 90 days/);
+});
+
 test("R09: installed version identity is exact and payload expectations are stated", async () => {
   const sandbox = await readFile(join(process.cwd(), "scripts", "sandbox", "run-lifecycle-in-sandbox.ps1"), "utf8");
   assert.doesNotMatch(sandbox, /StartsWith\(\$expected\)/, "no near-miss version identity");

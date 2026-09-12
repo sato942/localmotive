@@ -156,7 +156,7 @@ Everything below is prepared and intentionally NOT executed. No tag, no release,
 
 ### 1a. Bootstrap and branch/PR sequence (rewritten 2026-09-12)
 
-`origin/main` is still `e530371`; the 0.6.0 work exists only as local commits, so no remote workflow can run yet. One coherent bootstrap, in order, honoring the standing rules (self-hosted runner for trusted pushes; GitHub-hosted runs only with explicit approval; tag/publish owner-gated). Step 1 needs no new permission; steps 3-5 need repository-settings and one GitHub-hosted run; step 6 is the release boundary.
+Current state: `origin/main` carries the full 0.6.0 work (pushed in two validated steps, `e530371 -> 9b04b47 -> db548c8`; trusted CI green on the self-hosted runner, see step 1) and the follow-up-review remediation series continues on top of it. Trusted jobs (`check`, `rust-audit`, `package-smoke`) run only for main pushes - never for pull requests; the PR path runs only `pr-check` on the GitHub-hosted runner. One coherent bootstrap remains, in order, honoring the standing rules (GitHub-hosted runs only with explicit approval; tag/publish owner-gated). Steps 2-5 need repository-settings and approved hosted runs; step 6 is the release boundary.
 
 1. **EXECUTED 2026-09-12 (agent, after a green soak): `origin/main` moved `e530371` -> `9b04b47`; trusted CI run validated on the self-hosted runner (`34674036480`: check 7m18s green incl. the fixed frontend step, rust-audit green, package-smoke green; the earlier two failed runs are the reproduce-and-fix record). The remote workflow tree is established; no action remains here.** Historical form: push main (agent; authorized after a green default-parallel soak) and watch the trusted CI:
 ```bash
@@ -184,7 +184,7 @@ Genuinely missing permissions (everything else is authorized): repository-rulese
 ### 1. Repository rulesets (owner action; currently absent - `gh api repos/sato942/localmotive/rulesets` returns none, `branches/main.protected` is false)
 
 ```bash
-# Main-branch ruleset: require pr-check, forbid force pushes and deletions.
+# Main-branch ruleset requirements: pull_request + pr-check status, no force pushes, no deletions.
 gh api repos/sato942/localmotive/rulesets --method POST --input - <<'JSON'
 {
   "name": "main-pr-check",
@@ -192,6 +192,7 @@ gh api repos/sato942/localmotive/rulesets --method POST --input - <<'JSON'
   "enforcement": "active",
   "conditions": {"ref_name": {"include": ["refs/heads/main"], "exclude": []}},
   "rules": [
+    {"type": "pull_request", "parameters": {"required_approving_review_count": 0, "dismiss_stale_reviews_on_push": false, "require_code_owner_review": false, "require_last_push_approval": false, "required_review_thread_resolution": false}},
     {"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": true, "required_status_checks": [{"context": "pr-check"}]}},
     {"type": "non_fast_forward"},
     {"type": "deletion"}
@@ -226,17 +227,25 @@ gh api repos/sato942/localmotive/rulesets --jq '.[] | {id, name, target, enforce
 ### 2. Publication (owner action; executes release.yml)
 
 ```bash
-git tag -a v0.6.0 -m "Localmotive 0.6.0 (unsigned)" && git push origin v0.6.0
-gh run watch $(gh run list --workflow=release.yml --limit 1 --json databaseId --jq '.[0].databaseId')
+# Create the tag on the EXACT reviewed revision (the frozen candidate source
+# recorded in the release-evidence manifest) - never on a moving HEAD.
+REVIEWED_SHA=<frozen-candidate-source-sha-from-the-evidence-manifest>
+git rev-parse "$REVIEWED_SHA"  # confirm, then:
+git tag -a v0.6.0 "$REVIEWED_SHA" -m "Localmotive 0.6.0 (unsigned)" && git push origin v0.6.0
+# Watch the run bound to THAT commit and event, not "the latest run".
+RUN_ID=$(gh run list --workflow=release.yml --commit "$REVIEWED_SHA" --json databaseId --jq '.[0].databaseId')
+gh run watch "$RUN_ID"
 # Then read back: tag object, release body, asset set, checksums, Latest state.
-gh release view v0.6.0 --json tagName,isLatest,isPrerelease,assets
+# `gh release view` has no isLatest field; read Latest from the releases API.
+gh release view v0.6.0 --json tagName,isPrerelease,assets
+gh api repos/sato942/localmotive/releases/latest --jq .tag_name
 ```
 
-Expected assets: the MSI, NSIS setup, portable exe, `SHA256SUMS`, the SBOM and the attestation artifacts. The workflow builds the installers ONCE in its `package` job, verifies the packaged executable, uploads them as `localmotive-<version>-verified`, runs the clean-account lifecycle on exactly those bytes, and `publish` downloads that same artifact and re-checks `sha256sum -c` without rewriting it - no build step exists in the publish job, so publication promotes the verified bytes without rebuilding them (confirmed in the 2026-09-12 third pass; the earlier hardcoded `v0.5.0` guard that would have skipped the v0.6.0 publication was fixed in commit `1776146`, and `publish` now requires the lifecycle verdict). Verify the published digests against `SHA256SUMS`. Local candidate digests at `3a2b06e`: portable `fbbd2a1a…`, msi `1d217350…`, setup `b83afa2c…`. G-09 additionally requires the negative publication controls (wrong SHA, moved tag, modified bytes, missing assets, absent lifecycle evidence) exercised on the real path before the release is trusted.
+Expected RELEASE ASSETS (the six files the release carries, pinned by the read-back): the NSIS setup, the portable exe, the MSI, `SHA256SUMS-<version>.txt`, `packaged-verification-0.4.1.json` (a historical filename whose contents are produced by this candidate end to end), and `candidate-inventory-<version>.json`. The SBOM, the catalog matrix, the lifecycle attestations and the read-back itself are WORKFLOW ARTIFACTS retained for 90 days under the run, not release assets; the review's earlier sentence conflated the two. The publication re-verifies the downloaded inventory byte-for-byte against the producer copy and re-runs the inventory verifier on the public set (R13), and it re-resolves the remote tag immediately before publishing so a retargeted tag cannot ship drifted source. The workflow builds the installers ONCE in its `package` job, verifies the packaged executable, uploads them as `localmotive-<version>-verified`, runs the clean-account lifecycle on exactly those bytes, and `publish` downloads that same artifact and re-checks `sha256sum -c` without rewriting it - no build step exists in the publish job, so publication promotes the verified bytes without rebuilding them (confirmed in the 2026-09-12 third pass; the earlier hardcoded `v0.5.0` guard that would have skipped the v0.6.0 publication was fixed in commit `1776146`, and `publish` now requires the lifecycle verdict). Verify the published digests against `SHA256SUMS`. Local candidate digests are re-cut at every shipped-code change and recorded in the canonical candidate inventory committed with the evidence; the earlier `3a2b06e` values (portable `fbbd2a1a…`, msi `1d217350…`, setup `b83afa2c…`) are superseded and remain only as history. G-09 additionally requires the negative publication controls (wrong SHA, moved tag, modified bytes, missing assets, absent lifecycle evidence) exercised on the real path before the release is trusted.
 
 ### 3. Approved runs and sessions still pending owner approval
 
-- A benign PR plus a controlled failing-check PR (GH-01.V1/V2) - GitHub-hosted `pr-check` runs are not burned without approval.
+- The GH-01 PR campaign consumes THREE GitHub-hosted `windows-latest` runs: (1) a benign PR proving `pr-check` green and visible; (2) a deliberately failing commit on the same PR proving the red state; (3) the revert commit proving green again. Total hosted budget: 3 runs, requested with the owner go for GH-01.V1/V2; nothing runs without that approval.
 - Narrator/NVDA and OS-level high-contrast session (G-05.I3 residual).
 - Authorized cloud/HF test account for live-provider scenarios (G-05.I3 residual).
 
