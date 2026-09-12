@@ -7,10 +7,11 @@
     "version":  "0.6.0",
     "previousTag":  "v0.4.0",
     "sourceRevision":  null,
-    "harnessRevision":  "2f0a54488c337da734dd79436d91fd46f58a5edf",
-    "startedAtUtc":  "2026-09-12T04:17:19.7958083Z",
-    "finishedAtUtc":  "2026-09-12T04:17:19.8043170Z",
+    "harnessRevision":  "ba1e450e308d40fcfb182319afa410758e320222",
+    "startedAtUtc":  "2026-09-12T15:34:10.8957191Z",
+    "finishedAtUtc":  "2026-09-12T15:34:10.9047209Z",
     "candidateDigests":  {
 
-                         }
+                         },
+    "candidateInventorySha256":  null
 }
