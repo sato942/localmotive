@@ -733,3 +733,42 @@ because R01-R05 and R10-R15 changed shipped code. Packaged campaign at that
 freeze: packaged verification 25/25 `overall_status=PASS` (`source_dirty`
 false), MT-06 cancellation 33/33, DC-04 command path 13/13, RT-04.V2 17/17,
 supervision/tamper/FE-16/FE-05.V3/catalog/churn clean, lifecycle matrix 4/4 PASS with the R07 flavors (preservation=PASS on every leg), witnesses 7/7 (including the live-lock refusal and stale-lock takeover legs added after a campaign incident where a killed attempt's orphaned harness overwrote a clean preservation record; the harness now locks each scenario and re-authorizes every evidence write), packaged health 7/7, MT-01d decode 867.25 tok/s (p95 878.93), and both negative controls (historical doctored installer FAIL-with-identity; freeze-6 byte-doctored setup refused at `resolve-installers` naming both digests). All scores, digests and records are in the tracker's fifth-pass reconciliation section and the canonical qualification manifest `.hermes-0.6/qualification-manifest-0.6.0.json`.
+
+### Fifth-pass follow-up additions (2026-09-12, after the campaign at `85edee6`)
+
+- **MT-07.V2 closed.** The five audit scenarios (CPU-only snapshot, same GPU with
+  changed CPU, fit-reduced effective context, changed draft settings with the same
+  companion, same LoRA filename with changed content) are covered as canonical
+  execution-snapshot identity tests (`calibration::tests::
+  mt07_cpu_only_and_hardware_changes_are_distinguished` plus the every-field table
+  test). Focused run 4/4 green; mutation MUT-MT07 (key derivation ignores
+  `lora_sha256`) caught. The prior `environment-blocked` disposition described the
+  live portability matrix, which the criterion's regression-test wording does not
+  require; that residual stays in the RT-06/S-25 hardware register.
+- **RT-06.V3 closed.** Packaged all-backend benchmark on this host (RTX 5090,
+  catalog `b10816`): the catalog exposes all seven Windows x64 backends; four are
+  eligible on a single-vendor host and were exercised (cpu/cuda-12.4/cuda-13.3
+  reused in 0.17-0.75 s; vulkan freshly installed at 35,228,033 bytes in 2.9 s);
+  the three non-NVIDIA backends are refused by the runtime-compatibility guard
+  with named reasons (a seven-backend host needs three GPU vendors - proven
+  refusals, not a code gap). Listing: 4 records with a zero-byte second pass
+  (verified-install lease works); selecting 379-388 ms with `managedVerified=true`;
+  launching (health) PASS in 3.3-3.4 s; instrumentation counters captured around
+  every step. `scripts/g05_rt06_all_backends.mjs` 12/12 checks PASS; evidence
+  `release-evidence/0.6.0/attestations/rt06-all-backends.json`.
+- **Accessibility probe extended** for G-05.I3's automatable scope: keyboard,
+  reduced motion, high-DPI/zoom and forced-colors legs plus a new
+  accessibility-tree leg (148 nodes, 10/10 interactive controls carry accessible
+  names). Residue: a manual Narrator/NVDA listening pass and live-credential
+  scenarios.
+- **Soak watch item resolved.** A capturing soak reproduced the one-off failure:
+  `proc::tests::dropping_a_contained_process_terminates_descendants` failed its
+  "descendant fixture did not start" assertion at the 15 s bound under parallel
+  load (nested PowerShell cold start). Fix: 45 s load-aware bound plus early
+  parent-exit diagnostics; mutation MUT-PROC1 caught (`parent_exit=Some(0)` in
+  162 ms); post-fix soak: three concurrent full suites with zero failure markers
+  and 10/10 focused repetitions green.
+- **Candidate re-cut (freeze 7).** The `proc.rs` fix changes a shipped-code file,
+  so the candidate was rebuilt and re-staged; the affected packaged checks
+  (supervision, FE-16, packaged verification) were re-run on the new bytes and the
+  qualification manifest regenerated with the previous freeze labeled superseded.

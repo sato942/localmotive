@@ -1,12 +1,12 @@
 {
   "schema_version": "1.0.0",
   "verifier": "scripts/verify_041.mjs",
-  "source_revision": "142e2f544a984af184da7378544c637b0bf7c37b",
-  "source_dirty": false,
+  "source_revision": "cb8ab64753d96b61fa43665d2cf1dd6b4ee7928c",
+  "source_dirty": true,
   "artifact": {
     "name": "Localmotive_0.6.0_x64-portable.exe",
     "size_bytes": 21019136,
-    "sha256": "095b153663aaef71f91a0dc7f67c5ac119c523b81521b00c82d67d32cb5f02ed"
+    "sha256": "9cf0f695c46fd276ff1c0e7c600e7cba99d82dc2b665c6b2e9fce335472e04e3"
   },
   "host_class": {
     "platform": "win32",
@@ -23,8 +23,8 @@
       }
     ]
   },
-  "started_at": "2026-09-12T16:35:49.162Z",
-  "finished_at": "2026-09-12T16:36:05.891Z",
+  "started_at": "2026-09-12T18:48:54.530Z",
+  "finished_at": "2026-09-12T18:49:11.784Z",
   "checks": [
     {
       "id": "candidate.artifact",
@@ -33,7 +33,7 @@
       "evidence": {
         "name": "Localmotive_0.6.0_x64-portable.exe",
         "size_bytes": 21019136,
-        "sha256": "095b153663aaef71f91a0dc7f67c5ac119c523b81521b00c82d67d32cb5f02ed"
+        "sha256": "9cf0f695c46fd276ff1c0e7c600e7cba99d82dc2b665c6b2e9fce335472e04e3"
       },
       "reason": ""
     },
@@ -42,18 +42,16 @@
       "criterion": "The source revision is a full Git commit and matches the requested revision.",
       "status": "PASS",
       "evidence": {
-        "source_revision": "142e2f544a984af184da7378544c637b0bf7c37b"
+        "source_revision": "cb8ab64753d96b61fa43665d2cf1dd6b4ee7928c"
       },
       "reason": ""
     },
     {
       "id": "candidate.clean-source",
       "criterion": "The packaged candidate comes from a clean checkout.",
-      "status": "PASS",
-      "evidence": {
-        "source_dirty": false
-      },
-      "reason": ""
+      "status": "FAIL",
+      "evidence": {},
+      "reason": "The source checkout contains tracked or untracked changes"
     },
     {
       "id": "candidate.cdp-connect",
@@ -453,5 +451,5 @@
       "reason": ""
     }
   ],
-  "overall_status": "PASS"
+  "overall_status": "FAIL"
 }
