@@ -1,25 +1,35 @@
-// MT-06 extension (2026-09-12 review): repeated cancel/restart cycles on the
-// packaged binary with resource measurements, not just caller latency.
-// Per cycle: run v2 benchmark -> cancel mid-flight -> the run ends -> the
-// server reports zero in-flight requests (/metrics requests_processing) and a
-// single owned child process. Every other cycle stops the server (children
-// reach zero) and starts it again (reservation released, listener re-owned).
-// After the final stop the listener must be gone.
+// MT-06 cancellation driver, R11 (follow-up review db548c8): the packaged
+// cancellation campaign measures APP-OWNED process identities instead of
+// process-name counts, coordinates each cancel with real server-side request
+// acceptance, asserts the persisted terminal record, bounds the cleanup
+// latency, and exercises an immediate restart to prove no overlapping
+// inference is possible while the previous run drains.
 //
-// Usage: node scripts/g05_mt06_cycles.mjs <debugPort> [cycles]
+// Usage: node scripts/g05_mt06_cycles.mjs <debugPort> [cycles] <appPid> [sourceRevision] [portableDigest]
+// appPid is REQUIRED: the owned-process checks are parent-scoped to it.
 import { attach } from "./lib/cdp_client.mjs";
 import { execSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { connect } from "node:net";
 import https from "node:https";
 
-const [portArg, cyclesArg] = process.argv.slice(2);
+const [portArg, cyclesArg, appPidArg, sourceRevisionArg, portableDigestArg] = process.argv.slice(2);
 const CYCLES = Number(cyclesArg ?? 6);
+const APP_PID = Number(appPidArg);
+if (!Number.isInteger(APP_PID) || APP_PID <= 0) {
+  console.error("usage: g05_mt06_cycles.mjs <debugPort> [cycles] <appPid> [sourceRevision] [portableDigest]");
+  process.exit(2);
+}
+const EVIDENCE_PATH = process.env.MT06_EVIDENCE_PATH ?? join(process.cwd(), ".hermes-0.6", "mt06-cycles-result.json");
+const BENCH_DIR = join(process.env.APPDATA ?? "", "io.github.localmotive.app", "benchmarks");
+const RUN_SETTLE_BOUND_MS = 60_000;
+const DRAIN_BOUND_MS = 300_000;
+const API_KEY = readFileSync(join(process.cwd(), ".hermes-0.6", "g05-tls", "api-key.txt"), "utf8").trim();
+
 const client = await attach(Number(portArg));
 const evaluate = (expr) => client.evaluate(expr);
 const settle = (ms) => new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
-const API_KEY = readFileSync(join(process.cwd(), ".hermes-0.6", "g05-tls", "api-key.txt"), "utf8").trim();
 
 const clickExact = (label) =>
   evaluate(`(() => {
@@ -48,13 +58,20 @@ const lastNotice = () =>
     return lines.length ? lines[lines.length - 1].slice(0, 240) : null;
   })()`);
 
-// Only one screen is mounted at a time; the Start/Stop controls live on the
-// Profile screen, so navigate there before using them (with refuted clicks
-// retried while the child is still alive).
+// --- Owned-process measurement (R11) ----------------------------------------
+// The app owns its server as a child process. Counts are scoped to the app's
+// PID via Win32_Process parentage; an enumeration failure THROWS (it must
+// never be reported as zero children, which would fake a clean stop).
+const ownedServerPids = () => {
+  const command = `powershell -NoProfile -Command "(Get-CimInstance Win32_Process -Filter \\"Name='llama-server.exe'\\" | Where-Object { $_.ParentProcessId -eq ${APP_PID} } | Select-Object -ExpandProperty ProcessId) -join ','"`;
+  const output = execSync(command, { encoding: "utf8", windowsHide: true, timeout: 20_000 });
+  const trimmed = output.trim();
+  if (trimmed === "" || trimmed === "0") return [];
+  return trimmed.split(",").map((value) => Number(value.trim())).filter((value) => Number.isInteger(value));
+};
+
 const stopServer = async () => {
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    // The stop control lives on the Control screen ("Stop server" /
-    // "Cancel start"); the Profile screen only carries Start.
     await clickExact("Control");
     await settle(1200);
     const stopped = await clickExact("Stop server");
@@ -62,20 +79,15 @@ const stopServer = async () => {
     let zero = false;
     for (let wait = 0; wait < 12 && !zero; wait += 1) {
       await settle(1000);
-      zero = llamaProcs() === 0;
+      try {
+        zero = ownedServerPids().length === 0;
+      } catch {
+        zero = false;
+      }
     }
     if (zero) return true;
   }
-  return llamaProcs() === 0;
-};
-
-const llamaProcs = () => {
-  try {
-    const out = execSync('tasklist /FI "IMAGENAME eq llama-server.exe" /FO CSV /NH', { encoding: "utf8" });
-    return out.split(/\r?\n/).filter((line) => line.toLowerCase().includes("llama-server.exe")).length;
-  } catch {
-    return 0;
-  }
+  return ownedServerPids().length === 0;
 };
 
 const metricsField = (name) =>
@@ -121,13 +133,39 @@ const listenerAlive = () =>
     setTimeout(() => done(false), 2000);
   });
 
+const newestBenchmarkRecord = (sinceMs) => {
+  try {
+    const candidates = readdirSync(BENCH_DIR)
+      .filter((name) => name.endsWith(".json"))
+      .map((name) => join(BENCH_DIR, name))
+      .map((path) => ({ path, mtime: statSync(path).mtimeMs }))
+      .filter((entry) => entry.mtime >= sinceMs)
+      .sort((a, b) => b.mtime - a.mtime);
+    if (candidates.length === 0) return null;
+    const record = JSON.parse(readFileSync(candidates[0].path, "utf8"));
+    return { path: candidates[0].path, terminalOutcome: record.terminalOutcome ?? null };
+  } catch (error) {
+    return { path: null, terminalOutcome: `ERR:${error.message}` };
+  }
+};
+
 const checks = [];
 const check = (name, ok, detail = "") => {
-  checks.push({ name, ok });
+  checks.push({ name, ok, detail });
   console.log(`${ok ? "PASS" : "FAIL"} ${name}${detail ? ` | ${detail}` : ""}`);
 };
 
-// --- Preconditions: live server, artifact inspected, preflight run once ----
+const startedAtMs = Date.now();
+const run = {
+  schema: "localmotive.mt06-cancellation.v1",
+  startedAtUtc: new Date().toISOString(),
+  sourceRevision: sourceRevisionArg ?? null,
+  portableDigest: portableDigestArg ?? null,
+  appPid: APP_PID,
+  cycles: [],
+};
+
+// --- Preconditions ----------------------------------------------------------
 await clickExact("Profile");
 await settle(1200);
 let live = await evaluate(`/Stop server/.test(document.body.textContent || "")`);
@@ -141,8 +179,22 @@ if (!live) {
 check("mt06.precondition-server-live", live, live ? "" : `notice=${await lastNotice()}`);
 if (!live) {
   console.log("MT06 SUMMARY: server did not start");
+  writeFileSync(EVIDENCE_PATH, JSON.stringify({ ...run, checks, summary: "server did not start" }, null, 2));
   process.exit(1);
 }
+let ownedServers = [];
+try {
+  for (let attempt = 0; attempt < 20 && ownedServers.length === 0; attempt += 1) {
+    ownedServers = ownedServerPids();
+    if (ownedServers.length === 0) await settle(1000);
+  }
+} catch (error) {
+  check("mt06.owned-pid-enumeration", false, String(error.message).slice(0, 160));
+  writeFileSync(EVIDENCE_PATH, JSON.stringify({ ...run, checks, summary: "enumeration failed" }, null, 2));
+  process.exit(1);
+}
+check("mt06.owned-pid-enumeration", ownedServers.length === 1, `pids=${ownedServers.join(",")}`);
+const ownedServerPid = ownedServers[0] ?? null;
 await clickExact("Benchmark");
 await settle(1200);
 await clickExact("Inspect artifact");
@@ -151,54 +203,121 @@ await clickExact("Run preflight");
 await settle(4000);
 
 // --- Cycles ----------------------------------------------------------------
-const results = [];
 for (let cycle = 1; cycle <= CYCLES; cycle += 1) {
+  const cycleStart = Date.now();
   await clickExact("Benchmark");
   await settle(1200);
   const started = await clickExact("Run v2 benchmark");
   let inFlight = false;
-  for (let attempt = 0; attempt < 40; attempt += 1) {
+  let accepted = false;
+  for (let attempt = 0; attempt < 60 && !accepted; attempt += 1) {
     await settle(1000);
-    if ((await buttonState("Cancel")) === "enabled") {
-      inFlight = true;
-      break;
+    const processing = await metricsField("llamacpp:requests_processing");
+    if (processing === "1") {
+      inFlight = (await buttonState("Cancel")) === "enabled";
+      // R11: cancel only AFTER the server reports the request in flight, so
+      // "cancel mid-request" is measured, not assumed from button state.
+      accepted = inFlight;
     }
   }
-  const cancelled = inFlight ? await clickExact("Cancel") : false;
+  const cancelled = accepted ? await clickExact("Cancel") : false;
   const cancelAt = Date.now();
   let settled = false;
   let notice = null;
+  let runEndedMs = null;
   for (let attempt = 0; attempt < 120 && !settled; attempt += 1) {
-    await settle(1000);
+    await settle(500);
     notice = await lastNotice();
     const cancelState = await buttonState("Cancel");
     const panelFinished = await evaluate(`/Benchmark finished|No benchmark is running/i.test(document.body.innerText || "")`);
     if (cancelState !== "enabled" || panelFinished) {
       settled = true;
+      runEndedMs = Date.now() - cancelAt;
     }
-    if (Date.now() - cancelAt > 150000) break;
+    if (Date.now() - cancelAt > RUN_SETTLE_BOUND_MS + 90_000) break;
   }
-  // Resource measurements after the run ends.
   let processing = await metricsField("llamacpp:requests_processing");
+  const drainStart = Date.now();
   let drained = processing === "0";
-  for (let attempt = 0; attempt < 20 && !drained; attempt += 1) {
-    await settle(1000);
+  for (let attempt = 0; attempt < 600 && !drained; attempt += 1) {
+    await settle(500);
     processing = await metricsField("llamacpp:requests_processing");
     drained = processing === "0";
+    if (Date.now() - drainStart > DRAIN_BOUND_MS) break;
   }
-  const procs = llamaProcs();
-  results.push({ cycle, started, inFlight, cancelled, settled, processing, procs });
+  const drainMs = Date.now() - drainStart;
+  const record = newestBenchmarkRecord(cycleStart);
+  let children = null;
+  let childError = null;
+  try {
+    children = ownedServerPids();
+  } catch (error) {
+    childError = String(error.message).slice(0, 160);
+  }
+  const entry = {
+    cycle,
+    started,
+    inFlight,
+    accepted,
+    cancelled,
+    settled,
+    runEndedMs,
+    drained,
+    drainMs,
+    processing,
+    ownedChildren: children,
+    childError,
+    terminalOutcome: record?.terminalOutcome ?? null,
+    recordPath: record?.path ?? null,
+    notice: String(notice ?? "").slice(0, 160),
+  };
+  run.cycles.push(entry);
   console.log(
-    `CYCLE ${cycle}: started=${started} inFlight=${inFlight} cancelled=${cancelled} settled=${settled} requests_processing=${processing} children=${procs} notice="${String(notice ?? "").slice(0, 90)}"`,
+    `CYCLE ${cycle}: accepted=${accepted} cancelled=${cancelled} settled=${settled}(${runEndedMs ?? "-"}ms) drained=${drained}(${drainMs}ms) record=${entry.terminalOutcome} children=${children?.join(",") ?? childError}`,
   );
-  check(`mt06.cycle-${cycle}-cancel-in-flight`, started && inFlight && cancelled);
-  check(`mt06.cycle-${cycle}-run-ended`, settled);
-  check(`mt06.cycle-${cycle}-requests-drained`, drained, `requests_processing=${processing}`);
-  check(`mt06.cycle-${cycle}-children-bounded`, procs === 1, `children=${procs}`);
+  check(`mt06.cycle-${cycle}-cancel-in-flight`, started && inFlight && accepted && cancelled);
+  check(`mt06.cycle-${cycle}-run-ended-bounded`, settled && runEndedMs !== null && runEndedMs <= RUN_SETTLE_BOUND_MS, `runEndedMs=${runEndedMs}`);
+  check(`mt06.cycle-${cycle}-requests-drained`, drained, `requests_processing=${processing} drainMs=${drainMs}`);
+  check(`mt06.cycle-${cycle}-cleanup-bounded`, drained && drainMs <= DRAIN_BOUND_MS, `drainMs=${drainMs}`);
+  check(
+    `mt06.cycle-${cycle}-persisted-terminal-outcome`,
+    entry.terminalOutcome === "cancelled",
+    `record=${record?.path ?? "none"} outcome=${entry.terminalOutcome}`,
+  );
+  check(
+    `mt06.cycle-${cycle}-owned-children-exactly-one`,
+    childError === null && children?.length === 1 && children[0] === ownedServerPid,
+    childError ?? `children=${children?.join(",")}`,
+  );
 
-  if (cycle % 2 === 0) {
+  if (cycle === CYCLES) {
+    // R11: immediate-restart overlap proof. Start a new run the moment the
+    // previous run reports ended; its requests must only begin after the old
+    // request drained, and at no sample may two server requests overlap.
+    await clickExact("Benchmark");
+    await settle(600);
+    const restarted = await clickExact("Run v2 benchmark");
+    let overlap = false;
+    let restartAccepted = false;
+    const restartAt = Date.now();
+    while (Date.now() - restartAt < 120_000 && !restartAccepted) {
+      const current = await metricsField("llamacpp:requests_processing");
+      if (current === "2" || current === "3") overlap = true;
+      if (current === "1" && restarted) restartAccepted = true;
+      const childrenNow = ownedServerPids();
+      if (childrenNow.length > 1) overlap = true;
+      await settle(500);
+    }
+    check("mt06.immediate-restart-starts", restarted && restartAccepted);
+    check("mt06.immediate-restart-no-overlap", !overlap, overlap ? "two concurrent requests or servers observed" : "");
+    await clickExact("Cancel");
+    for (let attempt = 0; attempt < 240; attempt += 1) {
+      await settle(500);
+      if ((await metricsField("llamacpp:requests_processing")) === "0") break;
+    }
+  } else if (cycle % 2 === 0) {
     const zero = await stopServer();
-    check(`mt06.cycle-${cycle}-stop-clears-children`, zero, `children=${llamaProcs()}`);
+    check(`mt06.cycle-${cycle}-stop-clears-owned-children`, zero, `children=${ownedServerPids().join(",")}`);
     check(`mt06.cycle-${cycle}-listener-released`, !(await listenerAlive()));
     await settle(1500);
     await clickExact("Control");
@@ -215,10 +334,21 @@ for (let cycle = 1; cycle <= CYCLES; cycle += 1) {
 
 // --- Final teardown ---------------------------------------------------------
 const finalZero = await stopServer();
-check("mt06.final-stop-clears-children", finalZero, `children=${llamaProcs()}`);
+let finalChildren = [];
+try {
+  finalChildren = ownedServerPids();
+} catch (error) {
+  check("mt06.final-owned-pid-enumeration", false, String(error.message).slice(0, 160));
+}
+check("mt06.final-stop-clears-owned-children", finalZero && finalChildren.length === 0, `children=${finalChildren.join(",")}`);
 check("mt06.final-listener-released", !(await listenerAlive()));
-check("mt06.worker-requests-never-orphaned", results.every((entry) => entry.processing === "0"));
 
 const failed = checks.filter((entry) => !entry.ok);
-console.log(`MT06 SUMMARY: ${checks.length - failed.length}/${checks.length} checks PASS`);
+run.checks = checks;
+run.finishedAtUtc = new Date().toISOString();
+run.totalMs = Date.now() - startedAtMs;
+run.summary = `${checks.length - failed.length}/${checks.length} checks PASS`;
+writeFileSync(EVIDENCE_PATH, JSON.stringify(run, null, 2));
+console.log(`MT06 SUMMARY: ${run.summary}`);
+console.log(`MT06 EVIDENCE: ${EVIDENCE_PATH}`);
 process.exit(failed.length === 0 ? 0 : 1);

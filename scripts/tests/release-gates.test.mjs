@@ -1141,6 +1141,30 @@ test("R07: preservation fixtures carry real released-version data, not markers",
   assert.doesNotMatch(release, /non-gating policy/, "the stale summary claim is gone");
 });
 
+test("R11: the packaged cancellation driver measures owned identities end to end", async () => {
+  const driver = await readFile(join(process.cwd(), "scripts", "g05_mt06_cycles.mjs"), "utf8");
+  // Owned process identities: parent-scoped to the app PID, never name counts
+  // that silently report zero on enumeration failure.
+  assert.match(driver, /ParentProcessId -eq \$\{APP_PID\}/);
+  assert.doesNotMatch(driver, /tasklist/, "no process-name counting remains");
+  assert.match(driver, /enumeration failure THROWS/);
+  assert.doesNotMatch(driver, /catch \{\s*return 0;\s*\}/s, "enumeration errors are not counted as zero");
+  // The cancel is coordinated with server-side acceptance.
+  assert.match(driver, /llamacpp:requests_processing/);
+  assert.match(driver, /cancel only AFTER the server reports the request in flight/);
+  // The persisted terminal record is asserted, not just the caller state.
+  assert.match(driver, /terminalOutcome === "cancelled"/);
+  // Bounded cleanup latency.
+  assert.match(driver, /RUN_SETTLE_BOUND_MS/);
+  assert.match(driver, /DRAIN_BOUND_MS/);
+  // The immediate-restart overlap scenario exists.
+  assert.match(driver, /mt06\.immediate-restart-no-overlap/);
+  // A source/digest-bound result file is written.
+  assert.match(driver, /localmotive\.mt06-cancellation\.v1/);
+  assert.match(driver, /MT06_EVIDENCE_PATH/);
+  assert.match(driver, /sourceRevision: sourceRevisionArg/);
+});
+
 test("R13: publication rechecks the tag and trusts exact bytes, with failure diagnostics", async () => {
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
   const publish = release.split("\n  publish:")[1];
