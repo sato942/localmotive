@@ -1063,7 +1063,12 @@ pub fn run_tuning<B: Bench, A: Advisor>(
                         0.0
                     };
                     let required = (2.0 * drift).max(MIN_MATERIAL_IMPROVEMENT);
-                    let confirmed = w > b * (1.0 + required);
+                    // R03 (follow-up review): the pre-measurement check above
+                    // cannot see a Stop that arrives DURING the finalist's
+                    // re-measurement; a successful response accepted after
+                    // that flag was set must not confirm a winner.
+                    let cancelled_during_verification = is_cancelled(inputs);
+                    let confirmed = w > b * (1.0 + required) && !cancelled_during_verification;
                     final_verification = Some(FinalVerification {
                         baseline_tps: b,
                         winner_tps: w,
@@ -1072,6 +1077,10 @@ pub fn run_tuning<B: Bench, A: Advisor>(
                     });
                     if confirmed {
                         confirmed_winner_tps = Some((index, w, winner_profile.clone()));
+                    } else if cancelled_during_verification {
+                        stopped_reason = format!(
+                            "{stopped_reason}; cancellation was requested during final verification, so the winner stays unconfirmed"
+                        );
                     } else {
                         stopped_reason = format!(
                             "{stopped_reason}; the measured winner did not clear the material-improvement bar (winner {:.2} tok/s vs baseline {:.2} tok/s, required +{:.1}%)",
@@ -1858,6 +1867,32 @@ mod tests {
         }
     }
 
+    /// R03: a bench whose finalist re-measurement completes successfully
+    /// after the Stop flag was set during it. tps pattern: baseline 100,
+    /// candidate 130, remeasure 100, remeasure 130; the flag fires on the
+    /// winner's re-measurement.
+    struct CancelOnFinalVerificationBench {
+        calls: usize,
+        flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    }
+    impl Bench for CancelOnFinalVerificationBench {
+        fn measure(&mut self, _profile: &LaunchProfile) -> Result<TrialMeasurement, String> {
+            self.calls += 1;
+            let tps = match self.calls {
+                1 | 3 => 100.0,
+                _ => 130.0,
+            };
+            if self.calls >= 4 {
+                self.flag.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            Ok(TrialMeasurement {
+                summary: summarize_benchmark(vec![tps, tps + 1.0], 256, 2).unwrap(),
+                command: "cmd".into(),
+                effective_context: Some(4096),
+            })
+        }
+    }
+
     /// A bench scripted per call: (tps, observed effective context). Calls
     /// beyond the script repeat the last entry.
     struct ScriptedBench {
@@ -1995,6 +2030,44 @@ mod tests {
         assert!(verification.confirmed);
         assert_eq!(report.best_index, Some(1));
         assert_eq!(report.best_tps, Some(130.5));
+    }
+
+    #[test]
+    fn r03_a_cancel_during_final_verification_withholds_the_winner() {
+        // R03 (follow-up review db548c8): the winner check happened BEFORE
+        // the finalist measurement; a Stop arriving DURING that measurement
+        // (whose response completes successfully) must not confirm a winner.
+        let base = base_profile();
+        let hw = hardware();
+        let cap = caps();
+        let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let inputs = tuning_inputs(&hw, &cap, TuningBudgets::default(), Some(&flag));
+        let mut bench = CancelOnFinalVerificationBench {
+            calls: 0,
+            flag: flag.clone(),
+        };
+        let mut advisor = ScriptedAdvisor {
+            replies: vec![
+                r#"{"changes":{"flashAttention":"on"},"rationale":"clear win","done":false}"#,
+                r#"{"changes":{},"rationale":"converged","done":true}"#,
+            ],
+            briefs_seen: vec![],
+        };
+        let report = run_tuning(&base, &inputs, &mut bench, &mut advisor, |_| {}).unwrap();
+        let verification = report.final_verification.expect("verification ran");
+        assert!(
+            !verification.confirmed,
+            "a cancel during the final re-measurement must withhold the winner"
+        );
+        assert_eq!(
+            report.best_index, None,
+            "no winner is reported after a cancellation"
+        );
+        assert!(
+            report.stopped_reason.contains("cancellation"),
+            "{}",
+            report.stopped_reason
+        );
     }
 
     #[test]

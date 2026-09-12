@@ -364,7 +364,21 @@ where
         let started = Instant::now();
         let result = request();
         let duration_ms = started.elapsed().as_secs_f64() * 1_000.0;
+        let cancelled_at_acceptance = cancelled.load(Ordering::Relaxed);
         match result {
+            Ok(_) if cancelled_at_acceptance => {
+                // R03: the Stop flag was set while the request was completing.
+                // The successful response is not accepted as evidence.
+                run.warmups.push(WarmupObservation {
+                    warmup,
+                    started_at_ms,
+                    duration_ms,
+                    outcome: AttemptOutcome::Cancelled,
+                    error: Some("Benchmark cancelled".into()),
+                });
+                run.terminal_outcome = Some(AttemptOutcome::Cancelled);
+                return Ok(run);
+            }
             Ok(_) => run.warmups.push(WarmupObservation {
                 warmup,
                 started_at_ms,
@@ -402,7 +416,24 @@ where
         let started = Instant::now();
         let result = request();
         let duration_ms = started.elapsed().as_secs_f64() * 1_000.0;
+        let cancelled_at_acceptance = cancelled.load(Ordering::Relaxed);
         let observation = match result {
+            Ok(_) if cancelled_at_acceptance => {
+                // R03: the final trial has no next iteration to observe a
+                // cancellation; a response accepted after the Stop flag was
+                // set must not be recorded as Succeeded evidence. The run
+                // carries a Cancelled terminal outcome.
+                run.observations.push(BenchmarkObservation {
+                    trial,
+                    started_at_ms,
+                    duration_ms,
+                    outcome: AttemptOutcome::Cancelled,
+                    error: Some("Benchmark cancelled".into()),
+                    ..BenchmarkObservation::default()
+                });
+                run.terminal_outcome = Some(AttemptOutcome::Cancelled);
+                break;
+            }
             Ok(timing) => BenchmarkObservation {
                 trial,
                 started_at_ms,
@@ -1035,6 +1066,78 @@ mod tests {
         assert_eq!(run.warmups[0].outcome, AttemptOutcome::TimedOut);
         assert!(run.observations.is_empty());
         assert_eq!(run.terminal_outcome, Some(AttemptOutcome::TimedOut));
+    }
+
+    #[test]
+    fn r03_a_cancel_during_the_only_warmup_discards_the_accepted_success() {
+        // R03 warmup sibling: a Stop that arrives while the last warmup is
+        // completing must not record a Succeeded warmup or a clean run.
+        let workload = Workload {
+            warmups: 1,
+            trials: 1,
+            ..Workload::default()
+        };
+        let cancelled = AtomicBool::new(false);
+        let run = run_workload_with(&workload, &cancelled, || {
+            cancelled.store(true, Ordering::Relaxed);
+            Ok(CompletionTiming {
+                prompt_tokens: 32,
+                cached_prompt_tokens: 0,
+                generated_tokens: 16,
+                prefill_tps: 100.0,
+                decode_tps: 50.0,
+                first_token_ms: None,
+                derived_ttft_ms: 25.0,
+                peak_process_rss_bytes: unknown_process_peak_rss_bytes(),
+            })
+        })
+        .unwrap();
+        assert_eq!(run.warmups[0].outcome, AttemptOutcome::Cancelled);
+        assert_eq!(run.terminal_outcome, Some(AttemptOutcome::Cancelled));
+        assert_eq!(
+            run.observations.len(),
+            0,
+            "no trial runs after the warmup cancellation"
+        );
+    }
+
+    #[test]
+    fn r03_a_cancel_during_the_final_trial_discards_the_accepted_success() {
+        // R03 (follow-up review db548c8): the LAST trial has no next
+        // iteration to observe cancellation. The request returns
+        // successfully after the Stop flag was set; the accepted response
+        // must not become Succeeded evidence and the run must carry a
+        // Cancelled terminal outcome.
+        let workload = Workload {
+            warmups: 0,
+            trials: 1,
+            ..Workload::default()
+        };
+        let cancelled = AtomicBool::new(false);
+        let run = run_workload_with(&workload, &cancelled, || {
+            cancelled.store(true, Ordering::Relaxed);
+            Ok(CompletionTiming {
+                prompt_tokens: 32,
+                cached_prompt_tokens: 0,
+                generated_tokens: 16,
+                prefill_tps: 100.0,
+                decode_tps: 50.0,
+                first_token_ms: None,
+                derived_ttft_ms: 25.0,
+                peak_process_rss_bytes: unknown_process_peak_rss_bytes(),
+            })
+        })
+        .unwrap();
+        assert_eq!(
+            run.observations[0].outcome,
+            AttemptOutcome::Cancelled,
+            "a response accepted after the cancel flag was set is not success evidence"
+        );
+        assert_eq!(run.terminal_outcome, Some(AttemptOutcome::Cancelled));
+        assert_eq!(
+            run.observations[0].decode_tps, None,
+            "the accepted-after-cancel timing must be discarded"
+        );
     }
 
     #[test]

@@ -386,7 +386,17 @@ impl LocalHttpClient {
                     })?;
                 loop {
                     match receiver.recv_timeout(CANCEL_ATTEMPT_SLICE) {
-                        Ok(result) => return result,
+                        Ok(result) => {
+                            // R03 (follow-up review): cancellation is defined
+                            // at RESULT ACCEPTANCE. A flag set after dispatch
+                            // but before the response is accepted must not be
+                            // lost to the polling slice; the received result
+                            // is discarded rather than misreported as success.
+                            if flag.load(Ordering::Relaxed) {
+                                return Err("The local request was cancelled".into());
+                            }
+                            return result;
+                        }
                         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                             if flag.load(Ordering::Relaxed) {
                                 return Err("The local request was cancelled".into());
@@ -1209,6 +1219,72 @@ ab1VTmVlluUDakDfjhwCcnE=
             1,
             "no duplicate request may follow the completed response"
         );
+    }
+
+    /// A server that tells the test when the request has been accepted, then
+    /// waits for the test's release flag before answering with a fast 200.
+    /// It coordinates the R03 window: cancel set after dispatch, response
+    /// accepted afterwards.
+    pub(crate) fn serve_gated(accepted: Arc<AtomicBool>, release: Arc<AtomicBool>) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut buffer = [0_u8; 8192];
+                let _ = stream.read(&mut buffer);
+                accepted.store(true, Ordering::SeqCst);
+                while !release.load(Ordering::SeqCst) {
+                    thread::sleep(Duration::from_millis(5));
+                }
+                let body = b"{\"ok\":true}";
+                let headers = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(headers.as_bytes());
+                let _ = stream.write_all(body);
+            }
+        });
+        port
+    }
+
+    #[test]
+    fn a_cancel_set_before_response_acceptance_discards_the_received_result() {
+        // R03 (follow-up review db548c8): cancellation is defined at result
+        // acceptance. The request is dispatched, the server accepts it, the
+        // user cancels, and only then is the (fast, successful) response
+        // released. Accepting it would mislabel the cancelled attempt as
+        // success; the received result must be discarded.
+        let accepted = Arc::new(AtomicBool::new(false));
+        let release = Arc::new(AtomicBool::new(false));
+        let port = serve_gated(Arc::clone(&accepted), Arc::clone(&release));
+        let client = LocalHttpClient::plain("127.0.0.1", port).unwrap();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&cancelled);
+        let call_client = client.clone();
+        let call = thread::spawn(move || {
+            call_client.post_json_cancellable(
+                "/completion",
+                &serde_json::json!({"prompt": [1]}),
+                Duration::from_secs(30),
+                &flag,
+            )
+        });
+        assert!(
+            settle_until(|| accepted.load(Ordering::SeqCst), Duration::from_secs(5)),
+            "the fixture must accept the request"
+        );
+        cancelled.store(true, Ordering::Relaxed);
+        release.store(true, Ordering::SeqCst);
+        let result = call.join().unwrap();
+        assert!(
+            result.is_err(),
+            "a response accepted after the cancel was set must be discarded, got {result:?}"
+        );
+        assert!(result.unwrap_err().contains("cancelled"));
     }
 
     #[test]
