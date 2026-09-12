@@ -158,7 +158,7 @@ Everything below is prepared and intentionally NOT executed. No tag, no release,
 
 `origin/main` is still `e530371`; the 0.6.0 work exists only as local commits, so no remote workflow can run yet. One coherent bootstrap, in order, honoring the standing rules (self-hosted runner for trusted pushes; GitHub-hosted runs only with explicit approval; tag/publish owner-gated). Step 1 needs no new permission; steps 3-5 need repository-settings and one GitHub-hosted run; step 6 is the release boundary.
 
-1. Push main (agent; authorized after a green default-parallel soak) and watch the trusted CI:
+1. **EXECUTED 2026-09-12 (agent, after a green soak): `origin/main` moved `e530371` -> `9b04b47`; trusted CI run `34673683605` on the self-hosted runner (result: `.hermes-0.6/ci-run-9b04b47.log`). The remote workflow tree is established; no action remains here.** Historical form: push main (agent; authorized after a green default-parallel soak) and watch the trusted CI:
 ```bash
 git push origin main
 gh run watch $(gh run list --workflow=CI --branch main --limit 1 --json databaseId --jq '.[0].databaseId')
