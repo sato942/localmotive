@@ -1065,6 +1065,17 @@ test("candidate inventory rejects a checksum that does not bind the staged bytes
   );
 });
 
+test("R10: TLS transport validation parses real structures and matches the pair", async () => {
+  const client = await readFile(join(process.cwd(), "src-tauri", "src", "local_client.rs"), "utf8");
+  assert.doesNotMatch(client, /does not look like PEM data/, "no marker-only validation remains");
+  assert.match(client, /webpki::EndEntityCert::try_from/, "the certificate parses as real X.509");
+  assert.match(client, /subject_public_key_info_from_certificate/, "the certificate SPKI is extracted structurally");
+  assert.match(client, /subject_public_key_info_from_private_key/, "the key SPKI is derived structurally");
+  assert.match(client, /do not belong together/, "a mismatched pair fails");
+  assert.match(client, /rustls_pemfile::certs|rustls_pemfile::private_key/, "PEM decoding is strict");
+  assert.match(client, /r10_transport_validation_parses_real_x509_and_matches_the_pair/);
+});
+
 test("R15: the loopback client never hops, and its bounds are structural", async () => {
   const client = await readFile(join(process.cwd(), "src-tauri", "src", "local_client.rs"), "utf8");
   assert.match(client, /redirect\(reqwest::redirect::Policy::none\(\)\)/, "redirects are never followed");

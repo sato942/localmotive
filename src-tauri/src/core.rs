@@ -3739,24 +3739,40 @@ fn main() {
         let error = profile.build_args().unwrap_err();
         assert!(error.contains("SSL certificate"), "{error}");
 
-        // A real PEM pair passes the file checks.
+        // R10: marker-wrapped junk is NOT a certificate - the parse must
+        // reject it before launch.
         let cert = dir.join("ok.crt");
         let key = dir.join("ok.key");
         std::fs::write(
             &cert,
-            "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n",
+            "-----BEGIN CERTIFICATE-----
+MIIB
+-----END CERTIFICATE-----
+",
         )
         .unwrap();
         std::fs::write(
             &key,
-            "-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----\n",
+            "-----BEGIN PRIVATE KEY-----
+MIIB
+-----END PRIVATE KEY-----
+",
         )
         .unwrap();
         profile.ssl_cert_file = cert.to_string_lossy().to_string();
         profile.ssl_key_file = key.to_string_lossy().to_string();
+        let error = profile.build_args().unwrap_err();
+        assert!(
+            error.contains("X.509") || error.contains("PEM"),
+            "marker-wrapped junk must fail real parsing: {error}"
+        );
+
+        // A real matching PEM pair passes the file checks.
+        std::fs::write(&cert, crate::local_client::tests::CA_TRUE_CERT).unwrap();
+        std::fs::write(&key, crate::local_client::tests::CA_TRUE_KEY).unwrap();
         profile
             .build_args()
-            .expect("a readable PEM pair must validate");
+            .expect("a real matching PEM pair must validate");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -3776,16 +3792,10 @@ fn main() {
         std::fs::create_dir_all(&dir).unwrap();
         let cert = dir.join("ok.crt");
         let key = dir.join("ok.key");
-        std::fs::write(
-            &cert,
-            "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n",
-        )
-        .unwrap();
-        std::fs::write(
-            &key,
-            "-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----\n",
-        )
-        .unwrap();
+        // R10: transport validation parses the real pair before the
+        // capability check; a marker-only fixture would fail upstream now.
+        std::fs::write(&cert, crate::local_client::tests::CA_TRUE_CERT).unwrap();
+        std::fs::write(&key, crate::local_client::tests::CA_TRUE_KEY).unwrap();
         profile.ssl_cert_file = cert.to_string_lossy().to_string();
         profile.ssl_key_file = key.to_string_lossy().to_string();
 

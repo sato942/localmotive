@@ -21,6 +21,14 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+# R10 (follow-up review db548c8): the pre-launch TLS validation decodes real
+# PEM/DER instead of substring markers. rustls-pemfile does strict PEM
+# decoding; rustls-pki-types provides the certificate type; rustls-webpki
+# (already in the tree via rustls) parses the certificate as a real X.509
+# structure.
+rustls-pemfile = "2"
+rustls-pki-types = "1"
+rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }

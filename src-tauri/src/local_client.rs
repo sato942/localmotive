@@ -129,6 +129,259 @@ fn validate_host(host: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// One DER TLV frame: tag byte, value bytes, and the rest of the input after
+/// the frame (R10). Length parsing accepts short and long form with bounds
+/// checks; the walker is deliberately strict so malformed data fails closed.
+struct DerFrame<'a> {
+    tag: u8,
+    value: &'a [u8],
+    rest: &'a [u8],
+}
+
+fn der_frame(input: &[u8]) -> Result<DerFrame<'_>, String> {
+    if input.len() < 2 {
+        return Err("DER data ended before a complete element".into());
+    }
+    let tag = input[0];
+    let first = input[1];
+    let mut index = 2;
+    let length = if first & 0x80 == 0 {
+        first as usize
+    } else {
+        let count = (first & 0x7f) as usize;
+        if count == 0 || count > 4 || input.len() < index + count {
+            return Err("DER length is malformed".into());
+        }
+        let mut value = 0_usize;
+        for byte in &input[index..index + count] {
+            value = (value << 8) | *byte as usize;
+        }
+        index += count;
+        value
+    };
+    if input.len() < index + length {
+        return Err("DER element extends past the available data".into());
+    }
+    Ok(DerFrame {
+        tag,
+        value: &input[index..index + length],
+        rest: &input[index + length..],
+    })
+}
+
+fn der_length(length: usize) -> Vec<u8> {
+    if length < 0x80 {
+        return vec![length as u8];
+    }
+    let bytes = length.to_be_bytes();
+    let first = bytes
+        .iter()
+        .position(|byte| *byte != 0)
+        .unwrap_or(bytes.len() - 1);
+    let mut out = vec![0x80 | (bytes.len() - first) as u8];
+    out.extend_from_slice(&bytes[first..]);
+    out
+}
+
+fn der_tlv(tag: u8, value: &[u8]) -> Vec<u8> {
+    let mut out = vec![tag];
+    out.extend_from_slice(&der_length(value.len()));
+    out.extend_from_slice(value);
+    out
+}
+
+fn der_children(value: &[u8]) -> Result<Vec<DerFrame<'_>>, String> {
+    let mut frames = Vec::new();
+    let mut cursor = value;
+    while !cursor.is_empty() {
+        let frame = der_frame(cursor)?;
+        cursor = frame.rest;
+        frames.push(frame);
+    }
+    Ok(frames)
+}
+
+/// The SubjectPublicKeyInfo TLV, extracted from a certificate's DER (R10).
+/// The walk is structural: Certificate SEQUENCE, tbsCertificate SEQUENCE,
+/// optional [0] version, then serialNumber, signature, issuer, validity,
+/// subject, and the SPKI. Semantic X.509 validity is still enforced by the
+/// webpki parse at the call site.
+fn subject_public_key_info_from_certificate(der: &[u8]) -> Result<Vec<u8>, String> {
+    let outer = der_frame(der)?;
+    if outer.tag != 0x30 {
+        return Err("The certificate is not a DER sequence".into());
+    }
+    let tbs = der_frame(outer.value)?;
+    if tbs.tag != 0x30 {
+        return Err("The certificate has no tbsCertificate".into());
+    }
+    let mut cursor = tbs.value;
+    let first = der_frame(cursor)?;
+    if first.tag == 0xa0 {
+        cursor = first.rest;
+    }
+    for _ in 0..5 {
+        let frame = der_frame(cursor)?;
+        cursor = frame.rest;
+    }
+    let spki = der_frame(cursor)?;
+    if spki.tag != 0x30 {
+        return Err("The certificate has no SubjectPublicKeyInfo".into());
+    }
+    Ok(der_tlv(0x30, spki.value))
+}
+
+const OID_RSA_ENCRYPTION: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01];
+const OID_EC_PUBLIC_KEY: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01];
+
+/// Build a canonical RSA SPKI from PKCS#1 modulus/exponent INTEGER frames.
+fn rsa_spki(modulus: &DerFrame<'_>, exponent: &DerFrame<'_>) -> Vec<u8> {
+    let mut rsa_key = Vec::new();
+    rsa_key.extend_from_slice(&der_tlv(0x02, modulus.value));
+    rsa_key.extend_from_slice(&der_tlv(0x02, exponent.value));
+    let mut inner = Vec::new();
+    inner.extend_from_slice(&der_tlv(0x06, OID_RSA_ENCRYPTION));
+    inner.extend_from_slice(&[0x05, 0x00]);
+    let mut bit_string = vec![0x00];
+    bit_string.extend_from_slice(&der_tlv(0x30, &rsa_key));
+    let mut spki = der_tlv(0x30, &inner);
+    spki.extend_from_slice(&der_tlv(0x03, &bit_string));
+    der_tlv(0x30, &spki)
+}
+
+fn ec_spki(curve_oid: &DerFrame<'_>, public_key: &DerFrame<'_>) -> Result<Vec<u8>, String> {
+    if public_key.value.first() != Some(&0x00) {
+        return Err("The EC public key bit string is malformed".into());
+    }
+    let mut inner = Vec::new();
+    inner.extend_from_slice(&der_tlv(0x06, OID_EC_PUBLIC_KEY));
+    inner.extend_from_slice(&der_tlv(0x06, curve_oid.value));
+    let mut spki = der_tlv(0x30, &inner);
+    spki.extend_from_slice(&der_tlv(0x03, public_key.value));
+    Ok(der_tlv(0x30, &spki))
+}
+
+/// The SPKI a private key would present in a certificate (R10): PKCS#8
+/// wrapped, raw PKCS#1 (RSA), or raw SEC1 (EC). The returned bytes are
+/// canonical DER, so byte equality against the certificate's SPKI is a real
+/// pair match.
+fn subject_public_key_info_from_private_key(der: &[u8]) -> Result<Vec<u8>, String> {
+    let outer = der_frame(der)?;
+    if outer.tag != 0x30 {
+        return Err("The private key is not a DER sequence".into());
+    }
+    let children = der_children(outer.value)?;
+    if children.is_empty() {
+        return Err("The private key is empty".into());
+    }
+    // PKCS#8: SEQUENCE { INTEGER 0, SEQUENCE algorithm, OCTET STRING key }.
+    // PKCS#1 / SEC1: SEQUENCE { INTEGER version, ... } with the key material
+    // as INTEGER (RSA) or OCTET STRING (EC) directly.
+    let (algorithm, key_octets) =
+        if children.len() >= 3 && children[1].tag == 0x30 && children[2].tag == 0x04 {
+            (Some(&children[1]), children[2].value)
+        } else if children.len() >= 2 && children[1].tag == 0x04 {
+            (None, children[1].value)
+        } else if children.len() >= 3 && children[1].tag == 0x02 && children[2].tag == 0x02 {
+            // Raw PKCS#1 RSA: SEQUENCE { version, modulus, publicExponent }.
+            // The first INTEGER is the version, not the modulus.
+            return Ok(rsa_spki(&children[1], &children[2]));
+        } else {
+            return Err("The private key is not in a supported PKCS#8, PKCS#1 or SEC1 form".into());
+        };
+    let algorithm = match algorithm {
+        Some(sequence) => sequence,
+        None => return raw_sec1_spki(key_octets),
+    };
+    let algorithm_children = der_children(algorithm.value)?;
+    let oid = algorithm_children
+        .first()
+        .filter(|frame| frame.tag == 0x06)
+        .ok_or("The private key algorithm is malformed")?;
+    if oid.value == OID_RSA_ENCRYPTION {
+        let inner = der_frame(key_octets)?;
+        if inner.tag != 0x30 {
+            return Err("The RSA key body is malformed".into());
+        }
+        let rsa = der_children(inner.value)?;
+        // PKCS#1: SEQUENCE { version, modulus, publicExponent, ... }.
+        if rsa.len() < 3 || rsa[0].tag != 0x02 || rsa[1].tag != 0x02 || rsa[2].tag != 0x02 {
+            return Err("The RSA key body is malformed".into());
+        }
+        return Ok(rsa_spki(&rsa[1], &rsa[2]));
+    }
+    if oid.value == OID_EC_PUBLIC_KEY {
+        let curve = algorithm_children
+            .get(1)
+            .filter(|frame| frame.tag == 0x06)
+            .ok_or("The EC key names no curve")?;
+        return raw_sec1_spki_with_curve(key_octets, curve);
+    }
+    Err("The private key algorithm is not RSA or EC".into())
+}
+
+fn raw_sec1_spki(sec1: &[u8]) -> Result<Vec<u8>, String> {
+    let outer = der_frame(sec1)?;
+    if outer.tag != 0x30 {
+        return Err("The EC key body is malformed".into());
+    }
+    let children = der_children(outer.value)?;
+    let curve = children
+        .iter()
+        .find(|frame| frame.tag == 0xa0)
+        .ok_or("The EC key names no curve")?;
+    let curve_inner = der_frame(curve.value)?;
+    if curve_inner.tag != 0x06 {
+        return Err("The EC key curve is malformed".into());
+    }
+    let public = children
+        .iter()
+        .find(|frame| frame.tag == 0xa1)
+        .ok_or("The EC key embeds no public key; regenerate it with one (openssl ec -pubout)")?;
+    let public_inner = der_frame(public.value)?;
+    if public_inner.tag != 0x03 {
+        return Err("The EC key public part is malformed".into());
+    }
+    ec_spki(&curve_inner, &public_inner)
+}
+
+fn raw_sec1_spki_with_curve(sec1: &[u8], curve: &DerFrame<'_>) -> Result<Vec<u8>, String> {
+    let outer = der_frame(sec1)?;
+    if outer.tag != 0x30 {
+        return Err("The EC key body is malformed".into());
+    }
+    let children = der_children(outer.value)?;
+    let public = children
+        .iter()
+        .find(|frame| frame.tag == 0xa1)
+        .ok_or("The EC key embeds no public key; regenerate it with one (openssl ec -pubout)")?;
+    let public_inner = der_frame(public.value)?;
+    if public_inner.tag != 0x03 {
+        return Err("The EC key public part is malformed".into());
+    }
+    ec_spki(curve, &public_inner)
+}
+
+/// Decode the file as PEM certificates; returns at least one DER certificate
+/// (R10: strict PEM framing and base64, not substring markers).
+fn pem_certificate_der(bytes: &[u8], label: &str) -> Result<Vec<u8>, String> {
+    let mut reader = bytes;
+    let mut certificates = rustls_pemfile::certs(&mut reader);
+    let first = certificates
+        .next()
+        .ok_or_else(|| format!("The {label} contains no PEM CERTIFICATE block"))?
+        .map_err(|error| format!("The {label} is not valid PEM: {error}"))?;
+    Ok(first.as_ref().to_vec())
+}
+
+fn pem_private_key_der(bytes: &[u8], label: &str) -> Result<Vec<u8>, String> {
+    let mut reader = bytes;
+    let key = rustls_pemfile::private_key(&mut reader)
+        .map_err(|error| format!("The {label} is not valid PEM: {error}"))?
+        .ok_or_else(|| format!("The {label} contains no PEM private-key block"))?;
+    Ok(key.secret_der().to_vec())
+}
+
 impl LocalHttpClient {
     /// A plain, unauthenticated client for callers that only hold host/port.
     pub fn plain(host: &str, port: u16) -> Result<Self, String> {
@@ -162,47 +415,44 @@ impl LocalHttpClient {
                 );
             }
         }
-        let certificates = [
-            (
-                profile.ssl_cert_file.trim(),
-                "SSL certificate",
-                "BEGIN CERTIFICATE",
-            ),
-            (profile.ssl_key_file.trim(), "SSL private key", "BEGIN"),
-        ];
-        for (path, label, marker) in certificates {
-            if path.is_empty() {
-                continue;
-            }
-            let bytes = read_bounded_file(path, MAX_CERT_FILE_BYTES, label)?;
-            let text = String::from_utf8(bytes)
-                .map_err(|_| format!("The {label} is not valid UTF-8 PEM"))?;
-            if !text.contains(marker) {
+        // R10 (follow-up review db548c8): the checks decode the real PEM and
+        // DER structures. Marker substrings ("MIIB" inside BEGIN/END lines)
+        // passed the old check; now the certificate must parse as X.509, the
+        // key must decode as a supported PKCS#8/PKCS#1/SEC1 form, and the
+        // pair must present the same SubjectPublicKeyInfo.
+        let cert_path = profile.ssl_cert_file.trim();
+        let key_path = profile.ssl_key_file.trim();
+        let certificates = if cert_path.is_empty() {
+            None
+        } else {
+            let bytes = read_bounded_file(cert_path, MAX_CERT_FILE_BYTES, "SSL certificate")?;
+            let der = pem_certificate_der(&bytes, "SSL certificate")?;
+            let certificate = rustls_pki_types::CertificateDer::from(der.clone());
+            webpki::EndEntityCert::try_from(&certificate).map_err(|error| {
+                format!(
+                    "The SSL certificate is not a valid X.509 certificate ({cert_path}): {error}"
+                )
+            })?;
+            Some(der)
+        };
+        let key = if key_path.is_empty() {
+            None
+        } else {
+            let bytes = read_bounded_file(key_path, MAX_CERT_FILE_BYTES, "SSL private key")?;
+            Some(pem_private_key_der(&bytes, "SSL private key")?)
+        };
+        if let (Some(certificate), Some(key)) = (certificates.as_deref(), key.as_deref()) {
+            let cert_spki =
+                subject_public_key_info_from_certificate(certificate).map_err(|error| {
+                    format!("The SSL certificate has no readable public key ({cert_path}): {error}")
+                })?;
+            let key_spki = subject_public_key_info_from_private_key(key).map_err(|error| {
+                format!("The SSL private key could not be read ({key_path}): {error}")
+            })?;
+            if cert_spki != key_spki {
                 return Err(format!(
-                    "The {label} does not look like PEM data ({path}); expected a {marker} block"
+                    "The SSL certificate ({cert_path}) and private key ({key_path}) do not belong together: their public keys differ"
                 ));
-            }
-        }
-        if !profile.ssl_cert_file.trim().is_empty() && !profile.ssl_key_file.trim().is_empty() {
-            // The pair must parse together; a mismatched pair would otherwise
-            // fail after launch as a plaintext health timeout.
-            let cert = read_bounded_file(
-                profile.ssl_cert_file.trim(),
-                MAX_CERT_FILE_BYTES,
-                "SSL certificate",
-            )?;
-            let key = read_bounded_file(
-                profile.ssl_key_file.trim(),
-                MAX_CERT_FILE_BYTES,
-                "SSL private key",
-            )?;
-            let cert_text = String::from_utf8_lossy(&cert);
-            let key_text = String::from_utf8_lossy(&key);
-            if !cert_text.contains("BEGIN CERTIFICATE") {
-                return Err("The SSL certificate is not a PEM certificate".into());
-            }
-            if !key_text.contains("PRIVATE KEY") {
-                return Err("The SSL private key is not a PEM private key".into());
             }
         }
         Ok(())
@@ -777,6 +1027,26 @@ CiKTf+R90oOKAJyAfnPuDESZDkBsloNknUS9g4ItGwKBgQCU/0IxUY0otQBvQ6VW
 o9Ebz1y4NVZJXyDte8SEpw4Ftd3invM3SbnpO/C+LC4tJV+PHH8EEX1pxDFv0Ukv
 TYlofGTiQ3pg+Fn/YZY7kvsZeNWrXpsPtKQD1rooPWuApyimkX+G8/2P6d9hCAdY
 y/xLb7CbIroYVJeLpVZRb5cajw==
+-----END PRIVATE KEY-----"##;
+
+    /// R10 EC-path fixture: a throwaway P-256 PKCS#8 pair generated with
+    /// openssl 3.2.4 for the SPKI pair-match tests. Test-only bytes; no
+    /// operational trust.
+    const EC_CERT: &str = r##"-----BEGIN CERTIFICATE-----
+MIIBjzCCATWgAwIBAgIUZ7nMCMIXaF6SRs5RxaJeL+IBNNswCgYIKoZIzj0EAwIw
+HTEbMBkGA1UEAwwSbG9jYWxtb3RpdmUtcjEwLWVjMB4XDTI2MDkxMjE1NDcyMVoX
+DTM2MDkwOTE1NDcyMVowHTEbMBkGA1UEAwwSbG9jYWxtb3RpdmUtcjEwLWVjMFkw
+EwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEfw2csAv/vFgELK6WQ+PaH+iIymxFzc7i
+2ygcei5aMDvDMIN+vFG+t+QS1VkNXd+a5PxJbu+4dvbx1gCNpEt2WaNTMFEwHQYD
+VR0OBBYEFIbWCGFhRTipnap5jTdnXF+aHXFLMB8GA1UdIwQYMBaAFIbWCGFhRTip
+nap5jTdnXF+aHXFLMA8GA1UdEwEB/wQFMAMBAf8wCgYIKoZIzj0EAwIDSAAwRQIg
+Lx8HQfPVUsiWjG73iCnMFuo4w8NF88IVvsfclDjFKNMCIQC36ow/MH5LgUmVLmuB
+I6EbfRyZwLstdf7ZthlFNpXKEQ==
+-----END CERTIFICATE-----"##;
+    const EC_KEY: &str = r##"-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgYXOhc8MY1PcNmJop
+RdhymZjDnfWm6bAYG6WuzSr+KEihRANCAAR/DZywC/+8WAQsrpZD49of6IjKbEXN
+zuLbKBx6LlowO8Mwg368Ub635BLVWQ1d35rk/Elu77h29vHWAI2kS3ZZ
 -----END PRIVATE KEY-----"##;
 
     const OTHER_CERT: &str = r##"-----BEGIN CERTIFICATE-----
@@ -1387,6 +1657,95 @@ ab1VTmVlluUDakDfjhwCcnE=
             "the drain waited for the slow worker to exit, not just observed zero ({waited:?})"
         );
         assert_eq!(client.active_cancellable_workers(), 0);
+    }
+
+    #[test]
+    fn r10_transport_validation_parses_real_x509_and_matches_the_pair() {
+        // R10 (follow-up review db548c8): the validator decodes the real PEM
+        // and DER. Marker-wrapped junk must fail; a mismatched pair must fail
+        // with the pair message; a real matching pair passes.
+        let dir = std::env::temp_dir().join(format!("localmotive-r10-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |name: &str, content: &str| {
+            let path = dir.join(name);
+            std::fs::write(&path, content).unwrap();
+            path.to_string_lossy().to_string()
+        };
+        let cert = write("ok.crt", TRUSTED_CERT);
+        let key = write("ok.key", TRUSTED_KEY);
+        let other_key = write("other.key", OTHER_KEY);
+        let junk_cert = write(
+            "junk.crt",
+            "-----BEGIN CERTIFICATE-----
+MIIB
+-----END CERTIFICATE-----
+",
+        );
+        let junk_key = write(
+            "junk.key",
+            "-----BEGIN PRIVATE KEY-----
+MIIB
+-----END PRIVATE KEY-----
+",
+        );
+        let mut profile = crate::core::LaunchProfile {
+            model: "C:/models/model.gguf".into(),
+            alias: "test-model".into(),
+            host: "127.0.0.1".into(),
+            port: 8080,
+            ..crate::core::LaunchProfile::default()
+        };
+
+        profile.ssl_cert_file = cert.clone();
+        profile.ssl_key_file = key.clone();
+        if let Err(error) = LocalHttpClient::validate_transport_files(&profile) {
+            panic!("a real matching pair must validate: {error}");
+        }
+
+        profile.ssl_cert_file = junk_cert.clone();
+        profile.ssl_key_file = junk_key.clone();
+        let error = LocalHttpClient::validate_transport_files(&profile).unwrap_err();
+        assert!(
+            error.contains("X.509") || error.contains("PEM"),
+            "marker-wrapped junk must fail real parsing: {error}"
+        );
+
+        profile.ssl_cert_file = cert.clone();
+        profile.ssl_key_file = junk_key;
+        let error = LocalHttpClient::validate_transport_files(&profile).unwrap_err();
+        assert!(
+            error.contains("private-key block")
+                || error.contains("PEM")
+                || error.contains("malformed"),
+            "a junk private key must fail real decoding: {error}"
+        );
+
+        profile.ssl_cert_file = cert.clone();
+        profile.ssl_key_file = other_key;
+        let error = LocalHttpClient::validate_transport_files(&profile).unwrap_err();
+        assert!(
+            error.contains("do not belong together"),
+            "an unrelated pair must fail the public-key match: {error}"
+        );
+
+        // A real EC (P-256, PKCS#8) pair exercises the EC SPKI path.
+        let ec_cert = write("ec.crt", EC_CERT);
+        let ec_key_path = write("ec.key", EC_KEY);
+        profile.ssl_cert_file = ec_cert.clone();
+        profile.ssl_key_file = ec_key_path.clone();
+        LocalHttpClient::validate_transport_files(&profile)
+            .expect("a real matching EC pair must validate");
+
+        // Cross-family mismatch: the RSA certificate with the EC private key.
+        profile.ssl_cert_file = cert;
+        profile.ssl_key_file = ec_key_path;
+        let error = LocalHttpClient::validate_transport_files(&profile).unwrap_err();
+        assert!(
+            error.contains("do not belong together"),
+            "cross-family material must fail the public-key match: {error}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
