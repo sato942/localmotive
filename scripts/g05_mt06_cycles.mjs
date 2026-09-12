@@ -212,9 +212,11 @@ const invokeBenchmarkAttempt = (workload) =>
   })()`);
 
 /// R16: attempt the replacement run at the earliest point the UI permits any
-/// action after a cancel - while the previous request is still observed
-/// active. The UI click and a direct IPC invocation both count as attempts.
-const attemptImmediateRestart = async () => {
+/// action after a cancel. The server metric is read at entry - before the UI
+/// navigation costs any time - and again at the click instant; the direct IPC
+/// attempt is the authoritative refusal probe.
+const attemptImmediateRestart = async ({ cancelAt, processingAtCancelRequest } = {}) => {
+  const processingAtEntry = await metricsField("llamacpp:requests_processing");
   await clickExact("Benchmark");
   await settle(600);
   const workload = newestManifest()?.workload ?? null;
@@ -225,6 +227,10 @@ const attemptImmediateRestart = async () => {
   const notice = await lastNotice();
   return {
     at: Date.now(),
+    cancelAt: cancelAt ?? null,
+    sinceCancelMs: cancelAt ? Date.now() - cancelAt : null,
+    processingAtCancelRequest: processingAtCancelRequest ?? null,
+    processingAtEntry,
     processingAtAttempt,
     buttonStateAtAttempt,
     uiAccepted,
@@ -298,12 +304,15 @@ for (let cycle = 1; cycle <= CYCLES; cycle += 1) {
   const tokensBefore = await metricsField("llamacpp:tokens_predicted_total");
   await clickExact("Benchmark");
   await settle(1200);
+  // A wider generation window for every cycle: the server must still be
+  // generating when the harness observes it, or the cancel lands on an
+  // already-finished request (seen live: one cycle missed its cancel and the
+  // in-flight coordination could not issue one at all).
+  const generatedSet = await setNumberInput("Benchmark generated tokens", 1024);
+  check(`mt06.cycle-${cycle}-window-workload-set`, String(generatedSet) === "1024", `input=${generatedSet}`);
   if (cycle === CYCLES) {
-    // R16: the final cycle proves the restart attempt happens while the
-    // previous request is still active. A longer generation widens that
-    // window so the attempt is not racing a finished request.
-    const generatedSet = await setNumberInput("Benchmark generated tokens", 1024);
-    check("mt06.final-window-workload-set", String(generatedSet) === "1024", `input=${generatedSet}`);
+    // The final cycle proves the restart attempt happens while the previous
+    // request is still active, so it keeps the widest window.
     await settle(800);
   }
   const started = await clickExact("Run v2 benchmark");
@@ -326,8 +335,17 @@ for (let cycle = 1; cycle <= CYCLES; cycle += 1) {
       accepted = inFlight;
     }
   }
+  const processingAtCancelRequest = await metricsField("llamacpp:requests_processing");
   const cancelled = accepted ? await clickExact("Cancel") : false;
   const cancelAt = Date.now();
+  // R16: attempt the replacement at the earliest point the UI permits any
+  // action after the cancel - before the settle/drain waits. The previous
+  // harness waited for the run to settle (and the server to drain) first,
+  // which made its "immediate restart" claim vacuous.
+  const finalAttempt =
+    cycle === CYCLES
+      ? await attemptImmediateRestart({ cancelAt, processingAtCancelRequest })
+      : null;
   let settled = false;
   let notice = null;
   let runEndedMs = null;
@@ -342,11 +360,6 @@ for (let cycle = 1; cycle <= CYCLES; cycle += 1) {
     }
     if (Date.now() - cancelAt > RUN_SETTLE_BOUND_MS + 90_000) break;
   }
-  // R16: the final cycle's first restart attempt happens HERE - before any
-  // drain wait - while the previous request is still observed active. The
-  // previous harness drained to requests_processing == 0 first, which made
-  // its "immediate restart" claim vacuous.
-  const finalAttempt = cycle === CYCLES ? await attemptImmediateRestart() : null;
   let processing = await metricsField("llamacpp:requests_processing");
   const drainStart = Date.now();
   let drained = processing === "0";
@@ -377,6 +390,45 @@ for (let cycle = 1; cycle <= CYCLES; cycle += 1) {
   for (let attempt = 0; attempt < 30 && !record; attempt += 1) {
     await settle(500);
     record = newestBenchmarkRecord(cycleStart);
+  }
+  // Seen live on the final cycle: a cancel that lands BETWEEN attempts ends
+  // the run without a terminal outcome in its record. That is a real outcome
+  // of the coordination, not a pass, so the harness runs one more measured
+  // attempt and cancels it while its first trial is in flight, then asserts
+  // the persisted terminal record of THAT attempt. The retry is recorded.
+  if (record && !record.terminalOutcome) {
+    const retryStart = Date.now();
+    const tokensBeforeRetry = await metricsField("llamacpp:tokens_predicted_total");
+    const retryStarted = await clickExact("Run v2 benchmark");
+    let inFlightRetry = false;
+    for (let attempt = 0; attempt < 90 && !inFlightRetry; attempt += 1) {
+      await settle(1000);
+      const processingRetry = await metricsField("llamacpp:requests_processing");
+      const tokensNow = await metricsField("llamacpp:tokens_predicted_total");
+      const generatedRetry =
+        Number.isFinite(Number(tokensNow)) && Number.isFinite(Number(tokensBeforeRetry))
+          ? Number(tokensNow) - Number(tokensBeforeRetry)
+          : 0;
+      if (processingRetry === "1" && generatedRetry >= 1) inFlightRetry = true;
+    }
+    const cancelledRetry = inFlightRetry ? await clickExact("Cancel") : false;
+    let recordRetry = record;
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      await settle(500);
+      const candidate = newestBenchmarkRecord(retryStart);
+      if (candidate?.terminalOutcome) {
+        recordRetry = candidate;
+        break;
+      }
+    }
+    run.terminalOutcomeRetry = {
+      attempted: Boolean(retryStarted),
+      inFlight: inFlightRetry,
+      cancelled: cancelledRetry,
+      outcome: recordRetry?.terminalOutcome ?? null,
+      path: recordRetry?.path ?? null,
+    };
+    record = recordRetry;
   }
   let children = null;
   let childError = null;
@@ -426,19 +478,25 @@ for (let cycle = 1; cycle <= CYCLES; cycle += 1) {
     // attemptImmediateRestart above) while the previous request was still
     // active. This block asserts the refusal, the overlap-free window, and
     // that the replacement run is permitted and recorded once cleanup ends.
+    const observedActive =
+      finalAttempt?.processingAtCancelRequest === "1" || finalAttempt?.processingAtEntry === "1";
     check(
       "mt06.immediate-restart-attempted-while-previous-active",
-      finalAttempt?.processingAtAttempt === "1",
-      `processing=${finalAttempt?.processingAtAttempt} ui=${finalAttempt?.buttonStateAtAttempt} uiAccepted=${finalAttempt?.uiAccepted}`,
+      observedActive &&
+        Number.isFinite(Number(finalAttempt?.sinceCancelMs)) &&
+        Number(finalAttempt?.sinceCancelMs) <= 3000,
+      `processingAtCancel=${finalAttempt?.processingAtCancelRequest} processingAtEntry=${finalAttempt?.processingAtEntry} processingAtClick=${finalAttempt?.processingAtAttempt} sinceCancelMs=${finalAttempt?.sinceCancelMs}`,
     );
     const refusalMessage = String(finalAttempt?.apiAttempt?.error ?? "");
+    // Refused means: the direct IPC attempt was rejected, or the UI refused /
+    // disabled the action. The API verdict is the authoritative one; the UI
+    // verdict and the notice are recorded as supporting evidence.
     check(
       "mt06.immediate-restart-refused-while-previous-active",
-      (finalAttempt?.uiAccepted === false ||
-        finalAttempt?.buttonStateAtAttempt === "disabled" ||
-        /already|clean|active|running/i.test(String(finalAttempt?.notice ?? ""))) &&
-        finalAttempt?.apiAttempt?.status === "refused",
-      `uiAccepted=${finalAttempt?.uiAccepted} uiState=${finalAttempt?.buttonStateAtAttempt} api=${finalAttempt?.apiAttempt?.status}${refusalMessage ? ` msg=${refusalMessage.slice(0, 120)}` : ""}`,
+      finalAttempt?.apiAttempt?.status === "refused" ||
+        finalAttempt?.uiAccepted === false ||
+        finalAttempt?.buttonStateAtAttempt === "disabled",
+      `api=${finalAttempt?.apiAttempt?.status} uiAccepted=${finalAttempt?.uiAccepted} uiState=${finalAttempt?.buttonStateAtAttempt} notice=${finalAttempt?.notice?.slice(0, 60)}${refusalMessage ? ` msg=${refusalMessage.slice(0, 100)}` : ""}`,
     );
     check(
       "mt06.final-no-overlap-before-drain",

@@ -1,0 +1,53 @@
+﻿{
+    "msiPayloadDigest":  "be0a1e7b6c075532d921e8e10d6483c295e327ad84cab853308ef4fbf0c80405",
+    "nsisPayloadDigest":  "c000e6315cea8591025c715ed9a1e07bc3dd632523fe4570d28245a36e41db0c",
+    "version":  "0.6.0",
+    "finishedAtUtc":  "2026-09-12T20:41:52.6799065Z",
+    "installedDigests":  {
+                             "Preservation upgrade":  "c000e6315cea8591025c715ed9a1e07bc3dd632523fe4570d28245a36e41db0c",
+                             "Post-update install":  "c000e6315cea8591025c715ed9a1e07bc3dd632523fe4570d28245a36e41db0c",
+                             "Pre-update install":  "af9f01ac31730798b584efd1aee8f8854e97cc894573106c6935acb0461ebb93",
+                             "MSI fresh install":  "be0a1e7b6c075532d921e8e10d6483c295e327ad84cab853308ef4fbf0c80405",
+                             "NSIS fresh install":  "c000e6315cea8591025c715ed9a1e07bc3dd632523fe4570d28245a36e41db0c"
+                         },
+    "steps":  [
+                  {
+                      "detail":  "installed version 0.6.0; uninstall removed the executable",
+                      "status":  "PASS",
+                      "name":  "nsis-fresh-install-launch-uninstall"
+                  },
+                  {
+                      "detail":  "installed version 0.6.0; uninstall removed the executable and the product registration",
+                      "status":  "PASS",
+                      "name":  "msi-fresh-install-launch-uninstall"
+                  },
+                  {
+                      "detail":  "executable version 0.4.0 -\u003e 0.6.0",
+                      "status":  "PASS",
+                      "name":  "nsis-update-from-previous-launch-uninstall"
+                  },
+                  {
+                      "detail":  "user-data canary and catalog mirror survived the upgrade; files collected for host verification; executable 0.6.0",
+                      "status":  "PASS",
+                      "name":  "nsis-preservation-from-v0.4.0"
+                  }
+              ],
+    "previousTag":  "v0.4.0",
+    "tag":  "v0.6.0",
+    "schema":  "localmotive.sandbox-lifecycle.v0",
+    "status":  "PASS",
+    "installedPayloadNote":  "Established payload expectations (R09): every NSIS path (fresh, update, preservation) must install one byte-identical executable, and the update must differ from the previous version - both enforced above. The MSI-installed executable is measured and version-verified on its own path; cross-bundler byte identity between the MSI image and the NSIS image is NOT claimed (release builds are not byte-reproducible between bundlers). No claim is made about sidecar files beyond the executable; the executable digest, its version string, and process survival are the measured identity.",
+    "coverageNote":  "NSIS and MSI fresh install/launch/uninstall and the NSIS update path with executable version and cross-path digest evidence. Eight-second process survival is a startup smoke, not full functional verification. The preservation step (staged via preserve.json) plants, per flavor, the released baseline\u0027s REAL persistence after the previous install - the v0.5.0-schema catalog mirror with a user override row, or the v0.4.1-era catalog cache record - and requires it to survive the upgrade and a launch smoke. The collected files are verified on the host (R07): the user override rows must survive with their ownership flags and sentinel values (mirror flavor), or the cache record must remain present and parseable (cache flavor).\"",
+    "stage":  "preservation-verification",
+    "preservation":  {
+                         "status":  "PASS",
+                         "output":  "PRESERVE_PASS cache: record present and parseable (schemaVersion 1)\r\nPRESERVE_PASS userdata: canary content intact"
+                     },
+    "sourceRevision":  "da091a47ca6595ec37690ab5ae63542671c5f7f6",
+    "harnessRevision":  "da091a47ca6595ec37690ab5ae63542671c5f7f6",
+    "candidateDigests":  {
+                             "currentSetup":  "fd33cb127af91d72d4041ed762753e8298ebe9000e8714948672efc49d85f693",
+                             "currentMsi":  "c16799792600157013cf7f91a8f1d4f270ec1ef6b078c0e96dda358a9cb9c11b"
+                         },
+    "candidateInventorySha256":  "c03f6074e6d8cf875e3e0212e06f8eb024ada65e63566e1c0d238a2a0aa90206"
+}

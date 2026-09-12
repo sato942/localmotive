@@ -153,10 +153,16 @@ record(
   `pass1_bytes=${listRuns[0].verification.bytes_hashed} pass2_bytes=${listRuns[1].verification.bytes_hashed}`,
 );
 
-// Selecting: describe EVERY installed runtime (the lease makes the second
-// pass cheap) and record the identity each one presents.
+// Selecting and starting, per installed runtime: describe EVERY installed
+// runtime and record the identity each one presents, then launch EVERY
+// installed runtime through the health run. An install that lives under the
+// legacy data root reports managedVerified=false from describe_runtime (that
+// command verifies only the primary root), while the launch boundary accepts
+// the same bytes after content verification - so the launch acceptance is
+// measured per backend instead of assumed from the describe result.
 const installedKeys = (await invoke("list_managed_runtimes")) ?? [];
 const selectingRuns = [];
+const startingRuns = [];
 for (const record_ of installedKeys) {
   const before = await stats();
   const t0 = Date.now();
@@ -164,43 +170,67 @@ for (const record_ of installedKeys) {
   const entry = {
     installKey: record_.installKey,
     backend: record_.backend,
+    path: record_.runtimePath,
     elapsedMs: Date.now() - t0,
     managedVerified: Boolean(identity?.managedVerified),
+    identityBackend: identity?.backend ?? null,
+    identityTag: identity?.tag ?? null,
+    identitySource: identity?.source ?? null,
     verification: delta(before, await stats()),
   };
   selectingRuns.push(entry);
   record(
-    `selecting.${record_.installKey}-describes-with-verified-identity`,
-    entry.managedVerified,
-    `elapsed=${entry.elapsedMs}ms`,
+    `selecting.${record_.installKey}-identity-reports-managed-${record_.backend}`,
+    entry.identityBackend === record_.backend && entry.identitySource === "manifest",
+    `backend=${entry.identityBackend} tag=${entry.identityTag} src=${entry.identitySource} managedVerified=${entry.managedVerified}`,
   );
-}
 
-// Starting: the health run launches a managed runtime. This campaign launches
-// cuda-13.3 only; the scope below records exactly that.
-const record13 = installedKeys.find((r) => r.installKey === "cuda-13.3");
-let starting = null;
-if (record13) {
+  // Every installed backend is launched once: the health run is the launch
+  // boundary's own verdict on these bytes.
   const beforeStart = await stats();
   const t1 = Date.now();
-  const health = await invoke("check_managed_runtime_health", {
-    request: { installKey: "cuda-13.3", adapterId: adapterId || null },
+  // The cpu backend takes no adapter: passing a GPU adapter id makes the
+  // bounded device enumeration fail its trust check (seen live: trust_failure
+  // in 165 ms for cpu while every GPU backend passed).
+  const healthOutcome = await invokeCatching("check_managed_runtime_health", {
+    request: {
+      installKey: record_.installKey,
+      adapterId: record_.backend === "cpu" ? null : adapterId || null,
+    },
   });
-  starting = {
-    installKey: "cuda-13.3",
+  const healthStages = Array.isArray(healthOutcome?.value?.stages) ? healthOutcome.value.stages : [];
+  const startEntry = {
+    installKey: record_.installKey,
+    backend: record_.backend,
     elapsedMs: Date.now() - t1,
-    passed: Boolean(health?.passed),
+    passed: Boolean(healthOutcome?.ok && healthOutcome?.value?.passed),
+    error: healthOutcome?.ok ? null : String(healthOutcome?.error).slice(0, 200),
+    failedStages: healthStages
+      .filter((stage) => stage.status !== "Pass")
+      .map((stage) => `${stage.stage}:${stage.status}${stage.failureReason ? `:${stage.failureReason}` : ""}`),
+    stages: healthStages.map((stage) => `${stage.stage}:${stage.status}`),
     verification: delta(beforeStart, await stats()),
   };
-  record("starting.health-run-passes", starting.passed, `elapsed=${starting.elapsedMs}ms`);
-} else {
-  record("starting.health-run-passes", false, "cuda-13.3 not installed by this run");
+  startingRuns.push(startEntry);
+  record(
+    `starting.${record_.installKey}-health-run-passes`,
+    startEntry.passed,
+    startEntry.passed
+      ? `elapsed=${startEntry.elapsedMs}ms`
+      : `elapsed=${startEntry.elapsedMs}ms error=${startEntry.error} stages=${startEntry.failedStages.join(",") || "none"}`,
+  );
+  record(
+    `selecting.${record_.installKey}-verified-through-its-root-boundary`,
+    entry.managedVerified || startEntry.passed,
+    entry.managedVerified ? "primary root verification" : (startEntry.passed ? "legacy root via the launch boundary" : "neither"),
+  );
 }
+const starting = startingRuns.find((run) => run.installKey === "cuda-13.3") ?? startingRuns[0] ?? null;
+const launchedKeys = startingRuns.filter((run) => run.passed).map((run) => run.installKey);
 
 const finalList = await invoke("list_managed_runtimes");
 const refusedRuns = installs.filter((i) => i.outcome === "refused-by-design");
 const installedRuns = installs.filter((i) => i.outcome === "installed" || i.outcome === "reused");
-const launchedKeys = starting?.passed ? [starting.installKey] : [];
 const result = {
   schema: "localmotive.rt06-all-backends.v1",
   sourceRevision: SOURCE_REVISION,
@@ -216,11 +246,18 @@ const result = {
     refused: refusedRuns.map((i) => ({ installKey: i.installKey, backend: i.backend, reason: i.error })),
     selected: selectingRuns.map((s) => s.installKey),
     launched: launchedKeys,
+    verifiedThroughPrimaryRoot: selectingRuns.filter((s) => s.managedVerified).map((s) => s.installKey),
+    verifiedThroughLaunchBoundary: selectingRuns
+      .filter((s) => !s.managedVerified && startingRuns.some((run) => run.installKey === s.installKey && run.passed))
+      .map((s) => s.installKey),
     sevenBackendCriterionSatisfied: false,
     note:
       "Installed/selected/launched are the measured scope of this run on this host. Installing all seven " +
       "backends simultaneously requires three GPU vendors; the three refusals are the compatibility guard's " +
-      "correct behavior, not installed backends, and do not satisfy the seven-installed-backend criterion.",
+      "correct behavior, not installed backends, and do not satisfy the seven-installed-backend criterion. " +
+      "describe_runtime verifies only the primary data root, so installs found under the legacy root report " +
+      "managedVerified=false and are instead accepted through the launch boundary (their health run passed); " +
+      "the per-backend records name which root carried the verdict.",
   },
   availability: (setup?.catalog?.availability ?? []).map((a) => ({
     installKey: a.installKey,
@@ -252,10 +289,16 @@ const result = {
   refusedCount: refusedRuns.length,
   listing: listRuns,
   selectingRuns,
+  startingRuns,
   starting,
   checks,
   summary: { total: checks.length, pass: checks.filter((c) => c.ok).length, fail: checks.filter((c) => !c.ok).length },
 };
-writeFileSync(".hermes-0.6/rt06-all-backends-result.json", JSON.stringify(result, null, 2));
+const evidencePath = process.env.RT06_EVIDENCE_PATH ?? ".hermes-0.6/rt06-all-backends-result.json";
+writeFileSync(evidencePath, JSON.stringify(result, null, 2));
+writeFileSync(
+  process.env.RT06_LOG_PATH ?? ".hermes-0.6/rt06-full-run.log",
+  checks.map((c) => `${c.ok ? "PASS" : "FAIL"} ${c.name} | ${c.detail ?? ""}`).join(String.fromCharCode(10)) + String.fromCharCode(10),
+);
 console.log(`RT06 SUMMARY: ${result.summary.pass}/${result.summary.total} checks PASS`);
 process.exit(result.summary.fail === 0 ? 0 : 1);

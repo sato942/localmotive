@@ -1,0 +1,17 @@
+﻿{
+    "schema":  "localmotive.sandbox-lifecycle.v0",
+    "status":  "FAIL",
+    "stage":  "resolve-installers",
+    "error":  "Candidate Localmotive_0.6.0_x64-setup.exe digest 88332e966e6907bdb75bd20295c0977d9672cca99d50d9ccd4b43d1734801312 does not match the inventory\u0027s 4ad8822e13422e1ac54029738adbc1f667fde49d8738483a4aed7ee2cea8bbef; refusing to qualify unverified bytes.",
+    "tag":  "v0.6.0",
+    "version":  "0.6.0",
+    "previousTag":  "v0.5.0",
+    "sourceRevision":  "cb8ab64753d96b61fa43665d2cf1dd6b4ee7928c",
+    "harnessRevision":  "ef0d57efaed34eb55902fdf17c851204ce6d087e",
+    "startedAtUtc":  "2026-09-12T20:15:16.3161915Z",
+    "finishedAtUtc":  "2026-09-12T20:15:16.4291527Z",
+    "candidateDigests":  {
+
+                         },
+    "candidateInventorySha256":  "af51cbadda5cd980b6388aed7b5edf495201d5dfef7a5aac1c9887269152ca74"
+}

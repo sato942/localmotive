@@ -1,0 +1,208 @@
+{
+  "schema": "localmotive.qualification-manifest.v1",
+  "release": "0.6.0",
+  "generatedAt": "2026-09-12T20:56:53.515339+00:00",
+  "repositoryHeadAtGeneration": "da091a47ca6595ec37690ab5ae63542671c5f7f6",
+  "sourceRevision": "da091a47ca6595ec37690ab5ae63542671c5f7f6",
+  "workflowFile": {
+    "path": ".github/workflows/release.yml",
+    "sha256": "28835eaddcddc28dfa8791d5a440ee0f573ebecb4df2a6c40071faf635ed9f4a"
+  },
+  "artifacts": [
+    {
+      "name": "Localmotive_0.6.0_x64-portable.exe",
+      "sizeBytes": 21019136,
+      "sha256": "f46ed292ceded2b069b57022f5df4d63d7d54e83ebb393f3c82117f0db861e54"
+    },
+    {
+      "name": "Localmotive_0.6.0_x64-setup.exe",
+      "sizeBytes": 5317511,
+      "sha256": "fd33cb127af91d72d4041ed762753e8298ebe9000e8714948672efc49d85f693"
+    },
+    {
+      "name": "Localmotive_0.6.0_x64.msi",
+      "sizeBytes": 9080832,
+      "sha256": "c16799792600157013cf7f91a8f1d4f270ec1ef6b078c0e96dda358a9cb9c11b"
+    }
+  ],
+  "records": {
+    "packaged_verification": {
+      "path": "release-evidence\\0.6.0\\attestations\\packaged-verification-0.6.0.json",
+      "exists": true,
+      "sha256": "f89599d3e2e9c3dc65c2751f0f23633c1a2105a6905407129fc0fdf87b934e68",
+      "sha256_lf": "f89599d3e2e9c3dc65c2751f0f23633c1a2105a6905407129fc0fdf87b934e68",
+      "overall_status": "PASS",
+      "checks": "25/25"
+    },
+    "lifecycle_upgrade_v0.4.0": {
+      "path": "release-evidence\\0.6.0\\attestations\\sandbox-clean-account-lifecycle-upgrade-v0.4.0.json",
+      "exists": true,
+      "sha256": "489ed9540e1e97fe6841f2d8a4a55443094783068517e617923cf76e4caf42f1",
+      "sha256_lf": "2964c143048c3c109442672366311c8cdd9ec00f6034078ebba161accab6bd01",
+      "status": "PASS",
+      "stage": "preservation-verification",
+      "sourceRevision": "da091a47ca6595ec37690ab5ae63542671c5f7f6",
+      "harnessRevision": "da091a47ca6595ec37690ab5ae63542671c5f7f6"
+    },
+    "lifecycle_upgrade_v0.5.0": {
+      "path": "release-evidence\\0.6.0\\attestations\\sandbox-clean-account-lifecycle-upgrade-v0.5.0.json",
+      "exists": true,
+      "sha256": "c006438d5e38a8b3786d3b0d8732c9479a78fa45ec75cae8bb5f6be5450f1246",
+      "sha256_lf": "8689e74ae77f8a78ea6293a1cde94b1895df70cb937e47bf6f78efc1d1a286bc",
+      "status": "PASS",
+      "stage": "preservation-verification",
+      "sourceRevision": "da091a47ca6595ec37690ab5ae63542671c5f7f6",
+      "harnessRevision": "da091a47ca6595ec37690ab5ae63542671c5f7f6"
+    },
+    "lifecycle_preservation_v0.4.1": {
+      "path": "release-evidence\\0.6.0\\attestations\\sandbox-clean-account-lifecycle-preservation-v0.4.1.json",
+      "exists": true,
+      "sha256": "18d5a8ff24f0783c9f9689bfa9fe4beb6e9eefeb0c55fc08a3dc817361ba4de7",
+      "sha256_lf": "13655ea5b7a85aa141a395519d894afe87ad1c8d062c5ca72a3dfed1f136bde5",
+      "status": "PASS",
+      "stage": "preservation-verification",
+      "sourceRevision": "da091a47ca6595ec37690ab5ae63542671c5f7f6",
+      "harnessRevision": "da091a47ca6595ec37690ab5ae63542671c5f7f6"
+    },
+    "lifecycle_preservation_v0.5.0": {
+      "path": "release-evidence\\0.6.0\\attestations\\sandbox-clean-account-lifecycle-preservation-v0.5.0.json",
+      "exists": true,
+      "sha256": "6b19be2f375d51b71dd27bb78b4eb2ed65a47584ecf9a8f3b7a31e4da64e2788",
+      "sha256_lf": "d6ac3c19eb0f2dcf7d1ebe5d6a1f10010bcc979514b88bbd37aa1c3f430d3ca6",
+      "status": "PASS",
+      "stage": "preservation-verification",
+      "sourceRevision": "da091a47ca6595ec37690ab5ae63542671c5f7f6",
+      "harnessRevision": "da091a47ca6595ec37690ab5ae63542671c5f7f6"
+    },
+    "witness_missing_assets": {
+      "path": "release-evidence\\0.6.0\\attestations\\witness-missing-assets.json",
+      "exists": true,
+      "sha256": "c0fb023ac1ca0194935357ce1d094942c0e174de4c1e29324e57321673c4acf9",
+      "sha256_lf": "1e0fc2cb1b25e61f5420a6cba85a8ddee866dea636ac9f7977e099b92171812c",
+      "status": "FAIL",
+      "stage": "resolve-installers",
+      "sourceRevision": null,
+      "harnessRevision": "581043bc84e31ccc4194fdaa337741f6868cf78b"
+    },
+    "witness_timeout": {
+      "path": "release-evidence\\0.6.0\\attestations\\witness-timeout.json",
+      "exists": true,
+      "sha256": "d8516348da7a27b5e6663f98eaed23f370c45e762ba7d0f4f74d960d035549ad",
+      "sha256_lf": "7f53364e178eb336f7f7ae8abbbc2747c850e7a433baac9013b39f1c1178c904",
+      "status": "TIMEOUT",
+      "stage": "sandbox-timeout",
+      "sourceRevision": "85edee63d060c43d05df3770d168a81b7421d6df",
+      "harnessRevision": "581043bc84e31ccc4194fdaa337741f6868cf78b"
+    },
+    "witness_malformed_result": {
+      "path": "release-evidence\\0.6.0\\attestations\\witness-malformed-result.json",
+      "exists": true,
+      "sha256": "9ae500fcad5eb23ef0812da43d98ea1dc25ebb15a68492f68c85eff1ae9d83ea",
+      "sha256_lf": "b99c46e7b54091de9cb9e42771555461449e949b77a9bb0bf24e88e15e82aa59",
+      "status": "FAIL",
+      "stage": "sandbox-run",
+      "sourceRevision": "85edee63d060c43d05df3770d168a81b7421d6df",
+      "harnessRevision": "581043bc84e31ccc4194fdaa337741f6868cf78b"
+    },
+    "witness_preservation_missing": {
+      "path": "release-evidence\\0.6.0\\attestations\\witness-preservation-missing.json",
+      "exists": true,
+      "sha256": "454588f2e76b9c53ae2ce0090491b41f823abefac091fe56bf6dc9417b9894ed",
+      "sha256_lf": "149ee5729abfa2467c0d5fc2be23f9a44c5df472051b7687bc58227c69156a67",
+      "status": "FAIL",
+      "stage": "preservation-verification",
+      "sourceRevision": "85edee63d060c43d05df3770d168a81b7421d6df",
+      "harnessRevision": "581043bc84e31ccc4194fdaa337741f6868cf78b"
+    },
+    "witness_stale_lock": {
+      "path": "release-evidence\\0.6.0\\attestations\\witness-stale-lock.json",
+      "exists": true,
+      "sha256": "a93891414056bc55022aa9ac2bc12dd8d69425b2ac618107e661d6b00ee4eea0",
+      "sha256_lf": "6178fa5949b2f169d2195e8876f399cf30f620d878e16d30c40e1ec626d125b6",
+      "status": "FAIL",
+      "stage": "resolve-installers",
+      "sourceRevision": "85edee63d060c43d05df3770d168a81b7421d6df",
+      "harnessRevision": "581043bc84e31ccc4194fdaa337741f6868cf78b"
+    },
+    "mt06_cancellation": {
+      "path": "release-evidence\\0.6.0\\attestations\\mt06-cycles-result.json",
+      "exists": true,
+      "sha256": "46b549a5c4bd86c98f6f55869b0061adc9d1e588c46d7ccbbd0dbca479bc434b",
+      "sha256_lf": "46b549a5c4bd86c98f6f55869b0061adc9d1e588c46d7ccbbd0dbca479bc434b",
+      "sourceRevision": "da091a47ca6595ec37690ab5ae63542671c5f7f6",
+      "summary": "33/33 checks PASS",
+      "checks": "33/33"
+    },
+    "dc04_command_path": {
+      "path": "release-evidence\\0.6.0\\attestations\\dc04-v2-command-path-verification.log",
+      "exists": true,
+      "sha256": "6189ccb4e5d8260a1284915aa9c833567af709599f1b5fb06c148c4a84e00ae2",
+      "sha256_lf": "6189ccb4e5d8260a1284915aa9c833567af709599f1b5fb06c148c4a84e00ae2"
+    },
+    "rt04_delayed_download": {
+      "path": "release-evidence\\0.6.0\\attestations\\rt04v2-delayed-download-verification.log",
+      "exists": true,
+      "sha256": "140c005f89b75244c53f15609f4cc78272766bbd434e28f8223bb325173da254",
+      "sha256_lf": "140c005f89b75244c53f15609f4cc78272766bbd434e28f8223bb325173da254"
+    },
+    "negative_control_refusal": {
+      "path": "release-evidence\\0.6.0\\attestations\\sandbox-clean-account-lifecycle-negative.json",
+      "exists": true,
+      "sha256": "2c0807f2efeba8d46f616f49669d94f997f7d6fbfd67ae995e9c289e167549bd",
+      "sha256_lf": "a29c992d4253c2b23eb0cfc32a514dbca4015a5d256e0bc52216b24a528e76c4",
+      "status": "FAIL",
+      "sourceRevision": "7c32fa90b9dd04057ba3c089392b0642f3b0545c",
+      "harnessRevision": "eb84e184c3841ec11d14873b9701df19bb1c0e67"
+    },
+    "negative_control_refusal_freeze7": {
+      "path": "release-evidence\\0.6.0\\attestations\\sandbox-clean-account-lifecycle-negative-freeze7.json",
+      "exists": true,
+      "sha256": "08ef21d02150ea7a429fab76012f96075a45dae287df830827fdfaf2f727295f",
+      "sha256_lf": "4ed1f246c69b796a3ccd0f52551aa04a3cfb750acec9bbbf2eca11d409e256f8",
+      "status": "FAIL",
+      "stage": "resolve-installers",
+      "sourceRevision": "cb8ab64753d96b61fa43665d2cf1dd6b4ee7928c",
+      "harnessRevision": "ef0d57efaed34eb55902fdf17c851204ce6d087e"
+    },
+    "negative_control_refusal_freeze8": {
+      "path": "release-evidence\\0.6.0\\attestations\\sandbox-clean-account-lifecycle-negative-freeze8.json",
+      "exists": true,
+      "sha256": "ddb8b7c3449b3877ca6a5dd939bdb28c50259d5846fa9f6d6115e8f8439c613f",
+      "sha256_lf": "4d7da8c142e4db356c314723b37d1c84a072ba1ffc9448ca8d5ee2d95903db4c",
+      "status": "FAIL",
+      "stage": "resolve-installers",
+      "sourceRevision": "da091a47ca6595ec37690ab5ae63542671c5f7f6",
+      "harnessRevision": "da091a47ca6595ec37690ab5ae63542671c5f7f6"
+    },
+    "a11y_packaged_verification": {
+      "path": "release-evidence\\0.6.0\\attestations\\g05-a11y-packaged-verification.log",
+      "exists": true,
+      "sha256": "f6dc99a439ff9d2bd6a3d295d28197dfe8eabbf71233a669eb6e68e24b3bd86a",
+      "sha256_lf": "f6dc99a439ff9d2bd6a3d295d28197dfe8eabbf71233a669eb6e68e24b3bd86a"
+    },
+    "rt06_all_backends": {
+      "path": "release-evidence\\0.6.0\\attestations\\rt06-all-backends.json",
+      "exists": true,
+      "sha256": "0c96c3dca72e472089abce134ef44b6abd79c31004e12a41e63b2f26bdb7cbff",
+      "sha256_lf": "0c96c3dca72e472089abce134ef44b6abd79c31004e12a41e63b2f26bdb7cbff",
+      "summary": {
+        "total": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "checks": "12/12"
+    },
+    "rt06_full_run_log": {
+      "path": "release-evidence\\0.6.0\\attestations\\rt06-full-run.log",
+      "exists": true,
+      "sha256": "1cfa0992610be4c462a4268cd3f5763d34fd3aec1eade042690eedfd1ad603a6",
+      "sha256_lf": "1cfa0992610be4c462a4268cd3f5763d34fd3aec1eade042690eedfd1ad603a6"
+    }
+  },
+  "supersededRecords": [
+    {
+      "description": "Qualification records produced at earlier candidate revisions (3a2b06e / 7c32fa9 / 57bde64 / the 85edee6 freeze-6 set / the cb8ab64 freeze-7 set, re-cut at da091a4 after self-hosted CI proved the first fixture diagnostic wrong) remain in history under their original bindings; they are NOT evidence for this candidate and are referenced only as history.",
+      "note": "Never rewritten."
+    }
+  ]
+}

@@ -1377,11 +1377,12 @@ test("no working-tree source file is a line-ending-only rewrite of its committed
   const { execFileSync } = await import("node:child_process");
   const status = execFileSync("git", ["status", "--porcelain", "-z"], { encoding: "utf8", cwd: process.cwd() });
   const modified = status
-    .split(" ")
+    .split("\0")
     .filter(Boolean)
     .map((entry) => entry.slice(3))
     .filter((path) => /(^|\/)(src|scripts|src-tauri\/src|src-tauri\/tests|\.github)\/.*\.(rs|mjs|ps1|ts|tsx|json|yml|yaml)$/.test(path));
-  assert.ok(modified.length > 0, "expected at least one file under review while the tree is dirty");
+  // A clean tree has nothing to inspect and must pass: this guard fails only
+  // when a modified file's content is line-ending churn.
   const CRLF = String.fromCharCode(13) + String.fromCharCode(10);
   const LF = String.fromCharCode(10);
   const offenders = [];

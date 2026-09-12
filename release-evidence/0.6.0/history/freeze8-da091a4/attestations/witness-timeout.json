@@ -1,0 +1,18 @@
+﻿{
+    "schema":  "localmotive.sandbox-lifecycle.v0",
+    "status":  "TIMEOUT",
+    "stage":  "sandbox-timeout",
+    "error":  "Sandbox produced no result.json within 0 minutes",
+    "tag":  "v0.6.0",
+    "version":  "0.6.0",
+    "previousTag":  "v0.4.1",
+    "sourceRevision":  "85edee63d060c43d05df3770d168a81b7421d6df",
+    "harnessRevision":  "581043bc84e31ccc4194fdaa337741f6868cf78b",
+    "startedAtUtc":  "2026-09-12T17:56:08.2901653Z",
+    "finishedAtUtc":  "2026-09-12T17:56:08.7041818Z",
+    "candidateDigests":  {
+                             "currentSetup":  "533b669c3cde3dfdea14865105ff3212b2390d8a7b2527ec6f8af85689ae933c",
+                             "currentMsi":  "9dac49aa3e66c15fb592ccd613885b5088a4838e0b4328b301dfa46e39d899bc"
+                         },
+    "candidateInventorySha256":  "6281568508e33e808339a5306745179ee2d59c8925fec04a0aead209898d9791"
+}

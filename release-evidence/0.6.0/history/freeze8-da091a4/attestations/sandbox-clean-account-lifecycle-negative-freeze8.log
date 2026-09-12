@@ -1,0 +1,1 @@
+﻿[host] FAIL during stage 'resolve-installers': Candidate Localmotive_0.6.0_x64-setup.exe digest 36c7123a89a500fbefa3fe5a15599c6df19a32e272ee8779b9da02ae3613164a does not match the inventory's fd33cb127af91d72d4041ed762753e8298ebe9000e8714948672efc49d85f693; refusing to qualify unverified bytes.
