@@ -700,3 +700,38 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sandbox/host-run-lif
   -Tag candidate-0.6.0 -Version 0.6.0 -CandidateDir .hermes-0.6/final-candidates \
   -PreviousTag v0.5.0 -EvidenceName sandbox-clean-account-lifecycle
 ```
+
+## Follow-up review remediation (R01-R15, reviewed `db548c8`, fifth pass)
+
+On 2026-09-12 the owner supplied `localmotive-0.6-followup-review-db548c8.md`
+(R01-R15) against revision `db548c820cbdf2d8b289f797ce27d31f1ff338f3`. The review
+record is committed verbatim in this repository. Every finding was verified
+against the tree before any change; all fifteen were confirmed and fixed (none
+was disproved), each with regression evidence that fails against the old
+behavior:
+
+| R | Fix (short) | Regression evidence |
+|---|---|---|
+| R01 | `release.yml` direct `needs` dependencies; checker enforces output reachability for every workflow | RED list captured; MUT-R01a caught |
+| R02 | Tag publication requires `event_name = push`; the predicate is evaluated semantically over the event/ref/input matrix | RED case `dispatch at tag + publish=false`; MUT-R02 caught |
+| R03 | Cancellation defined at result acceptance (client, warmup/trial loops, tuning finalist confirmation) | RED first at all three layers; MUT-R03a/b-trial/b-warmup/c caught |
+| R04 | One client per benchmark run; the run drains abandoned workers before finalizing; production drain accessor | RED test with a slow-body fixture; MUT-R04 + MUT-R04g caught |
+| R05 | Lifecycle: anything short of verified preservation PASS fails the job; evidence flips to FAIL at `preservation-verification` | Witness leg 5; MUT-R05b (false green) caught |
+| R06 | Explicit `-CandidateDir` never falls back; installers verified against the inventory (sha256 + sizeBytes) | Doctored-byte negative refused before the sandbox |
+| R07 | Real released-version persistence fixtures (v0.5.0-schema mirror with a user override; v0.4.1 cache record) + the four-leg qualification matrix | Six verifier control cases; matrix in `release.yml`; live legs in this campaign |
+| R08 | Candidate re-cut; canonical qualification manifest binds source + artifact digests + every record with its own harness revision | `.hermes-0.6/qualification-manifest-0.6.0.json`; older identities labeled superseded |
+| R09 | Exact installed-version identity (4-part canonical normalizes; near misses fail); NSIS/MSI payload expectations recorded | Gate added; fresh lifecycle docs carry `nsisPayloadDigest`/`msiPayloadDigest`/`installedPayloadNote` |
+| R10 | Real PEM/X.509 parsing (webpki) + structural SPKI extraction + key SPKI derivation (PKCS#8/PKCS#1/SEC1, RSA + EC) + pair match | Marker-junk tests flipped to expect failure; real RSA and EC pairs PASS; unrelated and cross-family pairs FAIL; MUT-R10 caught |
+| R11 | Packaged cancellation driver: owned PIDs (Win32 parent scope, enumeration failure throws), server-accepted request gate, persisted `terminalOutcome` assertion, bounded cleanup, overlap-free immediate restart, digest-bound result file | 33/33 checks at this freeze; per-cycle records `cancelled`; MUT via gate pins |
+| R12 | Consumer inventory validation fails closed (schema, release identity, exact canonical set, duplicates) | Eight-case behavioral test on the real verifier; MUT-R12 caught |
+| R13 | Publication re-resolves the remote tag before publishing; public inventory byte-compared to the producer copy and re-verified; failure diagnostics retained; preflight evidence always written | Gate pins; preflight probe wrote FAIL evidence at stage `initialization` |
+| R14 | Owner handoff corrected: remote state, trusted-job scoping, required-PR ruleset rule, tag bound to the reviewed SHA, supported Latest readback, explicit 3-run PR campaign | Gate pin on the corrected text |
+| R15 | No redirect hops; environment proxies ignored; request bodies through a bounded writer; file reads bounded by the handle | Three tests with three mutants (follow-redirect, unbounded writer, unbounded read) caught |
+
+The candidate was re-cut at freeze `85edee63d060c43d05df3770d168a81b7421d6df`
+because R01-R05 and R10-R15 changed shipped code. Packaged campaign at that
+freeze: packaged verification 25/25 `overall_status=PASS` (`source_dirty`
+false), MT-06 cancellation 33/33, DC-04 command path 13/13, RT-04.V2 17/17,
+supervision/tamper/FE-16/FE-05.V3/catalog/churn clean, lifecycle matrix per
+R07. All scores, digests and records are in the tracker's fifth-pass
+reconciliation section and the qualification manifest.
