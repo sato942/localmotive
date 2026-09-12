@@ -1,29 +1,8 @@
 # Localmotive 0.6.0 remediation report
 
-**Snapshot:** 2026-09-12, third pass. Local branch `main` beyond the docs
-tip; candidate code freeze at `3a2b06e` (`feat(download): verification-profile
-seam for DC-04`, on top of the MT-06 fix `57bde64e`). Candidate digests:
-portable `fbbd2a1a…`, MSI `1d217350…`, NSIS setup `b83afa2c…`.
-**Baseline:** `v0.5.0` (source `a4b7127f739f7420232d9b6f63da693d39128d0b`).
-**Range covered:** every commit between `v0.5.0` and HEAD - 173 commits, 199
-files changed, +48 190 / -5 206 lines.
-**Push state:** the only commit on `origin/main` beyond `v0.5.0` is `e530371`
-("docs(0.5): Phase 8 ship ledger"); the other 172 commits are local only and
-have not been pushed. This is deliberate: the release flow plants a tag at a
-resolved SHA, and the tag/publish steps are owner-gated (section 6).
+**Snapshot:** 2026-09-12, fourth pass. Candidate code freeze `7c32fa9`; docs/driver tip follows on `main` (this pass's docs commit). The candidate was rebuilt at the freeze and restaged: portable `fcf1d3b2…`, msi `c18eecc2…`, setup `e405cd1e…` (`SHA256SUMS-0.6.0.txt` and `candidate-inventory-0.6.0.json` record `sourceRevision 7c32fa90b9dd04057ba3c089392b0642f3b0545c`). Superseded freezes and their digests remain visible unrelabelled: `3a2b06e` (portable `fbbd2a1a…`), `57bde64e` (portable `79615950…`), `a0ed247`/`6384df0` in the lineage table.
 
-This report compares the work against the authoritative tracker
-[`docs/history/TODO-0.6.md`](docs/history/TODO-0.6.md), whose evidence source is
-[`docs/history/localmotive-comprehensive-audit.md`](docs/history/localmotive-comprehensive-audit.md)
-(audit SHA-256 `fb87c9df9fd4cffa3768b81ddd40fd55363e718456a182b4237c1bfc9054b647`).
-Detailed per-item dispositions live in
-[`docs/RELEASE-REVIEW-0.6.md`](docs/RELEASE-REVIEW-0.6.md); committed release
-evidence lives in `release-evidence/0.6.0/`; the working logs of the final
-re-bind live in the gitignored `.hermes-0.6/` scratch directory and are named
-throughout this report.
-
----
-
+**What the fourth pass changed:** the publication path now consumes the retained verified candidate with its original inventory and validates source identity plus every digest/size before promoting those bytes (the `--verify` CLI resolved its artifact directory from `argv[2]` — the `--verify` flag itself under the exact workflow invocation — and was repaired RED-first with mutation MUT-W3 caught). Lifecycle evidence binds to the candidate inventory's full source SHA with the harness revision recorded separately, and a substituted environment revision is refused. The health-model fetch gained the verifier-profile loopback seam and RT-04.V2 is sealed packaged 17/17 with a controlled slow-server delay fixture. MT-06 gained resource-bound proofs beyond caller latency (three slow-body unit tests plus a packaged six-cycle resource driver, 37/37). Gates on the freeze: `npx tsc --noEmit` 0; Vitest 141/141; node gates 126/126; `cargo fmt --check` 0; clippy `-D warnings` 0; `cargo test` 600 passed / 0 failed / 7 ignored; isolated `verify_041` re-run on the committed tree 25/25 PASS.
 ## 1. What the plan asked for
 
 The audit produced **72 findings** (19 High, 43 Medium, 10 Low), **29
@@ -465,6 +444,29 @@ validated catalog or in your local overrides.` **without touching the network**
 cannot be removed here (`That entry ships with the curated catalog and cannot
 be removed here.`).
 
+### 5.7 Publication consumes the retained inventory (release contract)
+
+The publish job never builds. It downloads the retained `localmotive-<version>-verified` artifact produced (and verified once) by the package job, then validates before upload: `LOCALMOTIVE_SOURCE_REVISION="$RESOLVED_SHA" node scripts/verify_candidate_inventory.mjs --verify "artifacts/candidate-inventory-${VERSION}.json"` followed by `sha256sum -c`. The verifier checks the recorded `sourceRevision` against the resolved tag revision (both must be full SHAs), every artifact size, and every artifact digest against both the inventory and the checksum file.
+
+Fourth pass: replaying that exact invocation against the staged candidate exposed a latent defect — the CLI resolved its artifact directory from `argv[2]`, which under `--verify <inventory>` is the flag itself, so the step would have failed closed with `ENOENT …‑‑verify\SHA256SUMS-0.6.0.txt`. RED was reproduced first; the fix resolves the artifact directory from the inventory's own directory. Proof (`.hermes-0.6/publication-inventory-proof.log`): `PASS producer inventory verified: 3 artifacts at source 7c32fa90b9dd04057ba3c089392b0642f3b0545c`; a wrong expected source refuses with `candidate inventory records source 7c32fa9…, expected 000…`; mutant MUT-W3 (drop the directory resolution) is caught by the new gate assertions in `scripts/tests/release-gates.test.mjs`.
+
+### 5.8 Lifecycle evidence binds to the candidate inventory (not HEAD)
+
+`host-run-lifecycle.ps1` now reads `candidate-inventory-<version>.json` from the candidate directory and binds every evidence document to its full source SHA; when `LOCALMOTIVE_SOURCE_REVISION` is set to anything else the run refuses (`MISMATCH_EXIT=1`, log `.hermes-0.6/freeze5-harness-mismatch.log`). The harness revision is recorded separately per document, so evidence names both the candidate source and the tooling that produced it. Re-run on freeze `7c32fa9`: up40 PASS, main PASS, preservation v0.4.1 PASS, preservation v0.5.0 PASS — every document shows `sourceRevision 7c32fa90b9dd…` with distinct `harnessRevision` values (`627dda1…`, `2f0a544…`), and the negative control (v0.5.0 bytes labelled 0.6.0) fails with the identity error as required. Fault-simulation legs may run without staged candidates and record a null binding; the witness suite passes all four legs (missing-assets FAIL at `resolve-installers`, timeout TIMEOUT at `sandbox-timeout`, malformed FAIL at `sandbox-run`, cancellation killed with no PASS artifact). The witness script no longer exports a HEAD-derived revision — that export was the exact substitution the binding refuses.
+
+### 5.9 MT-06 extension: resources, not just caller latency
+
+The cancellable client's fix is now proven beyond the caller-return measurement, in both layers:
+
+- Unit (`src-tauri/src/local_client.rs`): a slow-body fixture dribbles responses while counting requests, live connections, completions and aborts. `a_cancelled_body_read_resolves_worker_ownership_without_duplicate_requests` cancels mid-body, proves the caller returns within one slice, the abandoned worker exits at its own deadline (worker-liveness counter reaches zero), the connection is torn down exactly once and the server saw exactly one request. `a_cancelled_call_lets_a_short_body_finish_once_on_the_owned_connection` proves the worker owns a short in-flight response to natural completion with no re-issue. `repeated_cancel_restart_cycles_keep_workers_bounded_and_requests_exact` runs six cancel/restart cycles: exactly one request per cycle, live workers return to zero between cycles. Mutations MUT-W1 (drop the lease decrement) and MUT-W2 (inflate the worker deadline) are both caught.
+- Packaged (`scripts/g05_mt06_cycles.mjs`, 37/37 checks PASS): six run→cancel mid-flight→settle cycles on the real binary. Per cycle the panel settles, `llamacpp:requests_processing` drains to 0, exactly one owned `llama-server` child exists during the run and zero after stop, restarts reach LIVE, and the final stop releases the listener.
+
+### 5.10 RT-04.V2 sealed and the store-repair disclosure
+
+The delayed-download window now has its own harness. A verifier-profile seam rebases the pinned health-model URL onto a loopback fixture (`download::rebase_download_url`, honored only with the isolated-root gate and plain-HTTP loopback only; production verification of the downloaded bytes is untouched). The packaged run (`scripts/g05_rt04v2_delay.mjs`, 17/17 PASS, attestation `release-evidence/0.6.0/attestations/rt04v2-delayed-download-verification.log`): the fixture streams the pinned model at ~4 MB/s; the run is observed mid-download; a swap attempt inside the pinned window is denied by the execution lease's read-shared handles (`EBUSY` — the no-time-based-release mechanism); the delayed run completes on untampered content with the full byte count served; tampering BOTH verified runtime copies (primary and legacy roots) outside the window yields `trust_failure` with the content-verification message and zero children; restoring the exact bytes (`87c4e9d0…`) returns a full seven-stage PASS. A single-copy tamper is defeated by the verified-copy fallback, which is why the refusal leg tampers both.
+
+Honest disclosure: the first RT-04 attempt had a driver defect — its restore path wrote the caller-supplied health-model backup over `llama-server-impl.dll`, corrupting the managed store. The store was repaired from the approved release archive (`llama-b10816-bin-win-cuda-13.3-x64.zip`, digest `f362882b…` matching `approved_runtimes.json`), installed the manifest-exact `llama-server-impl.dll` (`87c4e9d0…`, 8 896 000 bytes), and a full re-scan verified all 55 manifest files (`.hermes-0.6/rt04-repair/repair.log`). The driver now captures and restores from its own DLL backup, and the lesson is recorded in the packaged-verification skill.
+
 ## 6. What is NOT complete
 
 24 checkboxes remain open. None is a High finding without a disposition; 17 are
@@ -490,7 +492,6 @@ the 2026-09-11 package.
 
 | rows | specific missing prerequisite |
 | --- | --- |
-| RT-04.V2 | a delay-injection seam for the health-model fetch (the DLL-swap half is packaged-verified in `g05_tamper_dll`; unit lease tests pin the window; the loopback-seam pattern now exists for catalog downloads) |
 | RT-06.V3 | a large multi-backend library installed on a representative host (this host has one verified CUDA backend) |
 | DC-12.V3 | a controlled OS-crash/power-loss harness (ordinary process-kill coverage exists: vitems_c D7, FE-16 v3) |
 | MT-07.V2 | CPU-only and changed-CPU machines for the portability matrix (fit-reduced rows need the same) |
@@ -593,6 +594,13 @@ release workflow; (5) read back the published assets and close out
 the published set is compared against the recorded inventory during readback
 (G-09.I3). The exact commands are in `docs/RELEASE-REVIEW-0.6.md`, section
 "Owner package for G-09".
+
+### 8.0 Fourth-pass release identity
+
+- Candidate code freeze: `7c32fa90b9dd04057ba3c089392b0642f3b0545c` (`feat(verification): RT-04.V2 delay seam, MT-06 resource proofs, inventory-bound lifecycle, publication gate pins`), rebuilt and restaged in the fourth pass.
+- Retained inventory: `.hermes-0.6/final-candidates/candidate-inventory-0.6.0.json` (schema 1, `release 0.6.0`, `sourceRevision 7c32fa9…`, three artifacts with sizes and digests, `checksumFile SHA256SUMS-0.6.0.txt`).
+- Candidate digests (freeze `7c32fa9`): portable `fcf1d3b2…`, msi `c18eecc2…`, setup `e405cd1e…`; negative-candidate doctored bytes under `.hermes-0.6/negative-candidates-060/` with their own inventory.
+- Publication validates these exact records before promoting (section 5.7); lifecycle evidence binds to the same `sourceRevision` (section 5.8); verify_041 re-ran on the committed tree (25/25) after this pass's tooling fixes.
 
 ### 8.1 Candidate lineage (full SHAs)
 

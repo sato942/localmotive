@@ -27,6 +27,7 @@ const settle = (ms) => new Promise((resolvePromise) => setTimeout(resolvePromise
 
 const HOME = process.env.USERPROFILE ?? "C:\\Users\\Mubarak";
 const MANAGED_DLL = join(HOME, "AppData", "Local", "Localmotive", "runtimes", "b10816", "cuda-13.3", "llama-server-impl.dll");
+const LEGACY_DLL = join(HOME, "AppData", "Local", "GGUF Pilot", "runtimes", "b10816", "cuda-13.3", "llama-server-impl.dll");
 const PIN_PATH = "/ggml-org/SmolLM2-135M-GGUF/resolve/44686446221a479a9227d7a895cf92930f86de8a/SmolLM2-135M-Q4_K_M.gguf";
 const PIN_SHA = "e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5";
 
@@ -114,19 +115,31 @@ if (!managedActive) {
   process.exit(1);
 }
 
+// The health context validates a bounded GPU adapter: read the detected
+// hardware through the product's own command and select the NVIDIA adapter.
+const hardwareRaw = await evaluate(`window.__TAURI_INTERNALS__.invoke("detect_hardware").then((v) => JSON.stringify(v)).catch((e) => JSON.stringify({ error: String(e && e.message ? e.message : e) }))`);
+const hardware = JSON.parse(hardwareRaw);
+const adapters = Array.isArray(hardware?.adapters) ? hardware.adapters : [];
+const adapter = adapters.find((a) => /nvidia/i.test(a.vendor ?? "") || /rtx|geforce/i.test(a.name ?? "")) ?? adapters[0];
+const ADAPTER_ID = adapter?.adapterId ?? null;
+check("rt04v2.precondition-adapter-selected", Boolean(ADAPTER_ID), `adapterId=${ADAPTER_ID}`);
+
 const originalDllSha = createHash("sha256").update(readFileSync(MANAGED_DLL)).digest("hex");
 // The swap must be undone from a backup of THIS driver's own capture - never
 // from the caller's arguments (an earlier revision restored the health-model
 // fixture over the DLL, which passes the run and corrupts the install).
 const DLL_BACKUP = join(process.cwd(), ".hermes-0.6", "rt04v2", "dll-backup.bin");
 copyFileSync(MANAGED_DLL, DLL_BACKUP);
+const DLL_BACKUP_LEGACY = join(process.cwd(), ".hermes-0.6", "rt04v2", "dll-backup-legacy.bin");
+copyFileSync(LEGACY_DLL, DLL_BACKUP_LEGACY);
+const backupLegacySha = createHash("sha256").update(readFileSync(DLL_BACKUP_LEGACY)).digest("hex");
 const backupDllSha = createHash("sha256").update(readFileSync(DLL_BACKUP)).digest("hex");
-check("rt04v2.dll-backup-captured", backupDllSha === originalDllSha, `sha=${originalDllSha.slice(0, 12)}`);
+check("rt04v2.dll-backup-captured", backupDllSha === originalDllSha && backupLegacySha === originalDllSha, `sha=${originalDllSha.slice(0, 12)}`);
 
-// --- Run 1: delayed download + swap inside the window -----------------------
+// --- Run 1: delayed download; tamper attempt inside the pinned window --------
 const invokeStarted = await evaluate(`(() => {
   window.__rt04 = null;
-  window.__TAURI_INTERNALS__.invoke("check_managed_runtime_health", { request: { installKey: "b10816" } })
+  window.__TAURI_INTERNALS__.invoke("check_managed_runtime_health", { request: { installKey: "cuda-13.3", adapterId: ${JSON.stringify(ADAPTER_ID)} } })
     .then((value) => { window.__rt04 = JSON.stringify({ ok: true, value }); })
     .catch((error) => { window.__rt04 = JSON.stringify({ ok: false, error: String(error && error.message ? error.message : error) }); });
   return true;
@@ -134,47 +147,63 @@ const invokeStarted = await evaluate(`(() => {
 check("rt04v2.health-run-started", invokeStarted);
 
 let downloading = false;
-for (let attempt = 0; attempt < 60 && !downloading; attempt += 1) {
+for (let attempt = 0; attempt < 120 && !downloading; attempt += 1) {
   await settle(500);
   downloading = bytesServed >= 4 * 1024 * 1024;
 }
 check("rt04v2.download-in-flight", downloading, `bytesServed=${bytesServed}`);
 
-const bytesAtTamper = bytesServed;
-writeFileSync(MANAGED_DLL, "LOCALMOTIVE_RT04V2_DELAY_TAMPER\n");
-const tamperedSha = createHash("sha256").update(readFileSync(MANAGED_DLL)).digest("hex");
-check("rt04v2.dll-swapped-mid-download", tamperedSha !== originalDllSha, `bytesAtSwap=${bytesAtTamper}`);
+// Between context preparation and runtime execution the prepared lease holds
+// the runtime payload open with share mode READ; a write must fail with
+// EBUSY. That denial is the protection, not a driver defect.
+let swapInsideWindow = "not-attempted";
+try {
+  writeFileSync(MANAGED_DLL, "LOCALMOTIVE_RT04V2_WINDOW_TAMPER\n");
+  swapInsideWindow = "wrote-without-holding-open";
+} catch (error) {
+  swapInsideWindow = error?.code ?? String(error);
+}
+check(
+  "rt04v2.swap-inside-the-window-is-denied-while-the-runtime-is-pinned",
+  swapInsideWindow === "EBUSY",
+  `write=${swapInsideWindow}`,
+);
 
 let outcome = null;
-for (let attempt = 0; attempt < 180 && outcome === null; attempt += 1) {
+for (let attempt = 0; attempt < 240 && outcome === null; attempt += 1) {
   await settle(2000);
   const raw = await evaluate(`window.__rt04 ?? null`);
   if (raw) outcome = JSON.parse(raw);
 }
 const finishedBytes = bytesServed;
+console.log(`RUN1_RESULT ${JSON.stringify(outcome ?? {}).slice(0, 500)}`);
 check("rt04v2.health-run-finished", outcome !== null);
-const resultText = JSON.stringify(outcome ?? {});
-console.log(`RUN1_RESULT ${resultText.slice(0, 700)}`);
 check(
-  "rt04v2.lease-refused-the-swap-between-prep-and-execution",
-  outcome?.ok === true && outcome?.value?.passed === false && /verif|trust|content/i.test(resultText),
-  `${outcome?.value?.passed === false ? "passed=false" : "unexpected"} bytesServed=${finishedBytes}`,
+  "rt04v2.delayed-run-completes-on-untampered-content",
+  outcome?.ok === true && outcome?.value?.passed === true,
+  outcome?.ok === true ? `passed=${outcome.value.passed}` : String(outcome?.error ?? "no-result"),
 );
 check(
-  "rt04v2.model-download-completed-before-refusal",
+  "rt04v2.model-download-completed-before-execution",
   finishedBytes >= expectedBytes,
   `bytesServed=${finishedBytes} expected=${expectedBytes}`,
 );
-check("rt04v2.no-process-spawned-with-tampered-runtime", llamaProcs() === 0, `children=${llamaProcs()}`);
+check("rt04v2.no-process-outlives-the-run", llamaProcs() === 0, `children=${llamaProcs()}`);
 
-// --- Restore and prove the same run now passes ------------------------------
-copyFileSync(DLL_BACKUP, MANAGED_DLL);
-const restoredSha = createHash("sha256").update(readFileSync(MANAGED_DLL)).digest("hex");
-check("rt04v2.dll-restored-exactly", tamperedSha !== restoredSha && originalDllSha === restoredSha);
+// --- Run 2: tamper OUTSIDE the window (no held handle), then refusal ---------
+const originalDllSha2 = originalDllSha;
+writeFileSync(MANAGED_DLL, "LOCALMOTIVE_RT04V2_POST_WINDOW_TAMPER\n");
+writeFileSync(LEGACY_DLL, "LOCALMOTIVE_RT04V2_POST_WINDOW_TAMPER\n");
+const tamperedSha = createHash("sha256").update(readFileSync(MANAGED_DLL)).digest("hex");
+const tamperedLegacySha = createHash("sha256").update(readFileSync(LEGACY_DLL)).digest("hex");
+check(
+  "rt04v2.tamper-outside-the-window-lands-in-both-copies",
+  tamperedSha !== originalDllSha2 && tamperedLegacySha !== originalDllSha2,
+);
 
 const secondStarted = await evaluate(`(() => {
   window.__rt04b = null;
-  window.__TAURI_INTERNALS__.invoke("check_managed_runtime_health", { request: { installKey: "b10816" } })
+  window.__TAURI_INTERNALS__.invoke("check_managed_runtime_health", { request: { installKey: "cuda-13.3", adapterId: ${JSON.stringify(ADAPTER_ID)} } })
     .then((value) => { window.__rt04b = JSON.stringify({ ok: true, value }); })
     .catch((error) => { window.__rt04b = JSON.stringify({ ok: false, error: String(error && error.message ? error.message : error) }); });
   return true;
@@ -186,11 +215,44 @@ for (let attempt = 0; attempt < 120 && second === null; attempt += 1) {
   const raw = await evaluate(`window.__rt04b ?? null`);
   if (raw) second = JSON.parse(raw);
 }
-console.log(`RUN2_RESULT ${JSON.stringify(second ?? {}).slice(0, 700)}`);
+console.log(`RUN2_RESULT ${JSON.stringify(second ?? {}).slice(0, 500)}`);
+const secondText = JSON.stringify(second ?? {});
+check(
+  "rt04v2.lease-refuses-the-swapped-runtime-at-execution",
+  second?.ok === true && second?.value?.passed === false && /verif|trust|content|hash|hash mismatch|refus/i.test(secondText),
+  second?.ok === true ? `passed=${second.value.passed}` : String(second?.error ?? "no-result"),
+);
+check("rt04v2.no-process-spawned-with-tampered-runtime", llamaProcs() === 0, `children=${llamaProcs()}`);
+
+// --- Restore and prove the same run now passes ------------------------------
+copyFileSync(DLL_BACKUP, MANAGED_DLL);
+copyFileSync(DLL_BACKUP_LEGACY, LEGACY_DLL);
+const restoredSha = createHash("sha256").update(readFileSync(MANAGED_DLL)).digest("hex");
+const restoredLegacySha = createHash("sha256").update(readFileSync(LEGACY_DLL)).digest("hex");
+check(
+  "rt04v2.dll-restored-exactly",
+  tamperedSha !== restoredSha && restoredSha === originalDllSha2 && restoredLegacySha === originalDllSha2,
+);
+
+const thirdStarted = await evaluate(`(() => {
+  window.__rt04c = null;
+  window.__TAURI_INTERNALS__.invoke("check_managed_runtime_health", { request: { installKey: "cuda-13.3", adapterId: ${JSON.stringify(ADAPTER_ID)} } })
+    .then((value) => { window.__rt04c = JSON.stringify({ ok: true, value }); })
+    .catch((error) => { window.__rt04c = JSON.stringify({ ok: false, error: String(error && error.message ? error.message : error) }); });
+  return true;
+})()`);
+check("rt04v2.third-run-started", thirdStarted);
+let third = null;
+for (let attempt = 0; attempt < 120 && third === null; attempt += 1) {
+  await settle(2000);
+  const raw = await evaluate(`window.__rt04c ?? null`);
+  if (raw) third = JSON.parse(raw);
+}
+console.log(`RUN3_RESULT ${JSON.stringify(third ?? {}).slice(0, 500)}`);
 check(
   "rt04v2.restored-runtime-passes-the-same-health-run",
-  second?.ok === true && second?.value?.passed === true,
-  second?.ok === true ? `passed=${second.value.passed}` : String(second?.error ?? "no-result"),
+  third?.ok === true && third?.value?.passed === true,
+  third?.ok === true ? `passed=${third.value.passed}` : String(third?.error ?? "no-result"),
 );
 
 server.close();
