@@ -94,7 +94,7 @@
           "node scripts/verify_060_catalog.mjs merge $portable \"artifacts/catalog-matrix-first-fill.json\" \"artifacts/catalog-matrix-restart.json\" \"artifacts/packaged-verification-catalog-$env:VERSION.json\""
         ],
         "publish": [
-          "LOCALMOTIVE_SOURCE_REVISION=\"$RESOLVED_SHA\" node scripts/verify_candidate_inventory.mjs --verify \"artifacts/candidate-inventory-${VERSION}.json\"",
+          "LOCALMOTIVE_SOURCE_REVISION=\"$RESOLVED_SHA\" node scripts/verify_candidate_inventory.mjs --verify \"artifacts/candidate-inventory-${VERSION}.json\" \"$VERSION\"",
           "(cd artifacts && sha256sum -c \"SHA256SUMS-${VERSION}.txt\")"
         ],
         "clean-account-lifecycle": [

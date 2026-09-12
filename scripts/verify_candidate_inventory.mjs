@@ -81,11 +81,40 @@ export async function verifyPublishedInventory({
   artifactDirectory = directory,
   inventoryPath = output,
   expectedSourceRevision,
+  expectedRelease,
 } = {}) {
   if (!/^[0-9a-f]{40}$/u.test(expectedSourceRevision ?? "")) {
     throw new Error("The expected source revision must be one full Git commit");
   }
   const record = JSON.parse(await readFile(inventoryPath, "utf8"));
+  // R12 (follow-up review db548c8): the consumer validates the inventory's
+  // own shape - schema, release identity, and the exact canonical asset set -
+  // before it trusts any row. A short, duplicated, renamed, or foreign
+  // artifact list must fail closed.
+  if (record.schemaVersion !== 1) {
+    throw new Error(`candidate inventory schema ${record.schemaVersion} is not supported`);
+  }
+  if (typeof record.release !== "string" || !/^\d+\.\d+\.\d+$/u.test(record.release)) {
+    throw new Error("candidate inventory release must be a plain semantic version");
+  }
+  if (expectedRelease && record.release !== expectedRelease) {
+    throw new Error(`candidate inventory is for release ${record.release}, expected ${expectedRelease}`);
+  }
+  if (!Array.isArray(record.artifacts) || record.artifacts.length === 0) {
+    throw new Error("candidate inventory lists no artifacts");
+  }
+  const canonical = [
+    `Localmotive_${record.release}_x64-setup.exe`,
+    `Localmotive_${record.release}_x64-portable.exe`,
+    `Localmotive_${record.release}_x64.msi`,
+  ].sort();
+  const names = record.artifacts.map((artifact) => artifact.name);
+  if (new Set(names).size !== names.length) {
+    throw new Error("candidate inventory lists a duplicate artifact");
+  }
+  if (JSON.stringify([...names].sort()) !== JSON.stringify(canonical)) {
+    throw new Error("candidate inventory does not name the exact release asset set");
+  }
   if (record.sourceRevision !== expectedSourceRevision) {
     throw new Error(
       `candidate inventory records source ${record.sourceRevision}, expected ${expectedSourceRevision}`,
@@ -119,6 +148,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       artifactDirectory: dirname(inventoryPath),
       inventoryPath,
       expectedSourceRevision: gitRevision(),
+      expectedRelease: process.argv[verifyIndex + 2],
     });
     console.log(`PASS producer inventory verified: ${record.artifacts.length} artifacts at source ${record.sourceRevision}`);
   } else {

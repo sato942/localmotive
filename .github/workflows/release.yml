@@ -500,7 +500,7 @@ jobs:
           VERSION: ${{ needs.quality.outputs.version }}
           RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
         run: |
-          LOCALMOTIVE_SOURCE_REVISION="$RESOLVED_SHA" node scripts/verify_candidate_inventory.mjs --verify "artifacts/candidate-inventory-${VERSION}.json"
+          LOCALMOTIVE_SOURCE_REVISION="$RESOLVED_SHA" node scripts/verify_candidate_inventory.mjs --verify "artifacts/candidate-inventory-${VERSION}.json" "$VERSION"
           (cd artifacts && sha256sum -c "SHA256SUMS-${VERSION}.txt")
           echo "Honestly unsigned full release: Authenticode is DEFERRED_BY_OWNER; no signature is claimed. SmartScreen may warn."
 

@@ -100,8 +100,14 @@ function Assert-AppVersion($exe, $expected, $label) {
   # across installer paths rather than to a host-built binary: Rust release
   # builds are not byte-reproducible between invocations.
   $version = (Get-Item $exe).VersionInfo.FileVersion
-  if (-not $version -or -not $version.StartsWith($expected)) {
-    Fail "$label expected executable version $expected but found '$version' at $exe"
+  # R09 (follow-up review db548c8): the comparison is exact. StartsWith
+  # accepted near-miss identities ("0.6.00", "0.6.0-beta"), which is a
+  # version-identity hole. The canonical 4-part form normalizes to the
+  # documented value; everything else fails.
+  $normalized = if ($version) { $version.Trim() } else { $null }
+  if ($normalized -eq "$expected.0") { $normalized = $expected }
+  if ($normalized -ne $expected) {
+    Fail "$label expected executable version $expected exactly but found '$version' at $exe"
   }
   $installedSha = (Get-FileHash -Path $exe -Algorithm SHA256).Hash.ToLower()
   $script:InstalledDigests[$label] = $installedSha
@@ -238,10 +244,14 @@ try {
     }
   }
 
+  $msiPayloadDigest = if ($script:InstalledDigests.ContainsKey("MSI fresh install")) { $script:InstalledDigests["MSI fresh install"] } else { $null }
   $doc = @{
     schema = "localmotive.sandbox-lifecycle.v0"
     status = "PASS"
     installedDigests = $script:InstalledDigests
+    nsisPayloadDigest = $nsisUnique[0]
+    msiPayloadDigest = $msiPayloadDigest
+    installedPayloadNote = "Established payload expectations (R09): every NSIS path (fresh, update, preservation) must install one byte-identical executable, and the update must differ from the previous version - both enforced above. The MSI-installed executable is measured and version-verified on its own path; cross-bundler byte identity between the MSI image and the NSIS image is NOT claimed (release builds are not byte-reproducible between bundlers). No claim is made about sidecar files beyond the executable; the executable digest, its version string, and process survival are the measured identity."
     tag = $meta.tag
     version = $meta.version
     previousTag = $meta.previousTag

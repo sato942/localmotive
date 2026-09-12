@@ -12,7 +12,7 @@ import { inspectIcoSizes, validateIconConfiguration } from "../verify_icons.mjs"
 import { validateBrandingEntries } from "../verify_branding.mjs";
 import { validateQualification } from "../verify_qualification.mjs";
 import { validateResearchAnchor } from "../verify_research_anchor.mjs";
-import { verifyCandidateInventory } from "../verify_candidate_inventory.mjs";
+import { verifyCandidateInventory, verifyPublishedInventory } from "../verify_candidate_inventory.mjs";
 
 async function versionFixture(overrides = {}) {
   const root = await mkdtemp(join(tmpdir(), "localmotive-version-gate-"));
@@ -1062,6 +1062,78 @@ test("candidate inventory rejects a checksum that does not bind the staged bytes
       sourceRevision: "a".repeat(40),
     }),
     /does not match SHA256SUMS/,
+  );
+});
+
+test("R09: installed version identity is exact and payload expectations are stated", async () => {
+  const sandbox = await readFile(join(process.cwd(), "scripts", "sandbox", "run-lifecycle-in-sandbox.ps1"), "utf8");
+  assert.doesNotMatch(sandbox, /StartsWith\(\$expected\)/, "no near-miss version identity");
+  assert.match(sandbox, /expected executable version \$expected exactly/);
+  assert.match(sandbox, /installedPayloadNote = /);
+  assert.match(sandbox, /nsisPayloadDigest = /);
+  assert.match(sandbox, /msiPayloadDigest = /);
+});
+
+test("R12: the published-inventory consumer fails closed on schema, set, and identity drift", async () => {
+  const root = await mkdtemp(join(tmpdir(), "localmotive-consumer-gate-"));
+  const names = [
+    "Localmotive_0.4.1_x64-setup.exe",
+    "Localmotive_0.4.1_x64-portable.exe",
+    "Localmotive_0.4.1_x64.msi",
+  ];
+  for (const name of names) await writeFile(join(root, name), name);
+  const { createHash } = await import("node:crypto");
+  const digest = (text) => createHash("sha256").update(text).digest("hex");
+  await writeFile(
+    join(root, "SHA256SUMS-0.4.1.txt"),
+    `${names.map((name) => `${digest(name)}  ${name}`).join("\n")}\n`,
+  );
+  const good = {
+    schemaVersion: 1,
+    release: "0.4.1",
+    sourceRevision: "a".repeat(40),
+    checksumFile: "SHA256SUMS-0.4.1.txt",
+    artifacts: names.map((name) => ({ name, sizeBytes: name.length, sha256: digest(name) })),
+  };
+  const writeInventory = async (mutate) => {
+    const record = JSON.parse(JSON.stringify(good));
+    mutate(record);
+    const path = join(root, `inventory-${Math.random().toString(16).slice(2)}.json`);
+    await writeFile(path, JSON.stringify(record, null, 2));
+    return path;
+  };
+  const verify = (path, extra = {}) =>
+    verifyPublishedInventory({
+      artifactDirectory: root,
+      inventoryPath: path,
+      expectedSourceRevision: "a".repeat(40),
+      expectedRelease: "0.4.1",
+      ...extra,
+    });
+
+  // The untouched record verifies (sanity: the fixture itself is valid).
+  await verify(await writeInventory(() => {}));
+  await assert.rejects(verify(await writeInventory((r) => { r.schemaVersion = 2; })), /schema 2 is not supported/);
+  await assert.rejects(verify(await writeInventory((r) => { r.release = "0.4.2"; })), /expected 0.4.1/);
+  await assert.rejects(
+    verify(await writeInventory((r) => { r.artifacts.push({ ...r.artifacts[0] }); })),
+    /duplicate artifact/,
+  );
+  await assert.rejects(
+    verify(await writeInventory((r) => { r.artifacts[1].name = "Localmotive_0.4.1_x64-extra.exe"; })),
+    /exact release asset set/,
+  );
+  await assert.rejects(
+    verify(await writeInventory((r) => { r.artifacts.splice(2, 1); })),
+    /exact release asset set/,
+  );
+  await assert.rejects(
+    verify(await writeInventory((r) => { r.artifacts = []; })),
+    /lists no artifacts/,
+  );
+  await assert.rejects(
+    verify(await writeInventory(() => {}), { expectedRelease: "9.9.9" }),
+    /expected 9.9.9/,
   );
 });
 
