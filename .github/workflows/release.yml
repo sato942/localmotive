@@ -106,7 +106,7 @@ jobs:
           working-directory: src-tauri
 
   quality:
-    needs: rust-audit
+    needs: [resolve, rust-audit]
     runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]
     outputs:
       tag: ${{ steps.version.outputs.tag }}
@@ -195,7 +195,7 @@ jobs:
         run: cargo test --locked --doc
 
   package:
-    needs: [rust-audit, quality]
+    needs: [resolve, rust-audit, quality]
     runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]
     steps:
       # The self-hosted runner image defaults core.autocrlf=true; pin LF
@@ -399,7 +399,7 @@ jobs:
   # HEAD) and records the harness revision separately; the summary states
   # plainly whether it ran, passed, failed or was skipped.
   clean-account-lifecycle:
-    needs: [resolve, package]
+    needs: [resolve, quality, package]
     runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]
     timeout-minutes: 120
     env:
@@ -471,9 +471,10 @@ jobs:
     # compare against a literal version, which would silently skip
     # publication for every other release.
     if: >-
-      startsWith(github.ref, 'refs/tags/v') && needs.quality.outputs.tag == github.ref_name ||
+      (github.event_name == 'push' &&
+      startsWith(github.ref, 'refs/tags/v') && needs.quality.outputs.tag == github.ref_name) ||
       (github.event_name == 'workflow_dispatch' && inputs.publish)
-    needs: [rust-audit, quality, package, clean-account-lifecycle]
+    needs: [resolve, rust-audit, quality, package, clean-account-lifecycle]
     runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]
     permissions:
       contents: write

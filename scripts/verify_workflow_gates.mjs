@@ -84,6 +84,21 @@ export function validateWorkflowGates(workflows, policy) {
         if (!reachable.has(gate)) failures.push(`${file}:${jobName} does not depend on material gate ${gate}`);
       }
     }
+    // R01 (follow-up review db548c8): the needs context exposes ONLY the jobs
+    // listed directly in a job's `needs`. Transitive reachability does not
+    // make an ancestor's outputs readable, so every needs.<job>.outputs /
+    // needs.<job>.result reference must point at a DIRECT dependency.
+    for (const [jobName, job] of Object.entries(jobs)) {
+      const needs = job?.needs;
+      const direct = new Set(typeof needs === "string" ? [needs] : (needs ?? []));
+      for (const match of JSON.stringify(job).matchAll(/needs\.([A-Za-z0-9_-]+)\.(?:outputs|result)/gu)) {
+        if (!direct.has(match[1])) {
+          failures.push(
+            `${file}:${jobName} reads needs.${match[1]} outputs without a direct dependency (needs: ${[...direct].join(", ") || "none"})`,
+          );
+        }
+      }
+    }
     for (const [jobName, job] of Object.entries(jobs)) {
       for (const [index, step] of (job.steps ?? []).entries()) {
         if (step?.["continue-on-error"] === true) failures.push(`${file}:${jobName}:step ${index} permits failure`);

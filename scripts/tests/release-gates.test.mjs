@@ -1089,7 +1089,7 @@ test("hardware qualify workflow pins every remote action and owns the host proof
   // workflow owns the host attestation job only.
   assert.doesNotMatch(workflow, /clean-account-lifecycle/);
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
-  assert.match(release, /clean-account-lifecycle:\n    needs: \[resolve, package\]/);
+  assert.match(release, /clean-account-lifecycle:\n    needs: \[resolve, quality, package\]/);
   const generator = await readFile(
     join(process.cwd(), "scripts", "qualification", "build_host_attestation.mjs"),
     "utf8",
@@ -1335,7 +1335,7 @@ test("GH-03 the lifecycle consumes candidates instead of waiting for publication
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
   const hardware = await readFile(join(process.cwd(), ".github", "workflows", "hardware-qualify.yml"), "utf8");
   const lifecycle = release.split("clean-account-lifecycle:")[1].split("\n  publish:")[0];
-  assert.match(lifecycle, /needs: \[resolve, package\]/);
+  assert.match(lifecycle, /needs: \[resolve, quality, package\]/);
   assert.match(lifecycle, /-CandidateDir "artifacts"/);
   assert.doesNotMatch(lifecycle, /ReleaseWaitMinutes/);
   const publishHead = release.split("\n  publish:")[1].split("steps:")[0];
@@ -2049,7 +2049,7 @@ test("publish promotes the verified bytes only after every material gate (G-06/G
   // that only waits for `package` would ship without the sandbox verdict.
   assert.match(
     release,
-    /needs: \[rust-audit, quality, package, clean-account-lifecycle\]/,
+    /needs: \[resolve, rust-audit, quality, package, clean-account-lifecycle\]/,
     "publish depends on the clean-account lifecycle gate",
   );
   assert.match(
@@ -2057,6 +2057,46 @@ test("publish promotes the verified bytes only after every material gate (G-06/G
     /needs\.quality\.outputs\.tag == github\.ref_name/,
     "the ship guard binds the resolved tag, not a literal version",
   );
+  // R02 (follow-up review db548c8): the predicate must be evaluated, not
+  // substring-matched. A manual dispatch AT A TAG REF with publish=false hit
+  // the automatic tag branch and published anyway; the automatic branch must
+  // require a push event, and every (event, ref, tag, input) combination is
+  // checked here through the real expression.
+  const predicateMatch = release.match(/if: >-\s*\n([\s\S]*?)\n\s*needs:/u);
+  assert.ok(predicateMatch, "the publish job's if-predicate is extractable");
+  const predicate = predicateMatch[1]
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" ")
+    .replace(/:\s*$/, "");
+  const evaluatePredicate = ({ eventName, ref, refName, tag, publishInput }) => {
+    const scope = {
+      startsWith: (value, prefix) => String(value).startsWith(prefix),
+      github: { event_name: eventName, ref, ref_name: refName },
+      needs: { quality: { outputs: { tag } } },
+      inputs: { publish: publishInput },
+    };
+    const js = predicate.replace(/==/gu, "===");
+    // eslint-disable-next-line no-new-func
+    return Boolean(new Function("scope", `with (scope) { return (${js}); }`)(scope));
+  };
+  const cases = [
+    { eventName: "push", ref: "refs/tags/v0.6.0", refName: "v0.6.0", tag: "v0.6.0", publishInput: "", expected: true, why: "tag push publishes" },
+    { eventName: "push", ref: "refs/tags/v0.6.1", refName: "v0.6.1", tag: "v0.6.0", publishInput: "", expected: false, why: "tag mismatch refuses" },
+    { eventName: "push", ref: "refs/heads/main", refName: "main", tag: "v0.6.0", publishInput: "", expected: false, why: "branch push never publishes" },
+    { eventName: "workflow_dispatch", ref: "refs/tags/v0.6.0", refName: "v0.6.0", tag: "v0.6.0", publishInput: false, expected: false, why: "manual dispatch at a tag with publish=false must NOT publish (R02)" },
+    { eventName: "workflow_dispatch", ref: "refs/tags/v0.6.0", refName: "v0.6.0", tag: "v0.6.0", publishInput: true, expected: true, why: "manual republish with publish=true" },
+    { eventName: "workflow_dispatch", ref: "refs/heads/main", refName: "main", tag: "v0.6.0", publishInput: false, expected: false, why: "manual dispatch without publish" },
+    { eventName: "workflow_dispatch", ref: "refs/heads/main", refName: "main", tag: "v0.6.0", publishInput: true, expected: true, why: "manual republish from a branch ref" },
+  ];
+  for (const row of cases) {
+    assert.equal(
+      evaluatePredicate(row),
+      row.expected,
+      `${row.why}: event=${row.eventName} ref=${row.ref} tag=${row.tag} publish=${row.publishInput}`,
+    );
+  }
   assert.ok(
     !/needs\.quality\.outputs\.tag == '/.test(publish),
     "the ship guard must not compare the resolved tag against a literal",

@@ -103,6 +103,7 @@
       },
       "publicationJobs": {
         "publish": [
+          "resolve",
           "quality",
           "rust-audit",
           "package",
