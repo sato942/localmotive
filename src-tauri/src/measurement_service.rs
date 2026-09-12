@@ -3,6 +3,7 @@
 //! operation coordinator and the measurement/evidence authorities stay in
 //! their modules and are consumed here.
 use crate::core::{BenchmarkSummary, LaunchProfile};
+use crate::local_client::LocalHttpClient;
 use crate::server_service::{validated_server_snapshot, ValidatedServerSnapshot};
 use crate::LaunchValidation;
 use crate::{
@@ -11,11 +12,36 @@ use crate::{
 };
 use crate::{spawn_server, wait_until_healthy_cancellable};
 
-/// Upper bound on waiting for abandoned cancellable workers to exit before a
-/// benchmark record finalizes (R04). Every worker self-exits at its request
-/// deadline, which is far below this ceiling; the ceiling exists so a stuck
-/// worker can never hold the operations slot forever.
-const WORKER_DRAIN_CEILING: std::time::Duration = std::time::Duration::from_secs(300);
+/// Slack above the workload's own request deadline before a worker drain is
+/// considered abnormal (R16 follow-up). A cancellable worker can never outlive
+/// its request deadline by more than process teardown, so the drain bound is
+/// derived from the deadline the run actually used instead of a fixed value:
+/// the previous fixed 300 s ceiling sat BELOW the default 600 s request
+/// deadline, so a cancelled slow request could outlive the ceiling while the
+/// ownership was already released.
+const WORKER_TEARDOWN_SLACK: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The drain bound for one workload: its request deadline plus teardown slack.
+pub(crate) fn benchmark_drain_ceiling(workload: &evidence::Workload) -> Duration {
+    Duration::from_millis(workload.timeout_ms).saturating_add(WORKER_TEARDOWN_SLACK)
+}
+
+/// Hold ownership until every owned cancellable worker has exited.
+///
+/// A cancelled benchmark abandons its worker, which keeps its request until
+/// the request deadline. The run - and the command that owns it - must not
+/// finalize a record, clear its slot, or release the operations reservation
+/// while such a worker can still be inferring: replacement work would overlap
+/// it (R04/R16). The ceiling is the expected bound; if it is exceeded, the
+/// worker outlived its own request deadline - an unexpected state - and the
+/// wait still continues rather than releasing ownership while work continues.
+pub(crate) fn drain_owned_workers(client: &LocalHttpClient, ceiling: Duration) {
+    if client.wait_for_worker_drain(ceiling) {
+        return;
+    }
+    while !client.wait_for_worker_drain(Duration::from_secs(1)) {}
+}
+
 use serde::Serialize;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -221,15 +247,31 @@ pub(crate) fn benchmark_execution_snapshot_from_profile(
     })
 }
 
+/// Everything one measured attempt needs, grouped so the run signature stays
+/// readable as the ownership requirements grow (R16 added the shared client).
+pub(crate) struct BenchmarkRunContext<'a> {
+    pub server_pid: u32,
+    pub profile: LaunchProfile,
+    pub validation: LaunchValidation,
+    pub workload: evidence::Workload,
+    pub prepared_prompt_tokens: Option<Vec<i32>>,
+    pub cancelled: &'a AtomicBool,
+    pub directory: &'a Path,
+}
+
 pub(crate) fn run_benchmark_snapshot(
-    server_pid: u32,
-    profile: LaunchProfile,
-    validation: LaunchValidation,
-    workload: evidence::Workload,
-    prepared_prompt_tokens: Option<Vec<i32>>,
-    cancelled: &AtomicBool,
-    directory: &Path,
+    client: LocalHttpClient,
+    context: BenchmarkRunContext<'_>,
 ) -> Result<BenchmarkRunResult, String> {
+    let BenchmarkRunContext {
+        server_pid,
+        profile,
+        validation,
+        workload,
+        prepared_prompt_tokens,
+        cancelled,
+        directory,
+    } = context;
     let mut artifacts = Vec::new();
     for artifact in &validation.artifacts {
         artifacts.push(artifact::inspect_artifact(
@@ -323,10 +365,10 @@ pub(crate) fn run_benchmark_snapshot(
             .collect(),
     };
     launch_fact.validate().map_err(|error| error.to_string())?;
-    // R04 (follow-up review db548c8): the whole run shares one client so
-    // every cancellable worker of this benchmark is observable on it; the
+    // R04 (follow-up review db548c8): the whole run shares one client - the
+    // command creates it and passes it to preparation and to this function -
+    // so every cancellable worker of this benchmark is observable on it; the
     // run drains those workers before it returns.
-    let client = local_client(&profile)?;
     let prompt_tokens = match (workload.cache_mode, prepared_prompt_tokens) {
         (evidence::CacheMode::Cold, None) => {
             return Err("Cold-cache benchmarking requires prepared prompt tokens".into());
@@ -386,17 +428,12 @@ pub(crate) fn run_benchmark_snapshot(
             Ok(timing)
         })?
     };
-    // R04: a cancelled attempt abandons its worker, which exits on its own
-    // at the operation deadline (at most this client's request ceiling). The
-    // run must not release its ownership - and the app must not accept
-    // replacement work - until every such worker has exited. On ceiling
-    // expiry the record is discarded rather than finalized under unknown
-    // ownership.
-    if !client.wait_for_worker_drain(WORKER_DRAIN_CEILING) {
-        return Err(
-            "Cancelled benchmark cleanup exceeded its bound; the record was discarded.".into(),
-        );
-    }
+    // R04/R16: a cancelled attempt abandons its worker, which keeps its
+    // request until the operation deadline. The run holds ownership until
+    // every such worker has exited: the ceiling derives from THIS workload's
+    // request deadline, and a worker that outlives even that keeps being
+    // waited for instead of being discarded under unknown ownership.
+    drain_owned_workers(&client, benchmark_drain_ceiling(&workload));
     let mut manifest = evidence::BenchmarkManifest {
         schema: evidence::BENCHMARK_SCHEMA_VERSION,
         harness_version,
@@ -490,16 +527,23 @@ pub(crate) async fn benchmark_v2(
         }
         *active = Some(cancelled.clone());
     }
+    // One client owns every request of this run: prompt preparation and the
+    // measured attempts share it, so a cancellation during preparation is
+    // covered by the same worker drain as the measured attempts (R16).
+    let client = local_client(&server.profile)?;
+    let run_client = client.clone();
+    // The drain bound is derived from this workload's own request deadline
+    // before the workload is moved into the run task.
+    let drain_ceiling = benchmark_drain_ceiling(&workload);
     let benchmark_result: Result<BenchmarkRunResult, String> = async {
         let prepared_prompt_tokens = if workload.cache_mode == evidence::CacheMode::Cold {
-            let profile = server.profile.clone();
             let workload = workload.clone();
             let preparation_cancelled = cancelled.clone();
+            let preparation_client = run_client.clone();
             Some(
                 tauri::async_runtime::spawn_blocking(move || {
-                    let client = crate::local_client::LocalHttpClient::from_profile(&profile)?;
                     measurement::prepare_exact_prompt_tokens_cancellable(
-                        &client,
+                        &preparation_client,
                         &workload,
                         preparation_cancelled.as_ref(),
                     )
@@ -536,21 +580,34 @@ pub(crate) async fn benchmark_v2(
             }
         }
         let task_cancelled = cancelled.clone();
+        let task_client = run_client.clone();
         tauri::async_runtime::spawn_blocking(move || {
             run_benchmark_snapshot(
-                server.pid,
-                server.profile,
-                server.validation,
-                workload,
-                prepared_prompt_tokens,
-                task_cancelled.as_ref(),
-                &directory,
+                task_client,
+                BenchmarkRunContext {
+                    server_pid: server.pid,
+                    profile: server.profile,
+                    validation: server.validation,
+                    workload,
+                    prepared_prompt_tokens,
+                    cancelled: task_cancelled.as_ref(),
+                    directory: &directory,
+                },
             )
         })
         .await
         .map_err(|error| format!("Benchmark task failed: {error}"))?
     }
     .await;
+    // R16: ownership is released only after every owned request and worker
+    // has actually terminated. This covers the boundaries the run's own drain
+    // cannot - a cancellation during prompt preparation, an ordinary error
+    // before the run, a cleanup failure, and a worker that outlived even its
+    // own request deadline. The slot and the operations reservation stay held
+    // for the whole wait, so replacement work is refused while the abandoned
+    // request can still be inferring; a discarded result never releases
+    // ownership early. The ceiling derives from this workload's deadline.
+    drain_owned_workers(&client, drain_ceiling);
     let mut active = state
         .benchmark
         .lock()
@@ -802,4 +859,102 @@ pub(crate) fn calibration_storage_root(
         .app_data_dir()
         .map_err(|error| error.to_string())?
         .join("calibration"))
+}
+
+#[cfg(test)]
+mod r16_ownership_tests {
+    use super::*;
+    use crate::local_client::tests::serve_slow_body;
+    use std::sync::atomic::Ordering;
+    use std::time::Instant;
+
+    fn settle_until(mut predicate: impl FnMut() -> bool, timeout: Duration) -> bool {
+        let started = Instant::now();
+        while started.elapsed() < timeout {
+            if predicate() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        predicate()
+    }
+
+    #[test]
+    fn r16_the_drain_bound_follows_the_workload_request_deadline() {
+        // R16: the previous fixed 300 s ceiling sat BELOW the default 600 s
+        // request deadline, so a cancelled slow request could outlive the
+        // ceiling while ownership was already released. The bound is derived
+        // from the deadline the run actually uses.
+        let default = evidence::Workload::default();
+        assert_eq!(default.timeout_ms, 600_000);
+        assert_eq!(
+            benchmark_drain_ceiling(&default),
+            Duration::from_millis(630_000),
+            "the derived bound must sit above the default request deadline"
+        );
+        let short = evidence::Workload {
+            timeout_ms: 5_000,
+            ..evidence::Workload::default()
+        };
+        assert_eq!(
+            benchmark_drain_ceiling(&short),
+            Duration::from_millis(35_000)
+        );
+    }
+
+    #[test]
+    fn r16_cancellation_during_preparation_leaves_an_owned_worker_the_drain_waits_for() {
+        // The cold path prepares the exact prompt before any measured trial.
+        // A cancellation during that preparation abandons the tokenize worker
+        // exactly like a cancelled trial; the run shares one client, so the
+        // command's drain must observe it and hold ownership until it exits.
+        let fixture = serve_slow_body(Duration::from_millis(1_200), 12);
+        let client = LocalHttpClient::plain("127.0.0.1", fixture.port).unwrap();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let workload = evidence::Workload {
+            prompt_tokens: 64,
+            timeout_ms: 30_000,
+            ..evidence::Workload::default()
+        };
+        let flag = Arc::clone(&cancelled);
+        let caller = client.clone();
+        let work = std::thread::spawn(move || {
+            measurement::prepare_exact_prompt_tokens_cancellable(&caller, &workload, &flag)
+        });
+        assert!(
+            settle_until(
+                || client.active_cancellable_workers() > 0,
+                Duration::from_secs(5)
+            ),
+            "the tokenize worker must be observable while it runs"
+        );
+        cancelled.store(true, Ordering::Relaxed);
+        assert!(
+            work.join().unwrap().is_err(),
+            "the cancelled preparation reports the cancellation"
+        );
+        assert!(
+            client.active_cancellable_workers() > 0,
+            "the abandoned preparation worker is still in flight after the cancellation"
+        );
+        // A ceiling below the worker's own deadline must not report the
+        // ownership resolved, and the drain must keep waiting past it instead
+        // of releasing ownership while the request is still running.
+        assert!(
+            !client.wait_for_worker_drain(Duration::from_millis(50)),
+            "the drain must report the worker still owned"
+        );
+        let started = Instant::now();
+        drain_owned_workers(&client, Duration::from_millis(50));
+        let waited = started.elapsed();
+        assert_eq!(
+            client.active_cancellable_workers(),
+            0,
+            "the drain returns only after the worker exited"
+        );
+        assert!(
+            waited >= Duration::from_millis(500),
+            "the drain kept waiting past the exceeded ceiling ({waited:?})"
+        );
+    }
 }

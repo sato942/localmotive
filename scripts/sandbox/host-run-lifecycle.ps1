@@ -16,6 +16,9 @@ param(
   # stage and, where known, the candidate identity.
   [ValidateSet("none", "timeout", "malformed-result", "missing-assets", "stall", "preservation-missing")]
   [string]$FaultSimulation = "none",
+  # How long the `stall` fault simulation holds the lock before it proceeds
+  # (the concurrency-contention witness starts a real owner and kills it).
+  [int]$StallSeconds = 600,
   # R07 (follow-up review db548c8): which REAL baseline persistence the
   # preservation step plants and verifies. `mirror` = the v0.5.0+ SQLite
   # catalog mirror with a user override row; `cache` = the v0.4.1-era catalog
@@ -54,32 +57,50 @@ function Get-FileSha256([string]$Path) {
   if (-not (Test-Path $Path)) { return $null }
   return (Get-FileHash -Path $Path -Algorithm SHA256).Hash.ToLower()
 }
-# Concurrency guard (incident 2026-09-12): a killed parent left an orphaned
-# attempt running, and its late TIMEOUT evidence overwrote a newer clean PASS
-# record for the same scenario. One live run per evidence name: a second
-# invocation refuses while a live owner exists, dead owners are taken over,
-# and every evidence write is re-authorized against the lock so a superseded
-# writer can never land output after losing ownership.
+# Concurrency guard (incident 2026-09-12; hardened 2026-09-13 after review): a
+# killed parent left an orphaned attempt running, and its late TIMEOUT evidence
+# overwrote a newer clean PASS record for the same scenario. One live run per
+# evidence name. Ownership is an OS-enforced exclusive handle: only one live
+# process can hold it, and the OS releases it when that process dies, so the
+# previous check-then-write recipe (which let two concurrent attempts both pass
+# the existence check) cannot race. The file stays readable so a refused run
+# can name the live owner; every evidence write is re-authorized against the
+# file's recorded owner and published by rename, so a superseded writer can
+# never land output after losing ownership.
 $LockDir = Join-Path $env:TEMP "localmotive-lifecycle-locks"
 New-Item -ItemType Directory -Force -Path $LockDir | Out-Null
 $script:LockPath = Join-Path $LockDir ("$EvidenceName.lock")
-if (Test-Path $script:LockPath) {
-  $owner = $null
-  try { $owner = Get-Content $script:LockPath -Raw | ConvertFrom-Json } catch { $owner = $null }
-  $ownerPid = if ($owner -and $owner.pid) { [int]$owner.pid } else { 0 }
-  $alive = $ownerPid -gt 0 -and (Get-Process -Id $ownerPid -ErrorAction SilentlyContinue)
-  if ($alive) {
-    throw "Another lifecycle run for '$EvidenceName' is active (PID $ownerPid, started $($owner.startedAtUtc)). Refusing to race its evidence; stop that run or wait for it to finish."
+$script:LockStream = $null
+function Acquire-LifecycleLock {
+  try {
+    $script:LockStream = [System.IO.File]::Open(
+      $script:LockPath,
+      [System.IO.FileMode]::OpenOrCreate,
+      [System.IO.FileAccess]::ReadWrite,
+      [System.IO.FileShare]::Read
+    )
+  } catch {
+    $owner = $null
+    try { $owner = Get-Content $script:LockPath -Raw | ConvertFrom-Json } catch { $owner = $null }
+    $ownerPid = if ($owner -and $owner.pid) { [int]$owner.pid } else { 0 }
+    $startedAt = if ($owner -and $owner.startedAtUtc) { $owner.startedAtUtc } else { "unknown" }
+    throw "Another lifecycle run for '$EvidenceName' holds the lock (PID $ownerPid, started $startedAt). Refusing to race its evidence; stop that run or wait for it to finish."
   }
-  Write-Host "Taking over a stale lifecycle lock for '$EvidenceName' (dead PID $ownerPid)."
+  $ownerDoc = [ordered]@{
+    pid = $PID
+    evidenceName = $EvidenceName
+    startedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+    host = [System.Net.Dns]::GetHostName()
+  }
+  $bytes = [System.Text.Encoding]::UTF8.GetBytes(($ownerDoc | ConvertTo-Json))
+  $script:LockStream.SetLength(0)
+  $script:LockStream.Write($bytes, 0, $bytes.Length)
+  $script:LockStream.Flush()
 }
-([ordered]@{
-  pid = $PID
-  evidenceName = $EvidenceName
-  startedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
-  host = [System.Net.Dns]::GetHostName()
-} | ConvertTo-Json) | Set-Content -Path $script:LockPath -Encoding UTF8
 function Assert-LockOwnership {
+  # Called before every publication: the run must still be the recorded owner.
+  # A missing/foreign record means another attempt took the lock over (or this
+  # run lost it); the evidence must not be written.
   if (-not (Test-Path $script:LockPath)) {
     throw "The lifecycle lock for '$EvidenceName' disappeared mid-run; refusing to write evidence."
   }
@@ -89,6 +110,15 @@ function Assert-LockOwnership {
     throw "The lifecycle lock for '$EvidenceName' is owned by another process; this run no longer owns the evidence and refuses to write it."
   }
 }
+function Write-EvidenceDocument([string]$Path, $Document) {
+  # Publish by rename: a reader never observes a partially written record, and
+  # the write is re-authorized against the lock immediately before it lands.
+  Assert-LockOwnership
+  $temporary = "$Path.tmp"
+  ($Document | ConvertTo-Json -Depth 8) | Set-Content -Path $temporary -Encoding UTF8
+  Move-Item -Force $temporary $Path
+}
+Acquire-LifecycleLock
 
 function Write-FailureEvidence([string]$Status, [string]$Message) {
   # Every terminal outcome leaves retrievable structured evidence that
@@ -97,7 +127,6 @@ function Write-FailureEvidence([string]$Status, [string]$Message) {
   # Windows PowerShell 5.1 does not allow an `if` statement as an expression
   # inside a hashtable literal; compute it first so the harness runs under the
   # default host shell as well as pwsh.
-  Assert-LockOwnership
   $sourceRevision = if ($env:LOCALMOTIVE_SOURCE_REVISION) { $env:LOCALMOTIVE_SOURCE_REVISION } else { $null }
   $doc = [ordered]@{
     schema = "localmotive.sandbox-lifecycle.v0"
@@ -114,11 +143,12 @@ function Write-FailureEvidence([string]$Status, [string]$Message) {
     candidateDigests = $candidateDigests
     candidateInventorySha256 = $candidateInventorySha256
   }
-  ($doc | ConvertTo-Json -Depth 6) | Set-Content -Path $EvidencePath -Encoding UTF8
+  Write-EvidenceDocument $EvidencePath $doc
   $lifecycleLog = Join-Path $Shared "lifecycle.log"
   $lines = @()
   if (Test-Path $lifecycleLog) { $lines += Get-Content $lifecycleLog }
   $lines += "[host] $Status during stage '$stage': $Message"
+  Assert-LockOwnership
   $lines | Set-Content -Path $EvidenceLog -Encoding UTF8
 }
 function Download-Asset([string]$RelTag, [string]$Name, [string]$OutPath) {
@@ -211,6 +241,18 @@ try {
     Write-Host "Using local candidates from $CandidateDir"
     Copy-Item $localSetup (Join-Path $Shared $currentSetup) -Force
     Copy-Item $localMsi (Join-Path $Shared $currentMsi) -Force
+    # The sandbox consumes the STAGED copies, so the staged copies - not just
+    # their sources - are re-verified against the approved inventory here.
+    if ($inventory) {
+      foreach ($name in @($currentSetup, $currentMsi)) {
+        $artifact = $inventory.artifacts | Where-Object { $_.name -eq $name }
+        $stagedSha = Get-FileSha256 (Join-Path $Shared $name)
+        $stagedSize = (Get-Item (Join-Path $Shared $name)).Length
+        if ($stagedSha -ne ([string]$artifact.sha256).ToLower() -or $stagedSize -ne [long]$artifact.sizeBytes) {
+          throw "Staged candidate $name ($stagedSha, $stagedSize bytes) does not match the approved inventory ($($artifact.sha256), $($artifact.sizeBytes) bytes); refusing to qualify unverified bytes."
+        }
+      }
+    }
     $haveLocal = $true
   }
 
@@ -315,9 +357,10 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
     $TimeoutMinutes = 0
   } elseif ($FaultSimulation -eq "stall") {
     # GH-06.V2 witness: a cancellable long stage. The cancellation leg kills
-    # this process and asserts that a killed run leaves no PASS artifact.
+    # this process and asserts that a killed run leaves no PASS artifact; the
+    # concurrency leg uses it to hold a real lock while a second run refuses.
     Write-Host "Fault simulation 'stall': waiting for cancellation..."
-    Start-Sleep -Seconds 600
+    Start-Sleep -Seconds $StallSeconds
   } else {
     Write-Host "Launching Windows Sandbox..."
     $sandbox = Start-Process -FilePath "$env:WINDIR\System32\WindowsSandbox.exe" -ArgumentList "`"$wsbPath`"" -PassThru
@@ -340,8 +383,7 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
         $failDoc | Add-Member -NotePropertyName sourceRevision -NotePropertyValue $env:LOCALMOTIVE_SOURCE_REVISION -Force
       $failDoc | Add-Member -NotePropertyName harnessRevision -NotePropertyValue $harnessRevision -Force
         $failDoc | Add-Member -NotePropertyName candidateDigests -NotePropertyValue $candidateDigests -Force
-        Assert-LockOwnership
-        ($failDoc | ConvertTo-Json -Depth 8) | Set-Content -Path $EvidencePath -Encoding UTF8
+        Write-EvidenceDocument $EvidencePath $failDoc
         $logPath = Join-Path $Shared "lifecycle.log"
         if (Test-Path $logPath) { Copy-Item $logPath $EvidenceLog -Force }
         throw "Clean-account lifecycle FAILED: $($result.error)"
@@ -376,11 +418,13 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
           Copy-Item $collectedMirror (Join-Path $OutDir "$EvidenceName-collected-mirror.sqlite") -Force
         }
         if (Test-Path $collectedCache) {
+          Assert-LockOwnership
           Copy-Item $collectedCache (Join-Path $OutDir "$EvidenceName-collected-catalog-cache.json") -Force
         }
         if (Test-Path $collectedUserdata) {
           Copy-Item $collectedUserdata (Join-Path $OutDir "$EvidenceName-collected-userdata.txt") -Force
         }
+        Assert-LockOwnership
         $preservationOutput | Set-Content (Join-Path $OutDir "$EvidenceName-verify.log") -Encoding UTF8
       }
       $doc = Get-Content $resultPath -Raw | ConvertFrom-Json
@@ -397,9 +441,9 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
       $doc | Add-Member -NotePropertyName candidateDigests -NotePropertyValue $candidateDigests -Force
       $doc | Add-Member -NotePropertyName candidateInventorySha256 -NotePropertyValue $candidateInventorySha256 -Force
       if ($preservationStatus -eq "PASS") {
-        Assert-LockOwnership
-      ($doc | ConvertTo-Json -Depth 8) | Set-Content -Path $EvidencePath -Encoding UTF8
+        Write-EvidenceDocument $EvidencePath $doc
         if (Test-Path (Join-Path $Shared "lifecycle.log")) {
+          Assert-LockOwnership
           Copy-Item (Join-Path $Shared "lifecycle.log") $EvidenceLog -Force
         }
         Write-Host "PASS - evidence copied to $OutDir (preservation: PASS)"
@@ -411,8 +455,7 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
       # before the job exits nonzero.
       $doc.status = "FAIL"
       $doc.stage = "preservation-verification"
-      Assert-LockOwnership
-      ($doc | ConvertTo-Json -Depth 8) | Set-Content -Path $EvidencePath -Encoding UTF8
+      Write-EvidenceDocument $EvidencePath $doc
       if (Test-Path (Join-Path $Shared "lifecycle.log")) {
         Copy-Item (Join-Path $Shared "lifecycle.log") $EvidenceLog -Force
       }
@@ -440,11 +483,15 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
   }
   throw
 } finally {
-  # Release the lock only when this run still owns it; a run that lost
-  # ownership (stale takeover) must not delete the new owner's lock.
+  # Release ownership: close the OS handle and remove the file only when this
+  # run is still the recorded owner. A run that never acquired the lock (a
+  # refusal) must not touch another owner's file.
+  $owns = $false
   if (Test-Path $script:LockPath) {
     $holder = $null
     try { $holder = Get-Content $script:LockPath -Raw | ConvertFrom-Json } catch { $holder = $null }
-    if ($holder -and [int]$holder.pid -eq $PID) { Remove-Item $script:LockPath -Force -ErrorAction SilentlyContinue }
+    $owns = [bool]($holder -and [int]$holder.pid -eq $PID)
   }
+  if ($script:LockStream) { try { $script:LockStream.Dispose() } catch { } }
+  if ($owns) { Remove-Item $script:LockPath -Force -ErrorAction SilentlyContinue }
 }

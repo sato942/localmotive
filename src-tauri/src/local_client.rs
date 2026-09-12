@@ -277,22 +277,23 @@ fn subject_public_key_info_from_private_key(der: &[u8]) -> Result<Vec<u8>, Strin
     // PKCS#8: SEQUENCE { INTEGER 0, SEQUENCE algorithm, OCTET STRING key }.
     // PKCS#1 / SEC1: SEQUENCE { INTEGER version, ... } with the key material
     // as INTEGER (RSA) or OCTET STRING (EC) directly.
-    let (algorithm, key_octets) =
-        if children.len() >= 3 && children[1].tag == 0x30 && children[2].tag == 0x04 {
-            (Some(&children[1]), children[2].value)
-        } else if children.len() >= 2 && children[1].tag == 0x04 {
-            (None, children[1].value)
-        } else if children.len() >= 3 && children[1].tag == 0x02 && children[2].tag == 0x02 {
-            // Raw PKCS#1 RSA: SEQUENCE { version, modulus, publicExponent }.
-            // The first INTEGER is the version, not the modulus.
-            return Ok(rsa_spki(&children[1], &children[2]));
-        } else {
-            return Err("The private key is not in a supported PKCS#8, PKCS#1 or SEC1 form".into());
-        };
-    let algorithm = match algorithm {
-        Some(sequence) => sequence,
-        None => return raw_sec1_spki(key_octets),
+    let algorithm = if children.len() >= 3 && children[1].tag == 0x30 && children[2].tag == 0x04 {
+        &children[1]
+    } else if children.len() >= 2 && children[1].tag == 0x04 {
+        // Raw SEC1 (EC PRIVATE KEY). The parsed structure spans the whole
+        // document - version INTEGER, private OCTET STRING, curve [0] and
+        // public key [1] - so the complete DER is what the SPKI extractor
+        // must read. Passing children[1] (the private scalar) made every
+        // complete SEC1 key fail as malformed.
+        return raw_sec1_spki(der);
+    } else if children.len() >= 3 && children[1].tag == 0x02 && children[2].tag == 0x02 {
+        // Raw PKCS#1 RSA: SEQUENCE { version, modulus, publicExponent }.
+        // The first INTEGER is the version, not the modulus.
+        return Ok(rsa_spki(&children[1], &children[2]));
+    } else {
+        return Err("The private key is not in a supported PKCS#8, PKCS#1 or SEC1 form".into());
     };
+    let key_octets = children[2].value;
     let algorithm_children = der_children(algorithm.value)?;
     let oid = algorithm_children
         .first()
@@ -1743,6 +1744,135 @@ MIIB
         assert!(
             error.contains("do not belong together"),
             "cross-family material must fail the public-key match: {error}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The complete raw SEC1 form of the EC fixture, byte-identical to
+    /// `openssl pkey -in ec.key -traditional`: the PKCS#8 privateKey OCTET
+    /// STRING holds the ECPrivateKey structure (version, private scalar,
+    /// public point) and the curve parameters [0] are re-inserted from the
+    /// PKCS#8 algorithm identifier, exactly as the traditional encoding does.
+    fn ec_sec1_der() -> Vec<u8> {
+        let der = pem_der(EC_KEY);
+        let outer = der_frame(&der).expect("PKCS#8 outer");
+        let children = der_children(outer.value).expect("PKCS#8 children");
+        let algorithm = der_children(children[1].value).expect("PKCS#8 algorithm");
+        let curve = algorithm.get(1).expect("curve OID");
+        let inner = der_frame(children[2].value).expect("ECPrivateKey outer");
+        let fields = der_children(inner.value).expect("ECPrivateKey children");
+        assert_eq!(fields[0].tag, 0x02, "ECPrivateKey version");
+        assert_eq!(fields[1].tag, 0x04, "ECPrivateKey private scalar");
+        let mut body = Vec::new();
+        body.extend_from_slice(&der_tlv(fields[0].tag, fields[0].value));
+        body.extend_from_slice(&der_tlv(fields[1].tag, fields[1].value));
+        body.extend_from_slice(&der_tlv(0xa0, &der_tlv(0x06, curve.value)));
+        for field in fields.iter().skip(2) {
+            body.extend_from_slice(&der_tlv(field.tag, field.value));
+        }
+        der_tlv(0x30, &body)
+    }
+
+    fn pem_from_der(label: &str, der: &[u8]) -> String {
+        use base64::Engine;
+        let body = base64::engine::general_purpose::STANDARD.encode(der);
+        let wrapped = body
+            .as_bytes()
+            .chunks(64)
+            .map(|chunk| std::str::from_utf8(chunk).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!("-----BEGIN {label}-----\n{wrapped}\n-----END {label}-----\n")
+    }
+
+    fn ec_sec1_pem() -> String {
+        pem_from_der("EC PRIVATE KEY", &ec_sec1_der())
+    }
+
+    /// A SEC1 structure with one context-tagged field removed, to prove each
+    /// required part is enforced rather than assumed.
+    fn ec_sec1_pem_without(tag: u8) -> String {
+        let der = ec_sec1_der();
+        let outer = der_frame(&der).expect("SEC1 outer");
+        let children = der_children(outer.value).expect("SEC1 children");
+        let mut body = Vec::new();
+        let mut removed = false;
+        for child in &children {
+            if child.tag == tag {
+                removed = true;
+                continue;
+            }
+            body.extend_from_slice(&der_tlv(child.tag, child.value));
+        }
+        assert!(removed, "fixture did not contain tag {tag:#x}");
+        pem_from_der("EC PRIVATE KEY", &der_tlv(0x30, &body))
+    }
+
+    #[test]
+    fn r16_a_raw_sec1_private_key_is_parsed_and_matched() {
+        // Follow-up review: the raw SEC1 branch passed the private scalar
+        // (children[1]) to the SEC1 parser instead of the complete SEC1
+        // structure, so every "EC PRIVATE KEY" file failed as malformed even
+        // though rustls-pemfile decodes it. A complete, valid SEC1 structure
+        // must validate against its certificate, and incomplete structures
+        // must fail closed with a precise message.
+        let dir = std::env::temp_dir().join(format!("localmotive-r16-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |name: &str, content: &str| {
+            let path = dir.join(name);
+            std::fs::write(&path, content).unwrap();
+            path.to_string_lossy().to_string()
+        };
+        let cert = write("ec.crt", EC_CERT);
+        let sec1 = write("ec-sec1.key", &ec_sec1_pem());
+        let mut profile = crate::core::LaunchProfile {
+            model: "C:/models/model.gguf".into(),
+            alias: "test-model".into(),
+            host: "127.0.0.1".into(),
+            port: 8080,
+            ..crate::core::LaunchProfile::default()
+        };
+
+        profile.ssl_cert_file = cert.clone();
+        profile.ssl_key_file = sec1.clone();
+        LocalHttpClient::validate_transport_files(&profile)
+            .expect("a complete raw SEC1 pair must validate");
+
+        // The pair match still applies to the SEC1 path.
+        profile.ssl_cert_file = write("other.crt", OTHER_CERT);
+        profile.ssl_key_file = sec1.clone();
+        let error = LocalHttpClient::validate_transport_files(&profile).unwrap_err();
+        assert!(
+            error.contains("do not belong together"),
+            "an unrelated certificate must fail the SEC1 pair match: {error}"
+        );
+
+        profile.ssl_cert_file = cert.clone();
+        profile.ssl_key_file = write("ec-sec1-no-public.key", &ec_sec1_pem_without(0xa1));
+        let error = LocalHttpClient::validate_transport_files(&profile).unwrap_err();
+        assert!(
+            error.contains("embeds no public key"),
+            "a SEC1 key without its public part must fail with guidance: {error}"
+        );
+
+        profile.ssl_key_file = write("ec-sec1-no-curve.key", &ec_sec1_pem_without(0xa0));
+        let error = LocalHttpClient::validate_transport_files(&profile).unwrap_err();
+        assert!(
+            error.contains("names no curve"),
+            "a SEC1 key without its curve must fail: {error}"
+        );
+
+        let mut truncated = ec_sec1_der();
+        truncated.truncate(truncated.len() - 3);
+        profile.ssl_key_file = write(
+            "ec-sec1-truncated.key",
+            &pem_from_der("EC PRIVATE KEY", &truncated),
+        );
+        let error = LocalHttpClient::validate_transport_files(&profile).unwrap_err();
+        assert!(
+            error.contains("could not be read"),
+            "a truncated SEC1 structure must fail closed: {error}"
         );
 
         let _ = std::fs::remove_dir_all(&dir);

@@ -16,3 +16,9 @@ scripts/*.mjs text eol=lf
 scripts/tests/*.mjs text eol=lf
 scripts/*.ps1 text eol=lf
 src-tauri/tauri.signing.conf.json text eol=lf
+# Rust and harness sources stay LF: a CRLF rewrite makes the packaged
+# clean-source probe see a dirty tree and inflates every diff.
+src-tauri/src/*.rs text eol=lf
+src-tauri/tests/**/*.rs text eol=lf
+scripts/tests/**/*.mjs text eol=lf
+scripts/**/*.ps1 text eol=lf

@@ -11,6 +11,15 @@ function commandLines(run) {
     .filter((line) => line && !line.startsWith("#"));
 }
 
+/// Normalize a GitHub Actions `permissions` block into exact
+/// `scope: value` strings so a forbidden grant cannot match by substring
+/// (a `checks: write` grant must never be reported as `contents: write`).
+function permissionGrants(permissions) {
+  if (permissions == null) return [];
+  if (typeof permissions !== "object") return [String(permissions)];
+  return Object.entries(permissions).map(([scope, value]) => `${scope}: ${value}`);
+}
+
 function dependencies(jobs, jobName) {
   const seen = new Set();
   const visit = (name) => {
@@ -97,6 +106,33 @@ export function validateWorkflowGates(workflows, policy) {
             `${file}:${jobName} reads needs.${match[1]} outputs without a direct dependency (needs: ${[...direct].join(", ") || "none"})`,
           );
         }
+      }
+    }
+    // Forbidden commands: a verify-only workflow must not be able to publish,
+    // so the policy names the publication mechanisms it must never contain
+    // (R16 release behavior). Checked structurally, not against a comment: a
+    // step `uses:` or any executed run line that matches fails the gate.
+    for (const forbidden of rules.forbiddenCommands ?? []) {
+      for (const [jobName, job] of Object.entries(jobs)) {
+        for (const [index, step] of (job.steps ?? []).entries()) {
+          const uses = String(step?.uses ?? "");
+          if (uses.includes(forbidden)) {
+            failures.push(`${file}:${jobName}:step ${index} uses forbidden ${JSON.stringify(forbidden)}`);
+          }
+          const runLines = commandLines(step?.run);
+          if (runLines.some((line) => line.includes(forbidden))) {
+            failures.push(`${file}:${jobName}:step ${index} runs forbidden ${JSON.stringify(forbidden)}`);
+          }
+          // A permissions block grants capability without a command line; the
+          // string form catches both `contents: write` here and in the file
+          // header because jobs inherit the top-level permissions.
+          if (permissionGrants(job?.permissions).includes(forbidden)) {
+            failures.push(`${file}:${jobName} is granted ${forbidden}`);
+          }
+        }
+      }
+      if (permissionGrants(workflow?.permissions).includes(forbidden)) {
+        failures.push(`${file} is granted ${forbidden} at the workflow level`);
       }
     }
     for (const [jobName, job] of Object.entries(jobs)) {

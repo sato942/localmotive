@@ -74,7 +74,8 @@
         ],
         "rust-audit": [],
         "resolve": [],
-        "clean-account-lifecycle": []
+        "clean-account-lifecycle": [],
+        "qualification": []
       },
       "packageJobs": {
         "package": [
@@ -93,23 +94,22 @@
           "node scripts/verify_060_catalog.mjs restart $cdpPort $catalogState \"artifacts/catalog-matrix-restart.json\"",
           "node scripts/verify_060_catalog.mjs merge $portable \"artifacts/catalog-matrix-first-fill.json\" \"artifacts/catalog-matrix-restart.json\" \"artifacts/packaged-verification-catalog-$env:VERSION.json\""
         ],
-        "publish": [
-          "LOCALMOTIVE_SOURCE_REVISION=\"$RESOLVED_SHA\" node scripts/verify_candidate_inventory.mjs --verify \"artifacts/candidate-inventory-${VERSION}.json\" \"$VERSION\"",
-          "(cd artifacts && sha256sum -c \"SHA256SUMS-${VERSION}.txt\")"
-        ],
         "clean-account-lifecycle": [
           "& \".\\scripts\\sandbox\\host-run-lifecycle.ps1\" -Tag \"${{ needs.resolve.outputs.tag }}\" -Version \"${{ needs.quality.outputs.version }}\" -PreviousTag $leg.Previous -CandidateDir \"artifacts\" -EvidenceName $leg.Name -PreservationFlavor $leg.Flavor"
+        ],
+        "qualification": [
+          "node scripts/build_qualification_manifest.mjs --stage artifacts --inventory \"artifacts/candidate-inventory-${VERSION}.json\" --attestations \"release-evidence/${VERSION}/attestations\" --release \"$VERSION\" --source \"$RESOLVED_SHA\" --out \"release-evidence/${VERSION}/qualification-manifest-${VERSION}.json\"",
+          "node scripts/verify_qualification_manifest.mjs --expect-source \"$RESOLVED_SHA\"",
+          "node scripts/verify_release_promotion.mjs --qualified . --tag \"v${VERSION}\" --expect-source \"$RESOLVED_SHA\" --report \"artifacts/promotion-check-${VERSION}.json\""
         ]
       },
-      "publicationJobs": {
-        "publish": [
-          "resolve",
-          "quality",
-          "rust-audit",
-          "package",
-          "clean-account-lifecycle"
-        ]
-      }
+      "publicationJobs": {},
+      "forbiddenCommands": [
+        "softprops/action-gh-release",
+        "gh release create",
+        "gh release upload",
+        "contents: write"
+      ]
     },
     "hardware-qualify.yml": {
       "gates": {
@@ -117,6 +117,29 @@
       },
       "packageJobs": {},
       "publicationJobs": {}
+    },
+    "release-promote.yml": {
+      "gates": {
+        "gate": []
+      },
+      "packageJobs": {},
+      "requiredCommands": {
+        "gate": [
+          "node scripts/verify_qualification_manifest.mjs --expect-source \"$RESOLVED_SHA\"",
+          "node scripts/verify_release_promotion.mjs --qualified . --tag \"v${VERSION}\" --expect-source \"$RESOLVED_SHA\" --verify-run \"$VERIFY_RUN_ID\" --report \"artifacts/promotion-check-${VERSION}.json\"",
+          "(cd artifacts && sha256sum -c \"SHA256SUMS-${VERSION}.txt\")"
+        ],
+        "publish": [
+          "node scripts/verify_release_promotion.mjs --qualified . --tag \"v${VERSION}\" --expect-source \"$RESOLVED_SHA\" --verify-run \"$VERIFY_RUN_ID\" --report \"artifacts/promotion-check-${VERSION}.json\"",
+          "(cd artifacts && sha256sum -c \"SHA256SUMS-${VERSION}.txt\")",
+          "LOCALMOTIVE_SOURCE_REVISION=\"$RESOLVED_SHA\" node scripts/verify_candidate_inventory.mjs --verify \"public-readback/candidate-inventory-${VERSION}.json\" \"$VERSION\""
+        ]
+      },
+      "publicationJobs": {
+        "publish": [
+          "gate"
+        ]
+      }
     }
   }
 }

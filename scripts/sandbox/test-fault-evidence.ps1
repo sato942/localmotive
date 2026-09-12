@@ -129,15 +129,40 @@ try {
   }
   Assert-Witness "witness-preservation-missing" "FAIL" "preservation-verification" $true "missing-files"
 
-  # Leg 6: one live run per evidence name. A live lock owner must make the
-  # next invocation refuse BEFORE any evidence is written; this is the
-  # incident repro (2026-09-12 a killed chain's orphan overwrote a clean
-  # record after the replacement run started).
+  # Leg 6: concurrent contention AND owner loss, exercised with a REAL second
+  # process (not a fabricated lock file). A live owner holds the OS-enforced
+  # exclusive handle; a second attempt for the same evidence name must refuse
+  # before writing anything. Killing the owner releases the handle; the next
+  # attempt then takes over, publishes its own evidence, and releases the lock.
+  # The killed owner must have written nothing.
   $lockDir = Join-Path $env:TEMP "localmotive-lifecycle-locks"
   New-Item -ItemType Directory -Force -Path $lockDir | Out-Null
   $liveLock = Join-Path $lockDir "witness-live-lock.lock"
   Remove-Witness "witness-live-lock"
-  ([ordered]@{ pid = $PID; evidenceName = "witness-live-lock"; startedAtUtc = (Get-Date).ToUniversalTime().ToString("o"); host = "witness" } | ConvertTo-Json) | Set-Content -Path $liveLock -Encoding UTF8
+  Remove-Item $liveLock -Force -ErrorAction SilentlyContinue
+  $owner = Start-Process -FilePath "powershell" -PassThru -ArgumentList @(
+    "-NoProfile", "-ExecutionPolicy", "Bypass",
+    "-File", "$PSScriptRoot\host-run-lifecycle.ps1",
+    "-Tag", "v$Version", "-Version", $Version,
+    "-CandidateDir", $CandidateDir, "-PreviousTag", $PreviousTag,
+    "-EvidenceName", "witness-live-lock", "-FaultSimulation", "stall",
+    "-StallSeconds", "60"
+  )
+  $ownerHolds = $false
+  for ($i = 0; $i -lt 80 -and -not $ownerHolds; $i++) {
+    Start-Sleep -Milliseconds 500
+    if (Test-Path $liveLock) {
+      try {
+        $holder = Get-Content $liveLock -Raw | ConvertFrom-Json
+        $ownerHolds = [bool]($holder -and [int]$holder.pid -eq $owner.Id)
+      } catch { $ownerHolds = $false }
+    }
+    if ($owner.HasExited) { break }
+  }
+  if (-not $ownerHolds) {
+    if (-not $owner.HasExited) { Stop-Process -Id $owner.Id -Force }
+    throw "the live owner (PID $($owner.Id)) never recorded its lock ownership"
+  }
   $refusalMessage = ""
   try {
     & "$PSScriptRoot\host-run-lifecycle.ps1" -Tag "v$Version" -Version $Version `
@@ -145,12 +170,44 @@ try {
       -EvidenceName "witness-live-lock" -FaultSimulation "missing-assets" 2>&1 | Out-String | ForEach-Object { $refusalMessage = $_ }
   } catch { $refusalMessage = $_.Exception.Message }
   if ($refusalMessage -notmatch "Refusing to race its evidence") {
-    throw "a live lock must refuse the run; got: $refusalMessage"
+    if (-not $owner.HasExited) { Stop-Process -Id $owner.Id -Force }
+    throw "a live lock must refuse the concurrent run; got: $refusalMessage"
+  }
+  if ($refusalMessage -notmatch "PID $($owner.Id)") {
+    if (-not $owner.HasExited) { Stop-Process -Id $owner.Id -Force }
+    throw "the refusal must name the live owner PID $($owner.Id); got: $refusalMessage"
   }
   if (Test-Path (Join-Path $attestations "witness-live-lock.json")) {
+    if (-not $owner.HasExited) { Stop-Process -Id $owner.Id -Force }
     throw "a refused run must not write evidence over the live owner's records"
   }
-  Write-Host "WITNESS OK: witness-live-lock -> refused while a live owner exists"
+  Write-Host "WITNESS OK: witness-live-lock -> concurrent attempt refused while the owner lives (PID $($owner.Id))"
+
+  # Owner loss: kill the live owner; the OS releases its handle. The killed
+  # owner wrote no evidence; the next attempt takes over and publishes.
+  Stop-Process -Id $owner.Id -Force
+  $owner.WaitForExit()
+  Start-Sleep -Seconds 1
+  if (Test-Path (Join-Path $attestations "witness-live-lock.json")) {
+    throw "a killed owner must leave no evidence document"
+  }
+  $takeoverDone = $false
+  for ($attempt = 0; $attempt -lt 5 -and -not $takeoverDone; $attempt++) {
+    try {
+      & "$PSScriptRoot\host-run-lifecycle.ps1" -Tag "v$Version" -Version $Version `
+        -CandidateDir (Join-Path $root "missing-assets-fixture") `
+        -EvidenceName "witness-live-lock" -FaultSimulation "missing-assets"
+      $takeoverDone = $true
+    } catch {
+      if ($_.Exception.Message -match "Refusing to race its evidence") { Start-Sleep -Seconds 1 }
+      else { $takeoverDone = $true }
+    }
+  }
+  Assert-Witness "witness-live-lock" "FAIL" "resolve-installers" $false
+  if (Test-Path $liveLock) {
+    throw "the takeover run must release its lock at exit"
+  }
+  Write-Host "WITNESS OK: witness-live-lock -> owner killed, takeover published its own evidence, lock released"
 
   # Leg 7: a dead owner's lock is stale; the run takes it over, proceeds to
   # its normal bounded failure, and releases the lock on the way out.

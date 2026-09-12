@@ -33,14 +33,111 @@ function Find-AppExe {
   if ($hit) { return $hit.FullName }
   return $null
 }
-function Launch-Smoke($exe) {
-  Log "Launch smoke: $exe"
-  $p = Start-Process -FilePath $exe -PassThru
-  Start-Sleep -Seconds 8
-  if ($p.HasExited) { throw "App exited during smoke launch code=$($p.ExitCode)" }
-  Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-  Start-Sleep -Seconds 2
-  Log "Startup smoke OK: the process survived 8 seconds; this is a startup smoke, not full functional verification"
+function Get-ProbeReply([string]$text) {
+  # CDP may batch several messages (events plus our reply) into one frame, so
+  # locate OUR reply by scanning balanced JSON objects for result.result.value
+  # instead of assuming one message per frame.
+  $index = 0
+  while ($true) {
+    $start = $text.IndexOf('{"id":1', $index)
+    if ($start -lt 0) { return $null }
+    $depth = 0
+    $i = $start
+    $inString = $false
+    $escaped = $false
+    while ($i -lt $text.Length) {
+      $ch = $text[$i]
+      if ($inString) {
+        if ($escaped) { $escaped = $false }
+        elseif ($ch -eq "\") { $escaped = $true }
+        elseif ($ch -eq '"') { $inString = $false }
+      } elseif ($ch -eq '"') { $inString = $true }
+      elseif ($ch -eq "{") { $depth++ }
+      elseif ($ch -eq "}") {
+        $depth--
+        if ($depth -eq 0) { break }
+      }
+      $i++
+    }
+    if ($depth -eq 0 -and $i -lt $text.Length) {
+      $candidate = $text.Substring($start, $i - $start + 1)
+      try {
+        $parsed = $candidate | ConvertFrom-Json
+        if ($parsed.result -and $parsed.result.result -and $parsed.result.result.value) {
+          return $parsed.result.result.value
+        }
+      } catch { }
+    }
+    $index = $start + 1
+  }
+  return $null
+}
+function Invoke-CdpProbe([int]$Port, [int]$TimeoutSeconds = 30) {
+  # Functional scope for the INSTALLED payload: start the real installed
+  # executable with the WebView2 debugger, attach over CDP, and evaluate the
+  # app's own rendered DOM. Process survival alone is not functional evidence;
+  # this proves the installed bytes boot WebView2, load the bundled assets and
+  # render the application shell.
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  $page = $null
+  while ((Get-Date) -lt $deadline -and -not $page) {
+    try {
+      $tabs = Invoke-RestMethod "http://127.0.0.1:$Port/json/list" -TimeoutSec 5
+      $page = $tabs | Where-Object { $_.type -eq "page" -and $_.webSocketDebuggerUrl } | Select-Object -First 1
+    } catch { }
+    if (-not $page) { Start-Sleep -Milliseconds 500 }
+  }
+  if (-not $page) { throw "The installed app exposed no CDP page target within $TimeoutSeconds seconds" }
+  $ws = New-Object System.Net.WebSockets.ClientWebSocket
+  # [void]: the awaited task results must not leak into this function's output
+  # (PowerShell would return them alongside the probe value).
+  [void]$ws.ConnectAsync([Uri]$page.webSocketDebuggerUrl, [Threading.CancellationToken]::None).GetAwaiter().GetResult()
+  try {
+    $expression = '(function(){const buttons=document.querySelectorAll("nav button");const text=(document.body&&document.body.innerText)||"";return JSON.stringify({navButtons:buttons.length,hasLocalmotive:/Localmotive/i.test(text),hasManagedControls:/Stop server|Start profile|HF catalog|Benchmark/i.test(text),bodyChars:text.length});})()'
+    $request = @{ id = 1; method = "Runtime.evaluate"; params = @{ expression = $expression; returnByValue = $true } } | ConvertTo-Json -Compress -Depth 5
+    $bytes = [Text.Encoding]::UTF8.GetBytes($request)
+    [void]$ws.SendAsync(
+      (New-Object System.ArraySegment[byte] -ArgumentList @(, $bytes)),
+      [System.Net.WebSockets.WebSocketMessageType]::Text, $true, [Threading.CancellationToken]::None
+    ).GetAwaiter().GetResult()
+    $value = $null
+    $readDeadline = (Get-Date).AddSeconds(15)
+    while (-not $value -and (Get-Date) -lt $readDeadline) {
+      $buffer = New-Object byte[] 262144
+      $received = [System.Net.WebSockets.WebSocketReceiveResult]$ws.ReceiveAsync(
+        (New-Object System.ArraySegment[byte] -ArgumentList @(, $buffer)),
+        [Threading.CancellationToken]::None
+      ).GetAwaiter().GetResult()
+      if ($received.MessageType -eq [System.Net.WebSockets.WebSocketMessageType]::Close) { break }
+      $value = Get-ProbeReply ([Text.Encoding]::UTF8.GetString($buffer, 0, $received.Count))
+    }
+    if (-not $value) { throw "CDP evaluate produced no value for the installed app" }
+    return ($value | ConvertFrom-Json)
+  } finally {
+    try { $ws.Dispose() } catch { }
+  }
+}
+function Launch-Smoke($exe, [string]$label) {
+  # One bounded launch that checks BOTH survival and function: the process
+  # must live 8 seconds AND the rendered app must answer a CDP probe.
+  Log "$label launch probe: $exe"
+  $port = 10093
+  $script:lastProbe = $null
+  $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$port"
+  try {
+    $p = Start-Process -FilePath $exe -PassThru
+    Start-Sleep -Seconds 8
+    if ($p.HasExited) { throw "$label exited during the launch probe code=$($p.ExitCode)" }
+    $script:lastProbe = Invoke-CdpProbe $port
+    Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+  } finally {
+    Remove-Item Env:\WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS -ErrorAction SilentlyContinue
+  }
+  if ($script:lastProbe.navButtons -lt 3 -or -not $script:lastProbe.hasLocalmotive -or $script:lastProbe.bodyChars -lt 40) {
+    throw "$label rendered no usable application shell: $($script:lastProbe | ConvertTo-Json -Compress)"
+  }
+  Log "$label launch probe OK: process survived 8 s; rendered shell navButtons=$($script:lastProbe.navButtons) bodyChars=$($script:lastProbe.bodyChars) managedControls=$($script:lastProbe.hasManagedControls)"
 }
 function Install-Nsis($setup) {
   Log "NSIS install: $setup"
@@ -145,7 +242,7 @@ try {
   $exe = Find-AppExe
   if (-not $exe) { Fail "Localmotive.exe not found after NSIS install" }
   $nsisVersion = Assert-AppVersion $exe $meta.version "NSIS fresh install"
-  Launch-Smoke $exe
+  Launch-Smoke $exe "NSIS fresh install"
   Uninstall-Nsis
   if (Find-AppExe) { Fail "Localmotive.exe still present after NSIS uninstall" }
   $steps += @{ name = "nsis-fresh-install-launch-uninstall"; status = "PASS"; detail = "installed version $nsisVersion; uninstall removed the executable" }
@@ -156,7 +253,7 @@ try {
   $exe = Find-AppExe
   if (-not $exe) { Fail "Localmotive.exe not found after MSI install" }
   $msiVersion = Assert-AppVersion $exe $meta.version "MSI fresh install"
-  Launch-Smoke $exe
+  Launch-Smoke $exe "MSI fresh install"
   Uninstall-Msi $curMsi
   Start-Sleep -Seconds 2
   # Audit GH-04: a leftover expected application or product registration is
@@ -178,7 +275,7 @@ try {
   $exe = Find-AppExe
   if (-not $exe) { Fail "App missing after update install" }
   $installedNewVersion = Assert-AppVersion $exe $meta.version "Post-update install"
-  Launch-Smoke $exe
+  Launch-Smoke $exe "Post-update install"
   Uninstall-Nsis
   if (Find-AppExe) { Fail "App still present after post-update uninstall" }
   $steps += @{ name = "nsis-update-from-previous-launch-uninstall"; status = "PASS"; detail = "executable version $installedOldVersion -> $installedNewVersion" }
@@ -194,7 +291,7 @@ try {
     Install-Nsis $oldSetup
     $oldExe = Find-AppExe
     if (-not $oldExe) { Fail "Previous version missing before preservation install" }
-    Launch-Smoke $oldExe
+    Launch-Smoke $oldExe "Preservation baseline"
     $userData = Join-Path $env:LOCALAPPDATA "io.github.localmotive.app"
     if (-not (Test-Path $userData)) { Fail "User-data dir missing after previous install: $userData" }
     Copy-Item (Join-Path $Shared "canary-userdata.txt") (Join-Path $userData "canary-userdata.txt") -Force
@@ -212,7 +309,7 @@ try {
     $exe = Find-AppExe
     if (-not $exe) { Fail "App missing after preservation upgrade" }
     $preservedVersion = Assert-AppVersion $exe $meta.version "Preservation upgrade"
-    Launch-Smoke $exe
+    Launch-Smoke $exe "Preservation upgrade"
     $canaryAfter = Join-Path $userData "canary-userdata.txt"
     if (-not (Test-Path $canaryAfter)) { Fail "User-data canary missing after upgrade" }
     $mirrorAfter = Join-Path $userData "catalog-mirror.sqlite"

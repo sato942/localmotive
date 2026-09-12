@@ -1,7 +1,12 @@
-name: Release
+name: Release verify
 
-# Tag-driven: pushing a version tag builds the Windows artifacts and publishes a
-# release titled with that version whose body is the matching CHANGELOG section.
+# Tag-driven VERIFICATION ONLY (R16 release behavior): pushing a version tag
+# builds the Windows artifacts, runs every qualification gate, assembles the
+# qualified candidate bundle, and stops. It never publishes. Publication is a
+# separate, explicitly authorized act: `.github/workflows/release-promote.yml`
+# consumes the exact qualified bundle this workflow uploads, validates source,
+# artifact, inventory and evidence identity again, and only then promotes the
+# bytes. See docs/RELEASE-REVIEW-0.6.md for the owner handoff.
 on:
   push:
     tags:
@@ -491,22 +496,15 @@ jobs:
           path: release-evidence/${{ needs.quality.outputs.version }}/attestations/
           if-no-files-found: error
 
-  publish:
-    # Preferred ship path: pushing the version tag publishes after the package
-    # job and the clean-account lifecycle PASS in the same run, so no second
-    # parallel package ever shares the runner CDP and nothing publishes
-    # without the sandbox verdict. Dispatch + publish=true stays for republish
-    # only. Audit S-26: this guard binds the RESOLVED tag - it must never
-    # compare against a literal version, which would silently skip
-    # publication for every other release.
-    if: >-
-      (github.event_name == 'push' &&
-      startsWith(github.ref, 'refs/tags/v') && needs.quality.outputs.tag == github.ref_name) ||
-      (github.event_name == 'workflow_dispatch' && inputs.publish)
-    needs: [resolve, rust-audit, quality, package, clean-account-lifecycle]
+  # The qualified candidate bundle: one artifact that binds the frozen source,
+  # the built bytes, the producer inventory, the packaged verification record,
+  # the sandbox lifecycle records, the witness records and the payload identity
+  # record through the committed manifest generator, then validates every one
+  # of those relationships with the committed verifier. Publication consumes
+  # this bundle and nothing else (release-promote.yml).
+  qualification:
+    needs: [resolve, quality, package, clean-account-lifecycle]
     runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]
-    permissions:
-      contents: write
     steps:
       # The self-hosted runner image defaults core.autocrlf=true; pin LF
       # before checkout (v5.1.0 has no git-config input).
@@ -517,135 +515,47 @@ jobs:
         with:
           ref: ${{ needs.resolve.outputs.sha }}
 
-      - name: Retrieve verified release candidates
+      - name: Retrieve the verified candidate artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: localmotive-${{ needs.quality.outputs.version }}-verified
           path: artifacts
 
-      - name: Verify the producer inventory and checksums without rewriting them
+      - name: Confirm the checked-out revision is the resolved release source
+        shell: bash
+        env:
+          RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$RESOLVED_SHA"             || { echo "::error::qualification checkout does not match the resolved release revision"; exit 1; }
+          echo "LOCALMOTIVE_SOURCE_REVISION=$RESOLVED_SHA" >> "$GITHUB_ENV"
+
+      - name: Assemble the canonical qualification manifest
         shell: bash
         env:
           VERSION: ${{ needs.quality.outputs.version }}
           RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
-        run: |
-          LOCALMOTIVE_SOURCE_REVISION="$RESOLVED_SHA" node scripts/verify_candidate_inventory.mjs --verify "artifacts/candidate-inventory-${VERSION}.json" "$VERSION"
-          (cd artifacts && sha256sum -c "SHA256SUMS-${VERSION}.txt")
-          echo "Honestly unsigned full release: Authenticode is DEFERRED_BY_OWNER; no signature is claimed. SmartScreen may warn."
+        run: node scripts/build_qualification_manifest.mjs --stage artifacts --inventory "artifacts/candidate-inventory-${VERSION}.json" --attestations "release-evidence/${VERSION}/attestations" --release "$VERSION" --source "$RESOLVED_SHA" --out "release-evidence/${VERSION}/qualification-manifest-${VERSION}.json"
 
-      - name: Extract this version's changelog section
+      - name: Validate the manifest, inventory, and every mandatory record
+        shell: bash
+        env:
+          RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
+        run: node scripts/verify_qualification_manifest.mjs --expect-source "$RESOLVED_SHA"
+
+      - name: Validate the promotion contract without publishing
         shell: bash
         env:
           VERSION: ${{ needs.quality.outputs.version }}
-        run: |
-          section=$(awk -v v="## ${VERSION}" '$0 == v {found=1; next} found && /^## / {exit} found {print}' CHANGELOG.md)
-          test -n "$(printf '%s' "$section" | tr -d '[:space:]')"
-          {
-            echo "## Localmotive ${VERSION}"
-            echo
-            printf '%s\n' "$section"
-            echo
-            echo "### Downloads"
-            echo
-            echo "| File | Use |"
-            echo "|---|---|"
-            echo "| \`Localmotive_${VERSION}_x64-setup.exe\` | Recommended installer (NSIS) |"
-            echo "| \`Localmotive_${VERSION}_x64.msi\` | MSI installer for managed deployment |"
-            echo "| \`Localmotive_${VERSION}_x64-portable.exe\` | Portable executable, no installation |"
-            echo "| \`SHA256SUMS-${VERSION}.txt\` | Executable and installer SHA-256 inventory |"
-            echo "| \`packaged-verification-0.4.1.json\` | Packaged behavior evidence |"
-            echo "| \`candidate-inventory-${VERSION}.json\` | Candidate size and digest evidence |"
-            echo
-            echo "Target scope: Windows 10 and Windows 11 x64. See the qualification limitations above."
-            echo ""
-            echo "This full release is honestly unsigned: Authenticode is DEFERRED_BY_OWNER, no signature is claimed, and Windows SmartScreen may warn. Verify the published SHA-256 checksums before use."
-          } > release-notes.md
-
-      - name: Re-resolve the remote tag immediately before publication (drift gate)
-        shell: bash
-        env:
-          TAG: ${{ needs.quality.outputs.tag }}
           RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
-        run: |
-          # R13 (follow-up review): the tag was resolved once at the start of
-          # the run. Re-resolve its peeled commit here so a retargeted or
-          # re-created tag can never publish a differently-sourced release
-          # than the one every gate in this run verified.
-          peeled=$(git ls-remote origin "refs/tags/${TAG}^{}" | awk '{print $1}')
-          if [ -z "$peeled" ]; then
-            peeled=$(git ls-remote origin "refs/tags/${TAG}" | awk '{print $1}')
-          fi
-          test -n "$peeled" || { echo "::error::tag ${TAG} is not visible on the remote"; exit 1; }
-          test "$peeled" = "$RESOLVED_SHA"             || { echo "::error::tag ${TAG} now points at $peeled, expected $RESOLVED_SHA; refusing to publish drifted source"; exit 1; }
-          echo "Tag ${TAG} still points at the resolved revision $RESOLVED_SHA."
+        run: node scripts/verify_release_promotion.mjs --qualified . --tag "v${VERSION}" --expect-source "$RESOLVED_SHA" --report "artifacts/promotion-check-${VERSION}.json"
 
-      - name: Publish the explicitly approved honestly unsigned full release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        with:
-          tag_name: ${{ needs.quality.outputs.tag }}
-          name: Localmotive ${{ needs.quality.outputs.version }} (unsigned)
-          prerelease: false
-          body_path: release-notes.md
-          files: |
-            artifacts/Localmotive_${{ needs.quality.outputs.version }}_x64-setup.exe
-            artifacts/Localmotive_${{ needs.quality.outputs.version }}_x64-portable.exe
-            artifacts/Localmotive_${{ needs.quality.outputs.version }}_x64.msi
-            artifacts/SHA256SUMS-${{ needs.quality.outputs.version }}.txt
-            artifacts/packaged-verification-0.4.1.json
-            artifacts/candidate-inventory-${{ needs.quality.outputs.version }}.json
-          fail_on_unmatched_files: true
-
-      - name: Read back and verify the public release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.quality.outputs.tag }}
-          VERSION: ${{ needs.quality.outputs.version }}
-          RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
-        run: |
-          rm -rf public-readback
-          mkdir public-readback
-          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
-            --json tagName,name,isDraft,isPrerelease,assets,body \
-            > public-readback/release.json
-          node -e "const r=JSON.parse(require('fs').readFileSync('public-readback/release.json','utf8')); const assert=require('assert'); assert.equal(r.tagName,process.env.TAG); assert.equal(r.name,'Localmotive '+process.env.VERSION+' (unsigned)'); assert.equal(r.isDraft,false); assert.equal(r.isPrerelease,false); assert.equal(r.assets.length,6);"
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
-            --dir public-readback --clobber
-          for name in \
-            "Localmotive_${VERSION}_x64-setup.exe" \
-            "Localmotive_${VERSION}_x64-portable.exe" \
-            "Localmotive_${VERSION}_x64.msi" \
-            "SHA256SUMS-${VERSION}.txt" \
-            "packaged-verification-0.4.1.json" \
-            "candidate-inventory-${VERSION}.json"; do
-            test -s "public-readback/$name"
-          done
-          cmp "artifacts/SHA256SUMS-${VERSION}.txt" "public-readback/SHA256SUMS-${VERSION}.txt"
-          # R13: the public inventory must be byte-identical to the producer's
-          # retained copy and must verify against the public artifact set - a
-          # nonempty JSON download is not evidence.
-          cmp "artifacts/candidate-inventory-${VERSION}.json" "public-readback/candidate-inventory-${VERSION}.json"
-          LOCALMOTIVE_SOURCE_REVISION="$RESOLVED_SHA" node scripts/verify_candidate_inventory.mjs --verify "public-readback/candidate-inventory-${VERSION}.json" "$VERSION"
-          (cd public-readback && sha256sum -c "SHA256SUMS-${VERSION}.txt")
-
-      - name: Retain public release read-back evidence
+      - name: Retain the qualified candidate bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: localmotive-${{ needs.quality.outputs.version }}-public-readback
-          path: public-readback/*
+          name: localmotive-${{ needs.quality.outputs.version }}-qualified
+          path: |
+            artifacts/*
+            release-evidence/${{ needs.quality.outputs.version }}/qualification-manifest-${{ needs.quality.outputs.version }}.json
+            release-evidence/${{ needs.quality.outputs.version }}/attestations/*
           if-no-files-found: error
           retention-days: 90
-
-      # R13 (follow-up review): a failed read-back must still leave its
-      # diagnostics retrievable - the release itself is already public, so the
-      # partial readback and the release notes are the investigation record.
-      - name: Retain publish diagnostics on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: localmotive-${{ needs.quality.outputs.version }}-publish-diagnostics
-          path: |
-            public-readback/
-            release-notes.md
-          if-no-files-found: ignore
-          retention-days: 30

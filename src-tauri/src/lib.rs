@@ -3325,6 +3325,66 @@ mod release_security_tests {
     }
 
     #[test]
+    fn r16_the_benchmark_command_releases_ownership_only_after_its_workers_exit() {
+        // R16 follow-up: the drain covers the command's own boundaries -
+        // cancellation during preparation, ordinary errors, a cleanup failure,
+        // and a worker that outlived even its own request deadline - and it
+        // runs BEFORE the benchmark slot is cleared, so replacement work can
+        // never start while an abandoned request can still be inferring. The
+        // bound is derived from the workload's own request deadline.
+        let source = crate::ALL_SOURCES;
+        // Built at runtime so this guard's own text cannot satisfy it.
+        let banned = format!("WORKER_DRAIN_{}", "CEILING");
+        assert!(
+            !source.contains(&banned),
+            "the fixed drain ceiling must not return; it sat below the default request deadline"
+        );
+        let body = source
+            .split_once("async fn benchmark_v2(")
+            .and_then(|(_, rest)| {
+                rest.split_once("fn cancel_benchmark(")
+                    .map(|(body, _)| body)
+            })
+            .unwrap();
+        let drain = body
+            .find("drain_owned_workers(&client, drain_ceiling)")
+            .expect("benchmark_v2 must drain its owned workers on every exit path");
+        let clear = body
+            .find("*active = None")
+            .expect("benchmark_v2 must clear its slot");
+        assert!(
+            drain < clear,
+            "the slot must not be cleared - and ownership not released - before the drain"
+        );
+        let bound = body
+            .find("let drain_ceiling = benchmark_drain_ceiling(&workload);")
+            .expect("the drain bound must derive from the workload deadline");
+        assert!(
+            bound < drain,
+            "the bound must be computed before the run task moves the workload"
+        );
+        assert!(
+            body.contains("let client = local_client(&server.profile)?;"),
+            "the command must own the run's client"
+        );
+        let run = source
+            .split_once("fn run_benchmark_snapshot(")
+            .and_then(|(_, rest)| {
+                rest.split_once("async fn benchmark_v2(")
+                    .map(|(body, _)| body)
+            })
+            .unwrap();
+        assert!(
+            run.contains("drain_owned_workers(&client, benchmark_drain_ceiling(&workload))"),
+            "the run must drain its owned workers before it finalizes the record"
+        );
+        assert!(
+            run.contains("client: LocalHttpClient,"),
+            "the run must share the command's client so preparation workers are observable"
+        );
+    }
+
+    #[test]
     fn multi_gpu_path_requires_explicit_adapter_selection() {
         let profile = LaunchProfile {
             tensor_split: "1,1".into(),

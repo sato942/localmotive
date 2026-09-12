@@ -149,6 +149,90 @@ const newestBenchmarkRecord = (sinceMs) => {
   }
 };
 
+const readManifest = (path) => {
+  const record = JSON.parse(readFileSync(path, "utf8"));
+  return { path, terminalOutcome: record.terminalOutcome ?? null, workload: record.workload ?? null };
+};
+
+const newestManifest = () => {
+  try {
+    const candidates = readdirSync(BENCH_DIR)
+      .filter((name) => name.endsWith(".json"))
+      .map((name) => join(BENCH_DIR, name))
+      .map((path) => ({ path, mtime: statSync(path).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime);
+    return candidates.length ? readManifest(candidates[0].path) : null;
+  } catch {
+    return null;
+  }
+};
+
+const recordsSince = (sinceMs) => {
+  try {
+    return readdirSync(BENCH_DIR)
+      .filter((name) => name.endsWith(".json"))
+      .map((name) => join(BENCH_DIR, name))
+      .filter((path) => statSync(path).mtimeMs >= sinceMs);
+  } catch {
+    return [];
+  }
+};
+
+/// Set a React-controlled numeric input through the native setter so the
+/// component's onChange observes the change (used to widen the final cycle's
+/// generation window so the previous request is provably active).
+const setNumberInput = (label, value) =>
+  evaluate(`(() => {
+    const input = [...document.querySelectorAll("input")].find(
+      (candidate) => candidate.getAttribute("aria-label") === ${JSON.stringify(label)},
+    );
+    if (!input) return "absent";
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    setter.call(input, ${JSON.stringify(String(value))});
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    return input.value;
+  })()`);
+
+/// Direct IPC attempt at the replacement run. This proves the BACKEND refuses
+/// replacement work while the previous run still owns the machine - it does
+/// not depend on the UI disabling its buttons.
+const invokeBenchmarkAttempt = (workload) =>
+  evaluate(`(async () => {
+    const internals = window.__TAURI_INTERNALS__;
+    if (!internals || typeof internals.invoke !== "function") {
+      return { status: "unavailable" };
+    }
+    const started = Date.now();
+    const attempt = internals.invoke("benchmark_v2", ${JSON.stringify({ workload })});
+    const outcome = await Promise.race([
+      attempt.then(() => ({ status: "accepted" }), (error) => ({ status: "refused", error: String(error) })),
+      new Promise((resolvePromise) => setTimeout(() => resolvePromise({ status: "pending" }), 2500)),
+    ]);
+    return { ...outcome, elapsedMs: Date.now() - started };
+  })()`);
+
+/// R16: attempt the replacement run at the earliest point the UI permits any
+/// action after a cancel - while the previous request is still observed
+/// active. The UI click and a direct IPC invocation both count as attempts.
+const attemptImmediateRestart = async () => {
+  await clickExact("Benchmark");
+  await settle(600);
+  const workload = newestManifest()?.workload ?? null;
+  const processingAtAttempt = await metricsField("llamacpp:requests_processing");
+  const buttonStateAtAttempt = await buttonState("Run v2 benchmark");
+  const uiAccepted = await clickExact("Run v2 benchmark");
+  const apiAttempt = workload ? await invokeBenchmarkAttempt(workload) : { status: "no-workload" };
+  const notice = await lastNotice();
+  return {
+    at: Date.now(),
+    processingAtAttempt,
+    buttonStateAtAttempt,
+    uiAccepted,
+    apiAttempt,
+    notice: String(notice ?? "").slice(0, 160),
+  };
+};
+
 const checks = [];
 const check = (name, ok, detail = "") => {
   checks.push({ name, ok, detail });
@@ -214,6 +298,14 @@ for (let cycle = 1; cycle <= CYCLES; cycle += 1) {
   const tokensBefore = await metricsField("llamacpp:tokens_predicted_total");
   await clickExact("Benchmark");
   await settle(1200);
+  if (cycle === CYCLES) {
+    // R16: the final cycle proves the restart attempt happens while the
+    // previous request is still active. A longer generation widens that
+    // window so the attempt is not racing a finished request.
+    const generatedSet = await setNumberInput("Benchmark generated tokens", 1024);
+    check("mt06.final-window-workload-set", String(generatedSet) === "1024", `input=${generatedSet}`);
+    await settle(800);
+  }
   const started = await clickExact("Run v2 benchmark");
   let inFlight = false;
   let accepted = false;
@@ -250,13 +342,32 @@ for (let cycle = 1; cycle <= CYCLES; cycle += 1) {
     }
     if (Date.now() - cancelAt > RUN_SETTLE_BOUND_MS + 90_000) break;
   }
+  // R16: the final cycle's first restart attempt happens HERE - before any
+  // drain wait - while the previous request is still observed active. The
+  // previous harness drained to requests_processing == 0 first, which made
+  // its "immediate restart" claim vacuous.
+  const finalAttempt = cycle === CYCLES ? await attemptImmediateRestart() : null;
   let processing = await metricsField("llamacpp:requests_processing");
   const drainStart = Date.now();
   let drained = processing === "0";
+  // R16: while the final cycle's abandoned request is still active, no
+  // replacement work may overlap it: every drain sample counts server
+  // requests and app-owned servers.
+  let windowOverlap = false;
+  let windowMaxProcessing = Number.isFinite(Number(processing)) ? Number(processing) : 0;
+  let windowMaxChildren = 0;
   for (let attempt = 0; attempt < 600 && !drained; attempt += 1) {
     await settle(500);
     processing = await metricsField("llamacpp:requests_processing");
     drained = processing === "0";
+    if (finalAttempt) {
+      const numeric = Number(processing);
+      if (Number.isFinite(numeric)) windowMaxProcessing = Math.max(windowMaxProcessing, numeric);
+      if (processing === "2" || processing === "3") windowOverlap = true;
+      const childrenNow = ownedServerPids();
+      windowMaxChildren = Math.max(windowMaxChildren, childrenNow.length);
+      if (childrenNow.length > 1) windowOverlap = true;
+    }
     if (Date.now() - drainStart > DRAIN_BOUND_MS) break;
   }
   const drainMs = Date.now() - drainStart;
@@ -311,26 +422,87 @@ for (let cycle = 1; cycle <= CYCLES; cycle += 1) {
   );
 
   if (cycle === CYCLES) {
-    // R11: immediate-restart overlap proof. Start a new run the moment the
-    // previous run reports ended; its requests must only begin after the old
-    // request drained, and at no sample may two server requests overlap.
-    await clickExact("Benchmark");
-    await settle(600);
-    const restarted = await clickExact("Run v2 benchmark");
-    let overlap = false;
-    let restartAccepted = false;
+    // R16: immediate-restart proof. The replacement attempt already ran (see
+    // attemptImmediateRestart above) while the previous request was still
+    // active. This block asserts the refusal, the overlap-free window, and
+    // that the replacement run is permitted and recorded once cleanup ends.
+    check(
+      "mt06.immediate-restart-attempted-while-previous-active",
+      finalAttempt?.processingAtAttempt === "1",
+      `processing=${finalAttempt?.processingAtAttempt} ui=${finalAttempt?.buttonStateAtAttempt} uiAccepted=${finalAttempt?.uiAccepted}`,
+    );
+    const refusalMessage = String(finalAttempt?.apiAttempt?.error ?? "");
+    check(
+      "mt06.immediate-restart-refused-while-previous-active",
+      (finalAttempt?.uiAccepted === false ||
+        finalAttempt?.buttonStateAtAttempt === "disabled" ||
+        /already|clean|active|running/i.test(String(finalAttempt?.notice ?? ""))) &&
+        finalAttempt?.apiAttempt?.status === "refused",
+      `uiAccepted=${finalAttempt?.uiAccepted} uiState=${finalAttempt?.buttonStateAtAttempt} api=${finalAttempt?.apiAttempt?.status}${refusalMessage ? ` msg=${refusalMessage.slice(0, 120)}` : ""}`,
+    );
+    check(
+      "mt06.final-no-overlap-before-drain",
+      !windowOverlap && windowMaxProcessing <= 1 && windowMaxChildren <= 1,
+      `maxProcessing=${windowMaxProcessing} maxChildren=${windowMaxChildren}`,
+    );
+    check(
+      "mt06.final-previous-request-drained",
+      drained,
+      `drainAfterAttemptMs=${finalAttempt ? drainStart - finalAttempt.at + drainMs : drainMs}`,
+    );
+    run.finalAttempt = finalAttempt;
+
+    // After cleanup completes the UI must permit the replacement run: refused
+    // or serialized, never blocked forever.
+    let restarted = false;
+    for (let attempt = 0; attempt < 60 && !restarted; attempt += 1) {
+      if ((await buttonState("Run v2 benchmark")) === "enabled") {
+        restarted = await clickExact("Run v2 benchmark");
+        break;
+      }
+      await settle(1000);
+    }
     const restartAt = Date.now();
+    let restartAccepted = false;
+    let overlap = windowOverlap;
     while (Date.now() - restartAt < 120_000 && !restartAccepted) {
       const current = await metricsField("llamacpp:requests_processing");
       if (current === "2" || current === "3") overlap = true;
+      if (ownedServerPids().length > 1) overlap = true;
       if (current === "1" && restarted) restartAccepted = true;
-      const childrenNow = ownedServerPids();
-      if (childrenNow.length > 1) overlap = true;
-      await settle(500);
+      await settle(400);
     }
-    check("mt06.immediate-restart-starts", restarted && restartAccepted);
+    check(
+      "mt06.final-restart-after-cleanup",
+      restarted && restartAccepted,
+      `restarted=${restarted} accepted=${restartAccepted}`,
+    );
     check("mt06.immediate-restart-no-overlap", !overlap, overlap ? "two concurrent requests or servers observed" : "");
+
+    // The replacement run persists its own terminal record: the cancelled
+    // record from the previous run must not be the only evidence of the cycle.
     await clickExact("Cancel");
+    let replacementRecord = null;
+    for (let attempt = 0; attempt < 240 && !replacementRecord; attempt += 1) {
+      await settle(500);
+      const candidates = recordsSince(restartAt)
+        .map((path) => {
+          try {
+            return readManifest(path);
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean)
+        .filter((record) => record.terminalOutcome === "cancelled");
+      if (candidates.length > 0) replacementRecord = candidates[candidates.length - 1];
+    }
+    if (replacementRecord) run.replacementRecordPath = replacementRecord.path;
+    check(
+      "mt06.final-replacement-terminal-record",
+      Boolean(replacementRecord),
+      `record=${replacementRecord?.path ?? "none"}`,
+    );
     for (let attempt = 0; attempt < 240; attempt += 1) {
       await settle(500);
       if ((await metricsField("llamacpp:requests_processing")) === "0") break;

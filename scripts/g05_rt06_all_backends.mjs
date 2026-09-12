@@ -20,6 +20,11 @@ if (!port) {
   console.error("usage: node g05_rt06_all_backends.mjs <cdpPort> <adapterId> [installBatch]");
   process.exit(2);
 }
+// Candidate binding (review follow-up): the record names the source revision
+// and portable digest it was produced against so evidence is never carried to
+// a different candidate without a visible mismatch.
+const SOURCE_REVISION = process.env.LOCALMOTIVE_SOURCE_REVISION ?? null;
+const PORTABLE_DIGEST = process.env.RT06_PORTABLE_DIGEST ?? null;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const client = await attach(port, { deadlineMs: 120_000 });
@@ -148,40 +153,75 @@ record(
   `pass1_bytes=${listRuns[0].verification.bytes_hashed} pass2_bytes=${listRuns[1].verification.bytes_hashed}`,
 );
 
-// Selecting + starting one managed runtime (cuda-13.3 when installed).
-const record13 = (await invoke("list_managed_runtimes")).find((r) => r.installKey === "cuda-13.3");
-let selecting = null;
-let starting = null;
-if (record13) {
+// Selecting: describe EVERY installed runtime (the lease makes the second
+// pass cheap) and record the identity each one presents.
+const installedKeys = (await invoke("list_managed_runtimes")) ?? [];
+const selectingRuns = [];
+for (const record_ of installedKeys) {
   const before = await stats();
   const t0 = Date.now();
-  const identity = await invoke("describe_runtime", { path: record13.runtimePath });
-  selecting = {
+  const identity = await invoke("describe_runtime", { path: record_.runtimePath });
+  const entry = {
+    installKey: record_.installKey,
+    backend: record_.backend,
     elapsedMs: Date.now() - t0,
     managedVerified: Boolean(identity?.managedVerified),
     verification: delta(before, await stats()),
   };
-  record("selecting.describes-with-verified-identity", selecting.managedVerified, `elapsed=${selecting.elapsedMs}ms`);
+  selectingRuns.push(entry);
+  record(
+    `selecting.${record_.installKey}-describes-with-verified-identity`,
+    entry.managedVerified,
+    `elapsed=${entry.elapsedMs}ms`,
+  );
+}
 
+// Starting: the health run launches a managed runtime. This campaign launches
+// cuda-13.3 only; the scope below records exactly that.
+const record13 = installedKeys.find((r) => r.installKey === "cuda-13.3");
+let starting = null;
+if (record13) {
   const beforeStart = await stats();
   const t1 = Date.now();
   const health = await invoke("check_managed_runtime_health", {
     request: { installKey: "cuda-13.3", adapterId: adapterId || null },
   });
   starting = {
+    installKey: "cuda-13.3",
     elapsedMs: Date.now() - t1,
     passed: Boolean(health?.passed),
     verification: delta(beforeStart, await stats()),
   };
   record("starting.health-run-passes", starting.passed, `elapsed=${starting.elapsedMs}ms`);
 } else {
-  record("selecting.describes-with-verified-identity", false, "cuda-13.3 not installed by this run");
   record("starting.health-run-passes", false, "cuda-13.3 not installed by this run");
 }
 
 const finalList = await invoke("list_managed_runtimes");
+const refusedRuns = installs.filter((i) => i.outcome === "refused-by-design");
+const installedRuns = installs.filter((i) => i.outcome === "installed" || i.outcome === "reused");
+const launchedKeys = starting?.passed ? [starting.installKey] : [];
 const result = {
   schema: "localmotive.rt06-all-backends.v1",
+  sourceRevision: SOURCE_REVISION,
+  portableDigest: PORTABLE_DIGEST,
+  // Scope of what RAN, not what the criterion wants. Four of the seven
+  // catalog backends are installed on this single-vendor (NVIDIA) host; the
+  // three vendor-mismatched backends are refused by the compatibility guard
+  // with named reasons. The criterion that requires all seven backends
+  // INSTALLED is therefore NOT satisfied by this run and stays open - it
+  // needs a three-vendor host.
+  backendScope: {
+    installed: installedRuns.map((i) => ({ installKey: i.installKey, backend: i.backend, outcome: i.outcome })),
+    refused: refusedRuns.map((i) => ({ installKey: i.installKey, backend: i.backend, reason: i.error })),
+    selected: selectingRuns.map((s) => s.installKey),
+    launched: launchedKeys,
+    sevenBackendCriterionSatisfied: false,
+    note:
+      "Installed/selected/launched are the measured scope of this run on this host. Installing all seven " +
+      "backends simultaneously requires three GPU vendors; the three refusals are the compatibility guard's " +
+      "correct behavior, not installed backends, and do not satisfy the seven-installed-backend criterion.",
+  },
   availability: (setup?.catalog?.availability ?? []).map((a) => ({
     installKey: a.installKey,
     status: a.status,
@@ -208,8 +248,10 @@ const result = {
     })),
   },
   installs,
+  installedCount: installedRuns.length,
+  refusedCount: refusedRuns.length,
   listing: listRuns,
-  selecting,
+  selectingRuns,
   starting,
   checks,
   summary: { total: checks.length, pass: checks.filter((c) => c.ok).length, fail: checks.filter((c) => !c.ok).length },

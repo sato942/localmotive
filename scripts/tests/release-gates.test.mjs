@@ -211,13 +211,23 @@ test("release evidence uses one resolved immutable revision", async () => {
   assert.match(workflow, /test "\$\(git rev-parse HEAD\)" = "\$RESOLVED_SHA"/);
   assert.match(workflow, /LOCALMOTIVE_SOURCE_REVISION=\$RESOLVED_SHA/);
   assert.doesNotMatch(workflow, /LOCALMOTIVE_SOURCE_REVISION:\s*\$\{\{ github\.sha \}\}/);
+  const promote = await readFile(join(process.cwd(), ".github", "workflows", "release-promote.yml"), "utf8");
+  assert.match(promote, /ref: \$\{\{ inputs\.tag \}\}/);
+  assert.match(promote, /--expect-source "\$RESOLVED_SHA"/);
+  assert.doesNotMatch(promote, /github\.sha\s*\}\}/, "no workflow context SHA is accepted as an identity");
 });
 
-test("release workflow reads published assets back", async () => {
-  const workflow = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
-  assert.match(workflow, /gh release view/);
-  assert.match(workflow, /gh release download/);
-  assert.match(workflow, /sha256sum -c/);
+test("release promotion reads published assets back", async () => {
+  // R16 release behavior: publication moved out of the tag-push workflow.
+  // The read-back lives in release-promote.yml, and the verify workflow must
+  // not contain any publication or read-back path at all.
+  const promote = await readFile(join(process.cwd(), ".github", "workflows", "release-promote.yml"), "utf8");
+  assert.match(promote, /gh release view/);
+  assert.match(promote, /gh release download/);
+  assert.match(promote, /sha256sum -c/);
+  const verify = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  assert.doesNotMatch(verify, /gh release view/);
+  assert.doesNotMatch(verify, /gh release create/);
 });
 
 test("a controlled nonzero native command remains nonzero", async () => {
@@ -495,28 +505,32 @@ test("MSI manufacturer equals the approved publisher value", async () => {
 });
 
 test("honestly unsigned full release verifies checksums and inventory instead of Authenticode", async () => {
-  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
-  assert.doesNotMatch(release, /signtool/);
-  assert.doesNotMatch(release, /Get-AuthenticodeSignature/);
-  assert.doesNotMatch(release, /TimeStamperCertificate/);
-  assert.doesNotMatch(release, /passed the Authenticode verification gate/);
-  assert.match(release, /unsigned/);
-  assert.match(release, /SmartScreen/);
-  assert.match(release, /verify_candidate_inventory/);
-  assert.match(release, /sha256sum -c/);
+  const verify = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  const promote = await readFile(join(process.cwd(), ".github", "workflows", "release-promote.yml"), "utf8");
+  for (const workflow of [verify, promote]) {
+    assert.doesNotMatch(workflow, /signtool/);
+    assert.doesNotMatch(workflow, /Get-AuthenticodeSignature/);
+    assert.doesNotMatch(workflow, /TimeStamperCertificate/);
+    assert.doesNotMatch(workflow, /passed the Authenticode verification gate/);
+  }
+  assert.match(verify, /verify_candidate_inventory/);
+  assert.match(promote, /verify_candidate_inventory/);
+  assert.match(promote, /sha256sum -c/);
+  assert.match(promote, /unsigned/);
+  assert.match(promote, /SmartScreen/);
   // The ship tip stays visible as Latest, so the publish path must not mark
   // the release as a GitHub Pre-release. Seen live: v0.4.1 shipped with
   // prerelease:true and releases/latest still pointed at v0.4.0.
-  assert.match(release, /prerelease:\s*false/);
-  assert.doesNotMatch(release, /\(unsigned prerelease\)/);
+  assert.match(promote, /prerelease:\s*false/);
+  assert.doesNotMatch(promote, /\(unsigned prerelease\)/);
 });
 
 test("honestly unsigned full release reads back Latest with the unsigned asset set", async () => {
-  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
-  assert.match(release, /prerelease:\s*false/);
-  assert.match(release, /\.isPrerelease/);
-  assert.match(release, /honestly unsigned/);
-  assert.match(release, /\(unsigned\)/);
+  const promote = await readFile(join(process.cwd(), ".github", "workflows", "release-promote.yml"), "utf8");
+  assert.match(promote, /prerelease:\s*false/);
+  assert.match(promote, /\.isPrerelease/);
+  assert.match(promote, /honestly unsigned/);
+  assert.match(promote, /\(unsigned\)/);
 });
 
 test("correct the three L2 claims in the new 0.4.1 changelog section", async () => {
@@ -1166,19 +1180,22 @@ test("R11: the packaged cancellation driver measures owned identities end to end
 });
 
 test("R13: publication rechecks the tag and trusts exact bytes, with failure diagnostics", async () => {
-  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
-  const publish = release.split("\n  publish:")[1];
+  const promote = await readFile(join(process.cwd(), ".github", "workflows", "release-promote.yml"), "utf8");
+  const publish = promote.split("\n  publish:")[1];
   // The remote tag is re-resolved immediately before publication.
   assert.match(publish, /Re-resolve the remote tag immediately before publication/);
   assert.match(publish, /refs\/tags\/\$\{TAG\}\^\{\}/);
   assert.match(publish, /refusing to publish drifted source/);
-  // The public inventory is byte-checked and re-verified, never trusted
-  // because it is nonempty.
+  // The public inventory and the packaged-verification record are byte-checked
+  // and re-verified against the producer set, never trusted because nonempty.
   assert.match(publish, /cmp "artifacts\/candidate-inventory-\$\{VERSION\}\.json" "public-readback\/candidate-inventory-\$\{VERSION\}\.json"/);
+  assert.match(publish, /cmp "artifacts\/packaged-verification-\$\{VERSION\}\.json" "public-readback\/packaged-verification-\$\{VERSION\}\.json"/);
   assert.match(publish, /verify_candidate_inventory\.mjs --verify "public-readback\/candidate-inventory/);
   // A failed read-back still leaves diagnostics.
   assert.match(publish, /publish-diagnostics/);
-  const lifecycle = release.split("\n  clean-account-lifecycle:")[1].split("\n  publish:")[0];
+  // The verify workflow keeps its lifecycle evidence uploads on every outcome.
+  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  const lifecycle = release.split("\n  clean-account-lifecycle:")[1];
   assert.match(lifecycle, /lifecycle-evidence/);
   assert.match(lifecycle, /if: always\(\)/);
   // The review text no longer conflates workflow artifacts with release assets.
@@ -1322,11 +1339,20 @@ test("workflow gate policy covers the hardware qualify night path", async () => 
 });
 
 test("release ship gates default to the self-hosted runner, never windows-latest", async () => {
-  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
-  assert.doesNotMatch(release, /runs-on:\s*windows-latest/);
-  for (const job of ["quality", "package", "publish"]) {
+  const verify = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  assert.doesNotMatch(verify, /runs-on:\s*windows-latest/);
+  for (const job of ["quality", "package", "qualification"]) {
     const pattern = new RegExp(`^  ${job}:[\\s\\S]*?runs-on:\\s*(.+)$`, "m");
-    const found = release.match(pattern);
+    const found = verify.match(pattern);
+    assert.ok(found, `${job} runs-on is missing`);
+    assert.match(found[1], /self-hosted/);
+    assert.match(found[1], /localmotive-hw/);
+  }
+  const promote = await readFile(join(process.cwd(), ".github", "workflows", "release-promote.yml"), "utf8");
+  assert.doesNotMatch(promote, /runs-on:\s*windows-latest/);
+  for (const job of ["gate", "publish"]) {
+    const pattern = new RegExp(`^  ${job}:[\\s\\S]*?runs-on:\\s*(.+)$`, "m");
+    const found = promote.match(pattern);
     assert.ok(found, `${job} runs-on is missing`);
     assert.match(found[1], /self-hosted/);
     assert.match(found[1], /localmotive-hw/);
@@ -1334,9 +1360,47 @@ test("release ship gates default to the self-hosted runner, never windows-latest
 });
 
 test("release checkout pins line endings so the packaged clean-source probe is honest", async () => {
-  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
-  assert.doesNotMatch(release, /git-config:/);
-  assert.match(release, /git config --global core\.autocrlf false/);
+  for (const file of ["release.yml", "release-promote.yml"]) {
+    const workflow = await readFile(join(process.cwd(), ".github", "workflows", file), "utf8");
+    assert.doesNotMatch(workflow, /git-config:/);
+    assert.match(workflow, /git config --global core\.autocrlf false/);
+  }
+});
+
+test("no working-tree source file is a line-ending-only rewrite of its committed bytes", async () => {
+  // Seen live (R16 freeze-9): a tool rewrote two Rust sources with CRLF while
+  // the index tracks LF, so `git diff` reported 4300 changed lines of pure
+  // line-ending churn and a byte-sensitive consumer would read the wrong
+  // file. This guard fails whenever git reports a modified source or harness
+  // file whose content equals its committed blob after CRLF -> LF
+  // normalization: a real change always differs beyond line endings.
+  const { execFileSync } = await import("node:child_process");
+  const status = execFileSync("git", ["status", "--porcelain", "-z"], { encoding: "utf8", cwd: process.cwd() });
+  const modified = status
+    .split(" ")
+    .filter(Boolean)
+    .map((entry) => entry.slice(3))
+    .filter((path) => /(^|\/)(src|scripts|src-tauri\/src|src-tauri\/tests|\.github)\/.*\.(rs|mjs|ps1|ts|tsx|json|yml|yaml)$/.test(path));
+  assert.ok(modified.length > 0, "expected at least one file under review while the tree is dirty");
+  const CRLF = String.fromCharCode(13) + String.fromCharCode(10);
+  const LF = String.fromCharCode(10);
+  const offenders = [];
+  for (const file of modified) {
+    let committed = null;
+    try {
+      committed = execFileSync("git", ["show", `HEAD:${file}`], { cwd: process.cwd(), maxBuffer: 32 * 1024 * 1024 });
+    } catch {
+      continue; // a brand-new file has no committed bytes to compare
+    }
+    const committedBytes = Buffer.from(committed);
+    const normalized = Buffer.from(committedBytes.toString("latin1").split(CRLF).join(LF), "latin1");
+    const worktree = await readFile(join(process.cwd(), file));
+    const worktreeLf = Buffer.from(worktree.toString("latin1").split(CRLF).join(LF), "latin1");
+    if (normalized.length === worktreeLf.length && normalized.equals(worktreeLf) && !worktree.equals(committedBytes)) {
+      offenders.push(file);
+    }
+  }
+  assert.deepEqual(offenders, [], `line-ending-only rewrites present in: ${offenders.join(", ")}`);
 });
 
 test("packaged clean-source probe ignores the verifier-owned artifacts directory", async () => {
@@ -1371,10 +1435,15 @@ test("release verify step waits for the candidate WebView before driving checks"
 
 test("release workflow serializes runs so two packages never share one runner", async () => {
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
-  // Tag-push and publish-dispatch each ran package on the same single
-  // runner; the second CDP session attached to the first WebView.
+  // Tag-push and dispatch each ran package on the same single runner; the
+  // second CDP session attached to the first WebView.
   assert.match(release, /concurrency:\s*\n\s*group:\s*localmotive-release/);
   assert.match(release, /cancel-in-progress:\s*true/);
+  // A promotion is never cancelled by a later tag push: it owns its own group
+  // and refuses cancellation.
+  const promote = await readFile(join(process.cwd(), ".github", "workflows", "release-promote.yml"), "utf8");
+  assert.match(promote, /concurrency:\s*\n\s*group:\s*localmotive-release-promote/);
+  assert.match(promote, /cancel-in-progress:\s*false/);
 });
 
 test("release verify step isolates the candidate behind a per-run CDP port with tree cleanup", async () => {
@@ -1391,22 +1460,35 @@ test("release verify step isolates the candidate behind a per-run CDP port with 
 });
 
 test("release publish verification avoids hosted-only shell dependencies", async () => {
-  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
-  // Git-bash on the self-hosted runner has no jq: parse the inventory
-  // with node so the publish gate cannot fail on missing tooling.
-  assert.doesNotMatch(release, /jq -r/);
+  for (const file of ["release.yml", "release-promote.yml"]) {
+    const workflow = await readFile(join(process.cwd(), ".github", "workflows", file), "utf8");
+    // Git-bash on the self-hosted runner has no jq: parse the inventory and
+    // the run metadata with node so the gates cannot fail on missing tooling.
+    assert.doesNotMatch(workflow, /jq -r/);
+  }
 });
 
-test("tag-push publish runs the same gates as the dispatch path", async () => {
-  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
-  // Preferred ship path: pushing the version tag publishes after package and
-  // the lifecycle verdict, so no second parallel package run ever shares the
-  // runner CDP. Audit S-26: the guard binds the RESOLVED tag - the original
-  // `== 'v0.5.0'` literal silently skipped publication for every later
-  // version; the dispatch republish path stays behind its explicit input.
-  assert.match(release, /needs\.quality\.outputs\.tag == github\.ref_name/);
-  assert.match(release, /startsWith\(github\.ref, 'refs\/tags\/v'\)/);
-  assert.match(release, /github\.event_name == 'workflow_dispatch' && inputs\.publish/);
+test("a tag push verifies without publishing and publication needs explicit authorization", async () => {
+  // R16 release behavior: the tag push runs every gate, assembles the
+  // qualified bundle, and stops. Publication is a separate workflow that
+  // refuses to run without the owner, the confirm phrase, a green verify run
+  // for the same commit, and dry_run=false.
+  const verify = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  assert.doesNotMatch(verify, /softprops\/action-gh-release/);
+  assert.doesNotMatch(verify, /gh release create/);
+  assert.doesNotMatch(verify, /contents: write/);
+  assert.match(verify, /localmotive-\$\{\{ needs\.quality\.outputs\.version \}\}-qualified/);
+  const promote = await readFile(join(process.cwd(), ".github", "workflows", "release-promote.yml"), "utf8");
+  assert.match(promote, /github\.actor == github\.repository_owner/);
+  assert.match(promote, /PUBLISH \$TAG/);
+  assert.match(promote, /^\s*dry_run:/m);
+  assert.match(promote, /default: true/, "a promotion defaults to a dry run");
+  assert.match(promote, /if: inputs\.dry_run == false/, "publication requires dry_run=false");
+  assert.match(promote, /run-id: \$\{\{ inputs\.verify_run_id \}\}/);
+  assert.match(promote, /Release verify/, "the verify run identity is checked by name");
+  assert.match(promote, /check-runs/);
+  assert.match(promote, /pr-check/);
+  assert.doesNotMatch(promote, /tauri build|npm run build/, "promotion never rebuilds the candidate");
 });
 
 test("branding history set covers the archived docs layout", async () => {
@@ -1532,13 +1614,14 @@ test("GH-03 the lifecycle consumes candidates instead of waiting for publication
   assert.match(lifecycle, /needs: \[resolve, quality, package\]/);
   assert.match(lifecycle, /-CandidateDir "artifacts"/);
   assert.doesNotMatch(lifecycle, /ReleaseWaitMinutes/);
-  const publishHead = release.split("\n  publish:")[1].split("steps:")[0];
-  // Fail-closed supersession of the original "must not gate on the
-  // interactive Sandbox feature" note: absent or failed lifecycle evidence
-  // blocks publication (G-06.I1, G-09.V1 negative control). The lifecycle
-  // itself still consumes CANDIDATE bytes rather than waiting for published
-  // assets, which is this test's subject.
-  assert.match(publishHead, /clean-account-lifecycle/, "publication waits for the lifecycle verdict (fail-closed)");
+  // Fail-closed: the qualification job that assembles the bundle publication
+  // consumes needs the lifecycle verdict, and the promotion validator refuses
+  // a bundle without PASS lifecycle records (G-06.I1, G-09.V1 negative
+  // control). The lifecycle itself still consumes CANDIDATE bytes rather than
+  // waiting for published assets, which is this test's subject.
+  assert.match(release, /qualification:\n    needs: \[resolve, quality, package, clean-account-lifecycle\]/, "the qualified bundle waits for the lifecycle verdict (fail-closed)");
+  const promote = await readFile(join(process.cwd(), ".github", "workflows", "release-promote.yml"), "utf8");
+  assert.match(promote, /verify_release_promotion\.mjs/);
   assert.doesNotMatch(hardware, /clean-account-lifecycle/, "the lifecycle job belongs to release.yml");
 });
 
@@ -1628,11 +1711,16 @@ test("GH-02 release jobs share one resolved immutable revision", async () => {
     1,
     "only the resolver may check out the requested tag ref",
   );
-  // Publication verifies the producer inventory instead of rewriting it.
-  const publish = release.split("\n  publish:")[1];
+  // Publication verifies the producer inventory instead of rewriting it, and
+  // it re-proves at promotion time that the verify run built the same commit.
+  const promote = await readFile(join(process.cwd(), ".github", "workflows", "release-promote.yml"), "utf8");
+  const publish = promote.split("\n  publish:")[1];
   assert.match(publish, /verify_candidate_inventory\.mjs --verify/);
   assert.match(publish, /"artifacts\/candidate-inventory-\$\{VERSION\}\.json"/);
   assert.doesNotMatch(publish, /verify_candidate_inventory\.mjs artifacts "\$VERSION"/);
+  assert.match(promote, /assert\.equal\(run\.head_sha, process\.env\.EXPECTED_SHA/, "the verify run must have built the resolved commit");
+  assert.match(promote, /sha="\$\(git rev-parse HEAD\)"/, "promotion resolves the tag itself");
+  assert.doesNotMatch(promote, /verify_candidate_inventory\.mjs artifacts "\$VERSION"/);
   // The verifier CLI must resolve the artifact directory from the inventory's
   // own directory: argv[2] is the --verify flag itself in the workflow form,
   // and defaulting to it breaks the consumer boundary (ENOENT on the sums
@@ -2171,22 +2259,26 @@ test("S-26: no workflow carries a literal release version and gates stay fail-fa
 });
 
 test("publication consumes the retained candidate inventory and validates it (2026-09-12 review)", async () => {
-  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
-  const publish = release.split("\n  publish:")[1];
-  assert.match(publish, /Retrieve verified release candidates/, "publish downloads the retained verified artifact");
-  assert.match(publish, /localmotive-\$\{\{ needs\.quality\.outputs\.version \}\}-verified/);
+  const promote = await readFile(join(process.cwd(), ".github", "workflows", "release-promote.yml"), "utf8");
+  const gate = promote.split("\n  gate:")[1].split("\n  publish:")[0];
+  // Promotion consumes the qualified bundle the verify run uploaded - the
+  // bundle carries the producer inventory, so the inventory is validated
+  // rather than rewritten and the candidate is never re-cut.
+  assert.match(gate, /Download the qualified bundle produced by that verify run/);
+  assert.match(gate, /localmotive-\$\{\{ steps\.resolve\.outputs\.version \}\}-qualified/);
+  assert.match(gate, /run-id: \$\{\{ inputs\.verify_run_id \}\}/, "the bundle comes from the named verify run");
   assert.match(
-    publish,
-    /RESOLVED_SHA: \$\{\{ needs\.resolve\.outputs\.sha \}\}/,
+    gate,
+    /verify_qualification_manifest\.mjs --expect-source "\$RESOLVED_SHA"/,
     "the source identity checked against the inventory is the resolved tag SHA",
   );
   assert.match(
-    publish,
-    /verify_candidate_inventory\.mjs --verify/,
-    "publish validates the producer inventory (source identity + every digest and size) before uploading",
+    gate,
+    /verify_release_promotion\.mjs --qualified \./,
+    "the promotion validator binds inventory, artifacts, checksums and records",
   );
-  assert.match(publish, /sha256sum -c/);
-  assert.doesNotMatch(publish, /tauri build/, "publication never rebuilds; a rebuild would be a new candidate");
+  assert.match(gate, /sha256sum -c/);
+  assert.doesNotMatch(promote, /tauri build|npm run build/, "publication never rebuilds; a rebuild would be a new candidate");
 });
 
 test("the RT-04.V2 health-model delay seam is loopback-only and verifier-gated", async () => {
@@ -2264,21 +2356,45 @@ test("R05/R06: lifecycle pass conditions are strict and candidate-bound", async 
 test("R04: the benchmark run owns its cancelled workers until they exit", async () => {
   const service = await readFile(join(process.cwd(), "src-tauri", "src", "measurement_service.rs"), "utf8");
   const client = await readFile(join(process.cwd(), "src-tauri", "src", "local_client.rs"), "utf8");
-  // One client per run: every cancellable worker of the benchmark is
-  // observable on the instance the run drains.
-  const constructions = service.match(/let client = local_client\(&profile\)\?;/g) ?? [];
-  assert.equal(constructions.length, 1, "the run constructs exactly one client");
+  // One client per run: every cancellable worker of the benchmark v2 run is
+  // observable on the instance the run drains (prompt preparation included).
+  const run = service.split("async fn benchmark_v2")[1].split("#[cfg(test)]")[0];
+  const constructions = run.match(/let client = local_client\(&server\.profile\)\?;/g) ?? [];
+  assert.equal(constructions.length, 1, "the v2 run constructs exactly one client");
   assert.ok(
-    !/&local_client\(&profile\)\?,/.test(service),
+    !/&local_client\(/.test(run.slice(run.indexOf("let run_client = client.clone();"))),
     "request sites reuse the run's client instead of constructing a new one",
   );
+  // R16 follow-up: the drain bound is DERIVED from the workload's own request
+  // deadline plus teardown slack. The old fixed 300 s ceiling sat below the
+  // default 600 s deadline, so a cancelled slow request could outlive the
+  // ceiling while ownership was already released.
+  assert.match(service, /const WORKER_TEARDOWN_SLACK: std::time::Duration/);
+  assert.match(service, /pub\(crate\) fn benchmark_drain_ceiling\(workload: &evidence::Workload\) -> Duration/);
+  assert.doesNotMatch(service, /WORKER_DRAIN_CEILING/, "the fixed ceiling must not come back");
   // The drain happens before the manifest finalizes, and only a drained
   // client may return a record.
-  const drainIndex = service.indexOf("client.wait_for_worker_drain(WORKER_DRAIN_CEILING)");
-  const manifestIndex = service.indexOf("let mut manifest = evidence::BenchmarkManifest {");
-  assert.ok(drainIndex > 0, "the run drains its workers");
-  assert.ok(manifestIndex > drainIndex, "the drain happens before the record finalizes");
-  assert.match(service, /WORKER_DRAIN_CEILING: std::time::Duration = std::time::Duration::from_secs\(300\)/);
+  const snapshot = service.split("pub(crate) fn run_benchmark_snapshot(")[1].split("pub(crate) async fn")[0];
+  const drainInSnapshot = snapshot.indexOf("drain_owned_workers(&client, benchmark_drain_ceiling(&workload));");
+  const manifestInSnapshot = snapshot.indexOf("let mut manifest = evidence::BenchmarkManifest {");
+  assert.ok(drainInSnapshot > 0, "the run drains its workers before returning a record");
+  assert.ok(manifestInSnapshot > drainInSnapshot, "the drain happens before the record finalizes");
+  // The command-level hold: ownership is released only after the drain
+  // returns, so a discarded result cannot release it while work continues.
+  const v2 = service.split("pub(crate) async fn benchmark_v2(")[1].split("#[cfg(test)]")[0];
+  const v2Drain = v2.indexOf("drain_owned_workers(&client, drain_ceiling);");
+  const slotRelease = v2.indexOf("*active = None;");
+  const resultRead = v2.indexOf("let result = benchmark_result?;");
+  assert.ok(v2Drain > 0, "the command drains its owned workers on every exit path");
+  assert.ok(slotRelease > v2Drain, "the benchmark slot is held until the drain returns");
+  assert.ok(resultRead > v2Drain, "a discarded result cannot release ownership before the drain");
+  // The drain never gives up and releases ownership while work continues: an
+  // exceeded bound continues waiting instead of dropping the worker.
+  assert.match(
+    service,
+    /pub\(crate\) fn drain_owned_workers\(client: &LocalHttpClient, ceiling: Duration\) \{[\s\S]*?while !client\.wait_for_worker_drain\(Duration::from_secs\(1\)\) \{\}/,
+    "an expired drain bound keeps waiting instead of releasing ownership",
+  );
   // The ownership accessor and the drain are production code, not test-only.
   const cfgTest = client.split("#[cfg(test)]");
   assert.match(client, /pub\(crate\) fn wait_for_worker_drain\(&self, ceiling: Duration\) -> bool/);
@@ -2286,8 +2402,16 @@ test("R04: the benchmark run owns its cancelled workers until they exit", async 
     !cfgTest.some((part) => part.slice(0, 200).includes("fn active_cancellable_workers")),
     "the worker counter is not gated to tests",
   );
-  // The R04 regression proves the drain waits for the slow worker.
+  // The R04 regression proves the drain waits for the slow worker, and the
+  // R16 regressions pin the derived bound and the every-exit-path hold.
   assert.match(client, /r04_worker_drain_waits_for_the_abandoned_slow_request_to_exit/);
+  assert.match(service, /r16_the_drain_bound_follows_the_workload_request_deadline/);
+  const lib = await readFile(join(process.cwd(), "src-tauri", "src", "lib.rs"), "utf8");
+  assert.match(
+    lib,
+    /r16_the_benchmark_command_releases_ownership_only_after_its_workers_exit/,
+    "the command-level ownership test must exist",
+  );
 });
 
 test("the stalled-fetch deadline stays injectable and bounded in tests (CI cancellation fix)", async () => {
@@ -2306,84 +2430,87 @@ test("the stalled-fetch deadline stays injectable and bounded in tests (CI cance
 
 test("publish promotes the verified bytes only after every material gate (G-06/G-09)", async () => {
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
-  const publish = release.split("\n  publish:")[1];
-  assert.ok(publish, "release.yml has a publish job");
-  // Publication promotes the artifact the package job verified - it never
+  const promote = await readFile(join(process.cwd(), ".github", "workflows", "release-promote.yml"), "utf8");
+  // R16: the tag-push workflow has no publish job at all, so no tag push can
+  // publish; publication requires the separate authorized dispatch.
+  assert.ok(!/^  publish:/m.test(release), "the verify workflow must not carry a publish job");
+  const gate = promote.split("\n  gate:")[1].split("\n  publish:")[0];
+  const publish = promote.split("\n  publish:")[1];
+  // Publication promotes the bundle the verify run qualified - it never
   // rebuilds and never rewrites the checksum inventory.
-  assert.match(publish, /Retrieve verified release candidates/, "publish retrieves the verified candidate artifact");
-  assert.match(
-    publish,
-    /localmotive-\$\{\{ needs\.quality\.outputs\.version \}\}-verified/,
-    "publish consumes the -verified artifact uploaded by the package job",
-  );
+  assert.match(gate, /Download the qualified bundle produced by that verify run/);
+  assert.match(gate, /localmotive-\$\{\{ steps\.resolve\.outputs\.version \}\}-qualified/);
   assert.match(publish, /sha256sum -c/, "publish verifies the producer checksums");
   assert.doesNotMatch(publish, /tauri build|sha256sum Localmotive/, "publish must not rebuild or rewrite the inventory");
-  // Absent or failed lifecycle evidence blocks publication (G-06.I1); a job
-  // that only waits for `package` would ship without the sandbox verdict.
+  // Absent or failed lifecycle evidence blocks publication (G-06.I1): the
+  // qualification job that assembles the bundle needs the lifecycle verdict,
+  // and the promotion validator refuses a bundle without PASS records.
   assert.match(
     release,
-    /needs: \[resolve, rust-audit, quality, package, clean-account-lifecycle\]/,
-    "publish depends on the clean-account lifecycle gate",
+    /qualification:\n    needs: \[resolve, quality, package, clean-account-lifecycle\]/,
+    "the qualified bundle depends on the clean-account lifecycle gate",
   );
-  assert.match(
-    publish,
-    /needs\.quality\.outputs\.tag == github\.ref_name/,
-    "the ship guard binds the resolved tag, not a literal version",
-  );
-  // R02 (follow-up review db548c8): the predicate must be evaluated, not
-  // substring-matched. A manual dispatch AT A TAG REF with publish=false hit
-  // the automatic tag branch and published anyway; the automatic branch must
-  // require a push event, and every (event, ref, tag, input) combination is
-  // checked here through the real expression.
-  const predicateMatch = release.match(/if: >-\s*\n([\s\S]*?)\n\s*needs:/u);
-  assert.ok(predicateMatch, "the publish job's if-predicate is extractable");
-  const predicate = predicateMatch[1]
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .join(" ")
-    .replace(/:\s*$/, "");
-  const evaluatePredicate = ({ eventName, ref, refName, tag, publishInput }) => {
-    const scope = {
-      startsWith: (value, prefix) => String(value).startsWith(prefix),
-      github: { event_name: eventName, ref, ref_name: refName },
-      needs: { quality: { outputs: { tag } } },
-      inputs: { publish: publishInput },
-    };
-    const js = predicate.replace(/==/gu, "===");
-    // eslint-disable-next-line no-new-func
-    return Boolean(new Function("scope", `with (scope) { return (${js}); }`)(scope));
-  };
-  const cases = [
-    { eventName: "push", ref: "refs/tags/v0.6.0", refName: "v0.6.0", tag: "v0.6.0", publishInput: "", expected: true, why: "tag push publishes" },
-    { eventName: "push", ref: "refs/tags/v0.6.1", refName: "v0.6.1", tag: "v0.6.0", publishInput: "", expected: false, why: "tag mismatch refuses" },
-    { eventName: "push", ref: "refs/heads/main", refName: "main", tag: "v0.6.0", publishInput: "", expected: false, why: "branch push never publishes" },
-    { eventName: "workflow_dispatch", ref: "refs/tags/v0.6.0", refName: "v0.6.0", tag: "v0.6.0", publishInput: false, expected: false, why: "manual dispatch at a tag with publish=false must NOT publish (R02)" },
-    { eventName: "workflow_dispatch", ref: "refs/tags/v0.6.0", refName: "v0.6.0", tag: "v0.6.0", publishInput: true, expected: true, why: "manual republish with publish=true" },
-    { eventName: "workflow_dispatch", ref: "refs/heads/main", refName: "main", tag: "v0.6.0", publishInput: false, expected: false, why: "manual dispatch without publish" },
-    { eventName: "workflow_dispatch", ref: "refs/heads/main", refName: "main", tag: "v0.6.0", publishInput: true, expected: true, why: "manual republish from a branch ref" },
-  ];
-  for (const row of cases) {
-    assert.equal(
-      evaluatePredicate(row),
-      row.expected,
-      `${row.why}: event=${row.eventName} ref=${row.ref} tag=${row.tag} publish=${row.publishInput}`,
-    );
-  }
-  assert.ok(
-    !/needs\.quality\.outputs\.tag == '/.test(publish),
-    "the ship guard must not compare the resolved tag against a literal",
-  );
-  // The workflow-gates policy must bind publish to the lifecycle gate too,
-  // so the checker fails any regression that drops the dependency.
+  // R02 (follow-up review db548c8) survives structurally: the accident that
+  // published from a stray dispatch cannot recur because publication is not
+  // reachable from the verify workflow at all, and the promotion workflow
+  // demands the owner, an exact confirm phrase, a green verify run for the
+  // same commit, and dry_run=false. Every refusal condition is asserted here.
+  assert.match(promote, /if: github\.actor == github\.repository_owner/);
+  assert.match(promote, /test "\$CONFIRM" = "PUBLISH \$TAG"/);
+  assert.match(promote, /if: inputs\.dry_run == false/);
+  assert.match(promote, /assert\.equal\(run\.conclusion, 'success'/);
+  assert.match(promote, /assert\.equal\(run\.head_sha, process\.env\.EXPECTED_SHA/);
+  assert.match(promote, /check-runs/);
   const policy = JSON.parse(await readFile(join(process.cwd(), ".github", "workflow-gates.json"), "utf8"));
-  const required = policy.workflows["release.yml"].publicationJobs.publish;
+  // The workflow-gates policy binds publish to the gate job and forbids any
+  // publication mechanism inside the verify workflow.
+  assert.deepEqual(policy.workflows["release-promote.yml"].publicationJobs.publish, ["gate"]);
+  assert.deepEqual(policy.workflows["release.yml"].publicationJobs, {});
   assert.ok(
-    required.includes("clean-account-lifecycle"),
-    "workflow-gates policy binds publish to clean-account-lifecycle",
+    policy.workflows["release.yml"].forbiddenCommands.includes("softprops/action-gh-release"),
+    "the verify workflow is forbidden from publishing",
+  );
+  assert.ok(
+    policy.workflows["release.yml"].forbiddenCommands.includes("gh release create"),
+    "the verify workflow is forbidden from creating releases",
   );
   const result = validateWorkflowGates(await loadWorkflows(process.cwd()), policy);
   assert.equal(result.ok, true, result.failures.join("\n"));
+});
+
+test("the gate policy refuses a verify workflow that can publish", () => {
+  const policy = {
+    workflows: {
+      "release.yml": {
+        gates: {},
+        packageJobs: {},
+        publicationJobs: {},
+        forbiddenCommands: ["softprops/action-gh-release", "contents: write"],
+      },
+    },
+  };
+  const workflow = {
+    "release.yml": {
+      jobs: {
+        verify: { steps: [{ uses: "softprops/action-gh-release@3bb12739" }] },
+      },
+    },
+  };
+  const failure = validateWorkflowGates(workflow, policy);
+  assert.equal(failure.ok, false);
+  assert.match(failure.failures.join("\n"), /forbidden/);
+  const writePermission = {
+    "release.yml": {
+      jobs: { verify: { permissions: { contents: "write" }, steps: [{ run: "echo hi" }] } },
+    },
+  };
+  const writeFailure = validateWorkflowGates(writePermission, policy);
+  assert.equal(writeFailure.ok, false);
+  assert.match(writeFailure.failures.join("\n"), /granted contents: write/);
+  const clean = {
+    "release.yml": { permissions: { contents: "read" }, jobs: { verify: { steps: [{ run: "echo hi" }] } } },
+  };
+  assert.equal(validateWorkflowGates(clean, policy).ok, true);
 });
 
 test("DC-04.V2 the authority distinction stays visible end to end", async () => {
