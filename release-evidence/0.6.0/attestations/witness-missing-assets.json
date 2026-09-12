@@ -6,9 +6,10 @@
     "tag":  "v0.6.0",
     "version":  "0.6.0",
     "previousTag":  "v0.4.0",
-    "sourceRevision":  "3a2b06e7f8cf7d49f86f759799a0418149735009",
-    "startedAtUtc":  "2026-09-12T01:11:57.5373205Z",
-    "finishedAtUtc":  "2026-09-12T01:11:57.5468735Z",
+    "sourceRevision":  null,
+    "harnessRevision":  "2f0a54488c337da734dd79436d91fd46f58a5edf",
+    "startedAtUtc":  "2026-09-12T04:17:19.7958083Z",
+    "finishedAtUtc":  "2026-09-12T04:17:19.8043170Z",
     "candidateDigests":  {
 
                          }

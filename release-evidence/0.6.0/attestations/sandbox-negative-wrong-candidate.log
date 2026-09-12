@@ -1,4 +1,4 @@
 ﻿
-[2026-09-12T01:37:16.5069692Z] Sandbox lifecycle starting
-[2026-09-12T01:37:16.7481997Z] NSIS install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.6.0_x64-setup.exe
-[2026-09-12T01:38:27.4639558Z] FAIL: NSIS fresh install expected executable version 0.6.0 but found '0.5.0' at C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-12T04:14:39.4349980Z] Sandbox lifecycle starting
+[2026-09-12T04:14:39.6713218Z] NSIS install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.6.0_x64-setup.exe
+[2026-09-12T04:15:50.4001962Z] FAIL: NSIS fresh install expected executable version 0.6.0 but found '0.5.0' at C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe

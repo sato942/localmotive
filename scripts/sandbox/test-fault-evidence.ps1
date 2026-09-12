@@ -20,9 +20,10 @@ $ErrorActionPreference = "Stop"
 # The harness requires a token even for the witness legs (its published-asset
 # fallback guard); the witness legs never reach a network call.
 if (-not $env:GH_TOKEN) { $env:GH_TOKEN = "fault-simulation" }
-if (-not $env:LOCALMOTIVE_SOURCE_REVISION) {
-  $env:LOCALMOTIVE_SOURCE_REVISION = (& git rev-parse HEAD).Trim()
-}
+# Do NOT export LOCALMOTIVE_SOURCE_REVISION here: the harness binds every
+# evidence document to the candidate inventory's full source SHA, and an
+# environment value that merely echoes the current HEAD is refused (and was
+# the exact HEAD-substitution the binding exists to stop).
 
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $attestations = Join-Path $root "release-evidence\$Version\attestations"
