@@ -779,4 +779,4 @@ supervision/tamper/FE-16/FE-05.V3/catalog/churn clean, lifecycle matrix 4/4 PASS
   MT-01d, FE-05.V3, catalog, churn, RT-04.V2, witnesses and the negative controls
   are carried forward under the disclosed test-only delta. The qualification
   manifest was regenerated at `release-evidence/0.6.0/qualification-manifest-0.6.0.json`
-  with the freeze-6 set labeled superseded, never rewritten.
+  with the freeze-6 set labeled superseded, never rewritten. The manifest now records EOL-normalized digests per record plus the release-workflow revision, references only committed records (the mt06 result moved out of gitignored scratch), and is validated end to end by `scripts/verify_qualification_manifest.mjs` - proven on a depth-1 clone of the pushed revision (18/18 records, `MANIFEST VERIFY PASS`) and pinned by a release gate whose mutation (a scratch-state reference) fails verification. A freeze-7 byte-doctored setup refusal with both digests named is retained as the candidate's own negative control.
