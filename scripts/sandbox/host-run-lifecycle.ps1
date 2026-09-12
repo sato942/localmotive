@@ -36,17 +36,25 @@ $OutDir = Join-Path $PWD "release-evidence\$Version\attestations"
 if ($CandidateDir) {
   $inventoryPath = Join-Path $CandidateDir "candidate-inventory-$Version.json"
   if (-not (Test-Path $inventoryPath)) {
-    throw "The candidate inventory is missing: $inventoryPath. Lifecycle evidence binds to the inventory's full source SHA; refusing to run without it."
+    if ($FaultSimulation -ne "none") {
+      # Fault legs may run without staged candidates (the missing-assets
+      # fixture is an absent directory by design); their evidence records a
+      # null candidate binding instead of a substituted revision.
+      $candidateSourceRevision = $null
+    } else {
+      throw "The candidate inventory is missing: $inventoryPath. Lifecycle evidence binds to the inventory's full source SHA; refusing to run without it."
+    }
+  } else {
+    $inventory = Get-Content $inventoryPath -Raw | ConvertFrom-Json
+    $candidateSourceRevision = [string]$inventory.sourceRevision
+    if ($candidateSourceRevision -notmatch '^[0-9a-f]{40}$') {
+      throw "The candidate inventory records an invalid source revision '$candidateSourceRevision'."
+    }
+    if ($env:LOCALMOTIVE_SOURCE_REVISION -and $env:LOCALMOTIVE_SOURCE_REVISION -ne $candidateSourceRevision) {
+      throw "LOCALMOTIVE_SOURCE_REVISION '$($env:LOCALMOTIVE_SOURCE_REVISION)' does not match the candidate inventory's '$candidateSourceRevision'. Never substitute HEAD for the candidate source."
+    }
+    $env:LOCALMOTIVE_SOURCE_REVISION = $candidateSourceRevision
   }
-  $inventory = Get-Content $inventoryPath -Raw | ConvertFrom-Json
-  $candidateSourceRevision = [string]$inventory.sourceRevision
-  if ($candidateSourceRevision -notmatch '^[0-9a-f]{40}$') {
-    throw "The candidate inventory records an invalid source revision '$candidateSourceRevision'."
-  }
-  if ($env:LOCALMOTIVE_SOURCE_REVISION -and $env:LOCALMOTIVE_SOURCE_REVISION -ne $candidateSourceRevision) {
-    throw "LOCALMOTIVE_SOURCE_REVISION '$($env:LOCALMOTIVE_SOURCE_REVISION)' does not match the candidate inventory's '$candidateSourceRevision'. Never substitute HEAD for the candidate source."
-  }
-  $env:LOCALMOTIVE_SOURCE_REVISION = $candidateSourceRevision
 } else {
   $candidateSourceRevision = if ($env:LOCALMOTIVE_SOURCE_REVISION) { $env:LOCALMOTIVE_SOURCE_REVISION } else { $null }
 }
