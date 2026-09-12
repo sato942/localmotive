@@ -767,8 +767,10 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let started_marker = root.join("descendant-started.txt");
         let marker = root.join("descendant-survived.txt");
+        let spawned_marker = root.join("descendant-spawned.txt");
         let started_literal = started_marker.to_string_lossy().replace('\'', "''");
         let marker_literal = marker.to_string_lossy().replace('\'', "''");
+        let spawned_literal = spawned_marker.to_string_lossy().replace('\'', "''");
         let descendant_script = format!(
             "[System.IO.File]::WriteAllText('{started_literal}', 'started'); Start-Sleep -Milliseconds 800; [System.IO.File]::WriteAllText('{marker_literal}', 'survived')"
         );
@@ -778,23 +780,24 @@ mod tests {
             .collect::<Vec<_>>();
         let encoded = base64::engine::general_purpose::STANDARD.encode(encoded_bytes);
         let parent_script = format!(
-            "Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile','-NonInteractive','-EncodedCommand','{encoded}'; Start-Sleep -Seconds 10"
+            "Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile','-NonInteractive','-EncodedCommand','{encoded}' -PassThru | ForEach-Object {{ [System.IO.File]::WriteAllText('{spawned_literal}', [string]$_.Id) }}; Start-Sleep -Seconds 10"
         );
         let mut command = super::hidden_command("powershell.exe");
         command.args(["-NoProfile", "-NonInteractive", "-Command", &parent_script]);
         let mut process = super::spawn_contained_process(&mut command).unwrap();
         // PowerShell's cold start under a fully parallel test run (or a
         // loaded machine: nested startup plus antivirus scanning) can far
-        // exceed fifteen seconds. Wait longer (bounded at 45 s) and keep
-        // enough context to tell "slow fixture" from "fixture never spawned":
-        // the parent exits only after its own ten-second sleep, so an early
-        // parent exit means Start-Process failed and the marker can never
-        // appear.
+        // exceed fifteen seconds. The parent exits on its own schedule
+        // (about ten seconds after spawning) whether or not the descendant
+        // has booted yet, so parent exit alone must NOT end the wait: the
+        // parent records the spawned child id when Start-Process succeeded,
+        // and only an exited parent WITHOUT that record is a fixture
+        // failure. The descendant may take the full bound.
         let started = Instant::now();
         let mut parent_exit: Option<std::process::ExitStatus> = None;
         while !started_marker.exists() && started.elapsed() < Duration::from_secs(45) {
             parent_exit = process.try_wait().ok().flatten();
-            if parent_exit.is_some() {
+            if parent_exit.is_some() && !spawned_marker.exists() {
                 break;
             }
             std::thread::sleep(Duration::from_millis(20));
@@ -802,7 +805,8 @@ mod tests {
 
         assert!(
             started_marker.exists(),
-            "the descendant fixture did not start (parent_exit={parent_exit:?}, elapsed={:?})",
+            "the descendant fixture did not start (spawned={}, parent_exit={parent_exit:?}, elapsed={:?})",
+            spawned_marker.exists(),
             started.elapsed()
         );
         drop(process);
