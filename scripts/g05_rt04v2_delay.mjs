@@ -54,6 +54,7 @@ const server = createServer((request, response) => {
     return;
   }
   rangeRequests += 1;
+  if (rangeRequests <= 4) console.log(`FIXTURE_HIT ${request.method} ${path.slice(0, 90)} range=${request.headers.range ?? "none"}`);
   const total = modelBytes;
   const range = /bytes=(\d+)-(\d*)/u.exec(request.headers.range ?? "");
   let start = 0;
@@ -114,6 +115,13 @@ if (!managedActive) {
 }
 
 const originalDllSha = createHash("sha256").update(readFileSync(MANAGED_DLL)).digest("hex");
+// The swap must be undone from a backup of THIS driver's own capture - never
+// from the caller's arguments (an earlier revision restored the health-model
+// fixture over the DLL, which passes the run and corrupts the install).
+const DLL_BACKUP = join(process.cwd(), ".hermes-0.6", "rt04v2", "dll-backup.bin");
+copyFileSync(MANAGED_DLL, DLL_BACKUP);
+const backupDllSha = createHash("sha256").update(readFileSync(DLL_BACKUP)).digest("hex");
+check("rt04v2.dll-backup-captured", backupDllSha === originalDllSha, `sha=${originalDllSha.slice(0, 12)}`);
 
 // --- Run 1: delayed download + swap inside the window -----------------------
 const invokeStarted = await evaluate(`(() => {
@@ -146,6 +154,7 @@ for (let attempt = 0; attempt < 180 && outcome === null; attempt += 1) {
 const finishedBytes = bytesServed;
 check("rt04v2.health-run-finished", outcome !== null);
 const resultText = JSON.stringify(outcome ?? {});
+console.log(`RUN1_RESULT ${resultText.slice(0, 700)}`);
 check(
   "rt04v2.lease-refused-the-swap-between-prep-and-execution",
   outcome?.ok === true && outcome?.value?.passed === false && /verif|trust|content/i.test(resultText),
@@ -159,7 +168,7 @@ check(
 check("rt04v2.no-process-spawned-with-tampered-runtime", llamaProcs() === 0, `children=${llamaProcs()}`);
 
 // --- Restore and prove the same run now passes ------------------------------
-copyFileSync(backupArg, MANAGED_DLL);
+copyFileSync(DLL_BACKUP, MANAGED_DLL);
 const restoredSha = createHash("sha256").update(readFileSync(MANAGED_DLL)).digest("hex");
 check("rt04v2.dll-restored-exactly", tamperedSha !== restoredSha && originalDllSha === restoredSha);
 
@@ -177,6 +186,7 @@ for (let attempt = 0; attempt < 120 && second === null; attempt += 1) {
   const raw = await evaluate(`window.__rt04b ?? null`);
   if (raw) second = JSON.parse(raw);
 }
+console.log(`RUN2_RESULT ${JSON.stringify(second ?? {}).slice(0, 700)}`);
 check(
   "rt04v2.restored-runtime-passes-the-same-health-run",
   second?.ok === true && second?.value?.passed === true,
