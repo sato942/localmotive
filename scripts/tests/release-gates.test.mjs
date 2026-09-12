@@ -2017,6 +2017,18 @@ test("MT-06 extension pins worker ownership and duplicate-free cancellation", as
   assert.match(source, /active_cancellable_workers/);
 });
 
+test("the stalled-fetch deadline stays injectable and bounded in tests (CI cancellation fix)", async () => {
+  const retry = await readFile(join(process.cwd(), "scripts", "lib", "http_retry.mjs"), "utf8");
+  assert.match(retry, /deadlineMs = REQUEST_TIMEOUT_MS/, "the deadline must stay injectable");
+  assert.match(retry, /AbortSignal\.timeout\(deadlineMs\)/, "the abort must use the injected deadline");
+  const test = await readFile(join(process.cwd(), "scripts", "tests", "http_retry.test.mjs"), "utf8");
+  assert.match(
+    test,
+    /fetchWithRetry\("https:\/\/example\.test\/stall", \{ fetchImpl, deadlineMs: 200 \}\)/,
+    "the stalled-fetch test must bound its own clock, not rely on the unref'd default timer",
+  );
+});
+
 test("publish promotes the verified bytes only after every material gate (G-06/G-09)", async () => {
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
   const publish = release.split("\n  publish:")[1];

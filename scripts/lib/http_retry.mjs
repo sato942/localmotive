@@ -51,13 +51,18 @@ export function retryDelayMs({ retryAfterHeader, attempt, nowMs = Date.now() }) 
  */
 export async function fetchWithRetry(
   url,
-  { headers = {}, fetchImpl = fetch, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), now = Date.now, onRetry = null } = {},
+  { headers = {}, fetchImpl = fetch, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), now = Date.now, onRetry = null, deadlineMs = REQUEST_TIMEOUT_MS } = {},
 ) {
   let waited = 0;
   for (let attempt = 0; ; attempt += 1) {
     const response = await fetchImpl(url, {
       headers,
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      // The deadline is injectable so tests can exercise the real abort
+      // path in bounded time: AbortSignal.timeout unrefs its timer, and a
+      // stalled-fetch test left pending on that timer alone can be cancelled
+      // by the runner as 'event loop already resolved' (a real CI failure on
+      // 2026-09-12). Production keeps the full 20 s deadline.
+      signal: AbortSignal.timeout(deadlineMs),
     });
     if (response.status !== 429 || attempt >= RETRY_ATTEMPTS) {
       return response;

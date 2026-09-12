@@ -71,7 +71,12 @@ test("fetch gives up at the attempts limit and the total budget is bounded", asy
 
 test("a stalled fetch is aborted by the request deadline", async () => {
   // A fetch implementation that never settles on its own but rejects when
-  // the signal aborts: the deadline must fire, not hang the builder.
+  // the signal aborts: the deadline must fire, not hang the builder. The
+  // deadline is injected so the test finishes in bounded time with the real
+  // AbortSignal.timeout path; a stalled promise left pending on the
+  // unref'd default timer was cancelled by the CI runner ("event loop has
+  // already resolved") on 2026-09-12, so the default value is never the
+  // test's only clock.
   const fetchImpl = (url, options) =>
     new Promise((_, reject) => {
       options.signal.addEventListener("abort", () =>
@@ -79,7 +84,7 @@ test("a stalled fetch is aborted by the request deadline", async () => {
       );
     });
   await assert.rejects(
-    fetchWithRetry("https://example.test/stall", { fetchImpl }),
+    fetchWithRetry("https://example.test/stall", { fetchImpl, deadlineMs: 200 }),
     /abort/i,
   );
 });
