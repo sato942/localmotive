@@ -2017,6 +2017,44 @@ test("MT-06 extension pins worker ownership and duplicate-free cancellation", as
   assert.match(source, /active_cancellable_workers/);
 });
 
+test("R05/R06: lifecycle pass conditions are strict and candidate-bound", async () => {
+  const harness = await readFile(join(process.cwd(), "scripts", "sandbox", "host-run-lifecycle.ps1"), "utf8");
+  const witness = await readFile(join(process.cwd(), "scripts", "sandbox", "test-fault-evidence.ps1"), "utf8");
+  // R06: an explicitly supplied candidate set is verified against the run's
+  // inventory and never silently replaced by a published release.
+  assert.match(harness, /refusing to fall back to a published release/);
+  assert.match(harness, /does not match the inventory's/);
+  assert.match(harness, /candidateInventorySha256/);
+  // R05: anything short of a verified preservation PASS fails the run.
+  assert.match(harness, /throw "Host preservation verification is not PASS \(\$preservationStatus\)/);
+  assert.match(harness, /\$doc\.status = "FAIL"/);
+  // The witness leg proves both: the evidence flips to FAIL at
+  // preservation-verification AND the run exits nonzero.
+  assert.match(witness, /witness-preservation-missing/);
+  assert.match(witness, /-FaultSimulation "preservation-missing"/);
+  assert.match(witness, /must exit nonzero when preservation is not PASS/);
+  // The witnesses themselves must exist and carry the inventory binding.
+  // The harness writes UTF-8 with a BOM under Windows PowerShell 5.1.
+  const readWitnessDoc = async (name) =>
+    JSON.parse(
+      (await readFile(join(process.cwd(), "release-evidence", "0.6.0", "attestations", `${name}.json`), "utf8"))
+        .replace(/^﻿/, ""),
+    );
+  for (const name of [
+    "witness-missing-assets",
+    "witness-timeout",
+    "witness-malformed-result",
+    "witness-preservation-missing",
+  ]) {
+    const doc = await readWitnessDoc(name);
+    assert.ok("candidateInventorySha256" in doc, `${name} binds the candidate inventory`);
+  }
+  const preservation = await readWitnessDoc("witness-preservation-missing");
+  assert.equal(preservation.status, "FAIL");
+  assert.equal(preservation.stage, "preservation-verification");
+  assert.equal(preservation.preservation.status, "missing-files");
+});
+
 test("R04: the benchmark run owns its cancelled workers until they exit", async () => {
   const service = await readFile(join(process.cwd(), "src-tauri", "src", "measurement_service.rs"), "utf8");
   const client = await readFile(join(process.cwd(), "src-tauri", "src", "local_client.rs"), "utf8");

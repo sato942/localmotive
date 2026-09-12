@@ -14,7 +14,7 @@ param(
   # none | timeout | malformed-result | missing-assets | stall
   # Each simulated failure must leave a bounded structured outcome with its
   # stage and, where known, the candidate identity.
-  [ValidateSet("none", "timeout", "malformed-result", "missing-assets", "stall")]
+  [ValidateSet("none", "timeout", "malformed-result", "missing-assets", "stall", "preservation-missing")]
   [string]$FaultSimulation = "none"
 )
 $ErrorActionPreference = "Stop"
@@ -46,6 +46,7 @@ if ($CandidateDir) {
     }
   } else {
     $inventory = Get-Content $inventoryPath -Raw | ConvertFrom-Json
+    $candidateInventorySha256 = (Get-FileHash -Path $inventoryPath -Algorithm SHA256).Hash.ToLower()
     $candidateSourceRevision = [string]$inventory.sourceRevision
     if ($candidateSourceRevision -notmatch '^[0-9a-f]{40}$') {
       throw "The candidate inventory records an invalid source revision '$candidateSourceRevision'."
@@ -72,6 +73,7 @@ Write-Host "Work dir: $Root"
 $startedAt = (Get-Date).ToUniversalTime()
 $stage = "initialization"
 $candidateDigests = @{}
+$candidateInventorySha256 = $null
 
 function Get-FileSha256([string]$Path) {
   if (-not (Test-Path $Path)) { return $null }
@@ -98,6 +100,7 @@ function Write-FailureEvidence([string]$Status, [string]$Message) {
     startedAtUtc = $startedAt.ToString("o")
     finishedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
     candidateDigests = $candidateDigests
+    candidateInventorySha256 = $candidateInventorySha256
   }
   ($doc | ConvertTo-Json -Depth 6) | Set-Content -Path $EvidencePath -Encoding UTF8
   $lifecycleLog = Join-Path $Shared "lifecycle.log"
@@ -128,15 +131,41 @@ try {
   $previousSetup = "Localmotive_${prevVersion}_x64-setup.exe"
 
   $haveLocal = $false
-  if ($CandidateDir -and (Test-Path $CandidateDir)) {
+  if ($CandidateDir) {
+    # R06 (follow-up review db548c8): a run that was told which candidates to
+    # evaluate must evaluate exactly those bytes. A missing directory or file
+    # is a hard refusal - never a silent fallback to a published release -
+    # and every artifact this stage uses must match the run's inventory.
+    if (-not (Test-Path $CandidateDir)) {
+      throw "The explicitly supplied candidate directory does not exist: $CandidateDir"
+    }
     $localSetup = Join-Path $CandidateDir $currentSetup
     $localMsi = Join-Path $CandidateDir $currentMsi
-    if ((Test-Path $localSetup) -and (Test-Path $localMsi)) {
-      Write-Host "Using local candidates from $CandidateDir"
-      Copy-Item $localSetup (Join-Path $Shared $currentSetup) -Force
-      Copy-Item $localMsi (Join-Path $Shared $currentMsi) -Force
-      $haveLocal = $true
+    if ((-not (Test-Path $localSetup)) -or (-not (Test-Path $localMsi))) {
+      throw "The explicitly supplied candidate directory is missing installer artifacts ($currentSetup, $currentMsi); refusing to fall back to a published release."
     }
+    if ($inventory) {
+      foreach ($name in @($currentSetup, $currentMsi)) {
+        $artifact = $inventory.artifacts | Where-Object { $_.name -eq $name }
+        if (-not $artifact) {
+          throw "The candidate inventory has no entry for $name; the qualification cannot bind these bytes."
+        }
+        $path = Join-Path $CandidateDir $name
+        $sha = Get-FileSha256 $path
+        $size = (Get-Item $path).Length
+        if ($sha -ne ([string]$artifact.sha256).ToLower()) {
+          throw "Candidate $name digest $sha does not match the inventory's $($artifact.sha256); refusing to qualify unverified bytes."
+        }
+        if ($size -ne [long]$artifact.sizeBytes) {
+          throw "Candidate $name size $size does not match the inventory's $($artifact.sizeBytes)."
+        }
+      }
+      Write-Host "Candidate installers verified against the inventory ($($inventory.sourceRevision))."
+    }
+    Write-Host "Using local candidates from $CandidateDir"
+    Copy-Item $localSetup (Join-Path $Shared $currentSetup) -Force
+    Copy-Item $localMsi (Join-Path $Shared $currentMsi) -Force
+    $haveLocal = $true
   }
 
   if (-not $haveLocal) {
@@ -225,7 +254,11 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
 
   # Networking=Enable so WebView2 bootstrapper can download in Sandbox (Disable caused NSIS exit 2).
   $stage = "sandbox-run"
-  if ($FaultSimulation -eq "malformed-result") {
+  if ($FaultSimulation -eq "preservation-missing") {
+    # R05 witness: a PASS result whose collected preservation files never
+    # arrive must fail the qualification at preservation-verification.
+    Set-Content -Path $resultPath -Value '{"status":"PASS","notes":["fault simulation: preservation files omitted"]}' -Encoding UTF8
+  } elseif ($FaultSimulation -eq "malformed-result") {
     # GH-06.V2 witness: a malformed in-sandbox result must become a bounded
     # FAIL outcome with this stage instead of a hang or a false pass.
     Set-Content -Path $resultPath -Value "{ this is not json" -Encoding UTF8
@@ -267,6 +300,7 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
       # Host-side preservation verification: the collected mirror must still
       # carry its canary marker and the user-data canary must match
       # (G-06.I2). Failure flips the run verdict; evidence is written first.
+      $stage = "preservation-verification"
       $collectedMirror = Join-Path $Shared "collected-mirror.sqlite"
       $collectedUserdata = Join-Path $Shared "collected-userdata.txt"
       $preservationStatus = "missing-files"
@@ -287,22 +321,37 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
         $preservationOutput | Set-Content (Join-Path $OutDir "$EvidenceName-verify.log") -Encoding UTF8
       }
       $doc = Get-Content $resultPath -Raw | ConvertFrom-Json
+      if (-not ($doc.PSObject.Properties.Name -contains "stage")) {
+        $doc | Add-Member -NotePropertyName stage -NotePropertyValue $stage -Force
+      }
       $preservation = [ordered]@{ status = $preservationStatus; output = $preservationOutput }
       $doc | Add-Member -NotePropertyName preservation -NotePropertyValue $preservation -Force
-      # Bind the pass verdict to the immutable source revision and candidate
-      # digests (GH-03/GH-06): the in-sandbox document alone cannot carry them.
+      # Bind the pass verdict to the immutable source revision, candidate
+      # digests, and candidate inventory (GH-03/GH-06/R06): the in-sandbox
+      # document alone cannot carry them.
       $doc | Add-Member -NotePropertyName sourceRevision -NotePropertyValue $env:LOCALMOTIVE_SOURCE_REVISION -Force
       $doc | Add-Member -NotePropertyName harnessRevision -NotePropertyValue $harnessRevision -Force
       $doc | Add-Member -NotePropertyName candidateDigests -NotePropertyValue $candidateDigests -Force
+      $doc | Add-Member -NotePropertyName candidateInventorySha256 -NotePropertyValue $candidateInventorySha256 -Force
+      if ($preservationStatus -eq "PASS") {
+        ($doc | ConvertTo-Json -Depth 8) | Set-Content -Path $EvidencePath -Encoding UTF8
+        if (Test-Path (Join-Path $Shared "lifecycle.log")) {
+          Copy-Item (Join-Path $Shared "lifecycle.log") $EvidenceLog -Force
+        }
+        Write-Host "PASS - evidence copied to $OutDir (preservation: PASS)"
+        exit 0
+      }
+      # R05 (follow-up review db548c8): a lifecycle run whose preservation
+      # step is missing or unverified is a FAILED qualification, not a pass
+      # with a note. The evidence keeps the diagnostics and flips to FAIL
+      # before the job exits nonzero.
+      $doc.status = "FAIL"
+      $doc.stage = "preservation-verification"
       ($doc | ConvertTo-Json -Depth 8) | Set-Content -Path $EvidencePath -Encoding UTF8
       if (Test-Path (Join-Path $Shared "lifecycle.log")) {
         Copy-Item (Join-Path $Shared "lifecycle.log") $EvidenceLog -Force
       }
-      if ($preservationStatus -eq "FAIL") {
-        throw "Host preservation verification FAILED: $preservationOutput"
-      }
-      Write-Host "PASS - evidence copied to $OutDir (preservation: $preservationStatus)"
-      exit 0
+      throw "Host preservation verification is not PASS ($preservationStatus): $preservationOutput"
     }
     Start-Sleep -Seconds 5
   }

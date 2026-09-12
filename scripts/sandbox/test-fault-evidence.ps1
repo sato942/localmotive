@@ -6,6 +6,7 @@
 #   timeout          -> TIMEOUT at sandbox-timeout
 #   malformed-result -> FAIL   at sandbox-run
 #   cancellation     -> the process is killed; no PASS artifact may exist
+#   preservation-missing -> FAIL at preservation-verification (R05)
 #
 # The fault paths are default-off in the real run; this script is their
 # evidence producer. Usage (from the repository root):
@@ -40,7 +41,7 @@ function Remove-Witness([string]$WitnessName) {
   }
 }
 
-function Assert-Witness([string]$WitnessName, [string]$ExpectedStatus, [string]$ExpectedStage, [bool]$ExpectDigests) {
+function Assert-Witness([string]$WitnessName, [string]$ExpectedStatus, [string]$ExpectedStage, [bool]$ExpectDigests, [string]$ExpectedPreservation = "") {
   $docPath = Join-Path $attestations "$WitnessName.json"
   if (-not (Test-Path $docPath)) { throw "witness $WitnessName produced no evidence document" }
   $doc = Get-Content $docPath -Raw | ConvertFrom-Json
@@ -48,6 +49,10 @@ function Assert-Witness([string]$WitnessName, [string]$ExpectedStatus, [string]$
   if ($doc.stage -ne $ExpectedStage) { throw "witness ${WitnessName}: stage '$($doc.stage)' != '$ExpectedStage'" }
   if (-not ($doc.PSObject.Properties.Name -contains "sourceRevision")) { throw "witness ${WitnessName}: missing sourceRevision binding" }
   if (-not ($doc.PSObject.Properties.Name -contains "candidateDigests")) { throw "witness ${WitnessName}: missing candidateDigests binding" }
+  if (-not ($doc.PSObject.Properties.Name -contains "candidateInventorySha256")) { throw "witness ${WitnessName}: missing candidateInventorySha256 binding" }
+  if ($ExpectedPreservation) {
+    if ($doc.preservation.status -ne $ExpectedPreservation) { throw "witness ${WitnessName}: preservation '$($doc.preservation.status)' != '$ExpectedPreservation'" }
+  }
   if ($ExpectDigests) {
     if ($doc.candidateDigests.currentSetup -ne $script:expectedSetupSha) { throw "witness ${WitnessName}: setup digest '$($doc.candidateDigests.currentSetup)' does not match the staged candidate '$script:expectedSetupSha'" }
     if ($doc.candidateDigests.currentMsi -ne $script:expectedMsiSha) { throw "witness ${WitnessName}: msi digest does not match the staged candidate" }
@@ -107,6 +112,20 @@ try {
     throw "a killed run left an evidence document; the workflow-level cancellation outcome is the 'MISSING' summary, not a file"
   }
   Write-Host "WITNESS OK: cancellation -> killed with no PASS artifact"
+
+  # Leg 5: a PASS result whose preservation files never arrived must fail at
+  # preservation-verification with the missing-files status retained (R05).
+  Remove-Witness "witness-preservation-missing"
+  $legFailed = $false
+  try {
+    & "$PSScriptRoot\host-run-lifecycle.ps1" -Tag "v$Version" -Version $Version `
+      -CandidateDir $CandidateDir -PreviousTag $PreviousTag `
+      -EvidenceName "witness-preservation-missing" -FaultSimulation "preservation-missing"
+  } catch { $legFailed = $true }
+  if (-not $legFailed) {
+    throw "the run must exit nonzero when preservation is not PASS; a FAIL evidence document alone is a false green"
+  }
+  Assert-Witness "witness-preservation-missing" "FAIL" "preservation-verification" $true "missing-files"
 
   Write-Host "ALL WITNESS LEGS PASS"
 } finally {
