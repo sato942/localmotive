@@ -1,0 +1,16 @@
+=== rt06 full 2026-09-12T18:40:03Z ===
+PASS catalog.exposes-every-windows-backend | options=cpu,cuda-12.4,cuda-13.3,openvino,rocm,sycl,vulkan
+PASS install.cpu | asset=llama-b10816-bin-win-cpu-x64.zip bytes=18412922 elapsed=169ms
+PASS install.cuda-12.4 | asset=llama-b10816-bin-win-cuda-12.4-x64.zip bytes=253942297 elapsed=717ms
+PASS install.cuda-13.3 | asset=llama-b10816-bin-win-cuda-13.3-x64.zip bytes=149564704 elapsed=506ms
+FAIL install.openvino | error=Error: Uncaught (in promise)
+FAIL install.rocm | error=Error: Uncaught (in promise)
+FAIL install.sycl | error=Error: Uncaught (in promise)
+PASS install.vulkan | asset=llama-b10816-bin-win-vulkan-x64.zip bytes=35228033 elapsed=2916ms
+FAIL listing.reports-every-installed-runtime | count=4 wanted=7
+PASS listing.second-pass-avoids-rehashing | pass1_bytes=0 pass2_bytes=0
+PASS selecting.describes-with-verified-identity | elapsed=366ms
+PASS starting.health-run-passes | elapsed=3334ms
+RT06 SUMMARY: 8/12 checks PASS
+RT06_FULL_EXIT=1
+=== rt06 full end 2026-09-12T18:40:24Z ===

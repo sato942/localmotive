@@ -6,8 +6,10 @@
 // prefers-reduced-motion, a 2x DPI / 150% zoom layout must stay overflow-free
 // with operable controls, and forced-colors (high contrast) must keep every
 // control reachable with words rather than colour alone. Screen-reader passes
-// (Narrator/NVDA) and live-credential scenarios remain out of scope here and
-// are recorded separately as NOT RUN.
+// The automation-tree leg consumes the same accessibility tree a screen
+// reader consumes (CDP Accessibility domain); a manual Narrator/NVDA listening
+// pass and live-credential scenarios remain out of scope and are recorded
+// separately as NOT RUN.
 import { spawn } from "node:child_process";
 import { attach } from "./lib/cdp_client.mjs";
 
@@ -178,6 +180,33 @@ try {
       `${forced.tags} tags (${forced.wordlessTags} wordless)`,
   );
   await client.send("Emulation.setEmulatedMedia", { features: [] });
+
+  // 5) Screen-reader semantics via the accessibility tree: every interactive
+  // node a screen reader would announce must carry a non-empty accessible
+  // name, so keyboard focus never announces a bare control.
+  await client.send("Accessibility.enable");
+  const tree = await client.send("Accessibility.getFullAXTree");
+  const interactiveRoles = new Set(["button", "link", "textbox", "combobox", "checkbox", "radio", "tab", "menuitem", "slider"]);
+  const nodes = (tree?.nodes ?? []).filter((node) => !node.ignored);
+  const interactive = nodes.filter((node) => interactiveRoles.has(node?.role?.value));
+  const unnamed = interactive.filter((node) => {
+    const name = node?.name?.value;
+    return typeof name !== "string" || name.trim().length === 0;
+  });
+  if (interactive.length < 6) {
+    failures.push(`accessibility tree exposed only ${interactive.length} interactive node(s)`);
+  }
+  if (unnamed.length > 0) {
+    failures.push(`${unnamed.length} interactive node(s) have no accessible name`);
+    for (const node of unnamed.slice(0, 5)) {
+      console.error(`  unnamed: role=${node?.role?.value} backendId=${node?.backendDOMNodeId ?? "?"}`);
+    }
+  }
+  const named = interactive.filter((node) => (node?.name?.value || "").trim().length > 0);
+  console.log(
+    `accessibility tree: ${nodes.length} nodes, ${interactive.length} interactive, ${named.length} with names`,
+  );
+  await client.send("Accessibility.disable").catch(() => {});
 
   if (failures.length > 0) {
     console.error("A11Y_FAIL");

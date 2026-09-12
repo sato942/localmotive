@@ -1,0 +1,341 @@
+{
+  "schema": "localmotive.rt06-all-backends.v1",
+  "availability": [
+    {
+      "installKey": "cpu",
+      "status": "available",
+      "reason": "Every mapped upstream job completed successfully."
+    },
+    {
+      "installKey": "cuda-12.4",
+      "status": "available",
+      "reason": "Every mapped upstream job completed successfully."
+    },
+    {
+      "installKey": "cuda-13.3",
+      "status": "available",
+      "reason": "Every mapped upstream job completed successfully."
+    },
+    {
+      "installKey": "openvino",
+      "status": "available",
+      "reason": "Every mapped upstream job completed successfully."
+    },
+    {
+      "installKey": "rocm",
+      "status": "available",
+      "reason": "Every mapped upstream job completed successfully."
+    },
+    {
+      "installKey": "sycl",
+      "status": "available",
+      "reason": "Every mapped upstream job completed successfully."
+    },
+    {
+      "installKey": "vulkan",
+      "status": "available",
+      "reason": "Every mapped upstream job completed successfully."
+    }
+  ],
+  "installedRecords": [
+    {
+      "installKey": "cpu",
+      "backend": "cpu",
+      "contentVerified": false
+    },
+    {
+      "installKey": "cuda-12.4",
+      "backend": "cuda",
+      "contentVerified": false
+    },
+    {
+      "installKey": "cuda-13.3",
+      "backend": "cuda",
+      "contentVerified": false
+    },
+    {
+      "installKey": "vulkan",
+      "backend": "vulkan",
+      "contentVerified": false
+    }
+  ],
+  "generatedAt": "2026-09-12T18:41:56.352Z",
+  "host": {
+    "cdpPort": 10103,
+    "adapterId": "luid:0000000000014f4f",
+    "batch": "all"
+  },
+  "catalog": {
+    "tag": "b10816",
+    "optionCount": 7,
+    "options": [
+      {
+        "installKey": "cpu",
+        "backend": "cpu",
+        "asset": "llama-b10816-bin-win-cpu-x64.zip",
+        "assetBytes": 18412922,
+        "companion": null,
+        "companionBytes": null,
+        "recommended": true
+      },
+      {
+        "installKey": "cuda-12.4",
+        "backend": "cuda",
+        "asset": "llama-b10816-bin-win-cuda-12.4-x64.zip",
+        "assetBytes": 253942297,
+        "companion": "cudart-llama-bin-win-cuda-12.4-x64.zip",
+        "companionBytes": 391443627,
+        "recommended": false
+      },
+      {
+        "installKey": "cuda-13.3",
+        "backend": "cuda",
+        "asset": "llama-b10816-bin-win-cuda-13.3-x64.zip",
+        "assetBytes": 149564704,
+        "companion": "cudart-llama-bin-win-cuda-13.3-x64.zip",
+        "companionBytes": 390970417,
+        "recommended": false
+      },
+      {
+        "installKey": "openvino",
+        "backend": "openvino",
+        "asset": "llama-b10816-bin-win-openvino-2026.3.1-x64.zip",
+        "assetBytes": 80318411,
+        "companion": null,
+        "companionBytes": null,
+        "recommended": false
+      },
+      {
+        "installKey": "rocm",
+        "backend": "rocm",
+        "asset": "llama-b10816-bin-win-rocm-10.0-x64.zip",
+        "assetBytes": 244244508,
+        "companion": null,
+        "companionBytes": null,
+        "recommended": false
+      },
+      {
+        "installKey": "sycl",
+        "backend": "sycl",
+        "asset": "llama-b10816-bin-win-sycl-x64.zip",
+        "assetBytes": 119727951,
+        "companion": null,
+        "companionBytes": null,
+        "recommended": false
+      },
+      {
+        "installKey": "vulkan",
+        "backend": "vulkan",
+        "asset": "llama-b10816-bin-win-vulkan-x64.zip",
+        "assetBytes": 35228033,
+        "companion": null,
+        "companionBytes": null,
+        "recommended": false
+      }
+    ]
+  },
+  "installs": [
+    {
+      "installKey": "cpu",
+      "backend": "cpu",
+      "outcome": "reused",
+      "asset": "llama-b10816-bin-win-cpu-x64.zip",
+      "assetBytes": 18412922,
+      "companionAsset": null,
+      "companionBytes": null,
+      "elapsedMs": 181,
+      "verification": {
+        "jobs_started": 0,
+        "jobs_coalesced": 0,
+        "bytes_hashed": 46741789,
+        "jobs_cancelled": 0
+      }
+    },
+    {
+      "installKey": "cuda-12.4",
+      "backend": "cuda",
+      "outcome": "reused",
+      "asset": "llama-b10816-bin-win-cuda-12.4-x64.zip",
+      "assetBytes": 253942297,
+      "companionAsset": "cudart-llama-bin-win-cuda-12.4-x64.zip",
+      "companionBytes": 391443627,
+      "elapsedMs": 737,
+      "verification": {
+        "jobs_started": 0,
+        "jobs_coalesced": 0,
+        "bytes_hashed": 1166447389,
+        "jobs_cancelled": 0
+      }
+    },
+    {
+      "installKey": "cuda-13.3",
+      "backend": "cuda",
+      "outcome": "reused",
+      "asset": "llama-b10816-bin-win-cuda-13.3-x64.zip",
+      "assetBytes": 149564704,
+      "companionAsset": "cudart-llama-bin-win-cuda-13.3-x64.zip",
+      "companionBytes": 390970417,
+      "elapsedMs": 527,
+      "verification": {
+        "jobs_started": 0,
+        "jobs_coalesced": 0,
+        "bytes_hashed": 704229997,
+        "jobs_cancelled": 0
+      }
+    },
+    {
+      "installKey": "openvino",
+      "backend": "openvino",
+      "outcome": "refused-by-design",
+      "asset": "llama-b10816-bin-win-openvino-2026.3.1-x64.zip",
+      "assetBytes": 80318411,
+      "elapsedMs": 152,
+      "error": "Error: GPU adapter luid:0000000000014f4f (nvidia) is incompatible with the openvino runtime"
+    },
+    {
+      "installKey": "rocm",
+      "backend": "rocm",
+      "outcome": "refused-by-design",
+      "asset": "llama-b10816-bin-win-rocm-10.0-x64.zip",
+      "assetBytes": 244244508,
+      "elapsedMs": 152,
+      "error": "Error: GPU adapter luid:0000000000014f4f (nvidia) is incompatible with the rocm runtime"
+    },
+    {
+      "installKey": "sycl",
+      "backend": "sycl",
+      "outcome": "refused-by-design",
+      "asset": "llama-b10816-bin-win-sycl-x64.zip",
+      "assetBytes": 119727951,
+      "elapsedMs": 141,
+      "error": "Error: GPU adapter luid:0000000000014f4f (nvidia) is incompatible with the sycl runtime"
+    },
+    {
+      "installKey": "vulkan",
+      "backend": "vulkan",
+      "outcome": "reused",
+      "asset": "llama-b10816-bin-win-vulkan-x64.zip",
+      "assetBytes": 35228033,
+      "companionAsset": null,
+      "companionBytes": null,
+      "elapsedMs": 195,
+      "verification": {
+        "jobs_started": 0,
+        "jobs_coalesced": 0,
+        "bytes_hashed": 102314781,
+        "jobs_cancelled": 0
+      }
+    }
+  ],
+  "listing": [
+    {
+      "pass": 0,
+      "elapsedMs": 5,
+      "count": 4,
+      "verification": {
+        "jobs_started": 0,
+        "jobs_coalesced": 0,
+        "bytes_hashed": 0,
+        "jobs_cancelled": 0
+      }
+    },
+    {
+      "pass": 1,
+      "elapsedMs": 3,
+      "count": 4,
+      "verification": {
+        "jobs_started": 0,
+        "jobs_coalesced": 0,
+        "bytes_hashed": 0,
+        "jobs_cancelled": 0
+      }
+    }
+  ],
+  "selecting": {
+    "elapsedMs": 379,
+    "managedVerified": true,
+    "verification": {
+      "jobs_started": 1,
+      "jobs_coalesced": 0,
+      "bytes_hashed": 704229997,
+      "jobs_cancelled": 0
+    }
+  },
+  "starting": {
+    "elapsedMs": 3399,
+    "passed": true,
+    "verification": {
+      "jobs_started": 0,
+      "jobs_coalesced": 0,
+      "bytes_hashed": 1408459994,
+      "jobs_cancelled": 0
+    }
+  },
+  "checks": [
+    {
+      "name": "catalog.exposes-every-windows-backend",
+      "ok": true,
+      "detail": "options=cpu,cuda-12.4,cuda-13.3,openvino,rocm,sycl,vulkan"
+    },
+    {
+      "name": "install.cpu",
+      "ok": true,
+      "detail": "asset=llama-b10816-bin-win-cpu-x64.zip bytes=18412922 elapsed=181ms outcome=reused"
+    },
+    {
+      "name": "install.cuda-12.4",
+      "ok": true,
+      "detail": "asset=llama-b10816-bin-win-cuda-12.4-x64.zip bytes=253942297 elapsed=737ms outcome=reused"
+    },
+    {
+      "name": "install.cuda-13.3",
+      "ok": true,
+      "detail": "asset=llama-b10816-bin-win-cuda-13.3-x64.zip bytes=149564704 elapsed=527ms outcome=reused"
+    },
+    {
+      "name": "refusal.openvino",
+      "ok": true,
+      "detail": "guarded refusal: Error: GPU adapter luid:0000000000014f4f (nvidia) is incompatible with the openvino runtime"
+    },
+    {
+      "name": "refusal.rocm",
+      "ok": true,
+      "detail": "guarded refusal: Error: GPU adapter luid:0000000000014f4f (nvidia) is incompatible with the rocm runtime"
+    },
+    {
+      "name": "refusal.sycl",
+      "ok": true,
+      "detail": "guarded refusal: Error: GPU adapter luid:0000000000014f4f (nvidia) is incompatible with the sycl runtime"
+    },
+    {
+      "name": "install.vulkan",
+      "ok": true,
+      "detail": "asset=llama-b10816-bin-win-vulkan-x64.zip bytes=35228033 elapsed=195ms outcome=reused"
+    },
+    {
+      "name": "listing.reports-every-installed-runtime",
+      "ok": true,
+      "detail": "count=4 eligible=4 refused-by-design=3"
+    },
+    {
+      "name": "listing.second-pass-avoids-rehashing",
+      "ok": true,
+      "detail": "pass1_bytes=0 pass2_bytes=0"
+    },
+    {
+      "name": "selecting.describes-with-verified-identity",
+      "ok": true,
+      "detail": "elapsed=379ms"
+    },
+    {
+      "name": "starting.health-run-passes",
+      "ok": true,
+      "detail": "elapsed=3399ms"
+    }
+  ],
+  "summary": {
+    "total": 12,
+    "pass": 12,
+    "fail": 0
+  }
+}

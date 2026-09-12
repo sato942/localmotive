@@ -782,17 +782,28 @@ mod tests {
         );
         let mut command = super::hidden_command("powershell.exe");
         command.args(["-NoProfile", "-NonInteractive", "-Command", &parent_script]);
-        let process = super::spawn_contained_process(&mut command).unwrap();
-        // PowerShell's cold start under a fully parallel test run can exceed
-        // three seconds; wait longer (bounded) instead of flaking.
+        let mut process = super::spawn_contained_process(&mut command).unwrap();
+        // PowerShell's cold start under a fully parallel test run (or a
+        // loaded machine: nested startup plus antivirus scanning) can far
+        // exceed fifteen seconds. Wait longer (bounded at 45 s) and keep
+        // enough context to tell "slow fixture" from "fixture never spawned":
+        // the parent exits only after its own ten-second sleep, so an early
+        // parent exit means Start-Process failed and the marker can never
+        // appear.
         let started = Instant::now();
-        while !started_marker.exists() && started.elapsed() < Duration::from_secs(15) {
+        let mut parent_exit: Option<std::process::ExitStatus> = None;
+        while !started_marker.exists() && started.elapsed() < Duration::from_secs(45) {
+            parent_exit = process.try_wait().ok().flatten();
+            if parent_exit.is_some() {
+                break;
+            }
             std::thread::sleep(Duration::from_millis(20));
         }
 
         assert!(
             started_marker.exists(),
-            "the descendant fixture did not start"
+            "the descendant fixture did not start (parent_exit={parent_exit:?}, elapsed={:?})",
+            started.elapsed()
         );
         drop(process);
         std::thread::sleep(Duration::from_millis(1_000));

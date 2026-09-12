@@ -10,4 +10,5 @@ keyboard: 16 distinct controls, 16 with a visible outline
 reduced-motion: emulated true, stylesheet rule true
 zoom: dpr 2, scrollWidth 1280 <= innerWidth 1280, 12 visible buttons, 0 unusable
 forced-colors: emulated true, 28 controls (0 wordless), 1 tags (0 wordless)
+accessibility tree: 148 nodes, 10 interactive, 10 with names
 A11Y_PASS
