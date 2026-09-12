@@ -3,8 +3,8 @@
     "error":  "NSIS fresh install expected executable version 0.6.0 but found \u00270.5.0\u0027 at C:\\Users\\WDAGUtilityAccount\\AppData\\Local\\Localmotive\\Localmotive.exe",
     "schema":  "localmotive.sandbox-lifecycle.v0",
     "log":  "C:\\Users\\WDAGUtilityAccount\\Desktop\\shared\\lifecycle.log",
-    "finishedAtUtc":  "2026-09-11T22:38:09.9952971Z",
-    "sourceRevision":  "57bde64ebbb7d148e0ff757add75f440e8241ece",
+    "finishedAtUtc":  "2026-09-12T01:38:27.4695363Z",
+    "sourceRevision":  "3a2b06e7f8cf7d49f86f759799a0418149735009",
     "candidateDigests":  {
                              "currentSetup":  "22a7ef75d15900fd0ef12344fed9665fada2d734fc3ce5992296db06899c4545",
                              "currentMsi":  "581ae3d093423bcbbd94034ff6f3be469605ecaaae12087b37ade605d4fc5ee5"

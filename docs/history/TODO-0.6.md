@@ -2981,6 +2981,112 @@ Work continued at HEAD for the remaining verification packages and a fresh candi
 
 **Also fixed in this campaign (FE-16 log well):** the Control log well dropped its content when the server stopped and its empty-state copy rendered a refactor placeholder ("Start this props.profile…"). The well now retains the last bounded output under a two-line stopped note and the copy reads "Start this profile…" (`src/screens/DashboardScreen.tsx`, `src/App.css`; component test `src/screens/DashboardScreen.test.tsx`; mutants MW1/MW2 caught; `docs/DESIGN.md` updated; design detector unchanged at the four known advisories).
 
+#### Third pass: release-path corrections, DC-04.V2 command-path execution, candidate lineage, and the open-box reconciliation (2026-09-12)
+
+**1. Release-path corrections found while confirming publication behaviour.**
+
+Two defects in `.github/workflows/release.yml` were found while confirming that publication promotes the verified bytes:
+
+- The publish ship guard compared the resolved tag against the literal `'v0.5.0'` (audit S-26 I2 replaced the same literal in the `resolve` job but missed this one), so pushing `v0.6.0` would have skipped publication entirely.
+- `publish` ordered only after `[rust-audit, quality, package]` while `clean-account-lifecycle` ran in parallel, so a lifecycle FAIL could still publish. GH-03's original "publication must not gate on the interactive Sandbox feature" note is explicitly superseded: absent or failed lifecycle evidence must not ship (G-06.I1; matches the G-09.V1 "absent lifecycle evidence" negative control).
+
+Fix commit `1776146` (workflow + `.github/workflow-gates.json` policy + release gates): the guard now binds `needs.quality.outputs.tag == github.ref_name` on a `v*` tag push (the dispatch republish path is unchanged), `publish` needs `clean-account-lifecycle`, and the policy checker enforces the dependency. Results: release gates 120 -> 122 (two new/extended tests); `node scripts/verify_workflow_gates.mjs` ok; `node scripts/verify_workflow_pins.mjs` clean. Mutants: WF1 (lifecycle dependency dropped) caught by three layers (GH-03 gate, new publish test, policy checker); WF2 (literal guard restored) caught by three layers (tag-push gate, S-26 literal ban, new publish test).
+
+Publication promotes the verified bytes without rebuilding them: the `package` job builds the installers once, verifies the packaged executable and uploads `localmotive-<version>-verified`; `clean-account-lifecycle` consumes exactly those bytes; `publish` downloads the same artifact, re-checks `sha256sum -c` without rewriting it and uploads exactly those files. No build step exists in the publish job.
+
+**2. DC-04.V2 executed through the supported command path (no override UI required).**
+
+The 2026-09-11 blocker ("driving raw IPC would not exercise a user-acceptable flow") is superseded by the owner's 2026-09-12 directive: this test does not require an override UI. Enabler commit `3a2b06e`: `download::resolve_url_with` honours `LOCALMOTIVE_HF_BASE` only when `LOCALMOTIVE_VERIFY_ISOLATED_ROOT` is set and only for plain-HTTP loopback values; outside the verifier profile or for any other value the canonical host wins (two unit tests + mutant MUT-HB1 caught; source pin in release-gates).
+
+Run: `.hermes-0.6/run-dc04.sh` (isolated root `%TEMP%\lm060-dc04`, CDP 10087, loopback fixture `http://127.0.0.1:10090` serving 69 632 controlled bytes) + `scripts/g05_dc04_override.mjs`. Result **13/13 PASS** (`.hermes-0.6/dc04-final.log`; attestation `release-evidence/0.6.0/attestations/dc04-v2-command-path-verification.log`):
+
+- `dc04.override-saved-with-correct-digest`; `dc04.user-row-keeps-user-provenance`; `dc04.curated-rows-keep-curated-provenance` (159 curated rows, all `userSourced=false`).
+- `dc04.correct-checksum-download-completes` (the command returns the published path; the authority-labelled completion message travels on the `download:progress` event and is pinned by the DC-04 gate); `dc04.published-bytes-match-the-fixture` (2 fixture hits: probe + ranged read).
+- `dc04.override-resaved-with-wrong-digest`; `dc04.incorrect-checksum-download-refused` ("The downloaded file failed its SHA-256 checksum and was deleted. Please try again."); `dc04.no-file-published-after-mismatch`.
+- `dc04.override-removed`; `dc04.revoked-download-refused-with-identity` ("That repository, file, or revision is not in the validated catalog or in your local overrides."); `dc04.revoked-refusal-touches-no-network` (fixture hit delta 0 - the authority check precedes any transfer).
+- `dc04.user-row-gone-after-removal`; `dc04.curated-row-cannot-be-removed-here` ("That entry ships with the curated catalog and cannot be removed here.").
+
+Authority distinction retained end to end: user-approved override rows carry `userSourced=true`; signed curated rows keep `userSourced=false`; the two completion messages are pinned by the release gate (DC-04.V2 authority-distinction test).
+
+**3. Full-SHA candidate lineage (`a0ed247` / `6384df0` / HEAD).**
+
+| revision | role | verified digests (portable / msi / setup) | verification binding | status |
+| --- | --- | --- | --- | --- |
+| `a0ed247` | 2026-09-11 candidate source | `075daa54…` / `2dd036c6…` / `a4d14496…` | 2026-09-11 campaign (packaged wave, first lifecycle runs) | superseded (docs tip `6384df0`) |
+| `6384df0` | 2026-09-11 docs tip | - | none (no code change) | historical |
+| `06cfa99` | withholding-seam refactor (`tune_service.rs`) | - | MT-04 verification (behaviour pre-existing) | folded into later cuts |
+| `53a65ed` | first closure batch (`App.tsx` persistence guard, `runtime.rs` RT-07) | - | FE-09/FE-03/FE-07/RT-07 legs | superseded |
+| `272ae15` | FE-16.V3 UI batch | - | DashboardScreen pins | superseded |
+| `57bde64` | MT-06 livelock fix (`local_client.rs`) | `79615950…` / `01b62b76…` / `255bfdd2…` | second-pass re-bind (packaged set, 4x lifecycle, negative, verify_041 25/25) | superseded by `3a2b06e` |
+| `1776146` | release-path corrections (workflow/gates/policy) | - | release gates 122 | current release infrastructure (not compiled into the app) |
+| `3a2b06e` | DC-04 verification seam (`download.rs`); full SHA `3a2b06e7f8cf7d49f86f759799a0418149735009` | `fbbd2a1a…` / `1d217350…` / `b83afa2c…` | third-pass re-bind (this record) | **CURRENT binding** |
+
+The intended release commit is the final `main` tip whose `src/` and `src-tauri/` trees equal `3a2b06e`'s; any further code change forces another re-cut and re-bind before tagging. Superseded sets stay in this ledger as history - no artifact or evidence document is ever relabelled to a new revision. The release workflow rebuilds once from the tag in its `package` job and publishes exactly the bytes that job verified (item 1).
+
+**4. Baseline count correction.**
+
+Earlier texts called `cargo test` 403 passed / 0 failed / 2 ignored and `npm test` 80/80 the "v0.5.0-era baseline". Correction: those are the baseline measured at the audited start `e530371` on 2026-09-11 (`tracker line 49`; `.hermes-0.6/baseline.log`), and the 80 is the node-suite count of that day - not a Vitest figure. Current, at `3a2b06e`: `cargo test` 595 passed / 0 failed / 7 ignored; Vitest 141; node gates 157 (release gates 122, health-cancellation fixtures 6, catalog schema / HTTP retry / IPC contract 29).
+
+**5. Owner-gate recheck (live readback, 2026-09-12 third pass).**
+
+`gh api repos/sato942/localmotive/rulesets` -> `[]`; `gh api repos/sato942/localmotive/branches/main --jq .protected` -> `false`; `git ls-remote --tags origin` lists `v0.4.0`, `v0.4.1`, `v0.5.0` only. No owner gate has been granted since the 2026-09-11 package; the release authorization boundary is unchanged. The commands are recorded so the owner can verify from the same readback.
+
+**6. Open-box reconciliation (20 open / 643 checked after this pass).**
+
+Categories: `owner-gated` = repository settings, the tag/publish authorization, or a real published release run; `environment-blocked` = needs hardware/environment this host does not provide; `held (finding-level)` = verified cells, closure deferred to the release decision by owner directive.
+
+| rows | category | completion criterion | unblock action |
+| --- | --- | --- | --- |
+| GH-01.I3/V1/V2/V3 | owner-gated | ruleset requiring `pr-check` (no bypass for ordinary contributions; force-push/delete forbidden) applied; benign PR shows the checks; controlled failing check blocks merge; readback with bypass actors recorded | owner applies ruleset; one PR run |
+| GH-02.I3/V3 | owner-gated | `v*` tag ruleset (updates/deletions blocked) applied; candidate-flow checkout/inventory comparison on a real run | owner applies ruleset; authorized release run |
+| GH-03.V1/V3 | owner-gated | fresh-version release exercised in the single-runner configuration; publish reads the published bytes back | authorized `v0.6.0` release run |
+| GH-06.V3 | owner-gated | completed release run's artifact collection inspected, not just its upload-step code | authorized `v0.6.0` release run |
+| G-09.I2/I3/V1 (+I1 beyond the prepared package) | owner-gated | tag/publish authorized; inventory+provenance bound to the published assets; readback; negative controls on the real path | owner publish decision |
+| G-10.I1 | owner-gated | final record written from the shipped release | after G-09 |
+| RT-04.V2 | environment-blocked | delayed health-model download between context preparation and runtime execution needs a delay-injection seam for the health-model fetch (no supported surface exists today; the DLL-swap half is packaged-verified in `scripts/g05_tamper_dll.mjs`; unit lease tests pin the window; the loopback-seam pattern now exists for catalog downloads) | build the health-model mirror seam (same pattern as `resolve_url_with`) or accept the six-field deferral |
+| RT-06.V3 | environment-blocked | listing/selection/launch measurements across seven backends need them installed on a representative host | multi-backend host session |
+| DC-12.V3 | environment-blocked | OS-crash/power-loss recovery needs a controlled VM/power harness (ordinary process-kill coverage exists: vitems_c D7, FE-16 v3) | environment decision |
+| MT-07.V2 | environment-blocked | CPU-only and changed-CPU machines for the portability matrix | hardware window |
+| S-25.I3 | environment-blocked | independent benchmark distributions / baseline drift need external held-out data | data agreement |
+| G-05.I3 | environment-blocked | keyboard/Narrator/high-DPI/reduced-motion pass is human-operated | owner session |
+| FE-05 (finding level) | held | cells V1-V3 verified; criterion sign-off recorded in the FE-05 record | release decision |
+
+**7. Follow-up schedule (G-10.I3) and retention.**
+
+Dependency/advisory follow-up runs through the normal process: `.github/dependabot.yml` opens grouped weekly updates for npm, cargo and github-actions; every main push and PR runs `npm audit --audit-level=moderate` and the `rust-audit` job (cargo-audit). Evidence retention: `release-evidence/<version>/` and its attestations stay in the repository and in git history; the tracker's deferral rows carry the six fields (owner, reason, residual risk, workaround, follow-up milestone, evidence gap). Measured-performance follow-ups live in the audit's "What to measure after correctness is restored" and stay separate from historical audit results.
+
+**8. G-08 reconciliation note.** The unresolved High rows are exactly GH-01, GH-02, GH-03 and GH-06.V3 (owner-gated) plus the release gates G-09/G-10.I1; each carries its criteria in item 6 and in the review. No High finding is described as verified without its cells, and a written deferral is nowhere treated as passing evidence.
+
+**9. Traceability validation (G-10.V1).** `node scripts/verify_tracker_links.mjs` resolves all 1397 links, confirms 643 checked / 20 open task ids, every open id keeps a review row, every review register id exists as a tracker task, and no id is both checked and open (TRACEABILITY OK, run after the third-pass updates).
+
+**10. Third-pass packaged set and evidence on the current freeze.**
+
+Packaged walk on `3a2b06e` (portable `fbbd2a1a…`), all logs under `.hermes-0.6/`:
+
+| probe | result | log |
+| --- | --- | --- |
+| stop supervision | PASS - contained child terminated within 1 s, no surviving listener | `rebind3-stop-supervision.log` |
+| health seven-stage | 7/7 PASS on the pinned model | `rebind3-health.log` |
+| v2 benchmark default | PASS - decode mean 978.38 tok/s, 5/5 sampled, 8.1 s (legacy CUDA-12.4 adopted runtime; the v2 code path is the object) | `rebind3-mt01d.log` |
+| tamper negative | PASS with enforced preconditions (managed CUDA-13.3 active, server stopped); the new guards refused two wrong-state attempts before the real leg; refusal "Managed file llama-server-impl.dll failed content verification" with 0 processes spawned; SHA restored exactly; clean restart LIVE; final count 0 | `rebind3-tamper5.log` |
+| FE-16 walk | ALL-PASS (retained tail after exit, no leaked placeholders, restart after exit) | `rebind3-fe16.log` |
+| FE-05.V3 walk | ALL-PASS (anchors=3, distinct provenance, replay route restores workload `fe05v3-b`) | `rebind3-fe05v3.log` |
+| vitems_c walk | DONE (P2-P5 incl. relaunch) | `rebind3-vitems-c.log` |
+| vitems_d walk | DONE (completed-while-away retention, adoption legs) | `rebind3-vitems-d.log` |
+| MT-05 combined cycle | PASS - live, stop to zero processes, reservation released, live again, final zero | `rebind3-mt05-cycle.log` |
+| churn reproduction | 3 rounds, no leftovers | `rebind3-churn.log` |
+| fault witnesses | ALL WITNESS LEGS PASS on the new digests (missing-assets, malformed-result, timeout stays TIMEOUT, cancellation kills with no PASS artifact) | `release-evidence/0.6.0/attestations/witness-*.json` |
+
+Lifecycle chain (clean account) on the same freeze, `LOCALMOTIVE_SOURCE_REVISION = 3a2b06e7f8cf7d49f86f759799a0418149735009`:
+
+| run | status | binding |
+| --- | --- | --- |
+| upgrade from v0.4.0 | PASS | sourceRevision 3a2b06e7f8cf7d49f86f759799a0418149735009, setup b83afa2c509405b2… |
+| main candidate (from v0.5.0) | PASS | sourceRevision 3a2b06e7f8cf7d49f86f759799a0418149735009, setup b83afa2c509405b2… |
+| upgrade from v0.4.1 | PASS | sourceRevision 3a2b06e7f8cf7d49f86f759799a0418149735009, setup b83afa2c509405b2… |
+| preservation run | PASS | sourceRevision 3a2b06e7f8cf7d49f86f759799a0418149735009, setup b83afa2c509405b2… |
+| negative control (v0.5.0 bytes labelled 0.6.0) | FAIL (expected refusal, not a defect) | sourceRevision 3a2b06e7f8cf7d49f86f759799a0418149735009 |
+
 #### G-05 packaged Windows wave — seventh batch: three chained evidence-flow defects found and fixed (candidate sha256 `0cebbba8e68922e9a1bea35cc1ef9833ffb5ff8470a74e9f706bed9b089fbe0f`)
 
 Exercising the DEFAULT v2 evidence flow on the packaged binary (approved CUDA b10816, SmolLM2, RTX 5090) exposed a broken chain: the flow could not complete end-to-end. Three independent defects were found, fixed regression-first, mutation-checked, and re-verified on the rebuilt package.

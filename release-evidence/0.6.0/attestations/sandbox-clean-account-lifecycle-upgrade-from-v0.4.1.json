@@ -1,11 +1,11 @@
 ﻿{
-    "previousTag":  "v0.5.0",
+    "previousTag":  "v0.4.1",
     "version":  "0.6.0",
-    "finishedAtUtc":  "2026-09-12T01:28:18.0537529Z",
+    "finishedAtUtc":  "2026-09-12T01:32:40.5771314Z",
     "installedDigests":  {
                              "Preservation upgrade":  "af941914e46152cf18e738014872b10d6c1a8a840e7798ca145d624a716f678e",
                              "Post-update install":  "af941914e46152cf18e738014872b10d6c1a8a840e7798ca145d624a716f678e",
-                             "Pre-update install":  "67f70fc399d1c31bcd573390042a49c97e8699beeb21759591b93a678a11ee76",
+                             "Pre-update install":  "71e821fd995d53af1f73483b7d4d10c16f5ea7afb7825051bee7b65357ee7a63",
                              "MSI fresh install":  "226f66dcd95ee6e43ecb0e3a394850dec9b343923116ca6d23e510b60584bf9a",
                              "NSIS fresh install":  "af941914e46152cf18e738014872b10d6c1a8a840e7798ca145d624a716f678e"
                          },
@@ -24,14 +24,14 @@
                       "name":  "msi-fresh-install-launch-uninstall"
                   },
                   {
-                      "detail":  "executable version 0.5.0 -\u003e 0.6.0",
+                      "detail":  "executable version 0.4.1 -\u003e 0.6.0",
                       "status":  "PASS",
                       "name":  "nsis-update-from-previous-launch-uninstall"
                   },
                   {
                       "detail":  "user-data canary and catalog mirror survived the upgrade; files collected for host verification; executable 0.6.0",
                       "status":  "PASS",
-                      "name":  "nsis-preservation-from-v0.5.0"
+                      "name":  "nsis-preservation-from-v0.4.1"
                   }
               ],
     "coverageNote":  "NSIS and MSI fresh install/launch/uninstall and the NSIS update path with executable version and cross-path digest evidence. Eight-second process survival is a startup smoke, not full functional verification. The preservation step (staged via preserve.json) plants a user-data canary file and a valid marker-bearing catalog mirror after the previous install and requires both to survive the upgrade and a launch smoke; the mirror is collected for host-side marker verification.",

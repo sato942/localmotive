@@ -279,6 +279,23 @@ with the real profile state. Working logs in `.hermes-0.6/`:
 | Churn reproducer (`g05_churn_repro.mjs`, G-05.I1 residual) | not reproduced | three start/cancel/start/stop rounds, zero surviving children |
 | Witness legs (`scripts/sandbox/test-fault-evidence.ps1`) | PASS 4/4 | `witness-timeout` TIMEOUT at `sandbox-timeout`; `witness-malformed-result` FAIL at `sandbox-run`; `witness-missing-assets` FAIL at `resolve-installers`; cancellation kill leaves no PASS artifact - all bound to `sourceRevision 57bde64e` and the staged digests |
 
+Third-pass re-run on `3a2b06e` (portable `fbbd2a1a…`), after the DC-04 seam
+and the release-path fixes; every row below ran on this freeze:
+
+| Probe | Result | Numbers |
+|---|---|---|
+| Stop supervision | PASS | child terminated within 1 s, no surviving listener |
+| Seven-stage health | PASS | 7/7 stages on the pinned SmolLM2-135M |
+| Default v2 workload | PASS | decode mean **978.38 tok/s**, 5/5 sampled, 8.1 s (legacy CUDA-12.4 adopted runtime; the v2 code path is the object) |
+| Tamper negative | PASS with enforced preconditions | the new guards refused two wrong-state attempts (server live; legacy runtime active) before the real leg; refusal `Managed file llama-server-impl.dll failed content verification`, 0 processes; exact SHA restore; clean restart LIVE; final 0 processes |
+| FE-16 walk | ALL-PASS | retained tail (1 321 chars), no leaked placeholders, restart after exit |
+| FE-05.V3 walk | ALL-PASS | anchors=3, distinct provenance keys, replay route restores workload `fe05v3-b` |
+| vitems_c walk | DONE | P2-P5 including relaunch |
+| vitems_d walk | DONE | completed-while-away retention + adoption legs |
+| MT-05 combined cycle | PASS | live -> 0 processes -> live -> 0 processes, reservation released |
+| Churn reproducer | not reproduced | 3 rounds, zero surviving children |
+| Witness legs | ALL PASS | missing-assets / malformed-result / timeout (stays TIMEOUT) / cancellation (killed, no PASS artifact), digest-equality guard enforced against the new digests |
+
 Historical packaged context (earlier windows, kept for the record): the same
 workloads measured 974.36-1002.60 tok/s on the legacy CUDA 12.4 build, and the
 TLS/API-key profile set (patch, ~1004.76 tok/s).
@@ -298,19 +315,31 @@ TLS/API-key profile set (patch, ~1004.76 tok/s).
   fast/slow classifier, and restart. Record:
   `release-evidence/0.6.0/attestations/packaged-verification-0.6.0.json`.
 
+- Third isolated run (`3a2b06e`, clean worktree, port 10086): **25/25 PASS**
+  (`overall_status: PASS`; `.hermes-0.6/rebind3-verify041-clean3.log`;
+  attestation `release-evidence/0.6.0/attestations/packaged-verification-0.6.0.json`
+  refreshed). Two intervening attempts did not count: one failed only
+  `candidate.clean-source` by design (uncommitted evidence edits at run time),
+  and one raced a leftover app instance and was discarded; the clean rerun
+  after the third-pass commit is the recorded result.
+
 ### 4.6 Sandbox lifecycle (clean account)
 
-Four Windows Sandbox runs on the final candidate installers, each carrying
-`sourceRevision 57bde64e` and the candidate digests
-(`255bfdd2...` setup / `01b62b76...` msi):
+Current chain on the `3a2b06e` candidate (portable `fbbd2a1a…`), every run
+carrying `sourceRevision 3a2b06e7f8cf7d49f86f759799a0418149735009` and setup digest
+`b83afa2c509405b2…`; these are the runs the release binds to:
 
 | Run | Previous tag | Result |
 |---|---|---|
-| 1 | v0.4.0 | PASS - NSIS fresh install/launch/uninstall, MSI fresh, NSIS update v0.4.0 -> 0.6.0, plus a fourth preservation step (`nsis-preservation-from-v0.4.0`) |
-| 2 | v0.5.0 | PASS - the same four steps with `nsis-preservation-from-v0.5.0` (`0.5.0 -> 0.6.0`) |
-| 3 | v0.4.1 | PASS - preservation run with host-side canary verification (SQLite mirror + user data collected and checked) |
-| 4 | v0.5.0 | PASS - preservation run, same verification |
-| Negative | v0.5.0 bytes renamed as 0.6.0 | FAIL-with-identity as designed: `NSIS fresh install expected executable version 0.6.0 but found '0.5.0'`, digests `22a7ef75...` / `581ae3d0...` |
+| 1 | v0.4.0 | PASS - NSIS fresh install/launch/uninstall, MSI fresh, NSIS update v0.4.0 -> 0.6.0, preservation step |
+| 2 | v0.5.0 | PASS - main candidate flow with preservation from v0.5.0 |
+| 3 | v0.4.1 | PASS - upgrade-from-v0.4.1 with host-side canary verification |
+| 4 | v0.5.0 | PASS - preservation run with canary verification |
+| Negative | v0.5.0 bytes renamed as 0.6.0 | FAIL-with-identity as designed: the harness refuses the doctored bytes (digests `581ae3d093423bcb…` / `22a7ef75d15900fd…`) |
+
+The superseded second-pass chain (four PASS runs bound to `57bde64e` and
+digests `255bfdd2…` / `01b62b76…`, plus the same negative control) stays in
+git history as its own record; no document was relabelled.
 
 ## 5. Defects found during the final re-bind and their fixes
 
