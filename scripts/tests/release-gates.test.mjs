@@ -2027,6 +2027,8 @@ test("the stalled-fetch deadline stays injectable and bounded in tests (CI cance
     /fetchWithRetry\("https:\/\/example\.test\/stall", \{ fetchImpl, deadlineMs: 200 \}\)/,
     "the stalled-fetch test must bound its own clock, not rely on the unref'd default timer",
   );
+  assert.match(test, /const keeper = setTimeout/, "the test must hold the event loop past the unref'd deadline timer");
+  assert.match(test, /clearTimeout\(keeper\)/, "the keeper must be cleared");
 });
 
 test("publish promotes the verified bytes only after every material gate (G-06/G-09)", async () => {

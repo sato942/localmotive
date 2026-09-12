@@ -83,8 +83,17 @@ test("a stalled fetch is aborted by the request deadline", async () => {
         reject(new Error("The operation was aborted")),
       );
     });
-  await assert.rejects(
-    fetchWithRetry("https://example.test/stall", { fetchImpl, deadlineMs: 200 }),
-    /abort/i,
-  );
+  const keeper = setTimeout(() => {}, 1000);
+  // AbortSignal.timeout's timer is unref'd: pending on it alone, the runner
+  // can cancel the promise when the event loop drains ("cancelledByParent"
+  // in CI). A referenced keeper timer holds the loop past the deadline, so
+  // the abort is guaranteed to fire before the loop is allowed to resolve.
+  try {
+    await assert.rejects(
+      fetchWithRetry("https://example.test/stall", { fetchImpl, deadlineMs: 200 }),
+      /abort/i,
+    );
+  } finally {
+    clearTimeout(keeper);
+  }
 });
