@@ -194,7 +194,13 @@ try {
   process.exit(1);
 }
 check("mt06.owned-pid-enumeration", ownedServers.length === 1, `pids=${ownedServers.join(",")}`);
-const ownedServerPid = ownedServers[0] ?? null;
+if (ownedServers.length !== 1) {
+  // Running cycles without known ownership would fake every child check.
+  console.log("MT06 SUMMARY: owned server process was not found for this app PID");
+  writeFileSync(EVIDENCE_PATH, JSON.stringify({ ...run, checks, summary: "owned pid not found" }, null, 2));
+  process.exit(1);
+}
+let currentOwnedServerPid = ownedServers[0];
 await clickExact("Benchmark");
 await settle(1200);
 await clickExact("Inspect artifact");
@@ -286,7 +292,7 @@ for (let cycle = 1; cycle <= CYCLES; cycle += 1) {
   );
   check(
     `mt06.cycle-${cycle}-owned-children-exactly-one`,
-    childError === null && children?.length === 1 && children[0] === ownedServerPid,
+    childError === null && children?.length === 1 && children[0] === currentOwnedServerPid,
     childError ?? `children=${children?.join(",")}`,
   );
 
@@ -329,6 +335,18 @@ for (let cycle = 1; cycle <= CYCLES; cycle += 1) {
       back = await evaluate(`/Stop server/.test(document.body.textContent || "")`);
     }
     check(`mt06.cycle-${cycle}-restart-reaches-live`, back);
+    if (back) {
+      // The deliberate stop/restart starts a NEW server process; track the
+      // current owned identity instead of the one captured at precondition.
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const refreshed = ownedServerPids();
+        if (refreshed.length === 1) {
+          currentOwnedServerPid = refreshed[0];
+          break;
+        }
+        await settle(500);
+      }
+    }
   }
 }
 
