@@ -1065,6 +1065,22 @@ test("candidate inventory rejects a checksum that does not bind the staged bytes
   );
 });
 
+test("R15: the loopback client never hops, and its bounds are structural", async () => {
+  const client = await readFile(join(process.cwd(), "src-tauri", "src", "local_client.rs"), "utf8");
+  assert.match(client, /redirect\(reqwest::redirect::Policy::none\(\)\)/, "redirects are never followed");
+  assert.match(client, /no_proxy\(\)/, "environment proxies are ignored");
+  assert.match(client, /BoundedVec::new\(MAX_LOCAL_REQUEST_BYTES\)/, "bodies serialize through the bounded writer");
+  assert.doesNotMatch(client, /serde_json::to_vec\(value\)/, "no unbounded pre-check serialization");
+  assert.match(client, /file\.take\(limit \+ 1\)/, "file reads are bounded by the handle");
+  for (const name of [
+    "r15_a_redirect_is_not_followed_and_the_client_fails_the_call",
+    "r15_the_request_body_serializes_through_a_bounded_writer",
+    "r15_bounded_file_reads_are_enforced_by_the_read_not_a_metadata_precheck",
+  ]) {
+    assert.match(client, new RegExp(name));
+  }
+});
+
 test("R09: installed version identity is exact and payload expectations are stated", async () => {
   const sandbox = await readFile(join(process.cwd(), "scripts", "sandbox", "run-lifecycle-in-sandbox.ps1"), "utf8");
   assert.doesNotMatch(sandbox, /StartsWith\(\$expected\)/, "no near-miss version identity");

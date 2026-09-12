@@ -40,6 +40,43 @@ struct Inner {
     active_workers: std::sync::atomic::AtomicUsize,
 }
 
+/// A `Write` sink that accepts at most `limit` bytes and then errors, so a
+/// serialized request body is never fully materialized past its limit (R15).
+struct BoundedVec {
+    buffer: Vec<u8>,
+    limit: usize,
+}
+
+impl BoundedVec {
+    fn new(limit: usize) -> Self {
+        Self {
+            buffer: Vec::new(),
+            limit,
+        }
+    }
+
+    fn into_inner(self) -> Vec<u8> {
+        self.buffer
+    }
+}
+
+impl std::io::Write for BoundedVec {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        if self.buffer.len() + data.len() > self.limit {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "request body exceeds the limit",
+            ));
+        }
+        self.buffer.extend_from_slice(data);
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 /// Decrements the worker counter when the worker thread exits, including on
 /// unwind, so an abandoned worker is never double-counted or leaked.
 struct WorkerLease(Arc<Inner>);
@@ -223,7 +260,13 @@ impl LocalHttpClient {
         let scheme = if cert_pem.is_some() { "https" } else { "http" };
         let mut builder = reqwest::blocking::Client::builder()
             .connect_timeout(Duration::from_secs(5))
-            .pool_max_idle_per_host(0);
+            .pool_max_idle_per_host(0)
+            // R15 (follow-up review db548c8): the client speaks to exactly
+            // one loopback server. Redirects are never followed - a 3xx is a
+            // failure, not a hop - and environment proxies are ignored so a
+            // stray HTTP_PROXY can never reroute local-server traffic.
+            .redirect(reqwest::redirect::Policy::none())
+            .no_proxy();
         if let Some(pem) = cert_pem.as_deref() {
             // Explicit local trust policy: the profile's certificate is the
             // root for this client. Certificate verification stays enabled.
@@ -348,8 +391,24 @@ impl LocalHttpClient {
             return Err(format!("Invalid local request path: {path}"));
         }
         let body_bytes = match body {
-            Some(value) => serde_json::to_vec(value)
-                .map_err(|error| format!("The request body could not be serialized: {error}"))?,
+            Some(value) => {
+                // R15: serialize through a bounded writer. The pre-check
+                // after serialization could only reject an oversized body
+                // AFTER the whole body had been allocated; the writer stops
+                // the copy at the limit instead.
+                let mut bounded = BoundedVec::new(MAX_LOCAL_REQUEST_BYTES);
+                match serde_json::to_writer(&mut bounded, value) {
+                    Ok(()) => bounded.into_inner(),
+                    Err(error) if error.is_io() => {
+                        return Err(format!(
+                            "The local request exceeds the {MAX_LOCAL_REQUEST_BYTES}-byte limit"
+                        ));
+                    }
+                    Err(error) => {
+                        return Err(format!("The request body could not be serialized: {error}"));
+                    }
+                }
+            }
             None => Vec::new(),
         };
         if body_bytes.len() > MAX_LOCAL_REQUEST_BYTES {
@@ -545,15 +604,28 @@ fn error_chain(error: &dyn std::error::Error) -> String {
 }
 
 fn read_bounded_file(path: &str, limit: u64, label: &str) -> Result<Vec<u8>, String> {
-    let metadata = std::fs::metadata(path)
+    // R15 (follow-up review db548c8): the read itself is bounded by the
+    // handle, not by a metadata pre-check. A file that grows between the
+    // check and the read - or a non-regular file that lies about its size -
+    // can never copy more than the limit plus one byte, and the overflow is
+    // detected and refused.
+    use std::io::Read as _;
+    let file = std::fs::File::open(path)
+        .map_err(|error| format!("The {label} could not be read ({path}): {error}"))?;
+    let metadata = file
+        .metadata()
         .map_err(|error| format!("The {label} could not be read ({path}): {error}"))?;
     if !metadata.is_file() {
         return Err(format!("The {label} is not a file: {path}"));
     }
-    if metadata.len() > limit {
+    let mut bytes = Vec::new();
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("The {label} could not be read ({path}): {error}"))?;
+    if bytes.len() as u64 > limit {
         return Err(format!("The {label} exceeds the {limit}-byte limit"));
     }
-    std::fs::read(path).map_err(|error| format!("The {label} could not be read ({path}): {error}"))
+    Ok(bytes)
 }
 
 #[cfg(test)]
@@ -1318,6 +1390,96 @@ ab1VTmVlluUDakDfjhwCcnE=
             "the drain waited for the slow worker to exit, not just observed zero ({waited:?})"
         );
         assert_eq!(client.active_cancellable_workers(), 0);
+    }
+
+    #[test]
+    fn r15_a_redirect_is_not_followed_and_the_client_fails_the_call() {
+        // R15 (follow-up review db548c8): the loopback client speaks to one
+        // server. A 3xx is a failure, never a hop: the redirect target must
+        // never receive the request.
+        let reached = Arc::new(AtomicBool::new(false));
+        let second = TcpListener::bind("127.0.0.1:0").unwrap();
+        let second_port = second.local_addr().unwrap().port();
+        let hit = Arc::clone(&reached);
+        thread::spawn(move || {
+            if let Ok((_stream, _)) = second.accept() {
+                hit.store(true, Ordering::SeqCst);
+            }
+        });
+        let first = TcpListener::bind("127.0.0.1:0").unwrap();
+        let first_port = first.local_addr().unwrap().port();
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = first.accept() {
+                let mut buffer = [0_u8; 8192];
+                let _ = stream.read(&mut buffer);
+                let redirect = format!(
+                    "HTTP/1.1 302 Found
+location: http://127.0.0.1:{second_port}/steal
+content-length: 0
+connection: close
+
+"
+                );
+                let _ = stream.write_all(redirect.as_bytes());
+            }
+        });
+        let client = LocalHttpClient::plain("127.0.0.1", first_port).unwrap();
+        let (status, _body) = client
+            .post_json(
+                "/completion",
+                &serde_json::json!({"prompt": [1]}),
+                Duration::from_secs(10),
+            )
+            .unwrap();
+        // The raw status is observable and the hop never happened: callers
+        // see 302, not a 200 from somewhere else.
+        assert_eq!(status, 302, "the redirect status is returned, not followed");
+        thread::sleep(Duration::from_millis(250));
+        assert!(
+            !reached.load(Ordering::SeqCst),
+            "the redirect target must never receive the request"
+        );
+    }
+
+    #[test]
+    fn r15_the_request_body_serializes_through_a_bounded_writer() {
+        // R15: the writer refuses bytes past the cap instead of accepting a
+        // full oversized allocation that is checked only afterwards.
+        use std::io::Write as _;
+        let mut bounded = BoundedVec::new(16);
+        assert!(bounded.write_all(b"0123456789abcdef").is_ok());
+        assert!(
+            bounded.write_all(b"x").is_err(),
+            "bytes past the limit are refused"
+        );
+        assert_eq!(bounded.into_inner().len(), 16);
+        let mut whole = BoundedVec::new(4);
+        assert!(
+            whole.write(b"12345").is_err(),
+            "a single oversized write is refused whole, never truncated into a valid body"
+        );
+    }
+
+    #[test]
+    fn r15_bounded_file_reads_are_enforced_by_the_read_not_a_metadata_precheck() {
+        // R15: the read is bounded by the handle (take(limit + 1)), so a file
+        // that lies about or grows past its size can never copy more than the
+        // limit plus one byte.
+        let dir = std::env::temp_dir().join(format!("localmotive-r15-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let at_limit = dir.join("at-limit.bin");
+        std::fs::write(&at_limit, vec![7_u8; 64]).unwrap();
+        let over = dir.join("over.bin");
+        std::fs::write(&over, vec![7_u8; 65]).unwrap();
+        assert_eq!(
+            read_bounded_file(&at_limit.to_string_lossy(), 64, "fixture")
+                .unwrap()
+                .len(),
+            64
+        );
+        let error = read_bounded_file(&over.to_string_lossy(), 64, "fixture").unwrap_err();
+        assert!(error.contains("exceeds the 64-byte limit"), "{error}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
