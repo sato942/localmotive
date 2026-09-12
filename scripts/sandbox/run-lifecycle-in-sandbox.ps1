@@ -198,7 +198,16 @@ try {
     $userData = Join-Path $env:LOCALAPPDATA "io.github.localmotive.app"
     if (-not (Test-Path $userData)) { Fail "User-data dir missing after previous install: $userData" }
     Copy-Item (Join-Path $Shared "canary-userdata.txt") (Join-Path $userData "canary-userdata.txt") -Force
-    Copy-Item (Join-Path $Shared "canary-mirror.sqlite") (Join-Path $userData "catalog-mirror.sqlite") -Force
+    # R07: plant the REAL baseline persistence for this leg's flavor. The
+    # mirror flavor stages a v0.5.0-schema catalog mirror with a user override
+    # row; the cache flavor stages the v0.4.1-era cache record at the path the
+    # 0.6 application still reads.
+    $preservationFlavor = if ($meta.PSObject.Properties.Name -contains "preservation") { [string]$meta.preservation } else { "mirror" }
+    if ($preservationFlavor -eq "cache") {
+      Copy-Item (Join-Path $Shared "canary-catalog-cache.json") (Join-Path $userData "catalog-cache.json") -Force
+    } else {
+      Copy-Item (Join-Path $Shared "canary-mirror.sqlite") (Join-Path $userData "catalog-mirror.sqlite") -Force
+    }
     Install-Nsis $curSetup
     $exe = Find-AppExe
     if (-not $exe) { Fail "App missing after preservation upgrade" }
@@ -207,9 +216,18 @@ try {
     $canaryAfter = Join-Path $userData "canary-userdata.txt"
     if (-not (Test-Path $canaryAfter)) { Fail "User-data canary missing after upgrade" }
     $mirrorAfter = Join-Path $userData "catalog-mirror.sqlite"
-    if (-not (Test-Path $mirrorAfter)) { Fail "Catalog mirror missing after upgrade: preserved data was deleted" }
+    if ($preservationFlavor -eq "cache") {
+      $cacheAfter = Join-Path $userData "catalog-cache.json"
+      if (-not (Test-Path $cacheAfter)) { Fail "Catalog cache record missing after upgrade: preserved data was deleted" }
+    } elseif (-not (Test-Path $mirrorAfter)) {
+      Fail "Catalog mirror missing after upgrade: preserved data was deleted"
+    }
     Copy-Item $mirrorAfter (Join-Path $Shared "collected-mirror.sqlite") -Force
     Copy-Item $canaryAfter (Join-Path $Shared "collected-userdata.txt") -Force
+    $cacheCollect = Join-Path $userData "catalog-cache.json"
+    if (Test-Path $cacheCollect) {
+      Copy-Item $cacheCollect (Join-Path $Shared "collected-catalog-cache.json") -Force
+    }
     Uninstall-Nsis
     if (Find-AppExe) { Fail "App still present after preservation uninstall" }
     $steps += @{ name = "nsis-preservation-from-$($meta.previousTag)"; status = "PASS"; detail = "user-data canary and catalog mirror survived the upgrade; files collected for host verification; executable $preservedVersion" }
@@ -256,7 +274,7 @@ try {
     version = $meta.version
     previousTag = $meta.previousTag
     finishedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
-    coverageNote = "NSIS and MSI fresh install/launch/uninstall and the NSIS update path with executable version and cross-path digest evidence. Eight-second process survival is a startup smoke, not full functional verification. The preservation step (staged via preserve.json) plants a user-data canary file and a valid marker-bearing catalog mirror after the previous install and requires both to survive the upgrade and a launch smoke; the mirror is collected for host-side marker verification."
+    coverageNote = "NSIS and MSI fresh install/launch/uninstall and the NSIS update path with executable version and cross-path digest evidence. Eight-second process survival is a startup smoke, not full functional verification. The preservation step (staged via preserve.json) plants, per flavor, the released baseline's REAL persistence after the previous install - the v0.5.0-schema catalog mirror with a user override row, or the v0.4.1-era catalog cache record - and requires it to survive the upgrade and a launch smoke. The collected files are verified on the host (R07): the user override rows must survive with their ownership flags and sentinel values (mirror flavor), or the cache record must remain present and parseable (cache flavor)."""
     steps = $steps
   }
   ($doc | ConvertTo-Json -Depth 6) | Set-Content -Path $ResultPath -Encoding UTF8

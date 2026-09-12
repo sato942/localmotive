@@ -1092,6 +1092,55 @@ test("R15: the loopback client never hops, and its bounds are structural", async
   }
 });
 
+test("R07: preservation fixtures carry real released-version data, not markers", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const root = join(process.cwd(), "scripts", "sandbox");
+  const generator = await readFile(join(root, "build_preservation_fixture.py"), "utf8");
+  // Provenance: the generator cites the released sources it mirrors.
+  assert.match(generator, /git show v0\.5\.0:src-tauri\/src\/catalog_db\.rs/);
+  assert.match(generator, /git show v0\.4\.1:src-tauri\/src\/catalog\.rs/);
+  // The committed mirror fixture really carries the v0.5.0 schema and the
+  // user-override sentinels (decoded content, not a file-name check).
+  const b64 = (await readFile(join(root, "canary-mirror.sqlite.b64"), "utf8")).trim();
+  const mirror = Buffer.from(b64, "base64");
+  assert.ok(mirror.length > 4096, "the fixture is a real SQLite database");
+  for (const needle of [
+    "USER-OVERRIDE-SENTINEL-0.6-preservation",
+    "NODE-ROW-SENTINEL-0.6-preservation",
+    "catalog_model",
+    "catalog_file",
+    "fixture/user-override",
+  ]) {
+    assert.ok(mirror.includes(needle), `mirror fixture contains ${needle}`);
+  }
+  // The v0.4.1 cache record fixture is a real CacheRecord with a schema-1 body.
+  const cache = JSON.parse(await readFile(join(root, "canary-catalog-cache.json"), "utf8"));
+  assert.ok("body" in cache && "etag" in cache, "cache fixture is a CacheRecord");
+  assert.equal(JSON.parse(cache.body).schemaVersion, 1, "the cache body is the v0.4.1 schema");
+  // The verifier asserts recovery, not a marker row.
+  const verifier = await readFile(join(root, "verify_preservation.py"), "utf8");
+  assert.match(verifier, /user_sourced/, "the verifier checks ownership flags");
+  assert.match(verifier, /USER-OVERRIDE-SENTINEL-0\.6-preservation/);
+  assert.doesNotMatch(verifier, /canary_marker/, "the marker-only check is gone");
+  // The harness plants per flavor and the workflow runs the baseline matrix.
+  const host = await readFile(join(root, "host-run-lifecycle.ps1"), "utf8");
+  const sandbox = await readFile(join(root, "run-lifecycle-in-sandbox.ps1"), "utf8");
+  assert.match(host, /PreservationFlavor/);
+  assert.match(sandbox, /canary-catalog-cache\.json/);
+  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  for (const leg of [
+    "sandbox-clean-account-lifecycle-upgrade-v0.4.0",
+    "sandbox-clean-account-lifecycle-upgrade-v0.5.0",
+    "sandbox-clean-account-lifecycle-preservation-v0.4.1",
+    "sandbox-clean-account-lifecycle-preservation-v0.5.0",
+  ]) {
+    assert.match(release, new RegExp(leg), `release matrix includes ${leg}`);
+  }
+  assert.match(release, /PreservationFlavor \$leg\.Flavor/);
+  assert.doesNotMatch(release, /non-gating policy/, "the stale summary claim is gone");
+});
+
 test("R09: installed version identity is exact and payload expectations are stated", async () => {
   const sandbox = await readFile(join(process.cwd(), "scripts", "sandbox", "run-lifecycle-in-sandbox.ps1"), "utf8");
   assert.doesNotMatch(sandbox, /StartsWith\(\$expected\)/, "no near-miss version identity");
@@ -1455,8 +1504,17 @@ test("GH-04 installer verdicts fail on leftovers and verify installed versions",
   assert.match(sandbox, /Assert-AppVersion \$exe \$meta\.version "MSI fresh install"/);
   assert.match(sandbox, /Assert-AppVersion \$exe \$meta\.version "Post-update install"/);
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
-  assert.match(release, /UPGRADE_BASELINE: v0\.4\.0/);
-  assert.doesNotMatch(release, /-PreviousTag "v0\.4\.0"/, "the baseline flows through the explicit matrix variable");
+  // R07 (follow-up review db548c8): the single baseline variable became the
+  // explicit qualification matrix - every supported baseline runs its update
+  // path and its preservation step with the baseline's real persistence
+  // flavor.
+  for (const leg of ["v0.4.0", "v0.4.1", "v0.5.0"]) {
+    assert.ok(release.includes(`Previous = "${leg}"`), `baseline ${leg} runs in the matrix`);
+  }
+  assert.match(release, /Flavor = "cache"/, "the v0.4.x legs use the cache-record flavor");
+  assert.match(release, /Flavor = "mirror"/, "the v0.5.0 legs use the SQLite mirror flavor");
+  assert.match(release, /PreservationFlavor \$leg\.Flavor/);
+  assert.doesNotMatch(release, /-PreviousTag "v0\.4\.0"/, "the baseline flows through the explicit matrix entries");
 });
 
 test("GH-06 lifecycle evidence survives every terminal outcome", async () => {
@@ -2056,9 +2114,12 @@ test("S-26: no workflow carries a literal release version and gates stay fail-fa
   // Audit S-26 I2 replaced the resolve-job literal; the publish ship guard
   // must bind the RESOLVED tag the same way - a `== 'v0.5.0'`-style equality
   // silently skips publication for every later version.
+  // Baseline tag names in the qualification matrix are data, not
+  // comparisons, so the check targets comparison positions (the original
+  // defect was a `== 'v0.5.0'`-style equality in a guard).
   assert.doesNotMatch(
     release,
-    /'v\d+\.\d+\.\d+'|"v\d+\.\d+\.\d+"/,
+    /(==|!=|-eq|-ne|equals\()\s*['"]v\d+\.\d+\.\d+['"]/,
     "release.yml must not compare against a literal version",
   );
 });

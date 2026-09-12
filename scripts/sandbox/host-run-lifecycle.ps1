@@ -15,7 +15,13 @@ param(
   # Each simulated failure must leave a bounded structured outcome with its
   # stage and, where known, the candidate identity.
   [ValidateSet("none", "timeout", "malformed-result", "missing-assets", "stall", "preservation-missing")]
-  [string]$FaultSimulation = "none"
+  [string]$FaultSimulation = "none",
+  # R07 (follow-up review db548c8): which REAL baseline persistence the
+  # preservation step plants and verifies. `mirror` = the v0.5.0+ SQLite
+  # catalog mirror with a user override row; `cache` = the v0.4.1-era catalog
+  # cache record (that version predates the mirror).
+  [ValidateSet("mirror", "cache")]
+  [string]$PreservationFlavor = "mirror"
 )
 $ErrorActionPreference = "Stop"
 
@@ -211,6 +217,7 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
   $b64 = (Get-Content (Join-Path $fixtureDir "canary-mirror.sqlite.b64") -Raw).Trim()
   [IO.File]::WriteAllBytes((Join-Path $Shared "canary-mirror.sqlite"), [Convert]::FromBase64String($b64))
   Copy-Item (Join-Path $fixtureDir "canary-userdata.txt") (Join-Path $Shared "canary-userdata.txt") -Force
+  Copy-Item (Join-Path $fixtureDir "canary-catalog-cache.json") (Join-Path $Shared "canary-catalog-cache.json") -Force
   Set-Content -Path (Join-Path $Shared "preserve.json") -Value '{"version":1}' -Encoding UTF8
 
   $stage = "prepare-sandbox"
@@ -226,6 +233,7 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
     currentSetup = $currentSetup
     currentMsi = $currentMsi
     previousSetup = $previousSetup
+    preservation = $PreservationFlavor
   } | ConvertTo-Json
   Set-Content -Path (Join-Path $Shared "meta.json") -Value $meta -Encoding UTF8
 
@@ -303,12 +311,18 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
       $stage = "preservation-verification"
       $collectedMirror = Join-Path $Shared "collected-mirror.sqlite"
       $collectedUserdata = Join-Path $Shared "collected-userdata.txt"
+      $collectedCache = Join-Path $Shared "collected-catalog-cache.json"
       $preservationStatus = "missing-files"
       $preservationOutput = "collected files absent; the preservation step did not run"
-      if ((Test-Path $collectedMirror) -and (Test-Path $collectedUserdata)) {
+      $preservationPresent = if ($PreservationFlavor -eq "mirror") {
+        (Test-Path $collectedMirror) -and (Test-Path $collectedUserdata)
+      } else {
+        (Test-Path $collectedCache) -and (Test-Path $collectedUserdata)
+      }
+      if ($preservationPresent) {
         $py = Get-Command python -ErrorAction SilentlyContinue
         if ($py) {
-          $verifyOut = & $py.Source (Join-Path $PWD "scripts\sandbox\verify_preservation.py") $collectedMirror $collectedUserdata 2>&1
+          $verifyOut = & $py.Source (Join-Path $PWD "scripts\sandbox\verify_preservation.py") $collectedMirror $collectedUserdata $collectedCache "--flavor" $PreservationFlavor 2>&1
           $verifyCode = $LASTEXITCODE
           $preservationOutput = ($verifyOut | Out-String).Trim()
           if ($verifyCode -eq 0) { $preservationStatus = "PASS" } else { $preservationStatus = "FAIL" }
@@ -316,8 +330,15 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
           $preservationStatus = "UNVERIFIED"
           $preservationOutput = "python unavailable on this host; verifier not run"
         }
-        Copy-Item $collectedMirror (Join-Path $OutDir "$EvidenceName-collected-mirror.sqlite") -Force
-        Copy-Item $collectedUserdata (Join-Path $OutDir "$EvidenceName-collected-userdata.txt") -Force
+        if (Test-Path $collectedMirror) {
+          Copy-Item $collectedMirror (Join-Path $OutDir "$EvidenceName-collected-mirror.sqlite") -Force
+        }
+        if (Test-Path $collectedCache) {
+          Copy-Item $collectedCache (Join-Path $OutDir "$EvidenceName-collected-catalog-cache.json") -Force
+        }
+        if (Test-Path $collectedUserdata) {
+          Copy-Item $collectedUserdata (Join-Path $OutDir "$EvidenceName-collected-userdata.txt") -Force
+        }
         $preservationOutput | Set-Content (Join-Path $OutDir "$EvidenceName-verify.log") -Encoding UTF8
       }
       $doc = Get-Content $resultPath -Raw | ConvertFrom-Json

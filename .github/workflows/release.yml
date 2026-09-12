@@ -403,9 +403,10 @@ jobs:
     runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]
     timeout-minutes: 120
     env:
-      # Explicit supported upgrade baseline matrix: update this variable
-      # when a new baseline is supported (audit GH-04 I4).
-      UPGRADE_BASELINE: v0.4.0
+      # Explicit supported qualification matrix (audit GH-04 I4 / G-06.I2;
+      # R07 follow-up review): every supported baseline runs the update path
+      # AND its preservation step with the baseline's real persistence flavor
+      # (v0.4.x predates the SQLite mirror, so it uses the cache-record leg).
     steps:
       - name: Pin LF line endings before checkout
         shell: bash
@@ -429,13 +430,22 @@ jobs:
           name: localmotive-${{ needs.quality.outputs.version }}-verified
           path: artifacts
 
-      - name: Run clean-account lifecycle in Sandbox from the candidate bytes
+      - name: Run the clean-account lifecycle matrix from the candidate bytes
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           LOCALMOTIVE_SOURCE_REVISION: ${{ needs.resolve.outputs.sha }}
         run: |
-          & ".\scripts\sandbox\host-run-lifecycle.ps1" -Tag "${{ needs.resolve.outputs.tag }}" -Version "${{ needs.quality.outputs.version }}" -PreviousTag "$env:UPGRADE_BASELINE" -CandidateDir "artifacts"
+          $matrix = @(
+            @{ Name = "sandbox-clean-account-lifecycle-upgrade-v0.4.0";      Previous = "v0.4.0"; Flavor = "cache" },
+            @{ Name = "sandbox-clean-account-lifecycle-upgrade-v0.5.0";      Previous = "v0.5.0"; Flavor = "mirror" },
+            @{ Name = "sandbox-clean-account-lifecycle-preservation-v0.4.1"; Previous = "v0.4.1"; Flavor = "cache" },
+            @{ Name = "sandbox-clean-account-lifecycle-preservation-v0.5.0"; Previous = "v0.5.0"; Flavor = "mirror" }
+          )
+          foreach ($leg in $matrix) {
+            Write-Host "=== $($leg.Name): baseline $($leg.Previous), persistence $($leg.Flavor) ==="
+            & ".\scripts\sandbox\host-run-lifecycle.ps1" -Tag "${{ needs.resolve.outputs.tag }}" -Version "${{ needs.quality.outputs.version }}" -PreviousTag $leg.Previous -CandidateDir "artifacts" -EvidenceName $leg.Name -PreservationFlavor $leg.Flavor
+          }
 
       - name: Lifecycle evidence summary
         if: always()
@@ -443,16 +453,23 @@ jobs:
         env:
           VERSION: ${{ needs.quality.outputs.version }}
         run: |
-          $evidence = "release-evidence/$($env:VERSION)/attestations/sandbox-clean-account-lifecycle.json"
-          $status = if (Test-Path $evidence) { (Get-Content $evidence -Raw | ConvertFrom-Json).status } else { "MISSING" }
-          @"
-          ## Clean-account lifecycle (Windows Sandbox)
-
-          - Candididate installers: consumed from the package job through -CandidateDir (no prepublication wait)
-          - Upgrade baseline: ``$env:UPGRADE_BASELINE``
-          - Scenario status: **$status** (non-gating policy; publication does not claim this result)
-          - Evidence file: ``$evidence``
-          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8
+          $legs = @(
+            "sandbox-clean-account-lifecycle-upgrade-v0.4.0",
+            "sandbox-clean-account-lifecycle-upgrade-v0.5.0",
+            "sandbox-clean-account-lifecycle-preservation-v0.4.1",
+            "sandbox-clean-account-lifecycle-preservation-v0.5.0"
+          )
+          $lines = @("## Clean-account lifecycle (Windows Sandbox)", "")
+          $lines += "- Candidate installers: consumed from the package job through -CandidateDir (no prepublication wait)"
+          $lines += "- Qualification matrix: every supported baseline above runs its update path and its preservation step with the baseline's real persistence flavor (R07/G-06.I2)."
+          $lines += "- Policy: publication depends on this job; a failing leg fails the release (no pass-with-note)."
+          foreach ($name in $legs) {
+            $evidence = "release-evidence/$($env:VERSION)/attestations/$name.json"
+            $status = if (Test-Path $evidence) { (Get-Content $evidence -Raw | ConvertFrom-Json).status } else { "MISSING" }
+            $preservation = if (Test-Path $evidence) { (Get-Content $evidence -Raw | ConvertFrom-Json).preservation.status } else { "MISSING" }
+            $lines += "- ``$name``: scenario **$status** (preservation: $preservation)"
+          }
+          $lines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8
 
       - name: Upload lifecycle evidence
         if: always()

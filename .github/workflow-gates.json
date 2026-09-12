@@ -98,7 +98,7 @@
           "(cd artifacts && sha256sum -c \"SHA256SUMS-${VERSION}.txt\")"
         ],
         "clean-account-lifecycle": [
-          "& \".\\scripts\\sandbox\\host-run-lifecycle.ps1\" -Tag \"${{ needs.resolve.outputs.tag }}\" -Version \"${{ needs.quality.outputs.version }}\" -PreviousTag \"$env:UPGRADE_BASELINE\" -CandidateDir \"artifacts\""
+          "& \".\\scripts\\sandbox\\host-run-lifecycle.ps1\" -Tag \"${{ needs.resolve.outputs.tag }}\" -Version \"${{ needs.quality.outputs.version }}\" -PreviousTag $leg.Previous -CandidateDir \"artifacts\" -EvidenceName $leg.Name -PreservationFlavor $leg.Flavor"
         ]
       },
       "publicationJobs": {
