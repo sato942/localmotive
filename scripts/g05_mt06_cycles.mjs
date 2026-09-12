@@ -48,6 +48,27 @@ const lastNotice = () =>
     return lines.length ? lines[lines.length - 1].slice(0, 240) : null;
   })()`);
 
+// Only one screen is mounted at a time; the Start/Stop controls live on the
+// Profile screen, so navigate there before using them (with refuted clicks
+// retried while the child is still alive).
+const stopServer = async () => {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    // The stop control lives on the Control screen ("Stop server" /
+    // "Cancel start"); the Profile screen only carries Start.
+    await clickExact("Control");
+    await settle(1200);
+    const stopped = await clickExact("Stop server");
+    if (!stopped) await clickExact("Cancel start");
+    let zero = false;
+    for (let wait = 0; wait < 12 && !zero; wait += 1) {
+      await settle(1000);
+      zero = llamaProcs() === 0;
+    }
+    if (zero) return true;
+  }
+  return llamaProcs() === 0;
+};
+
 const llamaProcs = () => {
   try {
     const out = execSync('tasklist /FI "IMAGENAME eq llama-server.exe" /FO CSV /NH', { encoding: "utf8" });
@@ -80,10 +101,10 @@ const metricsField = (name) =>
         });
       },
     );
-    request.on("error", () => resolvePromise(null));
+    request.on("error", (error) => resolvePromise(`ERR:${error.code ?? error.message}`));
     request.on("timeout", () => {
       request.destroy();
-      resolvePromise(null);
+      resolvePromise("ERR:timeout");
     });
     request.end();
   });
@@ -132,6 +153,8 @@ await settle(4000);
 // --- Cycles ----------------------------------------------------------------
 const results = [];
 for (let cycle = 1; cycle <= CYCLES; cycle += 1) {
+  await clickExact("Benchmark");
+  await settle(1200);
   const started = await clickExact("Run v2 benchmark");
   let inFlight = false;
   for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -149,17 +172,18 @@ for (let cycle = 1; cycle <= CYCLES; cycle += 1) {
     await settle(1000);
     notice = await lastNotice();
     const cancelState = await buttonState("Cancel");
-    if (cancelState === "absent" || /cancelled|No benchmark is running/i.test(notice ?? "")) {
+    const panelFinished = await evaluate(`/Benchmark finished|No benchmark is running/i.test(document.body.innerText || "")`);
+    if (cancelState !== "enabled" || panelFinished) {
       settled = true;
     }
     if (Date.now() - cancelAt > 150000) break;
   }
   // Resource measurements after the run ends.
-  let processing = await metricsField("requests_processing");
+  let processing = await metricsField("llamacpp:requests_processing");
   let drained = processing === "0";
   for (let attempt = 0; attempt < 20 && !drained; attempt += 1) {
     await settle(1000);
-    processing = await metricsField("requests_processing");
+    processing = await metricsField("llamacpp:requests_processing");
     drained = processing === "0";
   }
   const procs = llamaProcs();
@@ -173,16 +197,13 @@ for (let cycle = 1; cycle <= CYCLES; cycle += 1) {
   check(`mt06.cycle-${cycle}-children-bounded`, procs === 1, `children=${procs}`);
 
   if (cycle % 2 === 0) {
-    await clickExact("Stop server");
-    let zero = false;
-    for (let attempt = 0; attempt < 30 && !zero; attempt += 1) {
-      await settle(1000);
-      zero = llamaProcs() === 0;
-    }
+    const zero = await stopServer();
     check(`mt06.cycle-${cycle}-stop-clears-children`, zero, `children=${llamaProcs()}`);
     check(`mt06.cycle-${cycle}-listener-released`, !(await listenerAlive()));
     await settle(1500);
-    await clickExact("Start");
+    await clickExact("Control");
+    await settle(800);
+    await clickExact("Start profile");
     let back = false;
     for (let attempt = 0; attempt < 60 && !back; attempt += 1) {
       await settle(1500);
@@ -193,12 +214,7 @@ for (let cycle = 1; cycle <= CYCLES; cycle += 1) {
 }
 
 // --- Final teardown ---------------------------------------------------------
-await clickExact("Stop server");
-let finalZero = false;
-for (let attempt = 0; attempt < 30 && !finalZero; attempt += 1) {
-  await settle(1000);
-  finalZero = llamaProcs() === 0;
-}
+const finalZero = await stopServer();
 check("mt06.final-stop-clears-children", finalZero, `children=${llamaProcs()}`);
 check("mt06.final-listener-released", !(await listenerAlive()));
 check("mt06.worker-requests-never-orphaned", results.every((entry) => entry.processing === "0"));

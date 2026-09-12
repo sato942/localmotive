@@ -154,6 +154,33 @@ The FE-16/FE-05 closure work changed shipped frontend code, and the re-bind prob
 
 Everything below is prepared and intentionally NOT executed. No tag, no release, no repository setting changes without the owner's explicit go.
 
+### 1a. Bootstrap and branch/PR sequence (rewritten 2026-09-12)
+
+`origin/main` is still `e530371`; the 0.6.0 work exists only as local commits, so no remote workflow can run yet. One coherent bootstrap, in order, honoring the standing rules (self-hosted runner for trusted pushes; GitHub-hosted runs only with explicit approval; tag/publish owner-gated). Step 1 needs no new permission; steps 3-5 need repository-settings and one GitHub-hosted run; step 6 is the release boundary.
+
+1. Push main (agent; authorized after a green default-parallel soak) and watch the trusted CI:
+```bash
+git push origin main
+gh run watch $(gh run list --workflow=CI --branch main --limit 1 --json databaseId --jq '.[0].databaseId')
+```
+2. Verify the PR check exists (GH-01.V1; consumes one GitHub-hosted `windows-latest` run - explicit approval needed):
+```bash
+git checkout -b verify/pr-check
+git commit --allow-empty -m "chore: verify the PR check"
+git push -u origin verify/pr-check
+gh pr create --title "Verify pr-check" --body "GH-01.V1 bootstrap proof."
+```
+   Record the `pr-check` run URL and the stable check name on the PR.
+3. Enable enforcement (GH-01.I3; owner, repository settings) with the two payloads in section 1 below, then read back:
+```bash
+gh api repos/sato942/localmotive/rulesets --jq '.[] | {id, name, target, enforcement}'
+```
+4. Prove a failing check blocks integration (GH-01.V2): on the same branch, commit a deliberately failing test; the PR must show `pr-check` red and the merge blocked. Revert the failing test and confirm `pr-check` green again.
+5. Integrate through the protected path (GH-01.V3): merge the PR, confirm the check ran on the merge commit, and read back the ruleset's bypass actors.
+6. Release (owner): section 2 below - the tag push publishes only after the retained candidate inventory is validated and the lifecycle verdict PASSes; the promoted bytes are the ones the package job built and verified.
+
+Genuinely missing permissions (everything else is authorized): repository-ruleset write, one GitHub-hosted PR run, and the tag/publish decision.
+
 ### 1. Repository rulesets (owner action; currently absent - `gh api repos/sato942/localmotive/rulesets` returns none, `branches/main.protected` is false)
 
 ```bash
@@ -191,6 +218,7 @@ gh api repos/sato942/localmotive/rulesets --jq '.[] | {id, name, target, enforce
 
 | id | status | note |
 | --- | --- | --- |
+| V06-G-08.V1 | held | Reopened 2026-09-12 per owner directive: the reconciliation is maintained in the tracker's third-pass record (open boxes categorised, High rows listed, deferrals not treated as passes) but closes only with the release decision. |
 | V06-G-09.I2 | owner | Inventory/checksum/provenance binding happens against the published assets after the authorized tag push; the pre-push binding exists at `3a2b06e` with digests in `SHA256SUMS-0.6.0.txt` and the candidate inventory JSON. |
 | V06-G-09.I3 | owner | Readback completes only after the authorized release run; the exact commands are in section 2 below. |
 | V06-G-09.V1 | owner | Negative controls: wrong candidate bytes exercised (doctored v0.5.0 bytes refused, `sandbox-negative-wrong-candidate.json`), missing assets/malformed/timeout exercised via the witness legs, absent lifecycle evidence is now a hard publication gate in `release.yml` (third-pass correction). The moved-tag and modified-bytes controls remain for the real path. |

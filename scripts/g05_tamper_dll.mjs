@@ -53,8 +53,22 @@ const procsZero = async (seconds) => {
 
 // Precondition 1: no server may be running (mt01d and friends sometimes leave
 // one up; a live server turns the start click into a "stop first" refusal).
-if (llamaProcs() > 0) await clickStop();
-const stoppedBeforeTamper = await procsZero(30);
+if (llamaProcs() > 0) {
+  // Only one screen is mounted at a time; the stop control lives on the
+  // Control screen ("Stop server" / "Cancel start").
+  await client.evaluate(`(() => { const b = [...document.querySelectorAll("button")].find(x => (x.textContent ?? "").trim() === "Control"); if (b) b.dispatchEvent(new MouseEvent("click", { bubbles: true })); return Boolean(b); })()`);
+  await settle(1500);
+  await clickStop();
+}
+let stoppedBeforeTamper = await procsZero(12);
+if (!stoppedBeforeTamper) {
+  // The stop click can land while the view is mid-update; retry it while the
+  // child is still alive before declaring the precondition failed.
+  for (let attempt = 0; attempt < 3 && !stoppedBeforeTamper; attempt += 1) {
+    await clickStop();
+    stoppedBeforeTamper = await procsZero(12);
+  }
+}
 console.log(`PRECONDITION_NO_SERVER ${stoppedBeforeTamper} procs=${llamaProcs()}`);
 if (!stoppedBeforeTamper) {
   console.log("G05_TAMPER_FINAL FAIL (a server survived the stop attempt)");

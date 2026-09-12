@@ -69,9 +69,9 @@ verification boxes are checked with recorded evidence.
   reconciliation; no finding is called closed without its rows.
 
 Test suites grew from the baseline recorded at the audited start (`e530371`,
-2026-09-11: `cargo test` 403 passed / 0 failed / 2 ignored; node gates 80/80 -
-that 80 is the node-suite count of that day, not a Vitest figure) to, at the
-current freeze `3a2b06e`:
+2026-09-11: `cargo test` 403 passed / 0 failed / 2 ignored; **Vitest 52** -
+`src/model.test.ts` carried 52 cases; **Node release-gate suite 80**) to, at
+the current freeze `3a2b06e`:
 
 - **Rust: 595 passed / 0 failed / 7 ignored** (`cargo test`, `.hermes-0.6/dc04-cargo-gates.log`),
   with `cargo fmt --check` clean and `clippy --all-targets -- -D warnings`
