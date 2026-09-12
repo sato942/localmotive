@@ -1,8 +1,8 @@
 {
   "schema": "localmotive.qualification-manifest.v1",
   "release": "0.6.0",
-  "generatedAt": "2026-09-12T17:56:29.876532+00:00",
-  "repositoryHeadAtGeneration": "581043bc84e31ccc4194fdaa337741f6868cf78b",
+  "generatedAt": "2026-09-12T17:58:50.913580+00:00",
+  "repositoryHeadAtGeneration": "bca8d4be41972c57fe752df52599d80c039678af",
   "sourceRevision": "85edee63d060c43d05df3770d168a81b7421d6df",
   "artifacts": [
     {
@@ -135,6 +135,11 @@
       "status": "FAIL",
       "sourceRevision": "7c32fa90b9dd04057ba3c089392b0642f3b0545c",
       "harnessRevision": "eb84e184c3841ec11d14873b9701df19bb1c0e67"
+    },
+    "a11y_packaged_verification": {
+      "path": "release-evidence\\0.6.0\\attestations\\g05-a11y-packaged-verification.log",
+      "exists": true,
+      "sha256": "5b5f23d12d5042be8969d481f93fd257468c3660350f589eb4a208edd5464fd2"
     }
   },
   "supersededRecords": [

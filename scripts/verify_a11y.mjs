@@ -1,9 +1,13 @@
-// G-05 packaged accessibility probe (keyboard traversal + reduced motion).
+// G-05 packaged accessibility probe (keyboard traversal, reduced motion,
+// high-DPI/zoom, forced-colors high contrast).
 //
 // Runs against the packaged binary over CDP: Tab traversal must reach real
-// controls with a visible focus indicator, and the app must honor
-// prefers-reduced-motion. Screen-reader passes are out of scope here and are
-// recorded separately as NOT RUN.
+// controls with a visible focus indicator, the app must honor
+// prefers-reduced-motion, a 2x DPI / 150% zoom layout must stay overflow-free
+// with operable controls, and forced-colors (high contrast) must keep every
+// control reachable with words rather than colour alone. Screen-reader passes
+// (Narrator/NVDA) and live-credential scenarios remain out of scope here and
+// are recorded separately as NOT RUN.
 import { spawn } from "node:child_process";
 import { attach } from "./lib/cdp_client.mjs";
 
@@ -87,6 +91,92 @@ try {
   if (!reduced.matches) failures.push("reduced-motion emulation did not apply");
   if (!reduced.hasRule) failures.push("no prefers-reduced-motion rule found in the stylesheets");
   console.log(`reduced-motion: emulated ${reduced.matches}, stylesheet rule ${reduced.hasRule}`);
+  await client.send("Emulation.setEmulatedMedia", { features: [] });
+
+  // 3) High-DPI / zoom: a 2x DPI 150% zoom layout must not overflow
+  // horizontally and every rendered button must keep a usable rectangle.
+  await client.send("Emulation.setDeviceMetricsOverride", {
+    width: 1280,
+    height: 800,
+    deviceScaleFactor: 2,
+    mobile: false,
+  });
+  await client.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1.5 });
+  await sleep(400);
+  const zoomed = await client.evaluate(`(() => {
+    const doc = document.documentElement;
+    const buttons = [...document.querySelectorAll("button")].filter((b) => b.offsetParent !== null);
+    const unusable = buttons.filter((b) => {
+      const r = b.getBoundingClientRect();
+      return r.width < 8 || r.height < 8;
+    });
+    return {
+      dpr: window.devicePixelRatio,
+      scrollWidth: doc.scrollWidth,
+      innerWidth: window.innerWidth,
+      visibleButtons: buttons.length,
+      unusable: unusable.length,
+    };
+  })()`);
+  if (zoomed.dpr < 2) failures.push(`deviceScaleFactor 2 did not apply (dpr=${zoomed.dpr})`);
+  if (zoomed.scrollWidth > zoomed.innerWidth + 8) {
+    failures.push(`zoomed layout overflows horizontally (${zoomed.scrollWidth} > ${zoomed.innerWidth})`);
+  }
+  if (zoomed.visibleButtons === 0 || zoomed.unusable > 0) {
+    failures.push(`zoomed layout left ${zoomed.unusable} unusable button(s) of ${zoomed.visibleButtons}`);
+  }
+  console.log(
+    `zoom: dpr ${zoomed.dpr}, scrollWidth ${zoomed.scrollWidth} <= innerWidth ${zoomed.innerWidth}, ` +
+      `${zoomed.visibleButtons} visible buttons, ${zoomed.unusable} unusable`,
+  );
+  await client.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1 });
+  await client.send("Emulation.clearDeviceMetricsOverride");
+
+  // 4) Forced colors (high contrast): emulation must apply and the design
+  // rule "colour is never the only channel" must hold - every control keeps
+  // words, and state tags are not colour-only.
+  // Navigate to a screen that carries runtime state tags so the word-bearing
+  // check is not vacuous.
+  await client.evaluate(`(() => {
+    const control = [...document.querySelectorAll("button")].find(
+      (b) => (b.textContent || "").trim() === "Control",
+    );
+    if (control) control.click();
+    return Boolean(control);
+  })()`);
+  await sleep(800);
+  await client.send("Emulation.setEmulatedMedia", {
+    features: [{ name: "forced-colors", value: "active" }],
+  });
+  await sleep(300);
+  const forced = await client.evaluate(`(() => {
+    const controls = [...document.querySelectorAll("button")];
+    const wordless = controls.filter((b) => {
+      const text = (b.textContent || "").trim();
+      const label = (b.getAttribute("aria-label") || "").trim();
+      return text.length === 0 && label.length === 0;
+    });
+    const tagish = [...document.querySelectorAll("[class*='state'], [class*='tag'], [class*='badge'], [class*='pill']")];
+    const wordlessTags = tagish.filter((el) => (el.textContent || "").trim().length === 0);
+    return {
+      matches: matchMedia("(forced-colors: active)").matches,
+      controls: controls.length,
+      wordless: wordless.length,
+      tags: tagish.length,
+      wordlessTags: wordlessTags.length,
+    };
+  })()`);
+  if (!forced.matches) failures.push("forced-colors emulation did not apply");
+  if (forced.wordless > 0) {
+    failures.push(`${forced.wordless} control(s) carry no words under forced colors`);
+  }
+  if (forced.wordlessTags > 0) {
+    failures.push(`${forced.wordlessTags} state tag(s) rely on colour alone under forced colors`);
+  }
+  console.log(
+    `forced-colors: emulated ${forced.matches}, ${forced.controls} controls (${forced.wordless} wordless), ` +
+      `${forced.tags} tags (${forced.wordlessTags} wordless)`,
+  );
   await client.send("Emulation.setEmulatedMedia", { features: [] });
 
   if (failures.length > 0) {
