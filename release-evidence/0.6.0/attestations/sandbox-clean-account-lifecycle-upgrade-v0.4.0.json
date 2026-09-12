@@ -1,14 +1,14 @@
 ﻿{
-    "msiPayloadDigest":  "b50685abc3ffe6ab8d3af21303a833652ccf179902bc6c8c1f154af2e31a54c8",
-    "nsisPayloadDigest":  "341134dd826967d30f84eb760dde76568e8f3206d4c27b1f74b716c85e9bab2d",
+    "msiPayloadDigest":  "be0a1e7b6c075532d921e8e10d6483c295e327ad84cab853308ef4fbf0c80405",
+    "nsisPayloadDigest":  "c000e6315cea8591025c715ed9a1e07bc3dd632523fe4570d28245a36e41db0c",
     "version":  "0.6.0",
-    "finishedAtUtc":  "2026-09-12T18:56:24.4511168Z",
+    "finishedAtUtc":  "2026-09-12T20:41:52.6799065Z",
     "installedDigests":  {
-                             "Preservation upgrade":  "341134dd826967d30f84eb760dde76568e8f3206d4c27b1f74b716c85e9bab2d",
-                             "Post-update install":  "341134dd826967d30f84eb760dde76568e8f3206d4c27b1f74b716c85e9bab2d",
+                             "Preservation upgrade":  "c000e6315cea8591025c715ed9a1e07bc3dd632523fe4570d28245a36e41db0c",
+                             "Post-update install":  "c000e6315cea8591025c715ed9a1e07bc3dd632523fe4570d28245a36e41db0c",
                              "Pre-update install":  "af9f01ac31730798b584efd1aee8f8854e97cc894573106c6935acb0461ebb93",
-                             "MSI fresh install":  "b50685abc3ffe6ab8d3af21303a833652ccf179902bc6c8c1f154af2e31a54c8",
-                             "NSIS fresh install":  "341134dd826967d30f84eb760dde76568e8f3206d4c27b1f74b716c85e9bab2d"
+                             "MSI fresh install":  "be0a1e7b6c075532d921e8e10d6483c295e327ad84cab853308ef4fbf0c80405",
+                             "NSIS fresh install":  "c000e6315cea8591025c715ed9a1e07bc3dd632523fe4570d28245a36e41db0c"
                          },
     "steps":  [
                   {
@@ -43,11 +43,11 @@
                          "status":  "PASS",
                          "output":  "PRESERVE_PASS cache: record present and parseable (schemaVersion 1)\r\nPRESERVE_PASS userdata: canary content intact"
                      },
-    "sourceRevision":  "cb8ab64753d96b61fa43665d2cf1dd6b4ee7928c",
-    "harnessRevision":  "41b3feb37577d87ce246475623be0714dcda0b74",
+    "sourceRevision":  "da091a47ca6595ec37690ab5ae63542671c5f7f6",
+    "harnessRevision":  "da091a47ca6595ec37690ab5ae63542671c5f7f6",
     "candidateDigests":  {
-                             "currentSetup":  "4ad8822e13422e1ac54029738adbc1f667fde49d8738483a4aed7ee2cea8bbef",
-                             "currentMsi":  "09d4dc0758715ec072338e3d5c6b66dd4ce973eb2a87253e508e932f8546389e"
+                             "currentSetup":  "fd33cb127af91d72d4041ed762753e8298ebe9000e8714948672efc49d85f693",
+                             "currentMsi":  "c16799792600157013cf7f91a8f1d4f270ec1ef6b078c0e96dda358a9cb9c11b"
                          },
-    "candidateInventorySha256":  "af51cbadda5cd980b6388aed7b5edf495201d5dfef7a5aac1c9887269152ca74"
+    "candidateInventorySha256":  "c03f6074e6d8cf875e3e0212e06f8eb024ada65e63566e1c0d238a2a0aa90206"
 }
