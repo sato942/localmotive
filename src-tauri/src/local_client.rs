@@ -264,9 +264,30 @@ impl LocalHttpClient {
     }
 
     /// Test-only view of the abandoned-worker bound (MT-06 extension).
-    #[cfg(test)]
+    /// How many cancellable workers of this client have not exited yet
+    /// (R04, follow-up review). A cancelled call abandons its worker; the
+    /// worker exits by itself at the whole-operation deadline, and this count
+    /// is the ownership bound the run drains before releasing its slot.
     pub(crate) fn active_cancellable_workers(&self) -> usize {
         self.inner.active_workers.load(Ordering::Relaxed)
+    }
+
+    /// Waits until every cancellable worker of this client has exited, or
+    /// until the ceiling elapses. Returns true when the client is drained.
+    /// The wait is a poll on the worker count; a worker never outlives its
+    /// own request deadline, so the caller passes a ceiling above that
+    /// deadline and treats expiry as unresolved ownership (R04).
+    pub(crate) fn wait_for_worker_drain(&self, ceiling: Duration) -> bool {
+        let started = std::time::Instant::now();
+        loop {
+            if self.active_cancellable_workers() == 0 {
+                return true;
+            }
+            if started.elapsed() >= ceiling {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
     }
 
     /// The request URL, with IPv6 hosts bracketed.
@@ -1249,6 +1270,54 @@ ab1VTmVlluUDakDfjhwCcnE=
             }
         });
         port
+    }
+
+    #[test]
+    fn r04_worker_drain_waits_for_the_abandoned_slow_request_to_exit() {
+        // R04 (follow-up review db548c8): after a cancellation the abandoned
+        // worker keeps its slow request alive until its own deadline, and the
+        // run must not report its ownership resolved before that worker
+        // exits - otherwise replacement work can overlap the slow request.
+        let fixture = serve_slow_body(Duration::from_millis(1200), 12);
+        let client = LocalHttpClient::plain("127.0.0.1", fixture.port).unwrap();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&cancelled);
+        let caller_client = client.clone();
+        let call = thread::spawn(move || {
+            caller_client.post_json_cancellable(
+                "/completion",
+                &serde_json::json!({"prompt": [1]}),
+                Duration::from_secs(30),
+                &flag,
+            )
+        });
+        assert!(
+            settle_until(
+                || client.active_cancellable_workers() > 0,
+                Duration::from_secs(5)
+            ),
+            "the worker must be counted while its request runs"
+        );
+        cancelled.store(true, Ordering::Relaxed);
+        assert!(
+            call.join().unwrap().is_err(),
+            "the cancelled call reports the cancellation"
+        );
+        assert!(
+            client.active_cancellable_workers() > 0,
+            "right after the cancel the slow worker is still in flight"
+        );
+        let started = std::time::Instant::now();
+        assert!(
+            client.wait_for_worker_drain(Duration::from_secs(10)),
+            "the worker exits by itself at its deadline"
+        );
+        let waited = started.elapsed();
+        assert!(
+            waited >= Duration::from_millis(600),
+            "the drain waited for the slow worker to exit, not just observed zero ({waited:?})"
+        );
+        assert_eq!(client.active_cancellable_workers(), 0);
     }
 
     #[test]

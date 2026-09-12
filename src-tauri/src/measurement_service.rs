@@ -10,6 +10,12 @@ use crate::{
     runtime, AppState, OperationOwner,
 };
 use crate::{spawn_server, wait_until_healthy_cancellable};
+
+/// Upper bound on waiting for abandoned cancellable workers to exit before a
+/// benchmark record finalizes (R04). Every worker self-exits at its request
+/// deadline, which is far below this ceiling; the ceiling exists so a stuck
+/// worker can never hold the operations slot forever.
+const WORKER_DRAIN_CEILING: std::time::Duration = std::time::Duration::from_secs(300);
 use serde::Serialize;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -317,16 +323,18 @@ pub(crate) fn run_benchmark_snapshot(
             .collect(),
     };
     launch_fact.validate().map_err(|error| error.to_string())?;
+    // R04 (follow-up review db548c8): the whole run shares one client so
+    // every cancellable worker of this benchmark is observable on it; the
+    // run drains those workers before it returns.
+    let client = local_client(&profile)?;
     let prompt_tokens = match (workload.cache_mode, prepared_prompt_tokens) {
         (evidence::CacheMode::Cold, None) => {
             return Err("Cold-cache benchmarking requires prepared prompt tokens".into());
         }
         (_, Some(prompt_tokens)) => prompt_tokens,
-        (evidence::CacheMode::Warm, None) => measurement::prepare_exact_prompt_tokens_cancellable(
-            &local_client(&profile)?,
-            &workload,
-            cancelled,
-        )?,
+        (evidence::CacheMode::Warm, None) => {
+            measurement::prepare_exact_prompt_tokens_cancellable(&client, &workload, cancelled)?
+        }
     };
     let workload_run = if workload.cache_mode == evidence::CacheMode::Cold {
         measurement::run_cold_workload_with(&workload, cancelled, || {
@@ -339,14 +347,14 @@ pub(crate) fn run_benchmark_snapshot(
                 spawn_server(&profile, "benchmark-cold")?;
             let attempt = wait_until_healthy_cancellable(
                 &mut child,
-                &local_client(&profile)?,
+                &client,
                 &log_path,
                 Duration::from_secs(120),
                 cancelled,
             )
             .and_then(|_| {
                 let mut timing = measurement::completion_request_with_prompt_tokens_cancellable(
-                    &local_client(&profile)?,
+                    &client,
                     &workload,
                     &prompt_tokens,
                     cancelled,
@@ -369,7 +377,7 @@ pub(crate) fn run_benchmark_snapshot(
     } else {
         measurement::run_workload_with(&workload, cancelled, || {
             let mut timing = measurement::completion_request_with_prompt_tokens_cancellable(
-                &local_client(&profile)?,
+                &client,
                 &workload,
                 &prompt_tokens,
                 cancelled,
@@ -378,6 +386,17 @@ pub(crate) fn run_benchmark_snapshot(
             Ok(timing)
         })?
     };
+    // R04: a cancelled attempt abandons its worker, which exits on its own
+    // at the operation deadline (at most this client's request ceiling). The
+    // run must not release its ownership - and the app must not accept
+    // replacement work - until every such worker has exited. On ceiling
+    // expiry the record is discarded rather than finalized under unknown
+    // ownership.
+    if !client.wait_for_worker_drain(WORKER_DRAIN_CEILING) {
+        return Err(
+            "Cancelled benchmark cleanup exceeded its bound; the record was discarded.".into(),
+        );
+    }
     let mut manifest = evidence::BenchmarkManifest {
         schema: evidence::BENCHMARK_SCHEMA_VERSION,
         harness_version,

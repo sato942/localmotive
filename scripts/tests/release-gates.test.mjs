@@ -2017,6 +2017,35 @@ test("MT-06 extension pins worker ownership and duplicate-free cancellation", as
   assert.match(source, /active_cancellable_workers/);
 });
 
+test("R04: the benchmark run owns its cancelled workers until they exit", async () => {
+  const service = await readFile(join(process.cwd(), "src-tauri", "src", "measurement_service.rs"), "utf8");
+  const client = await readFile(join(process.cwd(), "src-tauri", "src", "local_client.rs"), "utf8");
+  // One client per run: every cancellable worker of the benchmark is
+  // observable on the instance the run drains.
+  const constructions = service.match(/let client = local_client\(&profile\)\?;/g) ?? [];
+  assert.equal(constructions.length, 1, "the run constructs exactly one client");
+  assert.ok(
+    !/&local_client\(&profile\)\?,/.test(service),
+    "request sites reuse the run's client instead of constructing a new one",
+  );
+  // The drain happens before the manifest finalizes, and only a drained
+  // client may return a record.
+  const drainIndex = service.indexOf("client.wait_for_worker_drain(WORKER_DRAIN_CEILING)");
+  const manifestIndex = service.indexOf("let mut manifest = evidence::BenchmarkManifest {");
+  assert.ok(drainIndex > 0, "the run drains its workers");
+  assert.ok(manifestIndex > drainIndex, "the drain happens before the record finalizes");
+  assert.match(service, /WORKER_DRAIN_CEILING: std::time::Duration = std::time::Duration::from_secs\(300\)/);
+  // The ownership accessor and the drain are production code, not test-only.
+  const cfgTest = client.split("#[cfg(test)]");
+  assert.match(client, /pub\(crate\) fn wait_for_worker_drain\(&self, ceiling: Duration\) -> bool/);
+  assert.ok(
+    !cfgTest.some((part) => part.slice(0, 200).includes("fn active_cancellable_workers")),
+    "the worker counter is not gated to tests",
+  );
+  // The R04 regression proves the drain waits for the slow worker.
+  assert.match(client, /r04_worker_drain_waits_for_the_abandoned_slow_request_to_exit/);
+});
+
 test("the stalled-fetch deadline stays injectable and bounded in tests (CI cancellation fix)", async () => {
   const retry = await readFile(join(process.cwd(), "scripts", "lib", "http_retry.mjs"), "utf8");
   assert.match(retry, /deadlineMs = REQUEST_TIMEOUT_MS/, "the deadline must stay injectable");
