@@ -211,18 +211,26 @@ await settle(4000);
 // --- Cycles ----------------------------------------------------------------
 for (let cycle = 1; cycle <= CYCLES; cycle += 1) {
   const cycleStart = Date.now();
+  const tokensBefore = await metricsField("llamacpp:tokens_predicted_total");
   await clickExact("Benchmark");
   await settle(1200);
   const started = await clickExact("Run v2 benchmark");
   let inFlight = false;
   let accepted = false;
-  for (let attempt = 0; attempt < 60 && !accepted; attempt += 1) {
+  for (let attempt = 0; attempt < 90 && !accepted; attempt += 1) {
     await settle(1000);
     const processing = await metricsField("llamacpp:requests_processing");
-    if (processing === "1") {
+    const tokensNow = await metricsField("llamacpp:tokens_predicted_total");
+    // R11: cancel only AFTER the server reports the request in flight AND
+    // has actually generated tokens for it. A pre-trial cancellation
+    // (prompt preparation) aborts before the manifest exists by design and
+    // would make the persisted-record check meaningless.
+    const generatedTokens =
+      Number.isFinite(Number(tokensNow)) && Number.isFinite(Number(tokensBefore))
+        ? Number(tokensNow) - Number(tokensBefore)
+        : 0;
+    if (processing === "1" && generatedTokens >= 1) {
       inFlight = (await buttonState("Cancel")) === "enabled";
-      // R11: cancel only AFTER the server reports the request in flight, so
-      // "cancel mid-request" is measured, not assumed from button state.
       accepted = inFlight;
     }
   }
