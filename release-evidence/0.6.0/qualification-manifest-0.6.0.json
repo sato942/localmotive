@@ -1,74 +1,84 @@
 {
   "schema": "localmotive.qualification-manifest.v1",
   "release": "0.6.0",
-  "generatedAt": "2026-09-12T17:58:50.913580+00:00",
-  "repositoryHeadAtGeneration": "bca8d4be41972c57fe752df52599d80c039678af",
-  "sourceRevision": "85edee63d060c43d05df3770d168a81b7421d6df",
+  "generatedAt": "2026-09-12T20:15:26.118748+00:00",
+  "repositoryHeadAtGeneration": "ef0d57efaed34eb55902fdf17c851204ce6d087e",
+  "sourceRevision": "cb8ab64753d96b61fa43665d2cf1dd6b4ee7928c",
+  "workflowFile": {
+    "path": ".github/workflows/release.yml",
+    "sha256": "28835eaddcddc28dfa8791d5a440ee0f573ebecb4df2a6c40071faf635ed9f4a"
+  },
   "artifacts": [
     {
       "name": "Localmotive_0.6.0_x64-portable.exe",
       "sizeBytes": 21019136,
-      "sha256": "095b153663aaef71f91a0dc7f67c5ac119c523b81521b00c82d67d32cb5f02ed"
+      "sha256": "9cf0f695c46fd276ff1c0e7c600e7cba99d82dc2b665c6b2e9fce335472e04e3"
     },
     {
       "name": "Localmotive_0.6.0_x64-setup.exe",
-      "sizeBytes": 5316366,
-      "sha256": "533b669c3cde3dfdea14865105ff3212b2390d8a7b2527ec6f8af85689ae933c"
+      "sizeBytes": 5315847,
+      "sha256": "4ad8822e13422e1ac54029738adbc1f667fde49d8738483a4aed7ee2cea8bbef"
     },
     {
       "name": "Localmotive_0.6.0_x64.msi",
       "sizeBytes": 9080832,
-      "sha256": "9dac49aa3e66c15fb592ccd613885b5088a4838e0b4328b301dfa46e39d899bc"
+      "sha256": "09d4dc0758715ec072338e3d5c6b66dd4ce973eb2a87253e508e932f8546389e"
     }
   ],
   "records": {
     "packaged_verification": {
       "path": "release-evidence\\0.6.0\\attestations\\packaged-verification-0.6.0.json",
       "exists": true,
-      "sha256": "fd7cdd4c5f757b9e12c0f48f1a8eedd46e0466127be6d01357b05d4bc2df8dc9",
+      "sha256": "c81660fb9df522615aa59ba8426d2fd6efc4a06b7b0ff11bde8fd928a5ad8696",
+      "sha256_lf": "c81660fb9df522615aa59ba8426d2fd6efc4a06b7b0ff11bde8fd928a5ad8696",
       "overall_status": "PASS",
       "checks": "25/25"
     },
     "lifecycle_upgrade_v0.4.0": {
       "path": "release-evidence\\0.6.0\\attestations\\sandbox-clean-account-lifecycle-upgrade-v0.4.0.json",
       "exists": true,
-      "sha256": "da9d013c41a974835f98e7d1c541f8543797a3a3a7a6f18ea987c72192c7631c",
+      "sha256": "c7b6a5b646c8cf34da61ae65db3757680940be49e4022b0bb77afa5b90095f2b",
+      "sha256_lf": "0453c3595a9cad603a5b87636a98e494f32e94d3a9f6179aa0f33b0a36c2d759",
       "status": "PASS",
       "stage": "preservation-verification",
-      "sourceRevision": "85edee63d060c43d05df3770d168a81b7421d6df",
-      "harnessRevision": "bc11417b2a4be540ab255d9dd6913579d3d334a8"
+      "sourceRevision": "cb8ab64753d96b61fa43665d2cf1dd6b4ee7928c",
+      "harnessRevision": "41b3feb37577d87ce246475623be0714dcda0b74"
     },
     "lifecycle_upgrade_v0.5.0": {
       "path": "release-evidence\\0.6.0\\attestations\\sandbox-clean-account-lifecycle-upgrade-v0.5.0.json",
       "exists": true,
-      "sha256": "0e6cbd9e96ccad7433f441d2740284a78461ef01c5c988a2eb6bba4e43378d72",
+      "sha256": "b6944791440a9045d769cdc83eabf661983ed907d1c4fcc9e2c0d57955e380e7",
+      "sha256_lf": "8835773274047812f49646f249c3128284349061eb27263302e3fac3cc17ebbd",
       "status": "PASS",
       "stage": "preservation-verification",
-      "sourceRevision": "85edee63d060c43d05df3770d168a81b7421d6df",
-      "harnessRevision": "eb84e184c3841ec11d14873b9701df19bb1c0e67"
+      "sourceRevision": "cb8ab64753d96b61fa43665d2cf1dd6b4ee7928c",
+      "harnessRevision": "41b3feb37577d87ce246475623be0714dcda0b74"
     },
     "lifecycle_preservation_v0.4.1": {
       "path": "release-evidence\\0.6.0\\attestations\\sandbox-clean-account-lifecycle-preservation-v0.4.1.json",
       "exists": true,
-      "sha256": "8c1011b12bbd7472778c7a1ebee06c25ef05213655b3721134cbf3dc98899644",
+      "sha256": "ff329e21ac1050856bb984ed9d5fe14087d6a7a285aef6e8899b9d9c79d17c56",
+      "sha256_lf": "e1845e7b3385a030fa9ee8606225baa20f2b20d3b2f079ed8e8d8cf106374e65",
       "status": "PASS",
       "stage": "preservation-verification",
-      "sourceRevision": "85edee63d060c43d05df3770d168a81b7421d6df",
-      "harnessRevision": "eb84e184c3841ec11d14873b9701df19bb1c0e67"
+      "sourceRevision": "cb8ab64753d96b61fa43665d2cf1dd6b4ee7928c",
+      "harnessRevision": "41b3feb37577d87ce246475623be0714dcda0b74"
     },
     "lifecycle_preservation_v0.5.0": {
       "path": "release-evidence\\0.6.0\\attestations\\sandbox-clean-account-lifecycle-preservation-v0.5.0.json",
       "exists": true,
-      "sha256": "a8035f384b23deb8b52bf8b60a09b40a29c786878300e4e3a2622175375fe965",
+      "sha256": "a7f1bed96aa66245ae029fa7d28d355080e5f61ac69a4bcb6e647c4893a38024",
+      "sha256_lf": "07fa54f2c436a0c159df956d22fbb2e8b1e109551476084f475f28a64e468bf5",
       "status": "PASS",
       "stage": "preservation-verification",
-      "sourceRevision": "85edee63d060c43d05df3770d168a81b7421d6df",
-      "harnessRevision": "eb84e184c3841ec11d14873b9701df19bb1c0e67"
+      "sourceRevision": "cb8ab64753d96b61fa43665d2cf1dd6b4ee7928c",
+      "harnessRevision": "41b3feb37577d87ce246475623be0714dcda0b74"
     },
     "witness_missing_assets": {
       "path": "release-evidence\\0.6.0\\attestations\\witness-missing-assets.json",
       "exists": true,
       "sha256": "c0fb023ac1ca0194935357ce1d094942c0e174de4c1e29324e57321673c4acf9",
+      "sha256_lf": "1e0fc2cb1b25e61f5420a6cba85a8ddee866dea636ac9f7977e099b92171812c",
       "status": "FAIL",
       "stage": "resolve-installers",
       "sourceRevision": null,
@@ -78,6 +88,7 @@
       "path": "release-evidence\\0.6.0\\attestations\\witness-timeout.json",
       "exists": true,
       "sha256": "d8516348da7a27b5e6663f98eaed23f370c45e762ba7d0f4f74d960d035549ad",
+      "sha256_lf": "7f53364e178eb336f7f7ae8abbbc2747c850e7a433baac9013b39f1c1178c904",
       "status": "TIMEOUT",
       "stage": "sandbox-timeout",
       "sourceRevision": "85edee63d060c43d05df3770d168a81b7421d6df",
@@ -87,6 +98,7 @@
       "path": "release-evidence\\0.6.0\\attestations\\witness-malformed-result.json",
       "exists": true,
       "sha256": "9ae500fcad5eb23ef0812da43d98ea1dc25ebb15a68492f68c85eff1ae9d83ea",
+      "sha256_lf": "b99c46e7b54091de9cb9e42771555461449e949b77a9bb0bf24e88e15e82aa59",
       "status": "FAIL",
       "stage": "sandbox-run",
       "sourceRevision": "85edee63d060c43d05df3770d168a81b7421d6df",
@@ -96,6 +108,7 @@
       "path": "release-evidence\\0.6.0\\attestations\\witness-preservation-missing.json",
       "exists": true,
       "sha256": "454588f2e76b9c53ae2ce0090491b41f823abefac091fe56bf6dc9417b9894ed",
+      "sha256_lf": "149ee5729abfa2467c0d5fc2be23f9a44c5df472051b7687bc58227c69156a67",
       "status": "FAIL",
       "stage": "preservation-verification",
       "sourceRevision": "85edee63d060c43d05df3770d168a81b7421d6df",
@@ -105,46 +118,80 @@
       "path": "release-evidence\\0.6.0\\attestations\\witness-stale-lock.json",
       "exists": true,
       "sha256": "a93891414056bc55022aa9ac2bc12dd8d69425b2ac618107e661d6b00ee4eea0",
+      "sha256_lf": "6178fa5949b2f169d2195e8876f399cf30f620d878e16d30c40e1ec626d125b6",
       "status": "FAIL",
       "stage": "resolve-installers",
       "sourceRevision": "85edee63d060c43d05df3770d168a81b7421d6df",
       "harnessRevision": "581043bc84e31ccc4194fdaa337741f6868cf78b"
     },
     "mt06_cancellation": {
-      "path": ".hermes-0.6\\mt06-cycles-result.json",
+      "path": "release-evidence\\0.6.0\\attestations\\mt06-cycles-result.json",
       "exists": true,
-      "sha256": "bf61efc8f2c62746f22e7623ab8248c464c08f11614382fe764628fd4cf82d4c",
-      "sourceRevision": "0618c9f63a27b60648af2467caaa2dc362ccc6f4",
+      "sha256": "8b3c368991cb578b78cc82e3393c00aa6685d472a6eb890d63213a7f4c3c5fc4",
+      "sha256_lf": "8b3c368991cb578b78cc82e3393c00aa6685d472a6eb890d63213a7f4c3c5fc4",
+      "sourceRevision": "41b3feb37577d87ce246475623be0714dcda0b74",
       "summary": "33/33 checks PASS",
       "checks": "33/33"
     },
     "dc04_command_path": {
       "path": "release-evidence\\0.6.0\\attestations\\dc04-v2-command-path-verification.log",
       "exists": true,
-      "sha256": "0f0c1e9f090def3104d79aa81874bbe873588de71771d7a3fc0294013e32623c"
+      "sha256": "8fe69e9e28ff81b330873c2c537b0a1463131377e8087ebc14a8d6b437ce4f51",
+      "sha256_lf": "8fe69e9e28ff81b330873c2c537b0a1463131377e8087ebc14a8d6b437ce4f51"
     },
     "rt04_delayed_download": {
       "path": "release-evidence\\0.6.0\\attestations\\rt04v2-delayed-download-verification.log",
       "exists": true,
-      "sha256": "140c005f89b75244c53f15609f4cc78272766bbd434e28f8223bb325173da254"
+      "sha256": "140c005f89b75244c53f15609f4cc78272766bbd434e28f8223bb325173da254",
+      "sha256_lf": "140c005f89b75244c53f15609f4cc78272766bbd434e28f8223bb325173da254"
     },
     "negative_control_refusal": {
       "path": "release-evidence\\0.6.0\\attestations\\sandbox-clean-account-lifecycle-negative.json",
       "exists": true,
       "sha256": "2c0807f2efeba8d46f616f49669d94f997f7d6fbfd67ae995e9c289e167549bd",
+      "sha256_lf": "a29c992d4253c2b23eb0cfc32a514dbca4015a5d256e0bc52216b24a528e76c4",
       "status": "FAIL",
       "sourceRevision": "7c32fa90b9dd04057ba3c089392b0642f3b0545c",
       "harnessRevision": "eb84e184c3841ec11d14873b9701df19bb1c0e67"
     },
+    "negative_control_refusal_freeze7": {
+      "path": "release-evidence\\0.6.0\\attestations\\sandbox-clean-account-lifecycle-negative-freeze7.json",
+      "exists": true,
+      "sha256": "08ef21d02150ea7a429fab76012f96075a45dae287df830827fdfaf2f727295f",
+      "sha256_lf": "4ed1f246c69b796a3ccd0f52551aa04a3cfb750acec9bbbf2eca11d409e256f8",
+      "status": "FAIL",
+      "stage": "resolve-installers",
+      "sourceRevision": "cb8ab64753d96b61fa43665d2cf1dd6b4ee7928c",
+      "harnessRevision": "ef0d57efaed34eb55902fdf17c851204ce6d087e"
+    },
     "a11y_packaged_verification": {
       "path": "release-evidence\\0.6.0\\attestations\\g05-a11y-packaged-verification.log",
       "exists": true,
-      "sha256": "5b5f23d12d5042be8969d481f93fd257468c3660350f589eb4a208edd5464fd2"
+      "sha256": "f6dc99a439ff9d2bd6a3d295d28197dfe8eabbf71233a669eb6e68e24b3bd86a",
+      "sha256_lf": "f6dc99a439ff9d2bd6a3d295d28197dfe8eabbf71233a669eb6e68e24b3bd86a"
+    },
+    "rt06_all_backends": {
+      "path": "release-evidence\\0.6.0\\attestations\\rt06-all-backends.json",
+      "exists": true,
+      "sha256": "8fc977e2de265778efc551041ac46ab8bfae1b698c0c1f5523622a6b19ff40b3",
+      "sha256_lf": "8fc977e2de265778efc551041ac46ab8bfae1b698c0c1f5523622a6b19ff40b3",
+      "summary": {
+        "total": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "checks": "12/12"
+    },
+    "rt06_full_run_log": {
+      "path": "release-evidence\\0.6.0\\attestations\\rt06-full-run.log",
+      "exists": true,
+      "sha256": "1cfa0992610be4c462a4268cd3f5763d34fd3aec1eade042690eedfd1ad603a6",
+      "sha256_lf": "1cfa0992610be4c462a4268cd3f5763d34fd3aec1eade042690eedfd1ad603a6"
     }
   },
   "supersededRecords": [
     {
-      "description": "Qualification records produced at earlier candidate revisions (3a2b06e / 7c32fa9 / 57bde64) remain in history under their original bindings; they are NOT evidence for this candidate and are referenced only as history.",
+      "description": "Qualification records produced at earlier candidate revisions (3a2b06e / 7c32fa9 / 57bde64 / the 85edee6 freeze-6 set, re-cut at cb8ab64 after the proc.rs load-aware fixture fix) remain in history under their original bindings; they are NOT evidence for this candidate and are referenced only as history.",
       "note": "Never rewritten."
     }
   ]

@@ -2504,3 +2504,28 @@ test("lifecycle harness refuses to race evidence for one scenario", async () => 
   assert.match(witnesses, /witness-live-lock/, "the live-lock refusal witness must exist");
   assert.match(witnesses, /witness-stale-lock/, "the stale-lock takeover witness must exist");
 });
+
+// Fresh-checkout validation (2026-09-12): the qualification manifest must
+// validate from a clean checkout - every referenced record committed, no
+// scratch-state references (the pre-fix manifest pointed mt06_cancellation at
+// a gitignored .hermes-0.6 path, which cannot validate in a clone).
+test("the qualification manifest validates and references only committed records", async () => {
+  const { verifyQualificationManifest } = await import("../verify_qualification_manifest.mjs");
+  const manifestPath = "release-evidence/0.6.0/qualification-manifest-0.6.0.json";
+  const { failures } = verifyQualificationManifest({ manifestPath });
+  assert.deepEqual(failures, [], failures.join("; "));
+  const manifest = JSON.parse(await readFile(join(process.cwd(), manifestPath), "utf8"));
+  for (const [name, entry] of Object.entries(manifest.records)) {
+    assert.ok(
+      !/(^|[\/])\.hermes-0\.6([\/]|$)/.test(entry.path),
+      `${name} must reference a committed record, not scratch state: ${entry.path}`,
+    );
+    assert.ok(
+      entry.sha256_lf,
+      `${name} must carry an EOL-normalized digest so a fresh checkout validates on any platform`,
+    );
+  }
+  assert.equal(manifest.artifacts.length, 3, "the manifest binds exactly the three staged artifacts");
+  assert.match(manifest.sourceRevision, /^[0-9a-f]{40}$/);
+  assert.ok(manifest.workflowFile?.sha256, "the release workflow revision is recorded separately");
+});
