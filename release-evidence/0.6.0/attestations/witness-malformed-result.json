@@ -7,9 +7,9 @@
     "version":  "0.6.0",
     "previousTag":  "v0.4.1",
     "sourceRevision":  "7c32fa90b9dd04057ba3c089392b0642f3b0545c",
-    "harnessRevision":  "822c068c52fe6cc212c7f742d317341d3042ef49",
-    "startedAtUtc":  "2026-09-12T15:53:59.4379719Z",
-    "finishedAtUtc":  "2026-09-12T15:54:01.8323815Z",
+    "harnessRevision":  "1030484a52d9417dbb496d2db10ceb7186730db9",
+    "startedAtUtc":  "2026-09-12T15:55:30.1670006Z",
+    "finishedAtUtc":  "2026-09-12T15:55:32.5533313Z",
     "candidateDigests":  {
                              "currentSetup":  "e405cd1e7b8cc3f2dca82dbd768d19f0c0dd55ff62891864b7e9a2c7fbea2887",
                              "currentMsi":  "c18eecc23ed121b4cfbe8f3b125b0b4e13ee46a99fcee722adc252c4b9641899"
