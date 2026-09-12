@@ -1998,6 +1998,19 @@ test("publish promotes the verified bytes only after every material gate (G-06/G
   assert.equal(result.ok, true, result.failures.join("\n"));
 });
 
+test("DC-04.V2 the download seam is loopback-only and verifier-gated", async () => {
+  const source = await readFile(join(process.cwd(), "src-tauri", "src", "download.rs"), "utf8");
+  // The packaged verifier points catalog downloads at a local fixture to run
+  // the correct/incorrect-checksum legs against controlled bytes. The seam
+  // must stay gated on the verifier profile and restricted to plain-HTTP
+  // loopback so an authenticated download can never be redirected remotely.
+  assert.match(source, /LOCALMOTIVE_VERIFY_ISOLATED_ROOT/);
+  assert.match(source, /LOCALMOTIVE_HF_BASE/);
+  assert.match(source, /http:\/\/127\.0\.0\.1:/);
+  assert.match(source, /http:\/\/localhost:/);
+  assert.match(source, /resolve_url_honors_the_loopback_fixture_inside_the_verifier_profile/);
+});
+
 test("S-26: the hardware probe runs only in its explicit qualification job", async () => {
   const hw = await readFile(
     join(process.cwd(), ".github", "workflows", "hardware-qualify.yml"),

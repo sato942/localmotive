@@ -260,16 +260,57 @@ pub fn eta_seconds(downloaded: u64, total: u64, bytes_per_second: u64) -> Option
 
 /// The canonical download URL for a catalog entry.
 pub fn resolve_url(repo: &str, filename: &str, revision: &str) -> String {
+    resolve_url_with(|name| std::env::var(name).ok(), repo, filename, revision)
+}
+
+/// Verification-profile seam (audit DC-04.V2): inside
+/// `LOCALMOTIVE_VERIFY_ISOLATED_ROOT` the packaged verifier may point catalog
+/// downloads at a loopback fixture so the authority and checksum legs run
+/// against controlled bytes. Outside that profile - or for any value that is
+/// not plain-HTTP loopback - the canonical host wins, so the seam can never
+/// redirect an authenticated download at a remote host.
+fn resolve_download_base(lookup: impl Fn(&str) -> Option<String>) -> String {
+    const CANONICAL: &str = "https://huggingface.co";
+    if lookup("LOCALMOTIVE_VERIFY_ISOLATED_ROOT").is_none() {
+        return CANONICAL.to_string();
+    }
+    let Some(candidate) = lookup("LOCALMOTIVE_HF_BASE") else {
+        return CANONICAL.to_string();
+    };
+    if !(candidate.starts_with("http://127.0.0.1:") || candidate.starts_with("http://localhost:")) {
+        return CANONICAL.to_string();
+    }
+    match reqwest::Url::parse(&candidate) {
+        Ok(parsed)
+            if parsed.scheme() == "http"
+                && matches!(parsed.host_str(), Some("127.0.0.1") | Some("localhost")) =>
+        {
+            candidate
+        }
+        _ => CANONICAL.to_string(),
+    }
+}
+
+/// The canonical download URL for a catalog entry, with the verification
+/// seam resolved through an injectable lookup so tests never touch the
+/// process environment.
+pub fn resolve_url_with(
+    lookup: impl Fn(&str) -> Option<String>,
+    repo: &str,
+    filename: &str,
+    revision: &str,
+) -> String {
     let revision = if revision.is_empty() {
         "main"
     } else {
         revision
     };
-    let mut url = reqwest::Url::parse("https://huggingface.co").expect("static HF URL is valid");
+    let base = resolve_download_base(lookup);
+    let mut url = reqwest::Url::parse(&base).expect("the download base URL is valid");
     {
         let mut path = url
             .path_segments_mut()
-            .expect("HTTPS URL accepts path segments");
+            .expect("the download base URL accepts path segments");
         path.clear();
         for segment in repo
             .split('/')
@@ -2604,6 +2645,56 @@ mod tests {
         assert!(
             resolve_url("a/b", "m.gguf", "").contains("/resolve/main/"),
             "an empty revision falls back to main"
+        );
+    }
+
+    #[test]
+    fn resolve_url_stays_canonical_outside_the_verifier_profile() {
+        // The DC-04.V2 seam applies only inside LOCALMOTIVE_VERIFY_ISOLATED_ROOT:
+        // an HF base alone changes nothing, and inside the profile only plain
+        // HTTP loopback values are honored - anything else falls back to the
+        // canonical host instead of redirecting an authenticated download.
+        let base_only = |name: &str| match name {
+            "LOCALMOTIVE_HF_BASE" => Some("http://127.0.0.1:8123".to_string()),
+            _ => None,
+        };
+        assert_eq!(
+            resolve_url_with(base_only, "local/Handmade-GGUF", "mine-Q4_K_M.gguf", "main"),
+            "https://huggingface.co/local/Handmade-GGUF/resolve/main/mine-Q4_K_M.gguf?download=true"
+        );
+        let remote = |name: &str| match name {
+            "LOCALMOTIVE_VERIFY_ISOLATED_ROOT" => Some("C:/tmp/verify".to_string()),
+            "LOCALMOTIVE_HF_BASE" => Some("https://evil.example".to_string()),
+            _ => None,
+        };
+        assert!(resolve_url_with(remote, "a/b", "m.gguf", "main")
+            .starts_with("https://huggingface.co/"));
+        let https_loopback = |name: &str| match name {
+            "LOCALMOTIVE_VERIFY_ISOLATED_ROOT" => Some("C:/tmp/verify".to_string()),
+            "LOCALMOTIVE_HF_BASE" => Some("https://127.0.0.1:8123".to_string()),
+            _ => None,
+        };
+        assert!(resolve_url_with(https_loopback, "a/b", "m.gguf", "main")
+            .starts_with("https://huggingface.co/"));
+        let malformed = |name: &str| match name {
+            "LOCALMOTIVE_VERIFY_ISOLATED_ROOT" => Some("C:/tmp/verify".to_string()),
+            "LOCALMOTIVE_HF_BASE" => Some("http://127.0.0.1:not-a-port".to_string()),
+            _ => None,
+        };
+        assert!(resolve_url_with(malformed, "a/b", "m.gguf", "main")
+            .starts_with("https://huggingface.co/"));
+    }
+
+    #[test]
+    fn resolve_url_honors_the_loopback_fixture_inside_the_verifier_profile() {
+        let lookup = |name: &str| match name {
+            "LOCALMOTIVE_VERIFY_ISOLATED_ROOT" => Some("C:/tmp/verify".to_string()),
+            "LOCALMOTIVE_HF_BASE" => Some("http://127.0.0.1:8123".to_string()),
+            _ => None,
+        };
+        assert_eq!(
+            resolve_url_with(lookup, "local/Handmade-GGUF", "mine-Q4_K_M.gguf", "main"),
+            "http://127.0.0.1:8123/local/Handmade-GGUF/resolve/main/mine-Q4_K_M.gguf?download=true"
         );
     }
 
