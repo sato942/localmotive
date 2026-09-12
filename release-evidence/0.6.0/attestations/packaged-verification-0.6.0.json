@@ -1,12 +1,12 @@
 {
   "schema_version": "1.0.0",
   "verifier": "scripts/verify_041.mjs",
-  "source_revision": "c64e031c8242161f213ff01b9b72f0ecb0de349d",
+  "source_revision": "daa4ce6b942c23c3f1a454c6ee9bcd94344d176f",
   "source_dirty": false,
   "artifact": {
     "name": "Localmotive_0.6.0_x64-portable.exe",
-    "size_bytes": 20995072,
-    "sha256": "fbbd2a1ab8c6c2698a85ef8535146b316c5944da2362192a7aafa2399b217b4b"
+    "size_bytes": 21019136,
+    "sha256": "095b153663aaef71f91a0dc7f67c5ac119c523b81521b00c82d67d32cb5f02ed"
   },
   "host_class": {
     "platform": "win32",
@@ -23,8 +23,8 @@
       }
     ]
   },
-  "started_at": "2026-09-12T01:18:27.900Z",
-  "finished_at": "2026-09-12T01:18:48.305Z",
+  "started_at": "2026-09-12T16:29:47.330Z",
+  "finished_at": "2026-09-12T16:30:18.516Z",
   "checks": [
     {
       "id": "candidate.artifact",
@@ -32,8 +32,8 @@
       "status": "PASS",
       "evidence": {
         "name": "Localmotive_0.6.0_x64-portable.exe",
-        "size_bytes": 20995072,
-        "sha256": "fbbd2a1ab8c6c2698a85ef8535146b316c5944da2362192a7aafa2399b217b4b"
+        "size_bytes": 21019136,
+        "sha256": "095b153663aaef71f91a0dc7f67c5ac119c523b81521b00c82d67d32cb5f02ed"
       },
       "reason": ""
     },
@@ -42,7 +42,7 @@
       "criterion": "The source revision is a full Git commit and matches the requested revision.",
       "status": "PASS",
       "evidence": {
-        "source_revision": "c64e031c8242161f213ff01b9b72f0ecb0de349d"
+        "source_revision": "daa4ce6b942c23c3f1a454c6ee9bcd94344d176f"
       },
       "reason": ""
     },
@@ -61,7 +61,7 @@
       "status": "PASS",
       "evidence": {
         "title": "Localmotive",
-        "port": 10086
+        "port": 10096
       },
       "reason": ""
     },
@@ -84,7 +84,7 @@
         "architecture": "x64",
         "adapter_count": 1,
         "catalog_result": "ready",
-        "managed_runtime_count": 0
+        "managed_runtime_count": 4
       },
       "reason": ""
     },
@@ -120,96 +120,16 @@
       "evidence": {
         "tag": "b10816",
         "option_count": 7,
-        "origin": "network"
+        "origin": "cache"
       },
       "reason": ""
     },
     {
       "id": "ui.runtime-cards",
       "criterion": "Every rendered runtime card keeps one scope element, frontend-owned fields empty, and the static upstream-evidence limits.",
-      "status": "PASS",
-      "evidence": {
-        "cards": [
-          {
-            "label": "CPU",
-            "roleCount": 2,
-            "scopeCount": 1,
-            "level": "",
-            "os": "",
-            "text": "DIRECT RUNTIME · UPSTREAM EVIDENCE ONLY · x64 · cpu · b10816 · exact product configuration untested",
-            "architecture": "x64",
-            "backend": "cpu",
-            "revision": "b10816"
-          },
-          {
-            "label": "NVIDIA CUDA 12.4",
-            "roleCount": 2,
-            "scopeCount": 1,
-            "level": "",
-            "os": "",
-            "text": "DIRECT RUNTIME · UPSTREAM EVIDENCE ONLY · x64 · cuda · b10816 · exact product configuration untested",
-            "architecture": "x64",
-            "backend": "cuda",
-            "revision": "b10816"
-          },
-          {
-            "label": "NVIDIA CUDA 13.3",
-            "roleCount": 2,
-            "scopeCount": 1,
-            "level": "",
-            "os": "",
-            "text": "DIRECT RUNTIME · UPSTREAM EVIDENCE ONLY · x64 · cuda · b10816 · exact product configuration untested",
-            "architecture": "x64",
-            "backend": "cuda",
-            "revision": "b10816"
-          },
-          {
-            "label": "Intel OpenVINO",
-            "roleCount": 2,
-            "scopeCount": 1,
-            "level": "",
-            "os": "",
-            "text": "DIRECT RUNTIME · UPSTREAM EVIDENCE ONLY · x64 · openvino · b10816 · exact product configuration untested",
-            "architecture": "x64",
-            "backend": "openvino",
-            "revision": "b10816"
-          },
-          {
-            "label": "AMD ROCm",
-            "roleCount": 2,
-            "scopeCount": 1,
-            "level": "",
-            "os": "",
-            "text": "DIRECT RUNTIME · UPSTREAM EVIDENCE ONLY · x64 · rocm · b10816 · exact product configuration untested",
-            "architecture": "x64",
-            "backend": "rocm",
-            "revision": "b10816"
-          },
-          {
-            "label": "Intel SYCL",
-            "roleCount": 2,
-            "scopeCount": 1,
-            "level": "",
-            "os": "",
-            "text": "DIRECT RUNTIME · UPSTREAM EVIDENCE ONLY · x64 · sycl · b10816 · exact product configuration untested",
-            "architecture": "x64",
-            "backend": "sycl",
-            "revision": "b10816"
-          },
-          {
-            "label": "Vulkan",
-            "roleCount": 2,
-            "scopeCount": 1,
-            "level": "",
-            "os": "",
-            "text": "DIRECT RUNTIME · UPSTREAM EVIDENCE ONLY · x64 · vulkan · b10816 · exact product configuration untested",
-            "architecture": "x64",
-            "backend": "vulkan",
-            "revision": "b10816"
-          }
-        ]
-      },
-      "reason": ""
+      "status": "FAIL",
+      "evidence": {},
+      "reason": "The real runtime catalog did not render any card"
     },
     {
       "id": "ui.blocked-backend",
@@ -308,150 +228,52 @@
     {
       "id": "tamper.isolated-root",
       "criterion": "Destructive tamper verification uses only the configured isolated application-data root.",
-      "status": "PASS",
-      "evidence": {
-        "isolated": true
-      },
-      "reason": ""
-    },
-    {
-      "id": "tamper.install-approved",
-      "criterion": "The packaged backend installs the compiled CPU runtime into the isolated root.",
-      "status": "PASS",
-      "evidence": {
-        "tag": "b10816",
-        "backend": "cpu",
-        "runtime_name": "llama-server.exe",
-        "reused": false,
-        "sha256": "907a7ac7fdef3b315bf8d85ade354a004698115d8fc50039872cdcccf061d4ca"
-      },
-      "reason": ""
+      "status": "FAIL",
+      "evidence": {},
+      "reason": "Set LOCALMOTIVE_VERIFY_ISOLATED_ROOT before launching the candidate"
     },
     {
       "id": "tamper.write",
       "criterion": "The verifier changes one byte in the isolated managed runtime before the trust check.",
-      "status": "PASS",
-      "evidence": {
-        "byte_offset": 4608,
-        "original_sha256": "907a7ac7fdef3b315bf8d85ade354a004698115d8fc50039872cdcccf061d4ca",
-        "tampered_sha256": "1b692ab2aa999c964647c8155023af48eb2ccd5e149c2cce6f03270e8944bb6e"
-      },
-      "reason": ""
+      "status": "FAIL",
+      "evidence": {},
+      "reason": "The approved isolated runtime was not available"
     },
     {
       "id": "tamper.health-rejection",
       "criterion": "Managed health rejects the changed runtime before model download or process execution.",
-      "status": "PASS",
-      "evidence": {
-        "passed": false,
-        "stage_count": 7,
-        "first_stage": "device_enumeration",
-        "first_status": "FAIL",
-        "first_failure_reason": "trust_failure"
-      },
-      "reason": ""
+      "status": "FAIL",
+      "evidence": {},
+      "reason": "The isolated tamper operation did not complete"
     },
     {
       "id": "tamper.reinstall-repair",
       "criterion": "A second approved installation detects and repairs the changed runtime instead of reusing it.",
-      "status": "PASS",
-      "evidence": {
-        "reused": false,
-        "repaired_sha256": "907a7ac7fdef3b315bf8d85ade354a004698115d8fc50039872cdcccf061d4ca"
-      },
-      "reason": ""
+      "status": "FAIL",
+      "evidence": {},
+      "reason": "The isolated tamper operation did not complete"
     },
     {
       "id": "health.seven-stage-pass",
       "criterion": "The repaired packaged runtime completes the exact seven-stage health contract.",
-      "status": "PASS",
-      "evidence": {
-        "model_sha256": "e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5",
-        "stages": [
-          {
-            "stage": "device_enumeration",
-            "status": "PASS"
-          },
-          {
-            "stage": "backend_operations",
-            "status": "PASS"
-          },
-          {
-            "stage": "pinned_model_load",
-            "status": "PASS"
-          },
-          {
-            "stage": "loopback_server_health",
-            "status": "PASS"
-          },
-          {
-            "stage": "deterministic_completion",
-            "status": "PASS"
-          },
-          {
-            "stage": "cancellation",
-            "status": "PASS"
-          },
-          {
-            "stage": "process_and_temporary_file_cleanup",
-            "status": "PASS"
-          }
-        ],
-        "completion_sha256": "832772f75900584e6fa29dce22525212535502b96fc827edfa4537bb9e1bbdc9"
-      },
-      "reason": ""
+      "status": "FAIL",
+      "evidence": {},
+      "reason": "The isolated tamper operation did not complete"
     },
     {
       "id": "health.cancellation",
       "criterion": "External cancellation stops an active packaged health run and returns its bounded contract.",
-      "status": "PASS",
-      "evidence": {
-        "outcome": "completed-before-cancel",
-        "passed": true,
-        "stage_count": 7
-      },
-      "reason": ""
+      "status": "FAIL",
+      "evidence": {},
+      "reason": "The isolated tamper operation did not complete"
     },
     {
       "id": "health.restart",
       "criterion": "A packaged health run succeeds after cancellation cleanup.",
-      "status": "PASS",
-      "evidence": {
-        "model_sha256": "e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5",
-        "stages": [
-          {
-            "stage": "device_enumeration",
-            "status": "PASS"
-          },
-          {
-            "stage": "backend_operations",
-            "status": "PASS"
-          },
-          {
-            "stage": "pinned_model_load",
-            "status": "PASS"
-          },
-          {
-            "stage": "loopback_server_health",
-            "status": "PASS"
-          },
-          {
-            "stage": "deterministic_completion",
-            "status": "PASS"
-          },
-          {
-            "stage": "cancellation",
-            "status": "PASS"
-          },
-          {
-            "stage": "process_and_temporary_file_cleanup",
-            "status": "PASS"
-          }
-        ],
-        "completion_sha256": "832772f75900584e6fa29dce22525212535502b96fc827edfa4537bb9e1bbdc9"
-      },
-      "reason": ""
+      "status": "FAIL",
+      "evidence": {},
+      "reason": "The isolated tamper operation did not complete"
     }
   ],
-  "overall_status": "PASS"
+  "overall_status": "FAIL"
 }

@@ -252,7 +252,13 @@ for (let cycle = 1; cycle <= CYCLES; cycle += 1) {
     if (Date.now() - drainStart > DRAIN_BOUND_MS) break;
   }
   const drainMs = Date.now() - drainStart;
-  const record = newestBenchmarkRecord(cycleStart);
+  // The manifest is persisted at the very end of the run; the odd cycles can
+  // reach this check before the write lands, so poll briefly for it.
+  let record = newestBenchmarkRecord(cycleStart);
+  for (let attempt = 0; attempt < 30 && !record; attempt += 1) {
+    await settle(500);
+    record = newestBenchmarkRecord(cycleStart);
+  }
   let children = null;
   let childError = null;
   try {
