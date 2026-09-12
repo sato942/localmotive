@@ -1,8 +1,9 @@
 # Localmotive 0.6.0 remediation report
 
-**Snapshot:** 2026-09-12. Local branch `main` at `b80f56a` (docs/evidence tip);
-candidate code freeze at `57bde64e` (`fix(local-client): stop discarding
-slow-but-healthy cancellable responses (MT-06)`).
+**Snapshot:** 2026-09-12, third pass. Local branch `main` beyond the docs
+tip; candidate code freeze at `3a2b06e` (`feat(download): verification-profile
+seam for DC-04`, on top of the MT-06 fix `57bde64e`). Candidate digests:
+portable `fbbd2a1a…`, MSI `1d217350…`, NSIS setup `b83afa2c…`.
 **Baseline:** `v0.5.0` (source `a4b7127f739f7420232d9b6f63da693d39128d0b`).
 **Range covered:** every commit between `v0.5.0` and HEAD - 173 commits, 199
 files changed, +48 190 / -5 206 lines.
@@ -38,7 +39,7 @@ evidence gap.
 
 | Tracker element | Planned | Actual at HEAD |
 |---|---|---|
-| Packages 1-12 | Sequenced remediation of all 72 findings | All closed; every finding's implementation landed with regression tests and ledger records |
+| Packages 1-12 | Sequenced remediation of all 72 findings | Implementation landed for all 72 findings with regression tests and ledger records; the verification/closure state per item is categorised in 2.1 - closure is claimed only where both kinds of box are checked |
 | Supplemental S-01..S-29 | Unnumbered audit recommendations | 28 closed with tests/evidence; S-25.I3 remains an explicit hardware-program deferral |
 | Gates G-01..G-04, G-06, G-07 | Candidate identity, verification wave, advisories | Closed with evidence |
 | Gate G-05 | Packaged Windows wave | Executed in seven batches, a High-finding campaign, and two final-candidate re-binds (2026-09-12); only the environment-blocked I3 residuals remain |
@@ -46,16 +47,40 @@ evidence gap.
 | Gates G-09, G-10 | Authorized publication and closeout | **Open - owner-gated** (section 6) |
 | Checkboxes | 663 | 639 checked, 24 open - every open item has a written disposition |
 
-Test suites grew from the v0.5.0-era baseline (Rust 403 tests; Vitest 80) to,
-at the final revision:
+### 2.1 Verification state by category (2026-09-12 third pass)
 
-- **Rust: 593 passed / 0 failed / 7 ignored** (`cargo test`, `.hermes-0.6/fix-cargo-gates2.log`),
+The statuses below distinguish implementation, verification and closure
+explicitly. An item is "fully closed" only when both its implementation and its
+verification boxes are checked with recorded evidence.
+
+- Findings (72): **63 fully closed**; 4 environment-blocked where the required
+  hardware/environment does not exist on this host (RT-04, RT-06, DC-12,
+  MT-07); 4 owner-gated governance findings (GH-01, GH-02, GH-03, GH-06);
+  FE-05 is implementation- and verification-complete but is held open at
+  finding level for the release decision on its stated completion criteria
+  (owner directive of 2026-09-12).
+- Supplemental packages (29): 28 closed; S-25.I3 environment-blocked
+  (independent benchmark distributions).
+- Gates (10): G-01-G-04, G-06, G-07 and G-08 closed; G-05 carries only its
+  environment residual G-05.I3 (human-operated accessibility session); G-09
+  (4 rows) and G-10.I1 are owner-gated on the authorized publication.
+- Checkboxes: **643 checked / 20 open**. Every open box carries a category, a
+  completion criterion and an unblock action in the tracker's third-pass
+  reconciliation; no finding is called closed without its rows.
+
+Test suites grew from the baseline recorded at the audited start (`e530371`,
+2026-09-11: `cargo test` 403 passed / 0 failed / 2 ignored; node gates 80/80 -
+that 80 is the node-suite count of that day, not a Vitest figure) to, at the
+current freeze `3a2b06e`:
+
+- **Rust: 595 passed / 0 failed / 7 ignored** (`cargo test`, `.hermes-0.6/dc04-cargo-gates.log`),
   with `cargo fmt --check` clean and `clippy --all-targets -- -D warnings`
   reporting zero warnings at every package closure.
-- **Vitest: 141 passed / 141** (`npx vitest run`, `.hermes-0.6/final-gates-7dcc34f.log`).
-- **Node suites: 154 passed / 0 failed** (`npm test`, measured 2026-09-12):
-  release gates 119, catalog schema, HTTP retry contract, IPC contract, and the
-  QD-03 health-cancellation fixtures 6.
+- **Vitest: 141 passed / 141** (`npx vitest run`).
+- **Node suites: 157 passed / 0 failed** (measured 2026-09-12): release gates
+  122 (including the new publish-promotes-verified-bytes, DC-04 seam, DC-04
+  distinction and download-seam gates), health-cancellation fixtures 6, and
+  the catalog-schema, HTTP-retry and IPC-contract files.
 - `npm test` is exactly `vitest run && node --test scripts/tests/release-gates.test.mjs
   scripts/tests/catalog_schema.test.mjs scripts/tests/http_retry.test.mjs
   scripts/tests/ipc_contract.test.mjs scripts/tests/health_cancel.test.mjs`,
@@ -184,7 +209,7 @@ Exact commands and observed results (2026-09-12):
 | Node suites | `npm test` (see section 2) | 154 passed / 0 failed |
 | Format | `cargo fmt --check` | clean (`FMT_OK`) |
 | Lints | `cargo clippy --all-targets -- -D warnings` | 0 warnings |
-| Rust tests | `cargo test` | 593 passed / 0 failed / 7 ignored |
+| Rust tests | `cargo test` | 595 passed / 0 failed / 7 ignored |
 | Design detector | `detect.mjs --json src/App.tsx src/App.css` | unchanged 4 known advisories, no new findings |
 | Design doc lint | `npx -y @google/design.md lint docs/DESIGN.md` | 0 errors |
 
@@ -361,53 +386,87 @@ Four Windows Sandbox runs on the final candidate installers, each carrying
   walk asserts the durable route instead: the retained well plus the persisted
   `.log.failure.json` beside the run log.
 
+### 5.5 Release-path defects found while confirming publication (governance)
+
+Two defects in `.github/workflows/release.yml` were found while confirming that
+publication promotes the verified bytes:
+
+- The publish ship guard compared the resolved tag against the literal
+  `'v0.5.0'` (audit S-26 I2 replaced the same literal in the `resolve` job but
+  missed this one), so pushing `v0.6.0` would have skipped publication
+  entirely.
+- `publish` ordered only after `[rust-audit, quality, package]` while
+  `clean-account-lifecycle` ran in parallel, so a lifecycle FAIL could still
+  publish. GH-03's original "must not gate on the interactive Sandbox feature"
+  note is explicitly superseded: absent or failed lifecycle evidence must not
+  ship.
+
+Fix commit `1776146` (workflow + `.github/workflow-gates.json` policy +
+release gates): the guard now binds `needs.quality.outputs.tag ==
+github.ref_name` on a `v*` tag push (the dispatch republish path is unchanged),
+`publish` needs `clean-account-lifecycle`, and the policy checker enforces the
+dependency. Gates 120 -> 122; mutant WF1 (lifecycle dependency dropped) and
+mutant WF2 (literal guard restored) were each caught by three independent
+layers. Publication still promotes exactly the bytes the `package` job built,
+verified and uploaded as `localmotive-<version>-verified`: `publish` downloads
+that artifact, re-checks `sha256sum -c` without rewriting it, and no build step
+exists in the publish job.
+
+### 5.6 DC-04.V2 executed through the supported command path
+
+The 2026-09-11 blocker ("driving raw IPC would not exercise a user-acceptable
+flow") was resolved by the owner's 2026-09-12 directive: the test does not
+require an override UI. Enabler commit `3a2b06e` adds
+`download::resolve_url_with`, which honours `LOCALMOTIVE_HF_BASE` only when
+`LOCALMOTIVE_VERIFY_ISOLATED_ROOT` is set and only for plain-HTTP loopback
+values (unit tests + mutant MUT-HB1 caught; source pin in the release gates).
+
+Run: `.hermes-0.6/run-dc04.sh` (isolated root, CDP 10087, loopback fixture
+serving 69 632 controlled bytes) + `scripts/g05_dc04_override.mjs` ->
+**13/13 PASS** (`.hermes-0.6/dc04-final.log`; attestation
+`release-evidence/0.6.0/attestations/dc04-v2-command-path-verification.log`):
+override saved with correct digest; user row keeps user provenance while 159
+curated rows keep curated provenance; correct digest publishes and the
+published bytes match the fixture (2 fixture hits: probe + ranged read); a
+wrong digest refuses with `The downloaded file failed its SHA-256 checksum and
+was deleted. Please try again.` and publishes nothing; override removal makes
+the download refuse with `That repository, file, or revision is not in the
+validated catalog or in your local overrides.` **without touching the network**
+(fixture hit delta 0); the user row disappears after removal; a curated id
+cannot be removed here (`That entry ships with the curated catalog and cannot
+be removed here.`).
+
 ## 6. What is NOT complete
 
 24 checkboxes remain open. None is a High finding without a disposition; 17 are
 owner-gated and 7 are environment-blocked.
 
-### 6.1 Owner-gated (the only blocking remainder)
+### 6.1 Owner-gated (repository settings and the authorized release run)
 
-These require explicit owner authority and are prepared, not executed:
+| rows | finding | completion criterion | unblock action |
+| --- | --- | --- | --- |
+| GH-01.I3/V1/V2/V3 | governance High | ruleset requiring `pr-check` (no bypass for ordinary contributions; force-push/deletion forbidden) applied; benign PR shows the checks; a controlled failing check blocks merge; readback recorded | owner applies the ruleset, then one PR run |
+| GH-02.I3/V3 | governance High | `v*` tag ruleset (updates/deletions blocked) applied; candidate-flow checkout/inventory comparison on a real run | owner applies the ruleset; authorized release run |
+| GH-03.V1/V3 | governance High | fresh-version release exercised in the single-runner configuration; publish reads the published bytes back | authorized `v0.6.0` release run |
+| GH-06.V3 | governance High | completed release run's artifact collection inspected, not just its code | authorized `v0.6.0` release run |
+| G-09.I2/I3/V1 (and I1 beyond the prepared package) | release gate | tag/publish authorized; inventory+provenance bound to the published assets; readback; negative controls exercised on the real path | owner publish decision |
+| G-10.I1 | release gate | final record written from the shipped release | after G-09 |
 
-1. **Repository rulesets** - `gh api repos/sato942/localmotive/rulesets` returns
-   none and `branches/main.protected` is false. Ready-to-apply payloads for a
-   main-branch ruleset (require `pr-check`, forbid force pushes/deletions) and a
-   `v*` tag ruleset (immutable tags) are in `docs/RELEASE-REVIEW-0.6.md`.
-   (GH-01.I3/V1/V2/V3, GH-02.I3/V3)
-2. **Authorized PR runs** - a benign PR and a controlled failing-check PR would
-   each consume a GitHub-hosted `pr-check` run; they are not started without
-   approval. (GH-01.V1/V2)
-3. **Publication** - push `main`, `git tag -a v0.6.0` at the verified SHA, run
-   the release workflow, read back artifacts (GH-03.V1/V3, GH-06.V3, G-09.*),
-   then close out (G-10.*). Nothing is tagged, signed, or published yet.
+Live recheck 2026-09-12: `gh api repos/sato942/localmotive/rulesets` returns
+`[]`; `branches/main` is `protected=false`; `git ls-remote --tags origin`
+lists `v0.4.0`, `v0.4.1`, `v0.5.0` only. No owner gate has been granted since
+the 2026-09-11 package.
 
 ### 6.2 Environment-blocked deferrals (six-field register rows in the review)
 
-- **RT-04.V2** - the delayed health-model download between context preparation
-  and runtime execution has no packaged harness; the DLL-replacement half is
-  proven (packaged refusal) and unit lease tests pin the window. Follow-up: a
-  throttled local health-model mirror in a later window.
-- **RT-06.V3** - seven-backend measurement needs all seven backends installed
-  on a representative host; this host has one verified CUDA backend plus a CPU
-  record. Follow-up: multi-backend host session.
-- **DC-04.V2** - `save_user_catalog_override` has no frontend surface to drive
-  from the UI; the command path is covered by Rust authority tests. Follow-up:
-  a reviewed override UI, then the controlled-server run.
-- **DC-12.V3** - OS-crash/power-loss validation is unsafe on the live
-  verification host; resume semantics are tested at process level. Follow-up:
-  storage fault-injection lab.
-- **MT-07.V2** - real CPU-only and mixed-machine identity classes are
-  unavailable; unit tests cover the classes. Follow-up: hardware matrix.
-- **S-25.I3** - the independent performance program (distributions, drift,
-  calibration error, queue metrics) needs real target hardware sessions.
-- **G-05.I3** - Narrator/NVDA, OS-level high-contrast, and live cloud/HF
-  credential scenarios need a screen reader, an interactive settings session,
-  and an authorized test account; engine-level emulation is done.
-
-None of these may be read as passed. Each carries owner, reason, residual risk,
-workaround, follow-up milestone, and evidence gap in
-`docs/RELEASE-REVIEW-0.6.md`.
+| rows | specific missing prerequisite |
+| --- | --- |
+| RT-04.V2 | a delay-injection seam for the health-model fetch (the DLL-swap half is packaged-verified in `g05_tamper_dll`; unit lease tests pin the window; the loopback-seam pattern now exists for catalog downloads) |
+| RT-06.V3 | a large multi-backend library installed on a representative host (this host has one verified CUDA backend) |
+| DC-12.V3 | a controlled OS-crash/power-loss harness (ordinary process-kill coverage exists: vitems_c D7, FE-16 v3) |
+| MT-07.V2 | CPU-only and changed-CPU machines for the portability matrix (fit-reduced rows need the same) |
+| S-25.I3 | independent held-out benchmark distributions/baseline drift data |
+| G-05.I3 | a human-operated keyboard/Narrator/high-DPI/reduced-motion session |
 
 ### 6.3 Not-yet-pushed state
 
@@ -506,6 +565,31 @@ the published set is compared against the recorded inventory during readback
 (G-09.I3). The exact commands are in `docs/RELEASE-REVIEW-0.6.md`, section
 "Owner package for G-09".
 
+### 8.1 Candidate lineage (full SHAs)
+
+| revision | role | verified digests (portable / msi / setup) | verification binding | status |
+| --- | --- | --- | --- | --- |
+| `a0ed247` | 2026-09-11 candidate source | `075daa54…` / `2dd036c6…` / `a4d14496…` | 2026-09-11 campaign | superseded (`6384df0` docs tip) |
+| `6384df0` | 2026-09-11 docs tip | - | none (no code) | historical |
+| `57bde64` | MT-06 livelock fix | `79615950…` / `01b62b76…` / `255bfdd2…` | second-pass re-bind (packaged set, lifecycle, negative, verify_041 25/25) | superseded by `3a2b06e` |
+| `1776146` | release-path corrections (workflow/gates/policy) | - | release gates | current (infrastructure; not compiled into the app) |
+| `3a2b06e` | DC-04 verification seam | `fbbd2a1a…` / `1d217350…` / `b83afa2c…` | third-pass re-bind (this report) | **current binding** |
+
+The intended release commit is the final `main` tip whose `src/` and
+`src-tauri/` trees equal `3a2b06e`'s; any further code change forces another
+re-cut and re-bind before tagging. Superseded sets stay in the ledger as
+history - no artifact is ever relabelled.
+
+### 8.2 Publication promotes the verified bytes without rebuilding them
+
+`release.yml` builds the installers once in its `package` job, verifies the
+packaged executable, and uploads `localmotive-<version>-verified`;
+`clean-account-lifecycle` downloads and tests exactly those bytes; `publish`
+downloads the same artifact, re-checks `sha256sum -c` **without rewriting it**
+and uploads exactly those files. No build step exists in the publish job. The
+tag push rebuilds once from the resolved SHA inside the same run - that run's
+verified bytes are what ships.
+
 ## 9. Honest limits of this report
 
 - Claims about packaged behavior come from the recorded probe logs and evidence
@@ -522,6 +606,25 @@ the published set is compared against the recorded inventory during readback
   claim beyond the SHA-256 pairing and the workflow records is made.
 
 ## Appendix A - exact commands to reproduce the final checks
+
+Third-pass additions (2026-09-12):
+
+```bash
+# Traceability/link validation on the tracker (G-10.V1)
+node scripts/verify_tracker_links.mjs              # TRACEABILITY OK
+
+# DC-04.V2 through the supported command path (isolated app + loopback fixture)
+bash .hermes-0.6/run-dc04.sh                       # 13/13 PASS
+
+# Tamper negative with enforced preconditions
+node scripts/g05_tamper_dll.mjs 10085              # G05_TAMPER_FINAL PASS
+
+# Release-path gates (publish guard + lifecycle dependency + verified-bytes pin)
+node --test scripts/tests/release-gates.test.mjs   # 122/122
+node scripts/verify_workflow_gates.mjs             # ok: true
+```
+
+
 
 ```bash
 # Local gates (from the repository root)

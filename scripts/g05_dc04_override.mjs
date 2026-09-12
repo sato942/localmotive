@@ -140,8 +140,11 @@ const downloadOk = await invoke("download_catalog_file", {
 });
 check(
   "dc04.correct-checksum-download-completes",
-  downloadOk.ok && String(downloadOk.value).includes("your local override digest"),
-  downloadOk.ok ? String(downloadOk.value).slice(0, 90) : downloadOk.error,
+  // On success the command returns the published path; the authority-labelled
+  // completion message travels on the download:progress event (state "done")
+  // and is pinned by the DC-04 release gate.
+  downloadOk.ok && String(downloadOk.value).includes(FILENAME),
+  downloadOk.ok ? String(downloadOk.value).slice(-70) : downloadOk.error,
 );
 const published = join(destination("ok"), FILENAME);
 const publishedBytes = existsSync(published) ? readFileSync(published) : null;

@@ -1998,6 +1998,25 @@ test("publish promotes the verified bytes only after every material gate (G-06/G
   assert.equal(result.ok, true, result.failures.join("\n"));
 });
 
+test("DC-04.V2 the authority distinction stays visible end to end", async () => {
+  const lib = await readFile(join(process.cwd(), "src-tauri", "src", "lib.rs"), "utf8");
+  // The two completion messages are the user-visible provenance distinction
+  // between a signed curated row and a user-approved override record.
+  assert.match(lib, /Download complete: checksum verified against your local override digest\./);
+  assert.match(lib, /Download complete and checksum verified\./);
+  assert.match(lib, /authorized\.authority == "user"/);
+  const driver = await readFile(join(process.cwd(), "scripts", "g05_dc04_override.mjs"), "utf8");
+  for (const leg of [
+    "dc04.override-saved-with-correct-digest",
+    "dc04.incorrect-checksum-download-refused",
+    "dc04.revoked-download-refused-with-identity",
+    "dc04.revoked-refusal-touches-no-network",
+    "dc04.curated-row-cannot-be-removed-here",
+  ]) {
+    assert.match(driver, new RegExp(leg.replace(/[.]/g, "\.")));
+  }
+});
+
 test("DC-04.V2 the download seam is loopback-only and verifier-gated", async () => {
   const source = await readFile(join(process.cwd(), "src-tauri", "src", "download.rs"), "utf8");
   // The packaged verifier points catalog downloads at a local fixture to run

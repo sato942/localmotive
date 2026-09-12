@@ -1,0 +1,18 @@
+CDP_READY after 1s
+fixture on 127.0.0.1:10090 size=69632 sha256=f7f9812c518e5831...
+fetch_model_catalog ok=false error=The catalog was refreshed recently. Try again in about 914 min.
+PASS dc04.override-saved-with-correct-digest
+PASS dc04.user-row-keeps-user-provenance
+PASS dc04.curated-rows-keep-curated-provenance | rows=159
+PASS dc04.correct-checksum-download-completes | rs\Mubarak\AppData\Local\Temp\lm060-dc04\downloads\ok\mine-Q4_K_M.gguf
+PASS dc04.published-bytes-match-the-fixture | hits=2
+PASS dc04.override-resaved-with-wrong-digest
+PASS dc04.incorrect-checksum-download-refused | The downloaded file failed its SHA-256 checksum and was deleted. Please try again.
+PASS dc04.no-file-published-after-mismatch
+PASS dc04.override-removed
+PASS dc04.revoked-download-refused-with-identity | That repository, file, or revision is not in the validated catalog or in your local overrides.
+PASS dc04.revoked-refusal-touches-no-network | hitsDelta=0
+PASS dc04.user-row-gone-after-removal
+PASS dc04.curated-row-cannot-be-removed-here | That entry ships with the curated catalog and cannot be removed here.
+DC04 SUMMARY: 13/13 checks PASS
+DC04_EXIT=0
