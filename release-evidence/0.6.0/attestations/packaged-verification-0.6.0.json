@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0.0",
   "verifier": "scripts/verify_041.mjs",
-  "source_revision": "cb8ab64753d96b61fa43665d2cf1dd6b4ee7928c",
-  "source_dirty": true,
+  "source_revision": "41b3feb37577d87ce246475623be0714dcda0b74",
+  "source_dirty": false,
   "artifact": {
     "name": "Localmotive_0.6.0_x64-portable.exe",
     "size_bytes": 21019136,
@@ -23,8 +23,8 @@
       }
     ]
   },
-  "started_at": "2026-09-12T18:48:54.530Z",
-  "finished_at": "2026-09-12T18:49:11.784Z",
+  "started_at": "2026-09-12T18:49:29.451Z",
+  "finished_at": "2026-09-12T18:49:45.430Z",
   "checks": [
     {
       "id": "candidate.artifact",
@@ -42,16 +42,18 @@
       "criterion": "The source revision is a full Git commit and matches the requested revision.",
       "status": "PASS",
       "evidence": {
-        "source_revision": "cb8ab64753d96b61fa43665d2cf1dd6b4ee7928c"
+        "source_revision": "41b3feb37577d87ce246475623be0714dcda0b74"
       },
       "reason": ""
     },
     {
       "id": "candidate.clean-source",
       "criterion": "The packaged candidate comes from a clean checkout.",
-      "status": "FAIL",
-      "evidence": {},
-      "reason": "The source checkout contains tracked or untracked changes"
+      "status": "PASS",
+      "evidence": {
+        "source_dirty": false
+      },
+      "reason": ""
     },
     {
       "id": "candidate.cdp-connect",
@@ -118,7 +120,7 @@
       "evidence": {
         "tag": "b10816",
         "option_count": 7,
-        "origin": "network"
+        "origin": "cache"
       },
       "reason": ""
     },
@@ -451,5 +453,5 @@
       "reason": ""
     }
   ],
-  "overall_status": "FAIL"
+  "overall_status": "PASS"
 }

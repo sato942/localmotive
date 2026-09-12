@@ -768,7 +768,15 @@ supervision/tamper/FE-16/FE-05.V3/catalog/churn clean, lifecycle matrix 4/4 PASS
   parent-exit diagnostics; mutation MUT-PROC1 caught (`parent_exit=Some(0)` in
   162 ms); post-fix soak: three concurrent full suites with zero failure markers
   and 10/10 focused repetitions green.
-- **Candidate re-cut (freeze 7).** The `proc.rs` fix changes a shipped-code file,
-  so the candidate was rebuilt and re-staged; the affected packaged checks
-  (supervision, FE-16, packaged verification) were re-run on the new bytes and the
-  qualification manifest regenerated with the previous freeze labeled superseded.
+- **Candidate re-cut (freeze 7, `cb8ab64753d96b61fa43665d2cf1dd6b4ee7928c`).**
+  The `proc.rs` fix is the only shipped-tree delta since freeze 6 (16 insertions /
+  5 deletions, `#[cfg(test)]` only). The candidate was rebuilt and re-staged
+  (portable `9cf0f695…`, setup `4ad8822e…`, msi `09d4dc07…`; inventory PASS) and
+  every process-affecting packaged check re-ran on the new bytes: packaged
+  verification 25/25 `source_dirty=false`, supervision, FE-16, MT-06 33/33,
+  RT-06 12/12, DC-04 13/13, accessibility A11Y_PASS, lifecycle matrix 4/4
+  `preservation=PASS` bound to `cb8ab64` via the inventory. Tamper, health,
+  MT-01d, FE-05.V3, catalog, churn, RT-04.V2, witnesses and the negative controls
+  are carried forward under the disclosed test-only delta. The qualification
+  manifest was regenerated at `release-evidence/0.6.0/qualification-manifest-0.6.0.json`
+  with the freeze-6 set labeled superseded, never rewritten.

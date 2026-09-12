@@ -3057,7 +3057,7 @@ Earlier texts called `cargo test` 403 passed / 0 failed / 2 ignored and `npm tes
 
 `gh api repos/sato942/localmotive/rulesets` -> `[]`; `gh api repos/sato942/localmotive/branches/main --jq .protected` -> `false`; `git ls-remote --tags origin` lists `v0.4.0`, `v0.4.1`, `v0.5.0` only. No owner gate has been granted since the 2026-09-11 package; the release authorization boundary is unchanged. The commands are recorded so the owner can verify from the same readback.
 
-**6. Open-box reconciliation (19 open / 644 checked after this pass; MT-07.V2 closed and G-05.I3 partially closed in the fifth-pass follow-up).**
+**6. Open-box reconciliation (18 open / 645 checked after this pass; MT-07.V2 and RT-06.V3 closed and G-05.I3 partially closed in the fifth-pass follow-up; the shipped-code delta is a `#[cfg(test)]`-only proc.rs change re-cut as freeze 7 `cb8ab64`, with every process-affecting packaged check re-run on the new bytes and the canonical manifest regenerated at `release-evidence/0.6.0/qualification-manifest-0.6.0.json`).**
 
 Categories: `owner-gated` = repository settings, the tag/publish authorization, or a real published release run; `environment-blocked` = needs hardware/environment this host does not provide; `held (finding-level)` = verified cells, closure deferred to the release decision by owner directive.
 

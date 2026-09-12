@@ -59,9 +59,9 @@
       "contentVerified": false
     }
   ],
-  "generatedAt": "2026-09-12T18:41:56.352Z",
+  "generatedAt": "2026-09-12T18:51:32.229Z",
   "host": {
-    "cdpPort": 10103,
+    "cdpPort": 10111,
     "adapterId": "luid:0000000000014f4f",
     "batch": "all"
   },
@@ -143,7 +143,7 @@
       "assetBytes": 18412922,
       "companionAsset": null,
       "companionBytes": null,
-      "elapsedMs": 181,
+      "elapsedMs": 172,
       "verification": {
         "jobs_started": 0,
         "jobs_coalesced": 0,
@@ -159,7 +159,7 @@
       "assetBytes": 253942297,
       "companionAsset": "cudart-llama-bin-win-cuda-12.4-x64.zip",
       "companionBytes": 391443627,
-      "elapsedMs": 737,
+      "elapsedMs": 736,
       "verification": {
         "jobs_started": 0,
         "jobs_coalesced": 0,
@@ -175,7 +175,7 @@
       "assetBytes": 149564704,
       "companionAsset": "cudart-llama-bin-win-cuda-13.3-x64.zip",
       "companionBytes": 390970417,
-      "elapsedMs": 527,
+      "elapsedMs": 532,
       "verification": {
         "jobs_started": 0,
         "jobs_coalesced": 0,
@@ -189,7 +189,7 @@
       "outcome": "refused-by-design",
       "asset": "llama-b10816-bin-win-openvino-2026.3.1-x64.zip",
       "assetBytes": 80318411,
-      "elapsedMs": 152,
+      "elapsedMs": 123,
       "error": "Error: GPU adapter luid:0000000000014f4f (nvidia) is incompatible with the openvino runtime"
     },
     {
@@ -198,7 +198,7 @@
       "outcome": "refused-by-design",
       "asset": "llama-b10816-bin-win-rocm-10.0-x64.zip",
       "assetBytes": 244244508,
-      "elapsedMs": 152,
+      "elapsedMs": 121,
       "error": "Error: GPU adapter luid:0000000000014f4f (nvidia) is incompatible with the rocm runtime"
     },
     {
@@ -207,7 +207,7 @@
       "outcome": "refused-by-design",
       "asset": "llama-b10816-bin-win-sycl-x64.zip",
       "assetBytes": 119727951,
-      "elapsedMs": 141,
+      "elapsedMs": 143,
       "error": "Error: GPU adapter luid:0000000000014f4f (nvidia) is incompatible with the sycl runtime"
     },
     {
@@ -218,7 +218,7 @@
       "assetBytes": 35228033,
       "companionAsset": null,
       "companionBytes": null,
-      "elapsedMs": 195,
+      "elapsedMs": 203,
       "verification": {
         "jobs_started": 0,
         "jobs_coalesced": 0,
@@ -230,7 +230,7 @@
   "listing": [
     {
       "pass": 0,
-      "elapsedMs": 5,
+      "elapsedMs": 4,
       "count": 4,
       "verification": {
         "jobs_started": 0,
@@ -241,7 +241,7 @@
     },
     {
       "pass": 1,
-      "elapsedMs": 3,
+      "elapsedMs": 4,
       "count": 4,
       "verification": {
         "jobs_started": 0,
@@ -252,7 +252,7 @@
     }
   ],
   "selecting": {
-    "elapsedMs": 379,
+    "elapsedMs": 384,
     "managedVerified": true,
     "verification": {
       "jobs_started": 1,
@@ -262,7 +262,7 @@
     }
   },
   "starting": {
-    "elapsedMs": 3399,
+    "elapsedMs": 3415,
     "passed": true,
     "verification": {
       "jobs_started": 0,
@@ -280,17 +280,17 @@
     {
       "name": "install.cpu",
       "ok": true,
-      "detail": "asset=llama-b10816-bin-win-cpu-x64.zip bytes=18412922 elapsed=181ms outcome=reused"
+      "detail": "asset=llama-b10816-bin-win-cpu-x64.zip bytes=18412922 elapsed=172ms outcome=reused"
     },
     {
       "name": "install.cuda-12.4",
       "ok": true,
-      "detail": "asset=llama-b10816-bin-win-cuda-12.4-x64.zip bytes=253942297 elapsed=737ms outcome=reused"
+      "detail": "asset=llama-b10816-bin-win-cuda-12.4-x64.zip bytes=253942297 elapsed=736ms outcome=reused"
     },
     {
       "name": "install.cuda-13.3",
       "ok": true,
-      "detail": "asset=llama-b10816-bin-win-cuda-13.3-x64.zip bytes=149564704 elapsed=527ms outcome=reused"
+      "detail": "asset=llama-b10816-bin-win-cuda-13.3-x64.zip bytes=149564704 elapsed=532ms outcome=reused"
     },
     {
       "name": "refusal.openvino",
@@ -310,7 +310,7 @@
     {
       "name": "install.vulkan",
       "ok": true,
-      "detail": "asset=llama-b10816-bin-win-vulkan-x64.zip bytes=35228033 elapsed=195ms outcome=reused"
+      "detail": "asset=llama-b10816-bin-win-vulkan-x64.zip bytes=35228033 elapsed=203ms outcome=reused"
     },
     {
       "name": "listing.reports-every-installed-runtime",
@@ -325,12 +325,12 @@
     {
       "name": "selecting.describes-with-verified-identity",
       "ok": true,
-      "detail": "elapsed=379ms"
+      "detail": "elapsed=384ms"
     },
     {
       "name": "starting.health-run-passes",
       "ok": true,
-      "detail": "elapsed=3399ms"
+      "detail": "elapsed=3415ms"
     }
   ],
   "summary": {

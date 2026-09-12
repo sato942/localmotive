@@ -1,6 +1,6 @@
 CDP_READY after 1s
 fixture on 127.0.0.1:10090 size=69632 sha256=f7f9812c518e5831...
-fetch_model_catalog ok=false error=The catalog was refreshed recently. Try again in about 914 min.
+fetch_model_catalog ok=false error=The catalog was refreshed recently. Try again in about 1400 min.
 PASS dc04.override-saved-with-correct-digest
 PASS dc04.user-row-keeps-user-provenance
 PASS dc04.curated-rows-keep-curated-provenance | rows=159
@@ -16,3 +16,4 @@ PASS dc04.user-row-gone-after-removal
 PASS dc04.curated-row-cannot-be-removed-here | That entry ships with the curated catalog and cannot be removed here.
 DC04 SUMMARY: 13/13 checks PASS
 DC04_EXIT=0
+DC04_7_EXIT=0

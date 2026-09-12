@@ -1,34 +1,34 @@
 ﻿
-[2026-09-12T16:38:40.1581511Z] Sandbox lifecycle starting
-[2026-09-12T16:38:40.3948520Z] NSIS install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.6.0_x64-setup.exe
-[2026-09-12T16:39:53.3363705Z] NSIS fresh install executable version 0.6.0 digest 223ccf5bef4648f0e0d86ccd143e771e7967a1bfbeca94bb454ac0f5df2e4276 at C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
-[2026-09-12T16:39:53.3520657Z] Launch smoke: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
-[2026-09-12T16:40:03.5893610Z] Startup smoke OK: the process survived 8 seconds; this is a startup smoke, not full functional verification
-[2026-09-12T16:40:03.6053854Z] NSIS uninstall: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\uninstall.exe
-[2026-09-12T16:40:07.8673657Z] NSIS fresh path PASS
-[2026-09-12T16:40:07.8673657Z] MSI install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.6.0_x64.msi
-[2026-09-12T16:42:11.8756818Z] MSI fresh install executable version 0.6.0 digest 9b2d1b5018f7a9289a6ee17b29cec77b60086b473b8e10902185d0653524556e at C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
-[2026-09-12T16:42:11.8919655Z] Launch smoke: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
-[2026-09-12T16:42:22.1025971Z] Startup smoke OK: the process survived 8 seconds; this is a startup smoke, not full functional verification
-[2026-09-12T16:42:22.1040427Z] MSI uninstall via package: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.6.0_x64.msi
-[2026-09-12T16:42:27.9829564Z] MSI fresh path PASS
-[2026-09-12T16:42:27.9986795Z] NSIS install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.4.0_x64-setup.exe
-[2026-09-12T16:42:31.1395627Z] Pre-update install executable version 0.4.0 digest af9f01ac31730798b584efd1aee8f8854e97cc894573106c6935acb0461ebb93 at C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
-[2026-09-12T16:42:31.1469591Z] NSIS install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.6.0_x64-setup.exe
-[2026-09-12T16:42:34.2795744Z] Post-update install executable version 0.6.0 digest 223ccf5bef4648f0e0d86ccd143e771e7967a1bfbeca94bb454ac0f5df2e4276 at C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
-[2026-09-12T16:42:34.2867966Z] Launch smoke: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
-[2026-09-12T16:42:44.4876837Z] Startup smoke OK: the process survived 8 seconds; this is a startup smoke, not full functional verification
-[2026-09-12T16:42:44.4892000Z] NSIS uninstall: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\uninstall.exe
-[2026-09-12T16:42:48.3292426Z] NSIS update path PASS
-[2026-09-12T16:42:48.3303787Z] NSIS install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.4.0_x64-setup.exe
-[2026-09-12T16:42:51.4404194Z] Launch smoke: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
-[2026-09-12T16:43:01.5959758Z] Startup smoke OK: the process survived 8 seconds; this is a startup smoke, not full functional verification
-[2026-09-12T16:43:01.6327369Z] NSIS install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.6.0_x64-setup.exe
-[2026-09-12T16:43:04.7923457Z] Preservation upgrade executable version 0.6.0 digest 223ccf5bef4648f0e0d86ccd143e771e7967a1bfbeca94bb454ac0f5df2e4276 at C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
-[2026-09-12T16:43:04.8066623Z] Launch smoke: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
-[2026-09-12T16:43:15.0070454Z] Startup smoke OK: the process survived 8 seconds; this is a startup smoke, not full functional verification
-[2026-09-12T16:43:15.1801705Z] NSIS uninstall: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\uninstall.exe
-[2026-09-12T16:43:19.0525855Z] Preservation path PASS
-[2026-09-12T16:43:19.0685706Z] NSIS-family installed payload digest consistent: 223ccf5bef4648f0e0d86ccd143e771e7967a1bfbeca94bb454ac0f5df2e4276
-[2026-09-12T16:43:19.0860940Z] OBSERVED: MSI payload digest 9b2d1b5018f7a9289a6ee17b29cec77b60086b473b8e10902185d0653524556e differs from the NSIS payload digest 223ccf5bef4648f0e0d86ccd143e771e7967a1bfbeca94bb454ac0f5df2e4276
-[2026-09-12T16:43:19.1160188Z] ALL PASS
+[2026-09-12T18:52:09.0632636Z] Sandbox lifecycle starting
+[2026-09-12T18:52:09.3169336Z] NSIS install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.6.0_x64-setup.exe
+[2026-09-12T18:52:59.0472873Z] NSIS fresh install executable version 0.6.0 digest 341134dd826967d30f84eb760dde76568e8f3206d4c27b1f74b716c85e9bab2d at C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-12T18:52:59.0472873Z] Launch smoke: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-12T18:53:09.3034060Z] Startup smoke OK: the process survived 8 seconds; this is a startup smoke, not full functional verification
+[2026-09-12T18:53:09.3192517Z] NSIS uninstall: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\uninstall.exe
+[2026-09-12T18:53:13.4693314Z] NSIS fresh path PASS
+[2026-09-12T18:53:13.4693314Z] MSI install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.6.0_x64.msi
+[2026-09-12T18:55:17.3839843Z] MSI fresh install executable version 0.6.0 digest b50685abc3ffe6ab8d3af21303a833652ccf179902bc6c8c1f154af2e31a54c8 at C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-12T18:55:17.3997620Z] Launch smoke: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-12T18:55:27.6098805Z] Startup smoke OK: the process survived 8 seconds; this is a startup smoke, not full functional verification
+[2026-09-12T18:55:27.6113137Z] MSI uninstall via package: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.6.0_x64.msi
+[2026-09-12T18:55:33.4835398Z] MSI fresh path PASS
+[2026-09-12T18:55:33.4992168Z] NSIS install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.4.0_x64-setup.exe
+[2026-09-12T18:55:36.6391490Z] Pre-update install executable version 0.4.0 digest af9f01ac31730798b584efd1aee8f8854e97cc894573106c6935acb0461ebb93 at C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-12T18:55:36.6412064Z] NSIS install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.6.0_x64-setup.exe
+[2026-09-12T18:55:39.7761990Z] Post-update install executable version 0.6.0 digest 341134dd826967d30f84eb760dde76568e8f3206d4c27b1f74b716c85e9bab2d at C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-12T18:55:39.7761990Z] Launch smoke: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-12T18:55:50.0040239Z] Startup smoke OK: the process survived 8 seconds; this is a startup smoke, not full functional verification
+[2026-09-12T18:55:50.0057850Z] NSIS uninstall: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\uninstall.exe
+[2026-09-12T18:55:53.8041572Z] NSIS update path PASS
+[2026-09-12T18:55:53.8177014Z] NSIS install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.4.0_x64-setup.exe
+[2026-09-12T18:55:56.9127716Z] Launch smoke: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-12T18:56:07.0772797Z] Startup smoke OK: the process survived 8 seconds; this is a startup smoke, not full functional verification
+[2026-09-12T18:56:07.1088126Z] NSIS install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.6.0_x64-setup.exe
+[2026-09-12T18:56:10.2468655Z] Preservation upgrade executable version 0.6.0 digest 341134dd826967d30f84eb760dde76568e8f3206d4c27b1f74b716c85e9bab2d at C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-12T18:56:10.2625371Z] Launch smoke: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-12T18:56:20.4752444Z] Startup smoke OK: the process survived 8 seconds; this is a startup smoke, not full functional verification
+[2026-09-12T18:56:20.5895296Z] NSIS uninstall: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\uninstall.exe
+[2026-09-12T18:56:24.4050247Z] Preservation path PASS
+[2026-09-12T18:56:24.4342592Z] NSIS-family installed payload digest consistent: 341134dd826967d30f84eb760dde76568e8f3206d4c27b1f74b716c85e9bab2d
+[2026-09-12T18:56:24.4342592Z] OBSERVED: MSI payload digest b50685abc3ffe6ab8d3af21303a833652ccf179902bc6c8c1f154af2e31a54c8 differs from the NSIS payload digest 341134dd826967d30f84eb760dde76568e8f3206d4c27b1f74b716c85e9bab2d
+[2026-09-12T18:56:24.4817874Z] ALL PASS
