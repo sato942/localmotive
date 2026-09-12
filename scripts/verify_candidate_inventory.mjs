@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { readFile, stat, writeFile } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -110,10 +110,14 @@ export async function verifyPublishedInventory({
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const verifyIndex = process.argv.indexOf("--verify");
   if (verifyIndex !== -1) {
-    // --verify <inventory>: consumer publication boundary.
-    process.argv[4] = process.argv[verifyIndex + 1];
+    // --verify <inventory>: consumer publication boundary. The artifact
+    // directory is the inventory's own directory - never argv[2], which is
+    // the --verify flag itself in this invocation form (the workflow step
+    // that would otherwise resolve "--verify/SHA256SUMS" and fail closed).
+    const inventoryPath = resolve(process.argv[verifyIndex + 1]);
     const record = await verifyPublishedInventory({
-      inventoryPath: resolve(process.argv[verifyIndex + 1]),
+      artifactDirectory: dirname(inventoryPath),
+      inventoryPath,
       expectedSourceRevision: gitRevision(),
     });
     console.log(`PASS producer inventory verified: ${record.artifacts.length} artifacts at source ${record.sourceRevision}`);

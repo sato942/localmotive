@@ -1428,7 +1428,15 @@ test("GH-02 release jobs share one resolved immutable revision", async () => {
   // Publication verifies the producer inventory instead of rewriting it.
   const publish = release.split("\n  publish:")[1];
   assert.match(publish, /verify_candidate_inventory\.mjs --verify/);
+  assert.match(publish, /"artifacts\/candidate-inventory-\$\{VERSION\}\.json"/);
   assert.doesNotMatch(publish, /verify_candidate_inventory\.mjs artifacts "\$VERSION"/);
+  // The verifier CLI must resolve the artifact directory from the inventory's
+  // own directory: argv[2] is the --verify flag itself in the workflow form,
+  // and defaulting to it breaks the consumer boundary (ENOENT on the sums
+  // file) in exactly the invocation publication uses.
+  const inventoryCli = await readFile(join(process.cwd(), "scripts", "verify_candidate_inventory.mjs"), "utf8");
+  assert.match(inventoryCli, /artifactDirectory: dirname\(inventoryPath\)/);
+  assert.doesNotMatch(inventoryCli, /process\.argv\[4\] = process\.argv\[verifyIndex \+ 1\]/);
   assert.match(publish, /LOCALMOTIVE_SOURCE_REVISION="\$RESOLVED_SHA"/);
 });
 
