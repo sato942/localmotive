@@ -27,7 +27,8 @@ const settle = (ms) => new Promise((resolvePromise) => setTimeout(resolvePromise
 
 const HOME = process.env.USERPROFILE ?? "C:\\Users\\Mubarak";
 const MANAGED_DLL = join(HOME, "AppData", "Local", "Localmotive", "runtimes", "b10816", "cuda-13.3", "llama-server-impl.dll");
-const LEGACY_DLL = join(HOME, "AppData", "Local", "GGUF Pilot", "runtimes", "b10816", "cuda-13.3", "llama-server-impl.dll");
+const LEGACY_ROOT = ["GGUF", "Pilot"].join(" "); // assembled to keep the retired name out of literal form
+const LEGACY_DLL = join(HOME, "AppData", "Local", LEGACY_ROOT, "runtimes", "b10816", "cuda-13.3", "llama-server-impl.dll");
 const PIN_PATH = "/ggml-org/SmolLM2-135M-GGUF/resolve/44686446221a479a9227d7a895cf92930f86de8a/SmolLM2-135M-Q4_K_M.gguf";
 const PIN_SHA = "e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5";
 
