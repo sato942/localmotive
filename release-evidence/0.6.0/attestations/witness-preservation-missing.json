@@ -8,11 +8,11 @@
                          "status":  "missing-files",
                          "output":  "collected files absent; the preservation step did not run"
                      },
-    "sourceRevision":  "85edee63d060c43d05df3770d168a81b7421d6df",
-    "harnessRevision":  "581043bc84e31ccc4194fdaa337741f6868cf78b",
+    "sourceRevision":  "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
+    "harnessRevision":  "aea51d5c984a08dfad07360674d3c8a815d80746",
     "candidateDigests":  {
-                             "currentSetup":  "533b669c3cde3dfdea14865105ff3212b2390d8a7b2527ec6f8af85689ae933c",
-                             "currentMsi":  "9dac49aa3e66c15fb592ccd613885b5088a4838e0b4328b301dfa46e39d899bc"
+                             "currentSetup":  "8398cf8a25949049b939e33aa2613330e41e7882aa951b868d064bc4fbc73bef",
+                             "currentMsi":  "2c00e0d3f9e2dc050fd3ec5fd02bc9f6b0923605b6d715b20a63f8292e30d11b"
                          },
-    "candidateInventorySha256":  "6281568508e33e808339a5306745179ee2d59c8925fec04a0aead209898d9791"
+    "candidateInventorySha256":  "73e758e3e0a6665719aa82eff0a0fd177e53807674a25e91aae6038dc51e3b00"
 }

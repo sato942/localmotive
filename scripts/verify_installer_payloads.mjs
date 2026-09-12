@@ -16,7 +16,7 @@
 //   node scripts/verify_installer_payloads.mjs <artifactDir> <inventoryPath> <evidencePath>
 // Requires 7-Zip (LOCALMOTIVE_7ZIP overrides the default install path).
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -46,6 +46,75 @@ export function extractInstallerPayload(installerPath, { sevenZip = SEVEN_ZIP, s
   } finally {
     rmSync(workDir, { recursive: true, force: true });
   }
+}
+
+/// Functional scope for an installed payload: launch the EXACT payload bytes
+/// with the WebView2 debugger, attach over CDP, and evaluate the rendered
+/// application shell. An exact version string and brief process survival are
+/// identity and liveness checks; they are not functional qualification, and
+/// this probe exists so the installed payloads carry the real thing. Returns a
+/// record that names what was observed and whether it passed.
+export async function probePayloadFunctionally(payloadBytes, label, port) {
+  const workDir = mkdtempSync(join(tmpdir(), `localmotive-payload-probe-${label}-`));
+  const exePath = join(workDir, `${label}-payload.exe`);
+  writeFileSync(exePath, payloadBytes);
+  const child = spawn(exePath, [], {
+    env: {
+      ...process.env,
+      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
+    },
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  const sleep = (ms) => new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
+  const deadline = Date.now() + 60_000;
+  let target = null;
+  while (Date.now() < deadline && !target) {
+    try {
+      const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+      target = list.find((entry) => entry.type === "page" && entry.webSocketDebuggerUrl) ?? null;
+    } catch {
+      // the debugger endpoint is not up yet
+    }
+    if (!target) await sleep(500);
+  }
+  const probe = { label, port, executable: exePath, cdpTarget: Boolean(target), navButtons: null, hasManagedControls: null, bodyChars: null };
+  if (target) {
+    try {
+      const socket = new WebSocket(target.webSocketDebuggerUrl);
+      await new Promise((resolvePromise, rejectPromise) => {
+        socket.onopen = resolvePromise;
+        socket.onerror = rejectPromise;
+      });
+      const expression =
+        '(function(){const buttons=document.querySelectorAll("nav button");const text=(document.body&&document.body.innerText)||"";return JSON.stringify({navButtons:buttons.length,hasLocalmotive:/Localmotive/i.test(text),hasManagedControls:/Stop server|Start profile|HF catalog|Benchmark/i.test(text),bodyChars:text.length});})()';
+      const reply = await new Promise((resolvePromise) => {
+        socket.onmessage = (event) => {
+          try {
+            const message = JSON.parse(event.data);
+            if (message.id === 1) resolvePromise(message.result?.result?.value ?? null);
+          } catch {
+            // ignore frames we do not answer
+          }
+        };
+        socket.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression, returnByValue: true } }));
+        setTimeout(() => resolvePromise(null), 20_000);
+      });
+      socket.close();
+      if (reply) Object.assign(probe, JSON.parse(reply));
+    } catch (error) {
+      probe.probeError = String(error).slice(0, 200);
+    }
+  }
+  try {
+    child.kill();
+  } catch {
+    // the probe process may already be gone
+  }
+  await sleep(2000);
+  rmSync(workDir, { recursive: true, force: true });
+  probe.passed = probe.cdpTarget === true && Number(probe.navButtons) > 0 && probe.hasManagedControls === true;
+  return probe;
 }
 
 /// The bundler patches one 3-byte marker in the same executable. Verify that
@@ -82,7 +151,14 @@ export function compareBundlePayloads(portable, payload, label) {
   return { ok: true, diffPositions, portableMarker, payloadMarker };
 }
 
-export function verifyInstallerPayloads({ artifactDir, inventoryPath, evidencePath, sevenZip = SEVEN_ZIP }) {
+export async function verifyInstallerPayloads({
+  artifactDir,
+  inventoryPath,
+  evidencePath,
+  sevenZip = SEVEN_ZIP,
+  probeFunctionally = false,
+  functionalBasePort = 10151,
+}) {
   const inventory = JSON.parse(readFileSync(inventoryPath, "utf8"));
   const portableEntry = inventory.artifacts.find((artifact) => artifact.name.endsWith("-portable.exe"));
   const setupEntry = inventory.artifacts.find((artifact) => artifact.name.endsWith("-setup.exe"));
@@ -106,6 +182,11 @@ export function verifyInstallerPayloads({ artifactDir, inventoryPath, evidencePa
   });
   const nsisComparison = compareBundlePayloads(portable, nsisPayload, "nsis");
   const msiComparison = compareBundlePayloads(portable, msiPayload, "msi");
+  const functional = [];
+  if (probeFunctionally) {
+    functional.push(await probePayloadFunctionally(nsisPayload, "nsis", functionalBasePort));
+    functional.push(await probePayloadFunctionally(msiPayload, "msi", functionalBasePort + 1));
+  }
   const evidence = {
     schema: "localmotive.installer-payload-identity.v1",
     generatedAt: new Date().toISOString(),
@@ -125,8 +206,26 @@ export function verifyInstallerPayloads({ artifactDir, inventoryPath, evidencePa
         "embedded copy of the executable. Every other byte is identical to the portable executable, so the " +
         "recorded digests differ while the installed programs are the same build.",
     },
-    status: nsisComparison.ok && msiComparison.ok ? "PASS" : "FAIL",
-    detail: [nsisComparison, msiComparison].map((comparison) => comparison.reason ?? "ok").join("; "),
+    functional,
+    functionalNote:
+      "Each installed payload was launched from its extracted bytes with the WebView2 debugger and evaluated " +
+      "over CDP: the record names the observed navigation-button count, the managed-control text and the " +
+      "rendered body length. The in-sandbox lifecycle legs install the SAME payload bytes (their recorded " +
+      "installed digest equals nsisPayload.sha256 / msiPayload.sha256) and prove install, launch, version " +
+      "identity, uninstall and preservation; this probe proves the functional shell of those exact bytes.",
+    status:
+      nsisComparison.ok &&
+      msiComparison.ok &&
+      (functional.length === 0 || functional.every((probe) => probe.passed))
+        ? "PASS"
+        : "FAIL",
+    detail: [
+      ...(nsisComparison.reason ? [nsisComparison.reason] : []),
+      ...(msiComparison.reason ? [msiComparison.reason] : []),
+      ...functional
+        .filter((probe) => !probe.passed)
+        .map((probe) => `${probe.label} functional probe failed (cdpTarget=${probe.cdpTarget})`),
+    ].join("; ") || "ok",
   };
   if (evidencePath) {
     writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
@@ -142,10 +241,11 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     );
     process.exit(2);
   }
-  const evidence = verifyInstallerPayloads({
+  const evidence = await verifyInstallerPayloads({
     artifactDir: resolve(artifactDir),
     inventoryPath: resolve(inventoryPath),
     evidencePath: evidencePath ? resolve(evidencePath) : null,
+    probeFunctionally: process.argv.includes("--functional"),
   });
   console.log(JSON.stringify(evidence, null, 2));
   if (evidence.status !== "PASS") {

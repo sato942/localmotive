@@ -17,7 +17,7 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ATTESTATION_RECORDS = {
@@ -55,7 +55,10 @@ function readJson(path) {
 }
 
 function recordEntry(root, path) {
-  const entry = { path: path.replaceAll("\\", "/"), exists: existsSync(path) };
+  // Record repository-relative paths: a fresh checkout validates the same
+  // manifest, and the verifier refuses scratch paths outright.
+  const rel = relative(root, path).replaceAll("\\", "/");
+  const entry = { path: rel.startsWith("..") ? path.replaceAll("\\", "/") : rel, exists: existsSync(path) };
   if (!entry.exists) return entry;
   const bytes = readFileSync(path);
   entry.sha256 = sha256Of(bytes);
@@ -77,12 +80,39 @@ function recordEntry(root, path) {
   return entry;
 }
 
+/// Mark lifecycle records as carried forward from a superseded candidate.
+/// The mandate allows this only with an explicit source-delta justification,
+/// and the manifest must name the exact prior inventory the records are bound
+/// to; the verifier refuses a carry-forward whose cited inventory does not
+/// match the record's own candidate digests.
+export function carryForwardEntries({
+  keys,
+  evidenceFrom,
+  reason,
+  root = process.cwd(),
+}) {
+  if (!evidenceFrom || !reason) throw new Error("a carry-forward needs evidenceFrom and a reason");
+  const from = resolve(root, evidenceFrom);
+  const inventory = readJson(from);
+  return {
+    keys,
+    entry: {
+      evidenceFrom: evidenceFrom.replaceAll("\\", "/"),
+      evidenceFromSha256: sha256Of(readFileSync(from)),
+      evidenceFromSha256Lf: sha256LfOf(readFileSync(from)),
+      evidenceFromSource: inventory.sourceRevision,
+      reason,
+    },
+  };
+}
+
 export function buildQualificationManifest({
   inventoryPath,
   attestationsDir,
   outPath,
   release,
   supersededPath = null,
+  carryForward = null,
   root = process.cwd(),
 }) {
   const inventoryFile = resolve(root, inventoryPath);
@@ -109,9 +139,18 @@ export function buildQualificationManifest({
     records: {},
     supersededRecords: [],
   };
+  const carriedKeys = new Set(carryForward?.keys ?? []);
   for (const [key, nameFor] of Object.entries(ATTESTATION_RECORDS)) {
     const file = join(resolve(root, attestationsDir), nameFor(release));
     manifest.records[key] = recordEntry(root, file);
+    if (carriedKeys.has(key)) {
+      manifest.records[key].carriedForward = carryForward.entry;
+    }
+  }
+  if (carryForward) {
+    manifest.carryForwardNote =
+      "These lifecycle records were produced against the candidate named by evidenceFrom, not this candidate: " +
+      carryForward.entry.reason;
   }
   if (supersededPath) {
     manifest.supersededRecords.push(readJson(resolve(root, supersededPath)));
@@ -139,12 +178,25 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     );
     process.exit(2);
   }
+  const carriedKeys = (option("carry-forward-lifecycle") ?? "")
+    .split(",")
+    .map((key) => key.trim())
+    .filter(Boolean);
+  const carryForward =
+    carriedKeys.length > 0
+      ? carryForwardEntries({
+          keys: carriedKeys,
+          evidenceFrom: option("carry-forward-evidence"),
+          reason: option("carry-forward-reason"),
+        })
+      : null;
   const { manifest, missing } = buildQualificationManifest({
     inventoryPath,
     attestationsDir,
     outPath,
     release,
     supersededPath: option("superseded"),
+    carryForward,
   });
   console.log(`manifest written: ${outPath}`);
   console.log(`sourceRevision: ${manifest.sourceRevision}`);

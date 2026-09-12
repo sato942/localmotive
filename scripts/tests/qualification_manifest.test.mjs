@@ -159,3 +159,61 @@ test("a text record without its newline-normalized digest is refused", () => {
     );
   });
 });
+
+test("a lifecycle record carried forward from a superseded candidate validates when its citation matches", () =>
+  withFixture(
+    { withQualifiedSet: true, carryForward: { key: "lifecycle_upgrade_v0.4.0" } },
+    async (fixture) => {
+      const result = await verify(fixture);
+      assert.deepEqual(result.failures, [], result.failures.join("\n"));
+      assert.ok(
+        result.lines.some((line) => line.startsWith("carried forward: lifecycle_upgrade_v0.4.0 from")),
+        result.lines.join("\n"),
+      );
+    },
+  ));
+
+test("a carried-forward record whose citation digest drifted is refused", () =>
+  withFixture(
+    {
+      carryForward: {
+        key: "lifecycle_upgrade_v0.4.0",
+        citeShaOverride: "9".repeat(64),
+      },
+    },
+    (fixture) => {
+      const result = verify(fixture);
+      assert.ok(result.failures.length > 0, "expected a refusal");
+      assert.match(result.failures.join("\n"), /carried-forward evidence inventory digest drifted/);
+    },
+  ));
+
+test("a carried-forward record whose staged digests contradict its cited inventory is refused", () =>
+  withFixture(
+    {
+      carryForward: {
+        key: "lifecycle_upgrade_v0.4.0",
+        recordMsi: "0".repeat(64),
+      },
+    },
+    (fixture) => {
+      const result = verify(fixture);
+      assert.ok(result.failures.length > 0, "expected a refusal");
+      assert.match(result.failures.join("\n"), /does not match its cited inventory/);
+    },
+  ));
+
+test("a carry-forward that cites a path outside the history tree is refused", () =>
+  withFixture(
+    {
+      carryForward: {
+        key: "lifecycle_upgrade_v0.4.0",
+        citePath: "release-evidence/0.6.0/candidate-inventory-0.6.0.json",
+      },
+    },
+    (fixture) => {
+      const result = verify(fixture);
+      assert.ok(result.failures.length > 0, "expected a refusal");
+      assert.match(result.failures.join("\n"), /must cite a history-path inventory/);
+    },
+  ));

@@ -224,24 +224,52 @@ gh api repos/sato942/localmotive/rulesets --jq '.[] | {id, name, target, enforce
 | V06-G-09.I3 | owner | Readback completes only after the authorized release run; the exact commands are in section 2 below. |
 | V06-G-09.V1 | owner | Negative controls: wrong candidate bytes exercised (doctored v0.5.0 bytes refused, `sandbox-negative-wrong-candidate.json`), missing assets/malformed/timeout exercised via the witness legs, absent lifecycle evidence is now a hard publication gate in `release.yml` (third-pass correction). The moved-tag and modified-bytes controls remain for the real path. |
 
-### 2. Publication (owner action; executes release.yml)
+### 2. Publication (owner action; two-step path, R16)
+
+Publication is now two explicit steps. A tag push runs `.github/workflows/release.yml`
+(workflow name `Release verify`): it builds, verifies, runs the four-leg lifecycle
+matrix, assembles the qualified candidate bundle and STOPS. It has no publish job,
+holds no write permission, and the gate policy (`release-promote.yml` in
+`.github/workflows/workflow-gates.json` -> `forbiddenCommands`) fails if any publication
+mechanism or write permission appears in it. Publication requires the separate,
+explicitly authorized dispatch of `.github/workflows/release-promote.yml`.
 
 ```bash
-# Create the tag on the EXACT reviewed revision (the frozen candidate source
-# recorded in the release-evidence manifest) - never on a moving HEAD.
-REVIEWED_SHA=<frozen-candidate-source-sha-from-the-evidence-manifest>
-git rev-parse "$REVIEWED_SHA"  # confirm, then:
+# Step 1 - verify on the exact reviewed revision (tag creation is the owner's
+# act; the frozen candidate source is the value recorded in the qualification
+# manifest, never a moving HEAD).
+REVIEWED_SHA=eb01bc9f97417e74ce7de7da85c86582f42ceb67
+git rev-parse "$REVIEWED_SHA"   # confirm, then:
 git tag -a v0.6.0 "$REVIEWED_SHA" -m "Localmotive 0.6.0 (unsigned)" && git push origin v0.6.0
-# Watch the run bound to THAT commit and event, not "the latest run".
 RUN_ID=$(gh run list --workflow=release.yml --commit "$REVIEWED_SHA" --json databaseId --jq '.[0].databaseId')
-gh run watch "$RUN_ID"
-# Then read back: tag object, release body, asset set, checksums, Latest state.
-# `gh release view` has no isLatest field; read Latest from the releases API.
+gh run watch "$RUN_ID"          # must end success; it publishes nothing
+
+# Step 2 - promote the exact qualified bundle from that run (dry run first).
+gh workflow run release-promote.yml \
+  -f tag=v0.6.0 -f verify_run_id="$RUN_ID" -f confirm="PUBLISH v0.6.0" -f dry_run=true
+gh run watch "$(gh run list --workflow=release-promote.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+# Then repeat with -f dry_run=false when the dry run is green and the owner
+# authorizes publication.
+
+# Step 3 - read back the public release.
 gh release view v0.6.0 --json tagName,isPrerelease,assets
 gh api repos/sato942/localmotive/releases/latest --jq .tag_name
 ```
 
-Expected RELEASE ASSETS (the six files the release carries, pinned by the read-back): the NSIS setup, the portable exe, the MSI, `SHA256SUMS-<version>.txt`, `packaged-verification-0.4.1.json` (a historical filename whose contents are produced by this candidate end to end), and `candidate-inventory-<version>.json`. The SBOM, the catalog matrix, the lifecycle attestations and the read-back itself are WORKFLOW ARTIFACTS retained for 90 days under the run, not release assets; the review's earlier sentence conflated the two. The publication re-verifies the downloaded inventory byte-for-byte against the producer copy and re-runs the inventory verifier on the public set (R13), and it re-resolves the remote tag immediately before publishing so a retargeted tag cannot ship drifted source. The workflow builds the installers ONCE in its `package` job, verifies the packaged executable, uploads them as `localmotive-<version>-verified`, runs the clean-account lifecycle on exactly those bytes, and `publish` downloads that same artifact and re-checks `sha256sum -c` without rewriting it - no build step exists in the publish job, so publication promotes the verified bytes without rebuilding them (confirmed in the 2026-09-12 third pass; the earlier hardcoded `v0.5.0` guard that would have skipped the v0.6.0 publication was fixed in commit `1776146`, and `publish` now requires the lifecycle verdict). Verify the published digests against `SHA256SUMS`. **Current candidate (freeze 8, 2026-09-12):** source `da091a47ca6595ec37690ab5ae63542671c5f7f6`; portable `f46ed292ceded2b069b57022f5df4d63d7d54e83ebb393f3c82117f0db861e54`, setup `fd33cb127af91d72d4041ed762753e8298ebe9000e8714948672efc49d85f693`, msi `c16799792600157013cf7f91a8f1d4f270ec1ef6b078c0e96dda358a9cb9c11b`; staged inventory `candidate-inventory-0.6.0.json` (PASS, 3 artifacts). The freeze-8 delta since freeze 7 is the corrected descendant-fixture diagnostic in `src-tauri/src/proc.rs` (`#[cfg(test)]` only; the first diagnostic was disproved by the self-hosted CI run for `3b97899`, which showed the parent exits on its own schedule whether or not the descendant has booted). Every packaged check that touches process handling was re-run on the new bytes: packaged verification 25/25 `overall_status=PASS` `source_dirty=false` (artifact `f46ed292...`); supervision; FE-16 exit evidence; MT-06 cancellation 33/33; RT-06 all-backend benchmark 12/12; DC-04 command path 13/13; accessibility 5-leg A11Y_PASS; the four-leg lifecycle matrix 4/4 with `preservation=PASS` on every leg, bound to `da091a4` via the inventory; and the freeze-8 byte-doctored setup refusal at `resolve-installers` naming both digests (`36c7123a...` vs `fd33cb12...`). CI for `da091a4` is green on the self-hosted runner (check + rust-audit + package-smoke). Carried forward under the disclosed test-only delta: tamper, seven-stage health, MT-01d throughput, FE-05.V3, catalog items, churn, RT-04.V2 17/17, the evidence witnesses and the historical negative controls. The canonical qualification manifest is `release-evidence/0.6.0/qualification-manifest-0.6.0.json` (19 records, verified by `scripts/verify_qualification_manifest.mjs`, proven on a depth-1 clone). Older candidate identities - `57bde64`, `3a2b06e`, `7c32fa9`, the freeze-6 set at `85edee6` and the freeze-7 set at `cb8ab64` (portable `9cf0f695...`) - remain in history labeled superseded, never rewritten. G-09 additionally requires the negative publication controls (wrong SHA, moved tag, modified bytes, missing assets, absent lifecycle evidence) exercised on the real path before the release is trusted.
+What the promotion workflow refuses, before any publication step exists in the
+run: a dispatcher who is not the repository owner; a `confirm` that is not
+exactly `PUBLISH <tag>`; a verify run that is not a successful `Release verify`
+push run for the commit the tag still points at; a commit that is not on `main`
+or whose required checks (`pr-check` or `check`) are not green; a bundle whose
+manifest, inventory, checksums, artifacts or records contradict each other
+(`scripts/verify_release_promotion.mjs`); and `dry_run=false` without all of the
+above. It consumes the exact bundle bytes - no build step exists in either
+promotion job - and it re-runs `sha256sum -c` and the inventory verifier instead
+of rewriting any checksum. The published assets are read back and compared
+byte-for-byte with the producer copies, including the packaged-verification
+record the qualification manifest references.
+
+Expected RELEASE ASSETS (the six files the release carries, pinned by the read-back): the NSIS setup, the portable exe, the MSI, `SHA256SUMS-<version>.txt`, `packaged-verification-<version>.json`, and `candidate-inventory-<version>.json`. The catalog matrix, the lifecycle attestations, the promotion decision record and the read-back itself are WORKFLOW ARTIFACTS retained for 90 days under the run, not release assets. **Current candidate (freeze 9, 2026-09-13):** source `eb01bc9f97417e74ce7de7da85c86582f42ceb67`; portable `97e1a4fb2c7622c211123c8e99abedc7e08f648ef3b6a0b8aa543121e6cad8c5`, setup `8398cf8a25949049b939e33aa2613330e41e7882aa951b868d064bc4fbc73bef`, msi `2c00e0d3f9e2dc050fd3ec5fd02bc9f6b0923605b6d715b20a63f8292e30d11b`; staged inventory `candidate-inventory-0.6.0.json` (PASS, 3 artifacts). Freeze-9 supersedes freeze 8 (`da091a4`) because the R16 remediation changed product code, the release path and the qualification tooling; the freeze-8 manifest, inventory and records are preserved unlabelled under `release-evidence/0.6.0/history/freeze8-da091a4/`, and every freeze-9 record binds to `eb01bc9f9741` through the inventory. The installed NSIS payload digest is `7ec790cf67cc70e3051621b6ef36dc494a16f39d8cd35db495dcdb19a4b87e29` and the installed MSI payload digest is `3a736bb9ee2928f02d73e718d51092cdc126e7920c22392eff33f909b9aa4f08` (byte-identical to the portable apart from the 3-byte bundle-type marker each bundler patches); both payloads were launched from their extracted bytes and evaluated over CDP (8 navigation buttons, managed controls rendered).
 
 ### 3. Approved runs and sessions still pending owner approval
 
@@ -259,4 +287,4 @@ Expected RELEASE ASSETS (the six files the release carries, pinned by the read-b
 Fresh observation at the final candidate: replacing the legacy `llama-server.exe` with a foreign binary yields "Legacy managed runtimes need compiled content approval. Install a current runtime to replace this one." - no execution of the replaced bytes (RT-02 guard, packaged).
 ## High-finding campaign results
 
-The remaining High-finding verification items were executed packaged and every one is now closed (2026-09-12 re-bind): FE-01.V3, FE-02.V2, FE-03.V1/V3, FE-04.V2, FE-05.V1/V2/V3, FE-07.V2, FE-16.V1/V3, IPC-01.V2, MT-04.V2, MT-05.V3, QD-02.I4, QD-03.V3, RT-07.V2, GH-06.V2 (see the tracker's re-bind campaign record). Still open with explicit dispositions: the GH-01/GH-02/GH-03 owner-gated items (rulesets, authorized PR runs, release-run observation), GH-06.V3 and the G-09 rows plus G-10.I1 (owner authorization), the environment-blocked RT-06.V3, DC-12.V3, MT-07.V2, S-25.I3 and G-05.I3 rows, and the final G-08 reconciliation held open until the unresolved High findings close. DC-04.V2 was executed and closed in the 2026-09-12 third pass; G-10.I2/I3/V1 were closed the same day once their requirements were met. No High finding has an unresolved item without a visible disposition, and FE-05 stays finding-level open for the release decision on its stated completion criteria.
+The remaining High-finding verification items were executed packaged and every one is now closed (2026-09-12 re-bind): FE-01.V3, FE-02.V2, FE-03.V1/V3, FE-04.V2, FE-05.V1/V2/V3, FE-07.V2, FE-16.V1/V3, IPC-01.V2, MT-04.V2, MT-05.V3, QD-02.I4, QD-03.V3, RT-07.V2, GH-06.V2 (see the tracker's re-bind campaign record). Still open with explicit dispositions: the GH-01/GH-02/GH-03 owner-gated items (rulesets, authorized PR runs, release-run observation), GH-06.V3 and the G-09 rows plus G-10.I1 (owner authorization), the environment-blocked RT-06.V3 (three-vendor host), DC-12.V3, MT-07.V2, S-25.I3 and G-05.I3 rows, and the final G-08 reconciliation held open until the unresolved High findings close. RT-06 freeze-9 update: the installed-backend scope is now recorded per backend (installed/selected/launched with the verification root) and the seven-installed-backend criterion remains explicitly not satisfied on this single-vendor host. DC-04.V2 was executed and closed in the 2026-09-12 third pass; G-10.I2/I3/V1 were closed the same day once their requirements were met. No High finding has an unresolved item without a visible disposition, and FE-05 stays finding-level open for the release decision on its stated completion criteria.

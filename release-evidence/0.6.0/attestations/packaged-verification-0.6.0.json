@@ -1,12 +1,12 @@
 {
   "schema_version": "1.0.0",
   "verifier": "scripts/verify_041.mjs",
-  "source_revision": "da091a47ca6595ec37690ab5ae63542671c5f7f6",
+  "source_revision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
   "source_dirty": false,
   "artifact": {
     "name": "Localmotive_0.6.0_x64-portable.exe",
-    "size_bytes": 21019136,
-    "sha256": "f46ed292ceded2b069b57022f5df4d63d7d54e83ebb393f3c82117f0db861e54"
+    "size_bytes": 20879360,
+    "sha256": "97e1a4fb2c7622c211123c8e99abedc7e08f648ef3b6a0b8aa543121e6cad8c5"
   },
   "host_class": {
     "platform": "win32",
@@ -23,8 +23,8 @@
       }
     ]
   },
-  "started_at": "2026-09-12T20:34:56.218Z",
-  "finished_at": "2026-09-12T20:35:15.394Z",
+  "started_at": "2026-09-12T22:18:48.602Z",
+  "finished_at": "2026-09-12T22:19:07.151Z",
   "checks": [
     {
       "id": "candidate.artifact",
@@ -32,8 +32,8 @@
       "status": "PASS",
       "evidence": {
         "name": "Localmotive_0.6.0_x64-portable.exe",
-        "size_bytes": 21019136,
-        "sha256": "f46ed292ceded2b069b57022f5df4d63d7d54e83ebb393f3c82117f0db861e54"
+        "size_bytes": 20879360,
+        "sha256": "97e1a4fb2c7622c211123c8e99abedc7e08f648ef3b6a0b8aa543121e6cad8c5"
       },
       "reason": ""
     },
@@ -42,7 +42,7 @@
       "criterion": "The source revision is a full Git commit and matches the requested revision.",
       "status": "PASS",
       "evidence": {
-        "source_revision": "da091a47ca6595ec37690ab5ae63542671c5f7f6"
+        "source_revision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67"
       },
       "reason": ""
     },
@@ -61,7 +61,7 @@
       "status": "PASS",
       "evidence": {
         "title": "Localmotive",
-        "port": 10086
+        "port": 10133
       },
       "reason": ""
     },

@@ -54,12 +54,18 @@ function write(root, relative, contents) {
       ? Buffer.from(contents, "utf8")
       : Buffer.from(JSON.stringify(contents, null, 2));
   writeFileSync(path, bytes);
-  return {
+  const entry = {
     path,
     relative: relative.split("\\").join("/"),
     sha256: sha256Of(bytes),
     sha256_lf: sha256LfOf(bytes),
   };
+  // Mirror the generator: a carried-forward record carries its citation on the
+  // manifest entry as well as in the document.
+  if (contents && typeof contents === "object" && contents.carriedForward) {
+    entry.carriedForward = contents.carriedForward;
+  }
+  return entry;
 }
 
 function lifecycleRecord(digests, previousTag, inventorySha, overrides = {}) {
@@ -170,6 +176,11 @@ export function buildFixture(options = {}) {
     }
     if (options.lifecycleWrongSource?.key === key) {
       overrides.sourceRevision = "c".repeat(40);
+    }
+    if (options.carryForward?.key === key) {
+      const carried = carryForwardFixture(root, options.carryForward);
+      overrides.candidateDigests = carried.recordDigests;
+      overrides.carriedForward = carried.entry;
     }
     if (options.lifecycleMissingStep?.key === key) {
       const record = lifecycleRecord(digests, previousTag, inventorySha, overrides);
@@ -331,6 +342,7 @@ export function buildFixture(options = {}) {
       sha256: file.sha256,
       sha256_lf: file.sha256_lf,
     };
+    if (file.carriedForward) recordEntries[key].carriedForward = file.carriedForward;
   }
 
   const manifest = {
@@ -357,6 +369,47 @@ export function verify(fixture, options = {}) {
     root: fixture.root,
     ...options,
   });
+}
+
+/// Build a carried-forward lifecycle record: the record stays bound to a
+/// superseded candidate whose inventory is committed under a history path.
+/// `options.carryForward` = { key, citePath, reason, priorSource, priorSetup,
+/// priorMsi, recordSetup, recordMsi, citeShaOverride }.
+export function carryForwardFixture(root, options) {
+  const {
+    key,
+    citePath = "release-evidence/0.6.0/history/freeze8/prior-inventory.json",
+    reason = "installer and migration code paths are unchanged between the two candidates",
+    priorSource = "c".repeat(40),
+    priorSetup = "5".repeat(64),
+    priorMsi = "6".repeat(64),
+    recordSetup = priorSetup,
+    recordMsi = priorMsi,
+    citeShaOverride = null,
+  } = options;
+  const absolute = join(root, citePath);
+  mkdirSync(dirname(absolute), { recursive: true });
+  const prior = {
+    schema: "localmotive.candidate-inventory.v1",
+    release: RELEASE,
+    sourceRevision: priorSource,
+    artifacts: [
+      { name: `Localmotive_${RELEASE}_x64-portable.exe`, sizeBytes: 11, sha256: "7".repeat(64) },
+      { name: `Localmotive_${RELEASE}_x64-setup.exe`, sizeBytes: 12, sha256: priorSetup },
+      { name: `Localmotive_${RELEASE}_x64.msi`, sizeBytes: 13, sha256: priorMsi },
+    ],
+  };
+  writeFileSync(absolute, JSON.stringify(prior, null, 2), "utf8");
+  const citeSha = sha256Of(readFileSync(absolute));
+  return {
+    key,
+    entry: {
+      evidenceFrom: citePath,
+      evidenceFromSha256: citeShaOverride ?? citeSha,
+      reason,
+    },
+    recordDigests: { currentSetup: recordSetup, currentMsi: recordMsi },
+  };
 }
 
 export function withFixture(options, run) {

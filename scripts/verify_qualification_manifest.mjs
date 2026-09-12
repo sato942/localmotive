@@ -339,6 +339,68 @@ export function verifyQualificationManifest({ manifestPath, root = ".", expected
   }
   if (recordCount === 0) failures.push("manifest references no records");
 
+  // Carry-forward ledger: a lifecycle record may be carried from a superseded
+  // candidate ONLY with a justification that names the prior inventory, and
+  // that inventory must be the one the record's own digests are bound to.
+  // The record is refused if the citation does not resolve, is not a history
+  // path, or contradicts the recorded staged digests.
+  const carriedForward = new Map();
+    for (const [key, entry] of Object.entries(records)) {
+      const carried = entry?.carriedForward;
+      if (!carried) continue;
+      const citePath = normalizeRecordPath(carried.evidenceFrom);
+      if (!citePath || !/^release-evidence\/[^/]+\/history\//.test(citePath)) {
+        failures.push(`${key}: a carried-forward record must cite a history-path inventory`);
+        continue;
+      }
+      const citeBytes = readEntry(root, citePath);
+      if (!citeBytes.exists) {
+        failures.push(`${key}: carried-forward evidence inventory ${citePath} is missing`);
+        continue;
+      }
+      const citeExact = carried.evidenceFromSha256 ? citeBytes.sha256 === carried.evidenceFromSha256 : true;
+      const citeLf = carried.evidenceFromSha256Lf ? citeBytes.sha256_lf === carried.evidenceFromSha256Lf : citeExact;
+      if (!citeExact && !citeLf) {
+        failures.push(`${key}: carried-forward evidence inventory digest drifted from the recorded citation`);
+        continue;
+      }
+      let prior = null;
+      try {
+        prior = parseJson(citeBytes.bytes);
+      } catch (error) {
+        failures.push(`${key}: carried-forward evidence inventory is not valid JSON: ${error}`);
+        continue;
+      }
+      if (!carried.reason || String(carried.reason).trim().length < 20) {
+        failures.push(`${key}: a carried-forward record needs a written source-delta justification`);
+      }
+      if (prior.sourceRevision === manifest.sourceRevision) {
+        failures.push(`${key}: carried-forward evidence cites the CURRENT candidate; re-run it instead`);
+        continue;
+      }
+      const priorArtifacts = new Map((prior.artifacts ?? []).map((artifact) => [artifact.name, artifact]));
+      const priorSetup = [...priorArtifacts.entries()].find(([name]) => name.endsWith("-setup.exe"))?.[1];
+      const priorMsi = [...priorArtifacts.entries()].find(([name]) => name.endsWith(".msi"))?.[1];
+      const doc = docs.get(key);
+      if (typeof doc !== "object" || doc === null) {
+        failures.push(`${key}: carried-forward record is not a parsed document`);
+        continue;
+      }
+      if (doc.candidateDigests?.currentSetup !== priorSetup?.sha256) {
+        failures.push(`${key}: carried-forward record's staged setup digest does not match its cited inventory`);
+        continue;
+      }
+      if (doc.candidateDigests?.currentMsi !== priorMsi?.sha256) {
+        failures.push(`${key}: carried-forward record's staged MSI digest does not match its cited inventory`);
+        continue;
+      }
+      carriedForward.set(key, { citePath, priorSource: prior.sourceRevision, reason: carried.reason });
+      lines.push(
+        `carried forward: ${key} from ${prior.sourceRevision.slice(0, 12)} (${citePath}); ${carried.reason}`,
+      );
+    }
+
+
   // --- Per-record contracts ------------------------------------------------
   const inventoryRows = new Map(
     (inventoryDoc?.artifacts ?? []).map((artifact) => [artifact.name, artifact]),
@@ -377,22 +439,28 @@ export function verifyQualificationManifest({ manifestPath, root = ".", expected
         failures.push(`${label}: required step ${step} is ${found.status}`);
       }
     }
-    if (doc.sourceRevision !== manifest.sourceRevision) {
-      failures.push(
-        `${label}: source revision ${doc.sourceRevision} contradicts the manifest source ${manifest.sourceRevision}`,
-      );
+    const carried = carriedForward.get(key) ?? null;
+    if (carried) {
+      // The ledger checked the record against the inventory it cites; the
+      // current-candidate digests are deliberately not required here.
+    } else {
+      if (doc.sourceRevision !== manifest.sourceRevision) {
+        failures.push(
+          `${label}: source revision ${doc.sourceRevision} contradicts the manifest source ${manifest.sourceRevision}`,
+        );
+      }
+      if (setupRow && String(doc.candidateDigests?.currentSetup).toLowerCase() !== setupRow.sha256) {
+        failures.push(`${label}: staged setup digest contradicts the inventory`);
+      }
+      if (msiRow && String(doc.candidateDigests?.currentMsi).toLowerCase() !== msiRow.sha256) {
+        failures.push(`${label}: staged MSI digest contradicts the inventory`);
+      }
+      if (inventoryDigest && doc.candidateInventorySha256 !== inventoryDigest) {
+        failures.push(`${label}: candidateInventorySha256 does not match the recorded producer inventory`);
+      }
     }
     if (!/^[0-9a-f]{40}$/.test(doc.harnessRevision ?? "")) {
       failures.push(`${label}: harness revision is not recorded`);
-    }
-    if (setupRow && String(doc.candidateDigests?.currentSetup).toLowerCase() !== setupRow.sha256) {
-      failures.push(`${label}: staged setup digest contradicts the inventory`);
-    }
-    if (msiRow && String(doc.candidateDigests?.currentMsi).toLowerCase() !== msiRow.sha256) {
-      failures.push(`${label}: staged MSI digest contradicts the inventory`);
-    }
-    if (inventoryDigest && doc.candidateInventorySha256 !== inventoryDigest) {
-      failures.push(`${label}: candidateInventorySha256 does not match the recorded producer inventory`);
     }
     for (const label2 of ["NSIS fresh install", "MSI fresh install", "Pre-update install", "Post-update install", "Preservation upgrade"]) {
       if (!doc.installedDigests?.[label2]) {
@@ -491,6 +559,7 @@ export function verifyQualificationManifest({ manifestPath, root = ".", expected
   if (payloadIdentity) {
     for (const [key, doc] of docs.entries()) {
       if (!LIFECYCLE_RECORDS[key]) continue;
+      if (carriedForward.has(key)) continue; // bound to the prior candidate's payloads
       if (typeof doc !== "object" || doc === null) continue;
       if (payloadIdentity.nsisPayload?.sha256 && doc.nsisPayloadDigest !== payloadIdentity.nsisPayload.sha256) {
         failures.push(`${key}: installed NSIS payload digest contradicts the staged installer payload`);
