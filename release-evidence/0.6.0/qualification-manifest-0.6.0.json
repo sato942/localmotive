@@ -1,8 +1,8 @@
 {
   "schema": "localmotive.qualification-manifest.v1",
   "release": "0.6.0",
-  "generatedAt": "2026-09-12T17:26:27.999449+00:00",
-  "repositoryHeadAtGeneration": "eb84e184c3841ec11d14873b9701df19bb1c0e67",
+  "generatedAt": "2026-09-12T17:56:29.876532+00:00",
+  "repositoryHeadAtGeneration": "581043bc84e31ccc4194fdaa337741f6868cf78b",
   "sourceRevision": "85edee63d060c43d05df3770d168a81b7421d6df",
   "artifacts": [
     {
@@ -50,7 +50,7 @@
     "lifecycle_preservation_v0.4.1": {
       "path": "release-evidence\\0.6.0\\attestations\\sandbox-clean-account-lifecycle-preservation-v0.4.1.json",
       "exists": true,
-      "sha256": "fa4daa8bd9d1f4f0234a5916973800bdfeb7e5470e1a3b6ede5c7cd7c8973e74",
+      "sha256": "8c1011b12bbd7472778c7a1ebee06c25ef05213655b3721134cbf3dc98899644",
       "status": "PASS",
       "stage": "preservation-verification",
       "sourceRevision": "85edee63d060c43d05df3770d168a81b7421d6df",
@@ -59,7 +59,7 @@
     "lifecycle_preservation_v0.5.0": {
       "path": "release-evidence\\0.6.0\\attestations\\sandbox-clean-account-lifecycle-preservation-v0.5.0.json",
       "exists": true,
-      "sha256": "1c3b4835a05d81322f395419ddd42c7b7e95c7c158ff5600d2a28100eb4779c0",
+      "sha256": "a8035f384b23deb8b52bf8b60a09b40a29c786878300e4e3a2622175375fe965",
       "status": "PASS",
       "stage": "preservation-verification",
       "sourceRevision": "85edee63d060c43d05df3770d168a81b7421d6df",
@@ -68,38 +68,47 @@
     "witness_missing_assets": {
       "path": "release-evidence\\0.6.0\\attestations\\witness-missing-assets.json",
       "exists": true,
-      "sha256": "21a3184791fae2e0b505ad526fbdf90cdfc18f4468e246f39ae69925bf02c251",
+      "sha256": "c0fb023ac1ca0194935357ce1d094942c0e174de4c1e29324e57321673c4acf9",
       "status": "FAIL",
       "stage": "resolve-installers",
       "sourceRevision": null,
-      "harnessRevision": "eb84e184c3841ec11d14873b9701df19bb1c0e67"
+      "harnessRevision": "581043bc84e31ccc4194fdaa337741f6868cf78b"
     },
     "witness_timeout": {
       "path": "release-evidence\\0.6.0\\attestations\\witness-timeout.json",
       "exists": true,
-      "sha256": "2d32bdae229cdcd4583731a3f824e5b102a80391a1a9e32e86e61fb5a2d5f505",
+      "sha256": "d8516348da7a27b5e6663f98eaed23f370c45e762ba7d0f4f74d960d035549ad",
       "status": "TIMEOUT",
       "stage": "sandbox-timeout",
-      "sourceRevision": "7c32fa90b9dd04057ba3c089392b0642f3b0545c",
-      "harnessRevision": "eb84e184c3841ec11d14873b9701df19bb1c0e67"
+      "sourceRevision": "85edee63d060c43d05df3770d168a81b7421d6df",
+      "harnessRevision": "581043bc84e31ccc4194fdaa337741f6868cf78b"
     },
     "witness_malformed_result": {
       "path": "release-evidence\\0.6.0\\attestations\\witness-malformed-result.json",
       "exists": true,
-      "sha256": "76f07f938f5a4342dafb960e0bb1a5813f1b50d6a6ff824fde76623fc909cfec",
+      "sha256": "9ae500fcad5eb23ef0812da43d98ea1dc25ebb15a68492f68c85eff1ae9d83ea",
       "status": "FAIL",
       "stage": "sandbox-run",
-      "sourceRevision": "7c32fa90b9dd04057ba3c089392b0642f3b0545c",
-      "harnessRevision": "eb84e184c3841ec11d14873b9701df19bb1c0e67"
+      "sourceRevision": "85edee63d060c43d05df3770d168a81b7421d6df",
+      "harnessRevision": "581043bc84e31ccc4194fdaa337741f6868cf78b"
     },
     "witness_preservation_missing": {
       "path": "release-evidence\\0.6.0\\attestations\\witness-preservation-missing.json",
       "exists": true,
-      "sha256": "754f608a0165b74263e18e7e3eb57807ef4e9cc2db84dc19d55ac04889bd8f66",
+      "sha256": "454588f2e76b9c53ae2ce0090491b41f823abefac091fe56bf6dc9417b9894ed",
       "status": "FAIL",
       "stage": "preservation-verification",
-      "sourceRevision": "7c32fa90b9dd04057ba3c089392b0642f3b0545c",
-      "harnessRevision": "eb84e184c3841ec11d14873b9701df19bb1c0e67"
+      "sourceRevision": "85edee63d060c43d05df3770d168a81b7421d6df",
+      "harnessRevision": "581043bc84e31ccc4194fdaa337741f6868cf78b"
+    },
+    "witness_stale_lock": {
+      "path": "release-evidence\\0.6.0\\attestations\\witness-stale-lock.json",
+      "exists": true,
+      "sha256": "a93891414056bc55022aa9ac2bc12dd8d69425b2ac618107e661d6b00ee4eea0",
+      "status": "FAIL",
+      "stage": "resolve-installers",
+      "sourceRevision": "85edee63d060c43d05df3770d168a81b7421d6df",
+      "harnessRevision": "581043bc84e31ccc4194fdaa337741f6868cf78b"
     },
     "mt06_cancellation": {
       "path": ".hermes-0.6\\mt06-cycles-result.json",

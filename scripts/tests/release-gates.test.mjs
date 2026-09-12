@@ -2485,3 +2485,22 @@ test("no workflow mapping key is comment-only (GitHub rejects the whole file)", 
     );
   }
 });
+
+// Regression for the 2026-09-12 lifecycle evidence incident: a killed chain
+// left an orphaned attempt running, and its late TIMEOUT record overwrote a
+// newer clean PASS for the same scenario. The harness now holds a per-scenario
+// lock (live owners refuse, dead owners are taken over) and re-authorizes
+// every evidence write against that lock.
+test("lifecycle harness refuses to race evidence for one scenario", async () => {
+  const harness = await readFile(join(process.cwd(), "scripts", "sandbox", "host-run-lifecycle.ps1"), "utf8");
+  assert.match(harness, /Refusing to race its evidence/, "live owners must make a second run refuse");
+  assert.match(harness, /function Assert-LockOwnership/, "the ownership assert must exist");
+  const guards = harness.match(/Assert-LockOwnership/g) || [];
+  assert.ok(
+    guards.length >= 6,
+    `expected the ownership assert plus at least five guarded writes; found ${guards.length}`,
+  );
+  const witnesses = await readFile(join(process.cwd(), "scripts", "sandbox", "test-fault-evidence.ps1"), "utf8");
+  assert.match(witnesses, /witness-live-lock/, "the live-lock refusal witness must exist");
+  assert.match(witnesses, /witness-stale-lock/, "the stale-lock takeover witness must exist");
+});

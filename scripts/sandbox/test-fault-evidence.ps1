@@ -7,6 +7,8 @@
 #   malformed-result -> FAIL   at sandbox-run
 #   cancellation     -> the process is killed; no PASS artifact may exist
 #   preservation-missing -> FAIL at preservation-verification (R05)
+#   live-lock        -> a run refuses to start while a live owner exists
+#   stale-lock       -> a dead owner's lock is taken over and released
 #
 # The fault paths are default-off in the real run; this script is their
 # evidence producer. Usage (from the repository root):
@@ -126,6 +128,47 @@ try {
     throw "the run must exit nonzero when preservation is not PASS; a FAIL evidence document alone is a false green"
   }
   Assert-Witness "witness-preservation-missing" "FAIL" "preservation-verification" $true "missing-files"
+
+  # Leg 6: one live run per evidence name. A live lock owner must make the
+  # next invocation refuse BEFORE any evidence is written; this is the
+  # incident repro (2026-09-12 a killed chain's orphan overwrote a clean
+  # record after the replacement run started).
+  $lockDir = Join-Path $env:TEMP "localmotive-lifecycle-locks"
+  New-Item -ItemType Directory -Force -Path $lockDir | Out-Null
+  $liveLock = Join-Path $lockDir "witness-live-lock.lock"
+  Remove-Witness "witness-live-lock"
+  ([ordered]@{ pid = $PID; evidenceName = "witness-live-lock"; startedAtUtc = (Get-Date).ToUniversalTime().ToString("o"); host = "witness" } | ConvertTo-Json) | Set-Content -Path $liveLock -Encoding UTF8
+  $refusalMessage = ""
+  try {
+    & "$PSScriptRoot\host-run-lifecycle.ps1" -Tag "v$Version" -Version $Version `
+      -CandidateDir (Join-Path $root "missing-assets-fixture") `
+      -EvidenceName "witness-live-lock" -FaultSimulation "missing-assets" 2>&1 | Out-String | ForEach-Object { $refusalMessage = $_ }
+  } catch { $refusalMessage = $_.Exception.Message }
+  if ($refusalMessage -notmatch "Refusing to race its evidence") {
+    throw "a live lock must refuse the run; got: $refusalMessage"
+  }
+  if (Test-Path (Join-Path $attestations "witness-live-lock.json")) {
+    throw "a refused run must not write evidence over the live owner's records"
+  }
+  Write-Host "WITNESS OK: witness-live-lock -> refused while a live owner exists"
+
+  # Leg 7: a dead owner's lock is stale; the run takes it over, proceeds to
+  # its normal bounded failure, and releases the lock on the way out.
+  Remove-Witness "witness-stale-lock"
+  $deadProc = Start-Process -FilePath "cmd" -ArgumentList "/c", "exit" -PassThru
+  $deadProc.WaitForExit()
+  $staleLock = Join-Path $lockDir "witness-stale-lock.lock"
+  ([ordered]@{ pid = $deadProc.Id; evidenceName = "witness-stale-lock"; startedAtUtc = (Get-Date).ToUniversalTime().ToString("o"); host = "witness" } | ConvertTo-Json) | Set-Content -Path $staleLock -Encoding UTF8
+  try {
+    & "$PSScriptRoot\host-run-lifecycle.ps1" -Tag "v$Version" -Version $Version `
+      -CandidateDir (Join-Path $root "missing-assets-fixture") `
+      -EvidenceName "witness-stale-lock" -FaultSimulation "missing-assets"
+  } catch { }
+  Assert-Witness "witness-stale-lock" "FAIL" "resolve-installers" $false
+  if (Test-Path $staleLock) {
+    throw "the stale-lock leg must release its lock at exit"
+  }
+  Write-Host "WITNESS OK: witness-stale-lock -> stale owner taken over, run proceeded, lock released"
 
   Write-Host "ALL WITNESS LEGS PASS"
 } finally {
