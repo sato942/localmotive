@@ -402,11 +402,10 @@ jobs:
     needs: [resolve, quality, package]
     runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]
     timeout-minutes: 120
-    env:
-      # Explicit supported qualification matrix (audit GH-04 I4 / G-06.I2;
-      # R07 follow-up review): every supported baseline runs the update path
-      # AND its preservation step with the baseline's real persistence flavor
-      # (v0.4.x predates the SQLite mirror, so it uses the cache-record leg).
+    # Explicit supported qualification matrix (audit GH-04 I4 / G-06.I2;
+    # R07 follow-up review): every supported baseline runs the update path
+    # AND its preservation step with the baseline's real persistence flavor
+    # (v0.4.x predates the SQLite mirror, so it uses the cache-record leg).
     steps:
       - name: Pin LF line endings before checkout
         shell: bash

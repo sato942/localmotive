@@ -2447,3 +2447,41 @@ test("S-26: the hardware probe runs only in its explicit qualification job", asy
     assert.doesNotMatch(body, /--ignored/, `${file} must not run ignored probes`);
   }
 });
+
+// Regression for the 2026-09-12 incident: a job-level `env:` containing only
+// comment lines made GitHub reject the ENTIRE release.yml (placeholder failed
+// runs on every push, workflow registered by path, no real jobs ever ran).
+// actionlint reports the same class as "[syntax-check] expecting a single
+// ${{...}} expression or mapping value". This gate keeps the whole workflow
+// set free of comment-only mapping keys.
+test("no workflow mapping key is comment-only (GitHub rejects the whole file)", async () => {
+  const { findCommentOnlyMappings } = await import("../verify_workflow_syntax.mjs");
+
+  // The exact broken shape must be flagged.
+  const broken = [
+    "jobs:",
+    "  lifecycle:",
+    "    env:",
+    "      # matrix for the qualification legs",
+    "    steps:",
+    "      - run: echo ok",
+    "",
+  ].join("\n");
+  const brokenFindings = findCommentOnlyMappings(broken);
+  assert.equal(brokenFindings.length, 1, "comment-only env must be flagged");
+  assert.equal(brokenFindings[0].key, "env");
+
+  // A mapping with real entries (plus comments) is fine.
+  const ok = ["jobs:", "  a:", "    env:", "      # comment", "      A: b", "    steps:", "      - run: x", ""].join("\n");
+  assert.deepEqual(findCommentOnlyMappings(ok), []);
+
+  // Every workflow in the repo must pass, release.yml included.
+  for (const file of ["release.yml", "ci.yml", "catalog.yml", "hardware-qualify.yml"]) {
+    const body = await readFile(join(process.cwd(), ".github", "workflows", file), "utf8");
+    assert.deepEqual(
+      findCommentOnlyMappings(body),
+      [],
+      `${file} must not contain comment-only mapping keys`,
+    );
+  }
+});
