@@ -1,5 +1,7 @@
 # v0.6 release review (V06-G-08.I1)
 
+> Current residual status (2026-09-13): the reviewed correction is accepted, but release acceptance and publication are incomplete. The active residual-work tracker is [`TODO-0.6-post-076a3eeecbdf.md`](../TODO-0.6-post-076a3eeecbdf.md) at the repository root (baseline `076a3ee…`; P06-01..P06-04 preparation VERIFIED; 19 original criteria plus R06-01/R06-02 open with stated blockers). This review document below is the historical owner-facing artifact: its decision tables, payloads (§1), and publication path (§2) are preserved as written, including the superseded `REVIEWED_SHA=16a8317…` recipe — reuse its exact ruleset payloads, but do not execute that recipe for any release including the correction.
+
 Owner-facing review artifact for the stabilization release decision. The
 policy and every decision below come from `docs/history/TODO-0.6.md` and
 `docs/history/localmotive-comprehensive-audit.md`; this document never
