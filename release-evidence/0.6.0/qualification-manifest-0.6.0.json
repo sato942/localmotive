@@ -1,8 +1,8 @@
 {
   "schema": "localmotive.qualification-manifest.v1",
   "release": "0.6.0",
-  "generatedAt": "2026-09-13T01:06:08.890Z",
-  "repositoryHeadAtGeneration": "950295e2d5ec04197b354993eb22bbcf606838ac",
+  "generatedAt": "2026-09-13T01:15:13.450Z",
+  "repositoryHeadAtGeneration": "4a410d8fdbcd464fe85ca2f9a40fa285ee374479",
   "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
   "workflowFile": {
     "path": ".github/workflows/release.yml",
@@ -95,62 +95,62 @@
     "witness_missing_assets": {
       "path": "release-evidence/0.6.0/attestations/witness-missing-assets.json",
       "exists": true,
-      "sha256": "8277373270acf9164ef68364e7e5698d28ee7e56c32959a33723c5aab2aaf07d",
-      "sha256_lf": "49603f9f5edb811249b3ebf84ced7266d6ecaabfc3e63e235729be56dcba8856",
+      "sha256": "f579b50f69ed0098e8b92400b4d21b3c20c6015065fd9df956b370c02fcb281b",
+      "sha256_lf": "f1b9845e9390acae523b71f0d58618d9b6f5bfc70c3d78c52d34d5e7e70e9624",
       "status": "FAIL",
       "stage": "resolve-installers",
       "sourceRevision": null,
-      "harnessRevision": "aea51d5c984a08dfad07360674d3c8a815d80746"
+      "harnessRevision": "4a410d8fdbcd464fe85ca2f9a40fa285ee374479"
     },
     "witness_timeout": {
       "path": "release-evidence/0.6.0/attestations/witness-timeout.json",
       "exists": true,
-      "sha256": "a8f40f6c619ca1597b751ea18f2b3ce25305620223fa41d2ac05cfd2bc4c7fd1",
-      "sha256_lf": "602ef297797a6464f019ea3b74c216d3cba77c864aa2b5d9ab8e12dd511ef28c",
+      "sha256": "339a402aed18119785608253c87ad6036eeb88476253dfa0592c5832c9a37377",
+      "sha256_lf": "348f71dac35694c7fcbb4cecb385d749ed9034f0bc19372320178f9ab3ca121c",
       "status": "TIMEOUT",
       "stage": "sandbox-timeout",
       "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
-      "harnessRevision": "aea51d5c984a08dfad07360674d3c8a815d80746"
+      "harnessRevision": "4a410d8fdbcd464fe85ca2f9a40fa285ee374479"
     },
     "witness_malformed_result": {
       "path": "release-evidence/0.6.0/attestations/witness-malformed-result.json",
       "exists": true,
-      "sha256": "0e9b896f3ae937c4cce263f7887cd1a2df5d14a06d711a9f368d44e12934961e",
-      "sha256_lf": "bff9441978ada2dfe308b735f637cbaf4565cf0a7131b89e58ddb43fd6b8bb68",
+      "sha256": "192a56f63d1b548072aa1f12b16a3cea7e8fac3454a44a4bb382bae909bad191",
+      "sha256_lf": "3a543abc52b8193511ebeabbbe60940493386cd4abe29581c7954f0cb4c2db82",
       "status": "FAIL",
       "stage": "sandbox-run",
       "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
-      "harnessRevision": "aea51d5c984a08dfad07360674d3c8a815d80746"
+      "harnessRevision": "4a410d8fdbcd464fe85ca2f9a40fa285ee374479"
     },
     "witness_preservation_missing": {
       "path": "release-evidence/0.6.0/attestations/witness-preservation-missing.json",
       "exists": true,
-      "sha256": "25efefcee6f4e3bbffd2bc10faf8e28b59fdff2dc6699eb88a123cd7525cd6e1",
-      "sha256_lf": "84bc6686e42b23883d209d6ca51f55bbbc8f8bb8d6d4671b36f4107a592e6d57",
+      "sha256": "ac14c8d7969f5b8a210bf590961d34187ee2ebd3c515f67a7b07617646a6b71c",
+      "sha256_lf": "9d24c71ce9fbb66fe57433390a385f510b2671d3cc257cf5ffc0e70873414276",
       "status": "FAIL",
       "stage": "preservation-verification",
       "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
-      "harnessRevision": "aea51d5c984a08dfad07360674d3c8a815d80746"
+      "harnessRevision": "4a410d8fdbcd464fe85ca2f9a40fa285ee374479"
     },
     "witness_stale_lock": {
       "path": "release-evidence/0.6.0/attestations/witness-stale-lock.json",
       "exists": true,
-      "sha256": "990108bf1b535bd68c1afc38a41dfa8b3daea9621e8fcec21bd5015ddb3ba968",
-      "sha256_lf": "fe098e7c51a7c4e1e5c498973157d78b9001018a36ea7f92a964b4ab2c4f6f23",
+      "sha256": "fc5d1713ad6e8ff1264d0706a678e05daa82e3f4d54bbd9aa443eb967f573458",
+      "sha256_lf": "5e8834c5db7610165ceacbdba32185fea07da0664926460837d158a562414fff",
       "status": "FAIL",
       "stage": "resolve-installers",
       "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
-      "harnessRevision": "aea51d5c984a08dfad07360674d3c8a815d80746"
+      "harnessRevision": "4a410d8fdbcd464fe85ca2f9a40fa285ee374479"
     },
     "witness_live_lock": {
       "path": "release-evidence/0.6.0/attestations/witness-live-lock.json",
       "exists": true,
-      "sha256": "5588f96815b8be65b169602b6d6c346bf1960bd32b9bcf5995a7c2b335f4a054",
-      "sha256_lf": "7a0f98e48280e8fee536371c6b695360d3b05c9c19196c88493e68dc36fd4b1a",
+      "sha256": "50b699132bad09197e085104f18ed4c508fd8347b4c5f1a4657cecc30a5eab51",
+      "sha256_lf": "5e4d768c68b2c562e64eca9a810b9a65a6b082f06c51cbcddfe897f415079cb9",
       "status": "FAIL",
       "stage": "resolve-installers",
       "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
-      "harnessRevision": "aea51d5c984a08dfad07360674d3c8a815d80746"
+      "harnessRevision": "4a410d8fdbcd464fe85ca2f9a40fa285ee374479"
     },
     "mt06_cancellation": {
       "path": "release-evidence/0.6.0/attestations/mt06-cycles-result.json",

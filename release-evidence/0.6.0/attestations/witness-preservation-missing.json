@@ -9,7 +9,7 @@
                          "output":  "collected files absent; the preservation step did not run"
                      },
     "sourceRevision":  "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
-    "harnessRevision":  "aea51d5c984a08dfad07360674d3c8a815d80746",
+    "harnessRevision":  "4a410d8fdbcd464fe85ca2f9a40fa285ee374479",
     "candidateDigests":  {
                              "currentSetup":  "8398cf8a25949049b939e33aa2613330e41e7882aa951b868d064bc4fbc73bef",
                              "currentMsi":  "2c00e0d3f9e2dc050fd3ec5fd02bc9f6b0923605b6d715b20a63f8292e30d11b"
