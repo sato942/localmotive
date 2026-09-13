@@ -238,7 +238,7 @@ explicitly authorized dispatch of `.github/workflows/release-promote.yml`.
 # Step 1 - verify on the exact reviewed revision (tag creation is the owner's
 # act; the frozen candidate source is the value recorded in the qualification
 # manifest, never a moving HEAD).
-REVIEWED_SHA=9e8582fc32750fc069889dc5037f3690a028b905
+REVIEWED_SHA=16a8317d15beddb08f44fc81d35d0c30c5f07a77
 git rev-parse "$REVIEWED_SHA"   # confirm, then:
 git tag -a v0.6.0 "$REVIEWED_SHA" -m "Localmotive 0.6.0 (unsigned)" && git push origin v0.6.0
 # Revision split (F9 repair pass, recorded here so the tag target is explicit):
@@ -250,6 +250,8 @@ git tag -a v0.6.0 "$REVIEWED_SHA" -m "Localmotive 0.6.0 (unsigned)" && git push 
 # reproduces these bytes); workflow/harness 362843cb7c1bb36b680729deeba4714e19103f6a
 # (F9-01 after-sample verdict, F9-04 staged-record transfer, F9-05 models-array
 # rejection); manifest rebound to that workflow revision at 9e8582f.
+# Tag the head of this repair pass (its tree is the reviewed content plus
+# this SHA line); the line above names the content commit it was reviewed at.
 RUN_ID=$(gh run list --workflow=release.yml --commit "$REVIEWED_SHA" --json databaseId --jq '.[0].databaseId')
 gh run watch "$RUN_ID"          # must end success; it publishes nothing
 
