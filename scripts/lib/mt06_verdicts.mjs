@@ -13,30 +13,58 @@
 
 /**
  * Classify whether the active-request boundary was actually exercised.
- * Coverage is `active` only when the previous request was observed in flight
- * immediately before the replacement invocation AND the immediate observation
- * after the invocation still shows exactly that one in-flight request
- * (overlap from the start, not only after a later settling delay). An attempt
- * made after the old request already ended is `not-exercised`: neither proof
- * of a product failure nor a passing test of the boundary. An immediate
- * reading above "1" is overlap observed at the invocation itself.
+ *
+ * The boundary proof is strictly bracketed: the previous request must be
+ * observed in flight immediately before the replacement invocation AND the
+ * immediate observation after the invocation must still show exactly that
+ * one in-flight request.
+ *
+ * - before "1", after "1": `active`. The boundary was exercised.
+ * - before "1", after a valid request count above "1": `overlap`. The
+ *   immediate sample shows overlapping requests at the invocation itself.
+ * - before "1", after "0": `not-exercised`. The request drained within the
+ *   observation interval, so this proof cannot tell whether the replacement
+ *   was refused while the request was active. A drained request is not
+ *   overlapping requests.
+ * - before "1", after null, missing, or an error result: `not-exercised`.
+ *   The required observation is unavailable, and missing evidence never
+ *   earns active coverage credit. An unreadable sample is not overlapping
+ *   requests.
+ * - before anything but "1": `not-exercised`. The previous request was
+ *   already inactive before the invocation.
+ *
+ * Neither `not-exercised` outcome is proof of a product failure nor a
+ * passing test of the boundary.
  */
 export function classifyCoverage({ processingAtCancel, processingBeforeInvocation, processingAfterInvocation = null }) {
-  if (processingBeforeInvocation === "1") {
-    if (processingAfterInvocation !== null && processingAfterInvocation !== "1") {
-      return {
-        coverage: "overlap",
-        detail: `requests_processing=${processingAfterInvocation} immediately after the invocation while the previous request was active (cancel sample ${processingAtCancel})`,
-      };
-    }
+  if (processingBeforeInvocation !== "1") {
+    return {
+      coverage: "not-exercised",
+      detail: `requests_processing=${processingBeforeInvocation} before the invocation; the previous request was active at cancellation=${processingAtCancel === "1"}`,
+    };
+  }
+  if (processingAfterInvocation === "1") {
     return {
       coverage: "active",
       detail: `requests_processing=1 immediately before the invocation (cancel sample ${processingAtCancel})`,
     };
   }
+  const afterNumeric = Number(processingAfterInvocation);
+  if (Number.isFinite(afterNumeric) && afterNumeric > 1) {
+    return {
+      coverage: "overlap",
+      detail: `requests_processing=${processingAfterInvocation} immediately after the invocation while the previous request was active (cancel sample ${processingAtCancel})`,
+    };
+  }
+  if (processingAfterInvocation === "0") {
+    return {
+      coverage: "not-exercised",
+      detail: `requests_processing=1 before the invocation but 0 immediately after: the request drained within the observation interval, so this strictly bracketed proof was not exercised (cancel sample ${processingAtCancel})`,
+    };
+  }
   return {
     coverage: "not-exercised",
-    detail: `requests_processing=${processingBeforeInvocation} before the invocation; the previous request was active at cancellation=${processingAtCancel === "1"}`,
+    detail: `the observation after the invocation is unavailable (${String(processingAfterInvocation)}), so the strictly bracketed proof was not exercised (cancel sample ${processingAtCancel})`,
   };
 }
 
@@ -49,6 +77,7 @@ export function classifyCoverage({ processingAtCancel, processingBeforeInvocatio
 export function evaluateScenario({
   scenario,
   coverage,
+  coverageDetail = null,
   uiStateBefore = null,
   uiAccepted = null,
   apiOutcome = null,
@@ -70,7 +99,7 @@ export function evaluateScenario({
   if (coverage !== "active") {
     return {
       status: "NOT-EXERCISED",
-      detail: `${scenario}: the previous request had already ended before the invocation`,
+      detail: `${scenario}: boundary proof not exercised (${coverageDetail ?? "the required bracketed observation is unavailable"})`,
     };
   }
   const refused =

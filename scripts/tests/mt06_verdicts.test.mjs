@@ -32,12 +32,12 @@ test("the immediate after-sample reaches the verdict: overlap at the invocation 
   // changing only that sample to "2" must fail both scenarios through the
   // driver's actual data-to-verdict wiring. The wiring under test is
   // classifyCoverage (with the after-sample) followed by evaluateScenario.
-  for (const scenario of ["ui", "api"]) {
+  const wire = (scenario, after) => {
     const attempt = {
       scenario,
       processingAtCancelRequest: "1",
       processingBeforeInvocation: "1",
-      processingAfterInvocation: "2",
+      processingAfterInvocation: after,
       buttonStateBefore: "enabled",
       uiAccepted: scenario === "ui" ? false : null,
       apiAttempt: scenario === "api" ? { status: "refused" } : null,
@@ -47,17 +47,26 @@ test("the immediate after-sample reaches the verdict: overlap at the invocation 
       processingBeforeInvocation: attempt.processingBeforeInvocation,
       processingAfterInvocation: attempt.processingAfterInvocation,
     });
-    assert.equal(coverage.coverage, "overlap");
     const verdict = evaluateScenario({
       scenario,
       coverage: coverage.coverage,
+      coverageDetail: coverage.detail,
       uiStateBefore: attempt.buttonStateBefore,
       uiAccepted: attempt.uiAccepted,
       apiOutcome: attempt.apiAttempt?.status ?? null,
       overlapObserved: false,
       serializationProved: false,
     });
+    return { coverage, verdict };
+  };
+  for (const scenario of ["ui", "api"]) {
+    const { coverage, verdict } = wire(scenario, "2");
+    assert.equal(coverage.coverage, "overlap");
     assert.equal(verdict.status, "FAIL", `${scenario} must fail on immediate overlap`);
+  }
+  // A count above "1" is overlap; anything else bracketed is not.
+  for (const scenario of ["ui", "api"]) {
+    assert.equal(wire(scenario, "3").verdict.status, "FAIL");
   }
   // The recorded shape (after-sample "1") keeps passing through the same wiring.
   const recorded = classifyCoverage({
@@ -70,6 +79,7 @@ test("the immediate after-sample reaches the verdict: overlap at the invocation 
     evaluateScenario({
       scenario: "api",
       coverage: recorded.coverage,
+      coverageDetail: recorded.detail,
       uiStateBefore: "enabled",
       uiAccepted: null,
       apiOutcome: "refused",
@@ -78,6 +88,71 @@ test("the immediate after-sample reaches the verdict: overlap at the invocation 
     }).status,
     "PASS",
   );
+});
+
+test("a drained or unavailable after-sample is not exercised, never overlap and never active", () => {
+  // Correction pass: "0" means the request drained within the observation
+  // interval; null/missing/error means the required observation is
+  // unavailable. Both are NOT-EXERCISED through the same classify-then-
+  // evaluate wiring, for both scenarios. Missing evidence must not earn
+  // active coverage credit, and zero must not be diagnosed as overlap.
+  const wire = (scenario, after) => {
+    const coverage = classifyCoverage({
+      processingAtCancel: "1",
+      processingBeforeInvocation: "1",
+      ...(after === undefined ? {} : { processingAfterInvocation: after }),
+    });
+    const verdict = evaluateScenario({
+      scenario,
+      coverage: coverage.coverage,
+      coverageDetail: coverage.detail,
+      uiStateBefore: "enabled",
+      uiAccepted: scenario === "ui" ? false : null,
+      apiOutcome: scenario === "api" ? "refused" : null,
+      overlapObserved: false,
+      serializationProved: false,
+    });
+    return { coverage, verdict };
+  };
+  for (const scenario of ["ui", "api"]) {
+    const drained = wire(scenario, "0");
+    assert.equal(drained.coverage.coverage, "not-exercised");
+    assert.match(drained.coverage.detail, /drained within the observation interval/);
+    assert.equal(drained.verdict.status, "NOT-EXERCISED");
+    assert.match(drained.verdict.detail, /drained within the observation interval/);
+    for (const missing of [null, undefined, "ERR:timeout"]) {
+      const result = wire(scenario, missing);
+      assert.equal(result.coverage.coverage, "not-exercised", `${scenario} after=${String(missing)}`);
+      assert.match(result.coverage.detail, /unavailable/);
+      assert.equal(result.verdict.status, "NOT-EXERCISED");
+      assert.match(result.verdict.detail, /unavailable/);
+    }
+  }
+});
+
+test("genuine drain-loop overlap still fails with an incomplete immediate sample", () => {
+  // An incomplete sample must not override genuine overlap evidence observed
+  // independently by the drain loop.
+  for (const scenario of ["ui", "api"]) {
+    const coverage = classifyCoverage({
+      processingAtCancel: "1",
+      processingBeforeInvocation: "1",
+      processingAfterInvocation: "0",
+    });
+    assert.equal(coverage.coverage, "not-exercised");
+    const verdict = evaluateScenario({
+      scenario,
+      coverage: coverage.coverage,
+      coverageDetail: coverage.detail,
+      uiStateBefore: "enabled",
+      uiAccepted: true,
+      apiOutcome: "accepted",
+      overlapObserved: true,
+      serializationProved: false,
+    });
+    assert.equal(verdict.status, "FAIL");
+    assert.match(verdict.detail, /concurrently/);
+  }
 });
 
 test("an already-inactive attempt is not exercised, not a failure and not a pass", () => {

@@ -1204,6 +1204,13 @@ test("R11: the packaged cancellation driver measures owned identities end to end
   assert.match(verdicts, /NOT-EXERCISED/);
   assert.match(verdicts, /processingAfterInvocation/);
   assert.match(verdicts, /coverage === "overlap"/);
+  // Correction pass: only a valid count above "1" is overlap; "0" is a
+  // drained interval and null/missing/error is an unavailable observation.
+  // Both are not-exercised, and missing evidence never earns active credit.
+  assert.match(verdicts, /afterNumeric > 1/);
+  assert.match(verdicts, /drained within the observation interval/);
+  assert.match(verdicts, /observation after the invocation is unavailable/);
+  assert.match(verdicts, /coverageDetail/);
   assert.match(verdicts, /evaluateProhibited/);
   assert.match(verdicts, /evaluateIdentity/);
   // A source/digest-bound result file is written.

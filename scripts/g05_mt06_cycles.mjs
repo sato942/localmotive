@@ -591,6 +591,7 @@ const runBoundaryScenario = async (scenario) => {
   const verdict = evaluateScenario({
     scenario,
     coverage: coverage.coverage,
+    coverageDetail: coverage.detail,
     uiStateBefore: attempt.buttonStateBefore,
     uiAccepted: attempt.uiAccepted,
     apiOutcome: attempt.apiAttempt?.status ?? null,
