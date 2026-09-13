@@ -2,7 +2,7 @@
     "msiPayloadDigest":  "3a736bb9ee2928f02d73e718d51092cdc126e7920c22392eff33f909b9aa4f08",
     "nsisPayloadDigest":  "7ec790cf67cc70e3051621b6ef36dc494a16f39d8cd35db495dcdb19a4b87e29",
     "version":  "0.6.0",
-    "finishedAtUtc":  "2026-09-13T00:30:50.5513750Z",
+    "finishedAtUtc":  "2026-09-13T00:55:17.0173293Z",
     "installedDigests":  {
                              "Preservation upgrade":  "7ec790cf67cc70e3051621b6ef36dc494a16f39d8cd35db495dcdb19a4b87e29",
                              "Post-update install":  "7ec790cf67cc70e3051621b6ef36dc494a16f39d8cd35db495dcdb19a4b87e29",
