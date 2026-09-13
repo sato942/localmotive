@@ -6,10 +6,10 @@
     "tag":  "v0.6.0",
     "version":  "0.6.0",
     "previousTag":  "v0.4.0",
-    "sourceRevision":  "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
-    "harnessRevision":  "4a410d8fdbcd464fe85ca2f9a40fa285ee374479",
-    "startedAtUtc":  "2026-09-13T01:14:35.8306769Z",
-    "finishedAtUtc":  "2026-09-13T01:14:35.8336814Z",
+    "sourceRevision":  "e9a36b3aa075d72713d88af4cc74d64d561f12f8",
+    "harnessRevision":  "fdc8b083d8a2ad6d3072d6462e5adbe987d03f61",
+    "startedAtUtc":  "2026-09-13T03:36:05.5243198Z",
+    "finishedAtUtc":  "2026-09-13T03:36:05.5268291Z",
     "candidateDigests":  {
 
                          },

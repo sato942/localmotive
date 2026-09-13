@@ -1,40 +1,40 @@
 {
   "schema": "localmotive.qualification-manifest.v1",
   "release": "0.6.0",
-  "generatedAt": "2026-09-13T01:15:13.450Z",
-  "repositoryHeadAtGeneration": "4a410d8fdbcd464fe85ca2f9a40fa285ee374479",
-  "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
+  "generatedAt": "2026-09-13T04:15:16.558Z",
+  "repositoryHeadAtGeneration": "fdc8b083d8a2ad6d3072d6462e5adbe987d03f61",
+  "sourceRevision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8",
   "workflowFile": {
     "path": ".github/workflows/release.yml",
-    "sha256": "dee50473773e32eddd8b19f3e4d6a7beb303f1fdb7b705c08243b8dd70d4be36"
+    "sha256": "b3d99a1f30ba9946138fd7f22a468884119efcbe1fb80cf5986b7c0d8bd92534"
   },
   "inventory": {
     "path": "release-evidence/0.6.0/candidate-inventory-0.6.0.json",
-    "sha256": "73e758e3e0a6665719aa82eff0a0fd177e53807674a25e91aae6038dc51e3b00"
+    "sha256": "dd0bd839775262603df21021b66410842ab07fdbac7437b3aa53bbfd0c6973e0"
   },
   "artifacts": [
     {
       "name": "Localmotive_0.6.0_x64-portable.exe",
-      "sizeBytes": 20879360,
-      "sha256": "97e1a4fb2c7622c211123c8e99abedc7e08f648ef3b6a0b8aa543121e6cad8c5"
+      "sizeBytes": 20818432,
+      "sha256": "d6a6ef663c925f9605f06ea2957ef95409dace00d798ebc28e5666249fd59427"
     },
     {
       "name": "Localmotive_0.6.0_x64-setup.exe",
-      "sizeBytes": 5298598,
-      "sha256": "8398cf8a25949049b939e33aa2613330e41e7882aa951b868d064bc4fbc73bef"
+      "sizeBytes": 5290112,
+      "sha256": "b935033d2ca2dbaf595c0a20e629053f0b4097ebe4b1059c351d140530ab8652"
     },
     {
       "name": "Localmotive_0.6.0_x64.msi",
-      "sizeBytes": 9048064,
-      "sha256": "2c00e0d3f9e2dc050fd3ec5fd02bc9f6b0923605b6d715b20a63f8292e30d11b"
+      "sizeBytes": 9035776,
+      "sha256": "bc5c6aae332487430c1d7a238b668e3919f1514f713dd0c9d1ab80e248313b9b"
     }
   ],
   "records": {
     "packaged_verification": {
       "path": "release-evidence/0.6.0/attestations/packaged-verification-0.6.0.json",
       "exists": true,
-      "sha256": "29c0a0dc4beead6a17c4152b094f7917e01c327212488acf442692f6f3673b8b",
-      "sha256_lf": "29c0a0dc4beead6a17c4152b094f7917e01c327212488acf442692f6f3673b8b",
+      "sha256": "1083242f0c43b1748a0cbe6cc3dc47748a8234de01c7ad7c247c1660bc72f3dd",
+      "sha256_lf": "1083242f0c43b1748a0cbe6cc3dc47748a8234de01c7ad7c247c1660bc72f3dd",
       "overall_status": "PASS",
       "checks": "25/25"
     },
@@ -52,7 +52,7 @@
         "evidenceFromSha256": "c03f6074e6d8cf875e3e0212e06f8eb024ada65e63566e1c0d238a2a0aa90206",
         "evidenceFromSha256Lf": "c03f6074e6d8cf875e3e0212e06f8eb024ada65e63566e1c0d238a2a0aa90206",
         "evidenceFromSource": "da091a47ca6595ec37690ab5ae63542671c5f7f6",
-        "reason": "Carried from freeze 8 (da091a4): no installer, migration, catalog-persistence or launch-path product code changed between da091a4 and eb01bc9 - the product delta is benchmark ownership in measurement_service.rs and raw SEC1 key parsing in local_client.rs, neither exercised by these legs; the freeze-9 harness change adds the ownership lock and the payload probe, whose behaviour is separately evidenced by witness-live-lock and the installer payload functional probe. The freeze-9 sandbox re-run is blocked on this host: Windows Sandbox cannot boot a VM (free RAM 168 MB with a stale vmmemWindowsSandbox holding ~3.8 GB), so it stays an open environment prerequisite, not a passed criterion."
+        "reason": "No installer, migration, catalog-persistence or launch-path product code changed between the cited candidate and this one: the product delta is the benchmark ownership handle in measurement_service.rs (the fallible client is now built before the active slot is published) plus its command-level regression; the F9-05 sandbox changes add the settings seed/collect and tighten the cache verifier, whose behaviour is separately evidenced by the preservation verifier controls and by the witnesses in this set. The sandbox legs stay an open environment prerequisite on this host, not a passed criterion."
       }
     },
     "lifecycle_upgrade_v0.5.0": {
@@ -63,7 +63,14 @@
       "status": "PASS",
       "stage": "preservation-verification",
       "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
-      "harnessRevision": "8924c0436b895d906a06d2e32d2b788e2655a737"
+      "harnessRevision": "8924c0436b895d906a06d2e32d2b788e2655a737",
+      "carriedForward": {
+        "evidenceFrom": "release-evidence/0.6.0/history/freeze9-eb01bc9/candidate-inventory-0.6.0.json",
+        "evidenceFromSha256": "73e758e3e0a6665719aa82eff0a0fd177e53807674a25e91aae6038dc51e3b00",
+        "evidenceFromSha256Lf": "73e758e3e0a6665719aa82eff0a0fd177e53807674a25e91aae6038dc51e3b00",
+        "evidenceFromSource": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
+        "reason": "No installer, migration, catalog-persistence or launch-path product code changed between the cited candidate and this one: the product delta is the benchmark ownership handle in measurement_service.rs (the fallible client is now built before the active slot is published) plus its command-level regression; the F9-05 sandbox changes add the settings seed/collect and tighten the cache verifier, whose behaviour is separately evidenced by the preservation verifier controls and by the witnesses in this set. The sandbox legs stay an open environment prerequisite on this host, not a passed criterion."
+      }
     },
     "lifecycle_preservation_v0.4.1": {
       "path": "release-evidence/0.6.0/attestations/sandbox-clean-account-lifecycle-preservation-v0.4.1.json",
@@ -73,7 +80,14 @@
       "status": "PASS",
       "stage": "preservation-verification",
       "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
-      "harnessRevision": "e9c1fd3e042b8b162850fed79603f930bcffaa8c"
+      "harnessRevision": "e9c1fd3e042b8b162850fed79603f930bcffaa8c",
+      "carriedForward": {
+        "evidenceFrom": "release-evidence/0.6.0/history/freeze9-eb01bc9/candidate-inventory-0.6.0.json",
+        "evidenceFromSha256": "73e758e3e0a6665719aa82eff0a0fd177e53807674a25e91aae6038dc51e3b00",
+        "evidenceFromSha256Lf": "73e758e3e0a6665719aa82eff0a0fd177e53807674a25e91aae6038dc51e3b00",
+        "evidenceFromSource": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
+        "reason": "No installer, migration, catalog-persistence or launch-path product code changed between the cited candidate and this one: the product delta is the benchmark ownership handle in measurement_service.rs (the fallible client is now built before the active slot is published) plus its command-level regression; the F9-05 sandbox changes add the settings seed/collect and tighten the cache verifier, whose behaviour is separately evidenced by the preservation verifier controls and by the witnesses in this set. The sandbox legs stay an open environment prerequisite on this host, not a passed criterion."
+      }
     },
     "lifecycle_preservation_v0.5.0": {
       "path": "release-evidence/0.6.0/attestations/sandbox-clean-account-lifecycle-preservation-v0.5.0.json",
@@ -89,85 +103,85 @@
         "evidenceFromSha256": "c03f6074e6d8cf875e3e0212e06f8eb024ada65e63566e1c0d238a2a0aa90206",
         "evidenceFromSha256Lf": "c03f6074e6d8cf875e3e0212e06f8eb024ada65e63566e1c0d238a2a0aa90206",
         "evidenceFromSource": "da091a47ca6595ec37690ab5ae63542671c5f7f6",
-        "reason": "Carried from freeze 8 (da091a4): no installer, migration, catalog-persistence or launch-path product code changed between da091a4 and eb01bc9 - the product delta is benchmark ownership in measurement_service.rs and raw SEC1 key parsing in local_client.rs, neither exercised by these legs; the freeze-9 harness change adds the ownership lock and the payload probe, whose behaviour is separately evidenced by witness-live-lock and the installer payload functional probe. The freeze-9 sandbox re-run is blocked on this host: Windows Sandbox cannot boot a VM (free RAM 168 MB with a stale vmmemWindowsSandbox holding ~3.8 GB), so it stays an open environment prerequisite, not a passed criterion."
+        "reason": "No installer, migration, catalog-persistence or launch-path product code changed between the cited candidate and this one: the product delta is the benchmark ownership handle in measurement_service.rs (the fallible client is now built before the active slot is published) plus its command-level regression; the F9-05 sandbox changes add the settings seed/collect and tighten the cache verifier, whose behaviour is separately evidenced by the preservation verifier controls and by the witnesses in this set. The sandbox legs stay an open environment prerequisite on this host, not a passed criterion."
       }
     },
     "witness_missing_assets": {
       "path": "release-evidence/0.6.0/attestations/witness-missing-assets.json",
       "exists": true,
-      "sha256": "f579b50f69ed0098e8b92400b4d21b3c20c6015065fd9df956b370c02fcb281b",
-      "sha256_lf": "f1b9845e9390acae523b71f0d58618d9b6f5bfc70c3d78c52d34d5e7e70e9624",
+      "sha256": "978c861cf3f2c342d03cb1d46888e80a9309a70f2dbaeee54692c46092069088",
+      "sha256_lf": "04185bec708f3991e6829c6830fd722fd8a02c3d71e5538cf11c7b0a488bf202",
       "status": "FAIL",
       "stage": "resolve-installers",
       "sourceRevision": null,
-      "harnessRevision": "4a410d8fdbcd464fe85ca2f9a40fa285ee374479"
+      "harnessRevision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8"
     },
     "witness_timeout": {
       "path": "release-evidence/0.6.0/attestations/witness-timeout.json",
       "exists": true,
-      "sha256": "339a402aed18119785608253c87ad6036eeb88476253dfa0592c5832c9a37377",
-      "sha256_lf": "348f71dac35694c7fcbb4cecb385d749ed9034f0bc19372320178f9ab3ca121c",
+      "sha256": "0af03fcf441c4cc7aef562f2ce4722bb7efcf202d6aa7542a0557354efd2f40b",
+      "sha256_lf": "aff184fa8c8567c7c3dd277e98abebf90bddc505f014a895e922ce1661ae2c39",
       "status": "TIMEOUT",
       "stage": "sandbox-timeout",
-      "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
-      "harnessRevision": "4a410d8fdbcd464fe85ca2f9a40fa285ee374479"
+      "sourceRevision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8",
+      "harnessRevision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8"
     },
     "witness_malformed_result": {
       "path": "release-evidence/0.6.0/attestations/witness-malformed-result.json",
       "exists": true,
-      "sha256": "192a56f63d1b548072aa1f12b16a3cea7e8fac3454a44a4bb382bae909bad191",
-      "sha256_lf": "3a543abc52b8193511ebeabbbe60940493386cd4abe29581c7954f0cb4c2db82",
+      "sha256": "a414a369c904f7b5bf91b6edd763fa4abfe47f6f74aca59141f7270926bba503",
+      "sha256_lf": "8e3cf9c14adfb72b59ffcd6d32c7bd86b1a3c9715c10f34879e52b4e1f2c7785",
       "status": "FAIL",
       "stage": "sandbox-run",
-      "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
-      "harnessRevision": "4a410d8fdbcd464fe85ca2f9a40fa285ee374479"
+      "sourceRevision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8",
+      "harnessRevision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8"
     },
     "witness_preservation_missing": {
       "path": "release-evidence/0.6.0/attestations/witness-preservation-missing.json",
       "exists": true,
-      "sha256": "ac14c8d7969f5b8a210bf590961d34187ee2ebd3c515f67a7b07617646a6b71c",
-      "sha256_lf": "9d24c71ce9fbb66fe57433390a385f510b2671d3cc257cf5ffc0e70873414276",
+      "sha256": "3d388349fedae39ceea35d1c4e2742d89fddd4beb3091c7564ea3601e1cd3958",
+      "sha256_lf": "b9fef951268a2bbf50515e9a92390e4e8383bf00efe24ffd5c7aa8083a7d384e",
       "status": "FAIL",
       "stage": "preservation-verification",
-      "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
-      "harnessRevision": "4a410d8fdbcd464fe85ca2f9a40fa285ee374479"
+      "sourceRevision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8",
+      "harnessRevision": "fdc8b083d8a2ad6d3072d6462e5adbe987d03f61"
     },
     "witness_stale_lock": {
       "path": "release-evidence/0.6.0/attestations/witness-stale-lock.json",
       "exists": true,
-      "sha256": "fc5d1713ad6e8ff1264d0706a678e05daa82e3f4d54bbd9aa443eb967f573458",
-      "sha256_lf": "5e8834c5db7610165ceacbdba32185fea07da0664926460837d158a562414fff",
+      "sha256": "7b934edaabd6c2e940009a6b000ae1aa118cccdb68109267de4a27b69f02111c",
+      "sha256_lf": "97c3d1dcc1bb5213c464004240825a4e51119d4f32f162c2036508de712a7f18",
       "status": "FAIL",
       "stage": "resolve-installers",
-      "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
-      "harnessRevision": "4a410d8fdbcd464fe85ca2f9a40fa285ee374479"
+      "sourceRevision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8",
+      "harnessRevision": "fdc8b083d8a2ad6d3072d6462e5adbe987d03f61"
     },
     "witness_live_lock": {
       "path": "release-evidence/0.6.0/attestations/witness-live-lock.json",
       "exists": true,
-      "sha256": "50b699132bad09197e085104f18ed4c508fd8347b4c5f1a4657cecc30a5eab51",
-      "sha256_lf": "5e4d768c68b2c562e64eca9a810b9a65a6b082f06c51cbcddfe897f415079cb9",
+      "sha256": "84643632aded20ec30dc4dd78f6255659ce680ff30524e856df4f803e93c7f4f",
+      "sha256_lf": "edd8e6f21d52d6a89bbae67726043884e0a00678e4076715f8c84e1a0bd15ac4",
       "status": "FAIL",
       "stage": "resolve-installers",
-      "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
-      "harnessRevision": "4a410d8fdbcd464fe85ca2f9a40fa285ee374479"
+      "sourceRevision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8",
+      "harnessRevision": "fdc8b083d8a2ad6d3072d6462e5adbe987d03f61"
     },
     "mt06_cancellation": {
       "path": "release-evidence/0.6.0/attestations/mt06-cycles-result.json",
       "exists": true,
-      "sha256": "95f50ed9489d5e86d42478460da809e60a495c816d6e216f21d4714549f3f07f",
-      "sha256_lf": "95f50ed9489d5e86d42478460da809e60a495c816d6e216f21d4714549f3f07f",
-      "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
-      "summary": "59/59 checks PASS",
-      "checks": "59/59"
+      "sha256": "aa4335706a380faa68003e1d0dbbbaf1411fc8f41d57a6c75889fa4c1863cf61",
+      "sha256_lf": "aa4335706a380faa68003e1d0dbbbaf1411fc8f41d57a6c75889fa4c1863cf61",
+      "sourceRevision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8",
+      "summary": "75/75 checks PASS (0 not exercised)",
+      "checks": "75/75"
     },
     "installer_payload_identity": {
       "path": "release-evidence/0.6.0/attestations/installer-payload-identity.json",
       "exists": true,
-      "sha256": "a38d8e8a34cd4d88a8a1aba20e7068e257c9329ed356f8ba073b5f477123977b",
-      "sha256_lf": "a38d8e8a34cd4d88a8a1aba20e7068e257c9329ed356f8ba073b5f477123977b",
+      "sha256": "0611bf6b458486a9d85aa1fbfd0cd3a3036457aaaa48b371cef988a08981b513",
+      "sha256_lf": "0611bf6b458486a9d85aa1fbfd0cd3a3036457aaaa48b371cef988a08981b513",
       "status": "PASS",
-      "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67"
+      "sourceRevision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8"
     },
     "dc04_command_path": {
       "path": "release-evidence/0.6.0/attestations/dc04-v2-command-path-verification.log",
@@ -190,9 +204,9 @@
     "rt06_all_backends": {
       "path": "release-evidence/0.6.0/attestations/rt06-all-backends.json",
       "exists": true,
-      "sha256": "d856fdb2b25a75d6b1afb2d6988bf75e5c685d2ea1ae815f1446edb13da3e30e",
-      "sha256_lf": "d856fdb2b25a75d6b1afb2d6988bf75e5c685d2ea1ae815f1446edb13da3e30e",
-      "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
+      "sha256": "32b0f84d056675c54676e570a160bd57b1eeb0e215488f5463bcccf746d832a7",
+      "sha256_lf": "32b0f84d056675c54676e570a160bd57b1eeb0e215488f5463bcccf746d832a7",
+      "sourceRevision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8",
       "summary": {
         "total": 22,
         "pass": 22,
@@ -203,10 +217,10 @@
     "rt06_full_run_log": {
       "path": "release-evidence/0.6.0/attestations/rt06-full-run.log",
       "exists": true,
-      "sha256": "f5c7156f1d9032682a29bc9fa1f914850cc06c8a1a6f4fd9f7fa00ebf4e02f23",
-      "sha256_lf": "f5c7156f1d9032682a29bc9fa1f914850cc06c8a1a6f4fd9f7fa00ebf4e02f23"
+      "sha256": "120a8845ed69116328acc3b2ca67862a7dddd52807a57d457c2681c6250fb573",
+      "sha256_lf": "120a8845ed69116328acc3b2ca67862a7dddd52807a57d457c2681c6250fb573"
     }
   },
   "supersededRecords": [],
-  "carryForwardNote": "These lifecycle records were produced against the candidate named by evidenceFrom, not this candidate: Carried from freeze 8 (da091a4): no installer, migration, catalog-persistence or launch-path product code changed between da091a4 and eb01bc9 - the product delta is benchmark ownership in measurement_service.rs and raw SEC1 key parsing in local_client.rs, neither exercised by these legs; the freeze-9 harness change adds the ownership lock and the payload probe, whose behaviour is separately evidenced by witness-live-lock and the installer payload functional probe. The freeze-9 sandbox re-run is blocked on this host: Windows Sandbox cannot boot a VM (free RAM 168 MB with a stale vmmemWindowsSandbox holding ~3.8 GB), so it stays an open environment prerequisite, not a passed criterion."
+  "carryForwardNote": "These lifecycle records were produced against the candidate named by evidenceFrom, not this candidate: lifecycle_upgrade_v0.4.0, lifecycle_preservation_v0.5.0 -> release-evidence/0.6.0/history/freeze8-da091a4/candidate-inventory-0.6.0.json: No installer, migration, catalog-persistence or launch-path product code changed between the cited candidate and this one: the product delta is the benchmark ownership handle in measurement_service.rs (the fallible client is now built before the active slot is published) plus its command-level regression; the F9-05 sandbox changes add the settings seed/collect and tighten the cache verifier, whose behaviour is separately evidenced by the preservation verifier controls and by the witnesses in this set. The sandbox legs stay an open environment prerequisite on this host, not a passed criterion. | lifecycle_upgrade_v0.5.0, lifecycle_preservation_v0.4.1 -> release-evidence/0.6.0/history/freeze9-eb01bc9/candidate-inventory-0.6.0.json: No installer, migration, catalog-persistence or launch-path product code changed between the cited candidate and this one: the product delta is the benchmark ownership handle in measurement_service.rs (the fallible client is now built before the active slot is published) plus its command-level regression; the F9-05 sandbox changes add the settings seed/collect and tighten the cache verifier, whose behaviour is separately evidenced by the preservation verifier controls and by the witnesses in this set. The sandbox legs stay an open environment prerequisite on this host, not a passed criterion."
 }

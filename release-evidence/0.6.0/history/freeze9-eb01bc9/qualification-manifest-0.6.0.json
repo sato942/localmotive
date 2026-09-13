@@ -1,0 +1,212 @@
+{
+  "schema": "localmotive.qualification-manifest.v1",
+  "release": "0.6.0",
+  "generatedAt": "2026-09-13T01:15:13.450Z",
+  "repositoryHeadAtGeneration": "4a410d8fdbcd464fe85ca2f9a40fa285ee374479",
+  "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
+  "workflowFile": {
+    "path": ".github/workflows/release.yml",
+    "sha256": "dee50473773e32eddd8b19f3e4d6a7beb303f1fdb7b705c08243b8dd70d4be36"
+  },
+  "inventory": {
+    "path": "release-evidence/0.6.0/candidate-inventory-0.6.0.json",
+    "sha256": "73e758e3e0a6665719aa82eff0a0fd177e53807674a25e91aae6038dc51e3b00"
+  },
+  "artifacts": [
+    {
+      "name": "Localmotive_0.6.0_x64-portable.exe",
+      "sizeBytes": 20879360,
+      "sha256": "97e1a4fb2c7622c211123c8e99abedc7e08f648ef3b6a0b8aa543121e6cad8c5"
+    },
+    {
+      "name": "Localmotive_0.6.0_x64-setup.exe",
+      "sizeBytes": 5298598,
+      "sha256": "8398cf8a25949049b939e33aa2613330e41e7882aa951b868d064bc4fbc73bef"
+    },
+    {
+      "name": "Localmotive_0.6.0_x64.msi",
+      "sizeBytes": 9048064,
+      "sha256": "2c00e0d3f9e2dc050fd3ec5fd02bc9f6b0923605b6d715b20a63f8292e30d11b"
+    }
+  ],
+  "records": {
+    "packaged_verification": {
+      "path": "release-evidence/0.6.0/attestations/packaged-verification-0.6.0.json",
+      "exists": true,
+      "sha256": "29c0a0dc4beead6a17c4152b094f7917e01c327212488acf442692f6f3673b8b",
+      "sha256_lf": "29c0a0dc4beead6a17c4152b094f7917e01c327212488acf442692f6f3673b8b",
+      "overall_status": "PASS",
+      "checks": "25/25"
+    },
+    "lifecycle_upgrade_v0.4.0": {
+      "path": "release-evidence/0.6.0/attestations/sandbox-clean-account-lifecycle-upgrade-v0.4.0.json",
+      "exists": true,
+      "sha256": "2964c143048c3c109442672366311c8cdd9ec00f6034078ebba161accab6bd01",
+      "sha256_lf": "2964c143048c3c109442672366311c8cdd9ec00f6034078ebba161accab6bd01",
+      "status": "PASS",
+      "stage": "preservation-verification",
+      "sourceRevision": "da091a47ca6595ec37690ab5ae63542671c5f7f6",
+      "harnessRevision": "da091a47ca6595ec37690ab5ae63542671c5f7f6",
+      "carriedForward": {
+        "evidenceFrom": "release-evidence/0.6.0/history/freeze8-da091a4/candidate-inventory-0.6.0.json",
+        "evidenceFromSha256": "c03f6074e6d8cf875e3e0212e06f8eb024ada65e63566e1c0d238a2a0aa90206",
+        "evidenceFromSha256Lf": "c03f6074e6d8cf875e3e0212e06f8eb024ada65e63566e1c0d238a2a0aa90206",
+        "evidenceFromSource": "da091a47ca6595ec37690ab5ae63542671c5f7f6",
+        "reason": "Carried from freeze 8 (da091a4): no installer, migration, catalog-persistence or launch-path product code changed between da091a4 and eb01bc9 - the product delta is benchmark ownership in measurement_service.rs and raw SEC1 key parsing in local_client.rs, neither exercised by these legs; the freeze-9 harness change adds the ownership lock and the payload probe, whose behaviour is separately evidenced by witness-live-lock and the installer payload functional probe. The freeze-9 sandbox re-run is blocked on this host: Windows Sandbox cannot boot a VM (free RAM 168 MB with a stale vmmemWindowsSandbox holding ~3.8 GB), so it stays an open environment prerequisite, not a passed criterion."
+      }
+    },
+    "lifecycle_upgrade_v0.5.0": {
+      "path": "release-evidence/0.6.0/attestations/sandbox-clean-account-lifecycle-upgrade-v0.5.0.json",
+      "exists": true,
+      "sha256": "c69c4980f0c1473874d92f789666ecda44bdc2ff8dda4fd71dda21c60bae8ae9",
+      "sha256_lf": "b48562bd159ce32d0c778b5ce691f84199848745a463bb9d8cde9bb284db1d6c",
+      "status": "PASS",
+      "stage": "preservation-verification",
+      "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
+      "harnessRevision": "8924c0436b895d906a06d2e32d2b788e2655a737"
+    },
+    "lifecycle_preservation_v0.4.1": {
+      "path": "release-evidence/0.6.0/attestations/sandbox-clean-account-lifecycle-preservation-v0.4.1.json",
+      "exists": true,
+      "sha256": "941bb95c200e02cb1b2e1a8514ca96acca9b7eb05060b5c8415052ee3abd3cc8",
+      "sha256_lf": "0302d0dcd1544fa21c10706e004b18aa9f564fa881641934bbf6a68c68afa3ff",
+      "status": "PASS",
+      "stage": "preservation-verification",
+      "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
+      "harnessRevision": "e9c1fd3e042b8b162850fed79603f930bcffaa8c"
+    },
+    "lifecycle_preservation_v0.5.0": {
+      "path": "release-evidence/0.6.0/attestations/sandbox-clean-account-lifecycle-preservation-v0.5.0.json",
+      "exists": true,
+      "sha256": "d6ac3c19eb0f2dcf7d1ebe5d6a1f10010bcc979514b88bbd37aa1c3f430d3ca6",
+      "sha256_lf": "d6ac3c19eb0f2dcf7d1ebe5d6a1f10010bcc979514b88bbd37aa1c3f430d3ca6",
+      "status": "PASS",
+      "stage": "preservation-verification",
+      "sourceRevision": "da091a47ca6595ec37690ab5ae63542671c5f7f6",
+      "harnessRevision": "da091a47ca6595ec37690ab5ae63542671c5f7f6",
+      "carriedForward": {
+        "evidenceFrom": "release-evidence/0.6.0/history/freeze8-da091a4/candidate-inventory-0.6.0.json",
+        "evidenceFromSha256": "c03f6074e6d8cf875e3e0212e06f8eb024ada65e63566e1c0d238a2a0aa90206",
+        "evidenceFromSha256Lf": "c03f6074e6d8cf875e3e0212e06f8eb024ada65e63566e1c0d238a2a0aa90206",
+        "evidenceFromSource": "da091a47ca6595ec37690ab5ae63542671c5f7f6",
+        "reason": "Carried from freeze 8 (da091a4): no installer, migration, catalog-persistence or launch-path product code changed between da091a4 and eb01bc9 - the product delta is benchmark ownership in measurement_service.rs and raw SEC1 key parsing in local_client.rs, neither exercised by these legs; the freeze-9 harness change adds the ownership lock and the payload probe, whose behaviour is separately evidenced by witness-live-lock and the installer payload functional probe. The freeze-9 sandbox re-run is blocked on this host: Windows Sandbox cannot boot a VM (free RAM 168 MB with a stale vmmemWindowsSandbox holding ~3.8 GB), so it stays an open environment prerequisite, not a passed criterion."
+      }
+    },
+    "witness_missing_assets": {
+      "path": "release-evidence/0.6.0/attestations/witness-missing-assets.json",
+      "exists": true,
+      "sha256": "f579b50f69ed0098e8b92400b4d21b3c20c6015065fd9df956b370c02fcb281b",
+      "sha256_lf": "f1b9845e9390acae523b71f0d58618d9b6f5bfc70c3d78c52d34d5e7e70e9624",
+      "status": "FAIL",
+      "stage": "resolve-installers",
+      "sourceRevision": null,
+      "harnessRevision": "4a410d8fdbcd464fe85ca2f9a40fa285ee374479"
+    },
+    "witness_timeout": {
+      "path": "release-evidence/0.6.0/attestations/witness-timeout.json",
+      "exists": true,
+      "sha256": "339a402aed18119785608253c87ad6036eeb88476253dfa0592c5832c9a37377",
+      "sha256_lf": "348f71dac35694c7fcbb4cecb385d749ed9034f0bc19372320178f9ab3ca121c",
+      "status": "TIMEOUT",
+      "stage": "sandbox-timeout",
+      "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
+      "harnessRevision": "4a410d8fdbcd464fe85ca2f9a40fa285ee374479"
+    },
+    "witness_malformed_result": {
+      "path": "release-evidence/0.6.0/attestations/witness-malformed-result.json",
+      "exists": true,
+      "sha256": "192a56f63d1b548072aa1f12b16a3cea7e8fac3454a44a4bb382bae909bad191",
+      "sha256_lf": "3a543abc52b8193511ebeabbbe60940493386cd4abe29581c7954f0cb4c2db82",
+      "status": "FAIL",
+      "stage": "sandbox-run",
+      "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
+      "harnessRevision": "4a410d8fdbcd464fe85ca2f9a40fa285ee374479"
+    },
+    "witness_preservation_missing": {
+      "path": "release-evidence/0.6.0/attestations/witness-preservation-missing.json",
+      "exists": true,
+      "sha256": "ac14c8d7969f5b8a210bf590961d34187ee2ebd3c515f67a7b07617646a6b71c",
+      "sha256_lf": "9d24c71ce9fbb66fe57433390a385f510b2671d3cc257cf5ffc0e70873414276",
+      "status": "FAIL",
+      "stage": "preservation-verification",
+      "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
+      "harnessRevision": "4a410d8fdbcd464fe85ca2f9a40fa285ee374479"
+    },
+    "witness_stale_lock": {
+      "path": "release-evidence/0.6.0/attestations/witness-stale-lock.json",
+      "exists": true,
+      "sha256": "fc5d1713ad6e8ff1264d0706a678e05daa82e3f4d54bbd9aa443eb967f573458",
+      "sha256_lf": "5e8834c5db7610165ceacbdba32185fea07da0664926460837d158a562414fff",
+      "status": "FAIL",
+      "stage": "resolve-installers",
+      "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
+      "harnessRevision": "4a410d8fdbcd464fe85ca2f9a40fa285ee374479"
+    },
+    "witness_live_lock": {
+      "path": "release-evidence/0.6.0/attestations/witness-live-lock.json",
+      "exists": true,
+      "sha256": "50b699132bad09197e085104f18ed4c508fd8347b4c5f1a4657cecc30a5eab51",
+      "sha256_lf": "5e4d768c68b2c562e64eca9a810b9a65a6b082f06c51cbcddfe897f415079cb9",
+      "status": "FAIL",
+      "stage": "resolve-installers",
+      "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
+      "harnessRevision": "4a410d8fdbcd464fe85ca2f9a40fa285ee374479"
+    },
+    "mt06_cancellation": {
+      "path": "release-evidence/0.6.0/attestations/mt06-cycles-result.json",
+      "exists": true,
+      "sha256": "95f50ed9489d5e86d42478460da809e60a495c816d6e216f21d4714549f3f07f",
+      "sha256_lf": "95f50ed9489d5e86d42478460da809e60a495c816d6e216f21d4714549f3f07f",
+      "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
+      "summary": "59/59 checks PASS",
+      "checks": "59/59"
+    },
+    "installer_payload_identity": {
+      "path": "release-evidence/0.6.0/attestations/installer-payload-identity.json",
+      "exists": true,
+      "sha256": "a38d8e8a34cd4d88a8a1aba20e7068e257c9329ed356f8ba073b5f477123977b",
+      "sha256_lf": "a38d8e8a34cd4d88a8a1aba20e7068e257c9329ed356f8ba073b5f477123977b",
+      "status": "PASS",
+      "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67"
+    },
+    "dc04_command_path": {
+      "path": "release-evidence/0.6.0/attestations/dc04-v2-command-path-verification.log",
+      "exists": true,
+      "sha256": "6189ccb4e5d8260a1284915aa9c833567af709599f1b5fb06c148c4a84e00ae2",
+      "sha256_lf": "6189ccb4e5d8260a1284915aa9c833567af709599f1b5fb06c148c4a84e00ae2"
+    },
+    "rt04_delayed_download": {
+      "path": "release-evidence/0.6.0/attestations/rt04v2-delayed-download-verification.log",
+      "exists": true,
+      "sha256": "140c005f89b75244c53f15609f4cc78272766bbd434e28f8223bb325173da254",
+      "sha256_lf": "140c005f89b75244c53f15609f4cc78272766bbd434e28f8223bb325173da254"
+    },
+    "a11y_packaged_verification": {
+      "path": "release-evidence/0.6.0/attestations/g05-a11y-packaged-verification.log",
+      "exists": true,
+      "sha256": "f6dc99a439ff9d2bd6a3d295d28197dfe8eabbf71233a669eb6e68e24b3bd86a",
+      "sha256_lf": "f6dc99a439ff9d2bd6a3d295d28197dfe8eabbf71233a669eb6e68e24b3bd86a"
+    },
+    "rt06_all_backends": {
+      "path": "release-evidence/0.6.0/attestations/rt06-all-backends.json",
+      "exists": true,
+      "sha256": "d856fdb2b25a75d6b1afb2d6988bf75e5c685d2ea1ae815f1446edb13da3e30e",
+      "sha256_lf": "d856fdb2b25a75d6b1afb2d6988bf75e5c685d2ea1ae815f1446edb13da3e30e",
+      "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
+      "summary": {
+        "total": 22,
+        "pass": 22,
+        "fail": 0
+      },
+      "checks": "22/22"
+    },
+    "rt06_full_run_log": {
+      "path": "release-evidence/0.6.0/attestations/rt06-full-run.log",
+      "exists": true,
+      "sha256": "f5c7156f1d9032682a29bc9fa1f914850cc06c8a1a6f4fd9f7fa00ebf4e02f23",
+      "sha256_lf": "f5c7156f1d9032682a29bc9fa1f914850cc06c8a1a6f4fd9f7fa00ebf4e02f23"
+    }
+  },
+  "supersededRecords": [],
+  "carryForwardNote": "These lifecycle records were produced against the candidate named by evidenceFrom, not this candidate: Carried from freeze 8 (da091a4): no installer, migration, catalog-persistence or launch-path product code changed between da091a4 and eb01bc9 - the product delta is benchmark ownership in measurement_service.rs and raw SEC1 key parsing in local_client.rs, neither exercised by these legs; the freeze-9 harness change adds the ownership lock and the payload probe, whose behaviour is separately evidenced by witness-live-lock and the installer payload functional probe. The freeze-9 sandbox re-run is blocked on this host: Windows Sandbox cannot boot a VM (free RAM 168 MB with a stale vmmemWindowsSandbox holding ~3.8 GB), so it stays an open environment prerequisite, not a passed criterion."
+}

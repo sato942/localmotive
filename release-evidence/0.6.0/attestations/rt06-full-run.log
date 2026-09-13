@@ -1,22 +1,22 @@
 PASS catalog.exposes-every-windows-backend | options=cpu,cuda-12.4,cuda-13.3,openvino,rocm,sycl,vulkan
-PASS install.cpu | asset=llama-b10816-bin-win-cpu-x64.zip bytes=18412922 elapsed=176ms outcome=reused
-PASS install.cuda-12.4 | asset=llama-b10816-bin-win-cuda-12.4-x64.zip bytes=253942297 elapsed=750ms outcome=reused
-PASS install.cuda-13.3 | asset=llama-b10816-bin-win-cuda-13.3-x64.zip bytes=149564704 elapsed=571ms outcome=reused
+PASS install.cpu | asset=llama-b10816-bin-win-cpu-x64.zip bytes=18412922 elapsed=739ms outcome=reused
+PASS install.cuda-12.4 | asset=llama-b10816-bin-win-cuda-12.4-x64.zip bytes=253942297 elapsed=1609ms outcome=reused
+PASS install.cuda-13.3 | asset=llama-b10816-bin-win-cuda-13.3-x64.zip bytes=149564704 elapsed=519ms outcome=reused
 PASS refusal.openvino | guarded refusal: Error: GPU adapter luid:0000000000014f4f (nvidia) is incompatible with the openvino runtime
 PASS refusal.rocm | guarded refusal: Error: GPU adapter luid:0000000000014f4f (nvidia) is incompatible with the rocm runtime
 PASS refusal.sycl | guarded refusal: Error: GPU adapter luid:0000000000014f4f (nvidia) is incompatible with the sycl runtime
-PASS install.vulkan | asset=llama-b10816-bin-win-vulkan-x64.zip bytes=35228033 elapsed=194ms outcome=reused
+PASS install.vulkan | asset=llama-b10816-bin-win-vulkan-x64.zip bytes=35228033 elapsed=778ms outcome=reused
 PASS listing.reports-every-installed-runtime | count=4 eligible=4 refused-by-design=3
 PASS listing.second-pass-avoids-rehashing | pass1_bytes=0 pass2_bytes=0
 PASS selecting.cpu-identity-reports-managed-cpu | backend=cpu tag=b10816 src=manifest managedVerified=true
-PASS starting.cpu-health-run-passes | elapsed=2077ms
+PASS starting.cpu-health-run-passes | elapsed=2036ms
 PASS selecting.cpu-verified-through-its-root-boundary | primary root verification
 PASS selecting.cuda-12.4-identity-reports-managed-cuda | backend=cuda tag=b10816 src=manifest managedVerified=false
-PASS starting.cuda-12.4-health-run-passes | elapsed=4260ms
+PASS starting.cuda-12.4-health-run-passes | elapsed=4175ms
 PASS selecting.cuda-12.4-verified-through-its-root-boundary | legacy root via the launch boundary
 PASS selecting.cuda-13.3-identity-reports-managed-cuda | backend=cuda tag=b10816 src=manifest managedVerified=true
-PASS starting.cuda-13.3-health-run-passes | elapsed=3634ms
+PASS starting.cuda-13.3-health-run-passes | elapsed=3448ms
 PASS selecting.cuda-13.3-verified-through-its-root-boundary | primary root verification
 PASS selecting.vulkan-identity-reports-managed-vulkan | backend=vulkan tag=b10816 src=manifest managedVerified=false
-PASS starting.vulkan-health-run-passes | elapsed=2711ms
+PASS starting.vulkan-health-run-passes | elapsed=2679ms
 PASS selecting.vulkan-verified-through-its-root-boundary | legacy root via the launch boundary

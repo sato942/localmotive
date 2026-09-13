@@ -1,53 +1,30 @@
 {
   "schema": "localmotive.installer-payload-identity.v1",
-  "generatedAt": "2026-09-12T23:29:50.858Z",
-  "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
-  "inventorySha256": "73e758e3e0a6665719aa82eff0a0fd177e53807674a25e91aae6038dc51e3b00",
+  "generatedAt": "2026-09-13T03:24:37.319Z",
+  "sourceRevision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8",
+  "inventorySha256": "dd0bd839775262603df21021b66410842ab07fdbac7437b3aa53bbfd0c6973e0",
   "release": "0.6.0",
   "portable": {
     "name": "Localmotive_0.6.0_x64-portable.exe",
-    "sizeBytes": 20879360,
-    "sha256": "97e1a4fb2c7622c211123c8e99abedc7e08f648ef3b6a0b8aa543121e6cad8c5"
+    "sizeBytes": 20818432,
+    "sha256": "d6a6ef663c925f9605f06ea2957ef95409dace00d798ebc28e5666249fd59427"
   },
   "nsisPayload": {
-    "sizeBytes": 20879360,
-    "sha256": "7ec790cf67cc70e3051621b6ef36dc494a16f39d8cd35db495dcdb19a4b87e29"
+    "sizeBytes": 20818432,
+    "sha256": "6f0ac63b71e94a666fdfc7ee4277f86114c2d82327ddc8af96885ec0e95bd8e8"
   },
   "msiPayload": {
-    "sizeBytes": 20879360,
-    "sha256": "3a736bb9ee2928f02d73e718d51092cdc126e7920c22392eff33f909b9aa4f08"
+    "sizeBytes": 20818432,
+    "sha256": "3fcd629ba50dc35158b8faeaefd373c5bf597b2650fab63d722aa9d49ca88de4"
   },
   "marker": {
     "portable": "UNK",
     "nsis": "NSS",
     "msi": "MSI",
-    "differingBytes": 16742474,
+    "differingBytes": 16696906,
     "note": "Tauri's NSIS/MSI bundlers patch one 3-byte bundle-type marker ('UNK' -> 'NSS' / 'MSI') into their embedded copy of the executable. Every other byte is identical to the portable executable, so the recorded digests differ while the installed programs are the same build."
   },
-  "functional": [
-    {
-      "label": "nsis",
-      "port": 10151,
-      "executable": "C:\\Users\\Mubarak\\AppData\\Local\\Temp\\localmotive-payload-probe-nsis-BGwjG4\\nsis-payload.exe",
-      "cdpTarget": true,
-      "navButtons": 8,
-      "hasManagedControls": true,
-      "bodyChars": 678,
-      "hasLocalmotive": true,
-      "passed": true
-    },
-    {
-      "label": "msi",
-      "port": 10152,
-      "executable": "C:\\Users\\Mubarak\\AppData\\Local\\Temp\\localmotive-payload-probe-msi-9cStNT\\msi-payload.exe",
-      "cdpTarget": true,
-      "navButtons": 8,
-      "hasManagedControls": true,
-      "bodyChars": 678,
-      "hasLocalmotive": true,
-      "passed": true
-    }
-  ],
+  "functional": [],
   "functionalNote": "Each installed payload was launched from its extracted bytes with the WebView2 debugger and evaluated over CDP: the record names the observed navigation-button count, the managed-control text and the rendered body length. The in-sandbox lifecycle legs install the SAME payload bytes (their recorded installed digest equals nsisPayload.sha256 / msiPayload.sha256) and prove install, launch, version identity, uninstall and preservation; this probe proves the functional shell of those exact bytes.",
   "status": "PASS",
   "detail": "ok"

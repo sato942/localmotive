@@ -1,24 +1,24 @@
 {
   "schemaVersion": 1,
   "release": "0.6.0",
-  "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
-  "generatedAt": "2026-09-12T22:11:31.688Z",
+  "sourceRevision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8",
+  "generatedAt": "2026-09-13T02:55:29.165Z",
   "checksumFile": "SHA256SUMS-0.6.0.txt",
   "artifacts": [
     {
       "name": "Localmotive_0.6.0_x64-portable.exe",
-      "sizeBytes": 20879360,
-      "sha256": "97e1a4fb2c7622c211123c8e99abedc7e08f648ef3b6a0b8aa543121e6cad8c5"
+      "sizeBytes": 20818432,
+      "sha256": "d6a6ef663c925f9605f06ea2957ef95409dace00d798ebc28e5666249fd59427"
     },
     {
       "name": "Localmotive_0.6.0_x64-setup.exe",
-      "sizeBytes": 5298598,
-      "sha256": "8398cf8a25949049b939e33aa2613330e41e7882aa951b868d064bc4fbc73bef"
+      "sizeBytes": 5290112,
+      "sha256": "b935033d2ca2dbaf595c0a20e629053f0b4097ebe4b1059c351d140530ab8652"
     },
     {
       "name": "Localmotive_0.6.0_x64.msi",
-      "sizeBytes": 9048064,
-      "sha256": "2c00e0d3f9e2dc050fd3ec5fd02bc9f6b0923605b6d715b20a63f8292e30d11b"
+      "sizeBytes": 9035776,
+      "sha256": "bc5c6aae332487430c1d7a238b668e3919f1514f713dd0c9d1ab80e248313b9b"
     }
   ]
 }
