@@ -1,8 +1,8 @@
 {
   "schema": "localmotive.qualification-manifest.v1",
   "release": "0.6.0",
-  "generatedAt": "2026-09-13T00:51:09.945Z",
-  "repositoryHeadAtGeneration": "8924c0436b895d906a06d2e32d2b788e2655a737",
+  "generatedAt": "2026-09-13T01:05:16.226Z",
+  "repositoryHeadAtGeneration": "6310c07d2e5eda424f972209e218d29b1acbcc7a",
   "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
   "workflowFile": {
     "path": ".github/workflows/release.yml",
@@ -58,8 +58,8 @@
     "lifecycle_upgrade_v0.5.0": {
       "path": "release-evidence/0.6.0/attestations/sandbox-clean-account-lifecycle-upgrade-v0.5.0.json",
       "exists": true,
-      "sha256": "5eafb3916d82959bc25007d4240754e481bf31e839a47876a8b04f12da93fec5",
-      "sha256_lf": "a2d6336984e8b54f203cd7266fa1cdebeaec2b65e4a86a64b5f9508c52f5be2d",
+      "sha256": "c69c4980f0c1473874d92f789666ecda44bdc2ff8dda4fd71dda21c60bae8ae9",
+      "sha256_lf": "b48562bd159ce32d0c778b5ce691f84199848745a463bb9d8cde9bb284db1d6c",
       "status": "PASS",
       "stage": "preservation-verification",
       "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
