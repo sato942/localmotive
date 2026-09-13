@@ -1,12 +1,12 @@
 {
   "schema": "localmotive.qualification-manifest.v1",
   "release": "0.6.0",
-  "generatedAt": "2026-09-13T04:15:16.558Z",
-  "repositoryHeadAtGeneration": "fdc8b083d8a2ad6d3072d6462e5adbe987d03f61",
+  "generatedAt": "2026-09-13T15:14:06.389Z",
+  "repositoryHeadAtGeneration": "362843cb7c1bb36b680729deeba4714e19103f6a",
   "sourceRevision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8",
   "workflowFile": {
     "path": ".github/workflows/release.yml",
-    "sha256": "b3d99a1f30ba9946138fd7f22a468884119efcbe1fb80cf5986b7c0d8bd92534"
+    "sha256": "091a0d160d2295cdd5d9a5661cc3821fe95a44eb93bd83a2590986d5509850c0"
   },
   "inventory": {
     "path": "release-evidence/0.6.0/candidate-inventory-0.6.0.json",
