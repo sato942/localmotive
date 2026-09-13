@@ -102,6 +102,16 @@ def check_cache(cache: str, failures: list) -> None:
                 f"cache record schemaVersion {version!r} != {CACHE_SCHEMA_VERSION} (the v0.4.1 contract)"
             )
             return
+        # F9-05: the released v0.4.1 Catalog shape carries `models` as an
+        # array (serde Vec<CatalogModel>). A body whose `models` is not an
+        # array (for example the string "invalid") cannot have come from the
+        # released parser, so accepting it would prove nothing about recovery.
+        models = body.get("models")
+        if not isinstance(models, list):
+            failures.append(
+                f"cache record models field is not an array (the v0.4.1 contract requires an array): {models!r}"
+            )
+            return
         print(f"PRESERVE_PASS cache: record present and parseable (schemaVersion {version})")
     except Exception as error:  # noqa: BLE001 - report any read failure
         failures.append(f"cache record missing or unreadable: {error}")

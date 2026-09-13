@@ -592,7 +592,7 @@ jobs:
         env:
           VERSION: ${{ needs.quality.outputs.version }}
           RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
-        run: node scripts/build_qualification_manifest.mjs --stage artifacts --inventory "artifacts/candidate-inventory-${VERSION}.json" --attestations "release-evidence/${VERSION}/attestations" --release "$VERSION" --source "$RESOLVED_SHA" --out "release-evidence/${VERSION}/qualification-manifest-${VERSION}.json"
+        run: node scripts/build_qualification_manifest.mjs --inventory "artifacts/candidate-inventory-${VERSION}.json" --attestations "release-evidence/${VERSION}/attestations" --release "$VERSION" --stage-packaged-verification "artifacts/packaged-verification-${VERSION}.json" --out "release-evidence/${VERSION}/qualification-manifest-${VERSION}.json"
 
       - name: Validate the manifest, inventory, and every mandatory record
         shell: bash

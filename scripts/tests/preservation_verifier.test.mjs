@@ -29,7 +29,7 @@ function readFixture() {
 
 /// Build a temp root with a userdata canary, a cache record and collected
 /// settings; each test mutates one of them.
-function stage({ cacheSchema = 1, collected = undefined, dropKey = null, corruptKey = null } = {}) {
+function stage({ cacheSchema = 1, cacheModels = [], collected = undefined, dropKey = null, corruptKey = null } = {}) {
   const root = mkdtempSync(join(tmpdir(), "lm-preserve-"));
   const fixture = readFixture();
   const userdata = join(root, "userdata.txt");
@@ -37,7 +37,7 @@ function stage({ cacheSchema = 1, collected = undefined, dropKey = null, corrupt
   const cache = join(root, "catalog-cache.json");
   writeFileSync(
     cache,
-    JSON.stringify({ body: JSON.stringify({ schemaVersion: cacheSchema, models: [] }), etag: null }),
+    JSON.stringify({ body: JSON.stringify({ schemaVersion: cacheSchema, models: cacheModels }), etag: null }),
   );
   const reads = {};
   for (const [key, value] of Object.entries(fixture.keys)) reads[key] = value;
@@ -94,6 +94,24 @@ test("a null cache schemaVersion fails (the reviewed verifier accepted it)", () 
     ]);
     assert.equal(result.code, 1);
     assert.match(result.output, /schemaVersion None != 1/);
+  });
+});
+
+test("a models field that is not an array fails (the v0.4.1 contract requires an array)", () => {
+  withStage({ cacheModels: "invalid" }, (staged) => {
+    const result = runVerifier([
+      join(staged.root, "mirror.sqlite"),
+      staged.userdata,
+      staged.cache,
+      "--flavor",
+      "cache",
+      "--settings-fixture",
+      join(SANDBOX, "canary-settings.json"),
+      "--settings",
+      staged.settings,
+    ]);
+    assert.equal(result.code, 1);
+    assert.match(result.output, /models field is not an array/);
   });
 });
 

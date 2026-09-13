@@ -13,17 +13,70 @@ import {
 
 test("coverage is active only when the request is in flight immediately before the invocation", () => {
   assert.equal(
-    classifyCoverage({ processingAtCancel: "1", processingBeforeInvocation: "1" }).coverage,
+    classifyCoverage({ processingAtCancel: "1", processingBeforeInvocation: "1", processingAfterInvocation: "1" }).coverage,
     "active",
   );
   // The reviewed driver accepted this shape as proof: active at cancellation,
   // already ended at the invocation. It must be classified, not credited.
-  const ended = classifyCoverage({ processingAtCancel: "1", processingBeforeInvocation: "0" });
+  const ended = classifyCoverage({ processingAtCancel: "1", processingBeforeInvocation: "0", processingAfterInvocation: "0" });
   assert.equal(ended.coverage, "not-exercised");
   assert.match(ended.detail, /active at cancellation=true/);
   assert.equal(
     classifyCoverage({ processingAtCancel: "0", processingBeforeInvocation: "0" }).coverage,
     "not-exercised",
+  );
+});
+
+test("the immediate after-sample reaches the verdict: overlap at the invocation fails", () => {
+  // Owner replay: the recorded runs carry processingAfterInvocation "1", and
+  // changing only that sample to "2" must fail both scenarios through the
+  // driver's actual data-to-verdict wiring. The wiring under test is
+  // classifyCoverage (with the after-sample) followed by evaluateScenario.
+  for (const scenario of ["ui", "api"]) {
+    const attempt = {
+      scenario,
+      processingAtCancelRequest: "1",
+      processingBeforeInvocation: "1",
+      processingAfterInvocation: "2",
+      buttonStateBefore: "enabled",
+      uiAccepted: scenario === "ui" ? false : null,
+      apiAttempt: scenario === "api" ? { status: "refused" } : null,
+    };
+    const coverage = classifyCoverage({
+      processingAtCancel: attempt.processingAtCancelRequest,
+      processingBeforeInvocation: attempt.processingBeforeInvocation,
+      processingAfterInvocation: attempt.processingAfterInvocation,
+    });
+    assert.equal(coverage.coverage, "overlap");
+    const verdict = evaluateScenario({
+      scenario,
+      coverage: coverage.coverage,
+      uiStateBefore: attempt.buttonStateBefore,
+      uiAccepted: attempt.uiAccepted,
+      apiOutcome: attempt.apiAttempt?.status ?? null,
+      overlapObserved: false,
+      serializationProved: false,
+    });
+    assert.equal(verdict.status, "FAIL", `${scenario} must fail on immediate overlap`);
+  }
+  // The recorded shape (after-sample "1") keeps passing through the same wiring.
+  const recorded = classifyCoverage({
+    processingAtCancel: "1",
+    processingBeforeInvocation: "1",
+    processingAfterInvocation: "1",
+  });
+  assert.equal(recorded.coverage, "active");
+  assert.equal(
+    evaluateScenario({
+      scenario: "api",
+      coverage: recorded.coverage,
+      uiStateBefore: "enabled",
+      uiAccepted: null,
+      apiOutcome: "refused",
+      overlapObserved: false,
+      serializationProved: false,
+    }).status,
+    "PASS",
   );
 });
 

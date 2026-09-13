@@ -223,7 +223,9 @@ const invokeBenchmarkAttempt = (workload) =>
 /// click had just started. Each scenario here exercises exactly one surface:
 /// `ui` issues only the click, `api` issues only the direct invocation.
 /// The server metric is sampled immediately before the invocation, which is
-/// the sample the coverage classification uses.
+/// the sample the coverage classification uses, and immediately after it:
+/// the after-sample feeds the same classification, so overlap at the
+/// invocation itself fails the scenario instead of passing silently.
 const attemptReplacement = async ({ scenario, cancelAt, processingAtCancelRequest }) => {
   // Navigation only: it issues no benchmark action, so the request stays in
   // flight while the replacement is attempted.
@@ -554,8 +556,13 @@ const runBoundaryScenario = async (scenario) => {
   let processing = await metricsField("llamacpp:requests_processing");
   const drainStart = Date.now();
   let drained = processing === "0";
-  let overlap = false;
+  // F9-01: the immediate sample after the invocation is the start of the
+  // overlap window: the drain loop opens with it instead of discarding it,
+  // so overlap at the invocation itself is observed rather than settled away.
+  let overlap = attempt.processingAfterInvocation === "2" || attempt.processingAfterInvocation === "3";
   let maxProcessing = Number.isFinite(Number(processing)) ? Number(processing) : 0;
+  const immediateNumeric = Number(attempt.processingAfterInvocation);
+  if (Number.isFinite(immediateNumeric)) maxProcessing = Math.max(maxProcessing, immediateNumeric);
   let maxChildren = 0;
   for (let attemptIndex = 0; attemptIndex < 600 && !drained; attemptIndex += 1) {
     await settle(500);
@@ -579,6 +586,7 @@ const runBoundaryScenario = async (scenario) => {
   const coverage = classifyCoverage({
     processingAtCancel: attempt.processingAtCancelRequest,
     processingBeforeInvocation: attempt.processingBeforeInvocation,
+    processingAfterInvocation: attempt.processingAfterInvocation,
   });
   const verdict = evaluateScenario({
     scenario,

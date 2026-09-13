@@ -1135,6 +1135,11 @@ test("R07: preservation fixtures carry real released-version data, not markers",
   // The verifier asserts recovery, not a marker row.
   const verifier = await readFile(join(root, "verify_preservation.py"), "utf8");
   assert.match(verifier, /user_sourced/, "the verifier checks ownership flags");
+  assert.match(
+    verifier,
+    /models field is not an array/,
+    "a models:string cache body fails the released v0.4.1 array contract",
+  );
   assert.match(verifier, /USER-OVERRIDE-SENTINEL-0\.6-preservation/);
   assert.doesNotMatch(verifier, /canary_marker/, "the marker-only check is gone");
   // The harness plants per flavor and the workflow runs the baseline matrix.
@@ -1179,6 +1184,13 @@ test("R11: the packaged cancellation driver measures owned identities end to end
   assert.match(driver, /runBoundaryScenario\("api"\)/);
   assert.match(driver, /from "\.\/lib\/mt06_verdicts\.mjs"/);
   assert.match(driver, /processingBeforeInvocation = await metricsField\("llamacpp:requests_processing"\)/);
+  assert.match(driver, /processingAfterInvocation = await metricsField\("llamacpp:requests_processing"\)/);
+  assert.match(driver, /processingAfterInvocation: attempt\.processingAfterInvocation/);
+  assert.match(
+    driver,
+    /overlap = attempt\.processingAfterInvocation === "2"/,
+    "the overlap window opens with the immediate after-sample, not after settling",
+  );
   assert.doesNotMatch(driver, /finalAttempt/, "the combined UI+API attempt is gone");
   assert.doesNotMatch(
     driver,
@@ -1190,6 +1202,8 @@ test("R11: the packaged cancellation driver measures owned identities end to end
   assert.match(driver, /replacement-ran-after-cleanup/);
   const verdicts = await readFile(join(process.cwd(), "scripts", "lib", "mt06_verdicts.mjs"), "utf8");
   assert.match(verdicts, /NOT-EXERCISED/);
+  assert.match(verdicts, /processingAfterInvocation/);
+  assert.match(verdicts, /coverage === "overlap"/);
   assert.match(verdicts, /evaluateProhibited/);
   assert.match(verdicts, /evaluateIdentity/);
   // A source/digest-bound result file is written.

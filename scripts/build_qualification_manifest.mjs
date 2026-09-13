@@ -12,6 +12,12 @@
 //     --out release-evidence/0.6.0/qualification-manifest-0.6.0.json \
 //     --release 0.6.0 [--superseded <path>]
 //
+// F9-04: the release workflow also passes --stage-packaged-verification
+// artifacts/packaged-verification-<version>.json so the freshly produced
+// record reaches the manifest (see the stagePackagedVerification parameter).
+// Without it the generator would bind whatever committed copy happens to sit
+// under --attestations.
+//
 // The verifier (`scripts/verify_qualification_manifest.mjs`) re-derives every
 // relationship from a fresh checkout; this script only records them.
 import { createHash } from "node:crypto";
@@ -114,6 +120,15 @@ export function buildQualificationManifest({
   supersededPath = null,
   carryForward = null,
   carryForwardGroups = null,
+  // F9-04: the packaged-verification producer record is written by the package
+  // job into the workflow's artifact staging directory (artifacts/), which is
+  // a DIFFERENT file from the committed attestation the same-named generator
+  // input would otherwise read. stagePackagedVerification names that fresh
+  // producer file; the builder stages it over the attestation input before
+  // recording the manifest entry, so the manifest always binds the freshly
+  // produced record. A missing stage file is a hard failure, never a silent
+  // fall back to a stale committed copy.
+  stagePackagedVerification = null,
   root = process.cwd(),
 }) {
   const inventoryFile = resolve(root, inventoryPath);
@@ -149,6 +164,17 @@ export function buildQualificationManifest({
     for (const key of group.keys ?? []) entryFor.set(key, group.entry);
   }
   for (const [key, nameFor] of Object.entries(ATTESTATION_RECORDS)) {
+    if (key === "packaged_verification" && stagePackagedVerification) {
+      const staged = resolve(root, stagePackagedVerification);
+      if (!existsSync(staged)) {
+        throw new Error(
+          `the staged packaged-verification producer record is missing: ${stagePackagedVerification}`,
+        );
+      }
+      const stagedBytes = readFileSync(staged);
+      const attestationFile = join(resolve(root, attestationsDir), nameFor(release));
+      writeFileSync(attestationFile, stagedBytes);
+    }
     const file = join(resolve(root, attestationsDir), nameFor(release));
     manifest.records[key] = recordEntry(root, file);
     const carried = entryFor.get(key);
@@ -220,6 +246,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     supersededPath: option("superseded"),
     carryForward,
     carryForwardGroups,
+    stagePackagedVerification: option("stage-packaged-verification"),
   });
   console.log(`manifest written: ${outPath}`);
   console.log(`sourceRevision: ${manifest.sourceRevision}`);

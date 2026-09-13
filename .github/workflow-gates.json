@@ -98,7 +98,7 @@
           "& \".\\scripts\\sandbox\\host-run-lifecycle.ps1\" -Tag \"${{ needs.resolve.outputs.tag }}\" -Version \"${{ needs.quality.outputs.version }}\" -PreviousTag $leg.Previous -CandidateDir \"artifacts\" -EvidenceName $leg.Name -PreservationFlavor $leg.Flavor"
         ],
         "qualification": [
-          "node scripts/build_qualification_manifest.mjs --stage artifacts --inventory \"artifacts/candidate-inventory-${VERSION}.json\" --attestations \"release-evidence/${VERSION}/attestations\" --release \"$VERSION\" --source \"$RESOLVED_SHA\" --out \"release-evidence/${VERSION}/qualification-manifest-${VERSION}.json\"",
+          "node scripts/build_qualification_manifest.mjs --inventory \"artifacts/candidate-inventory-${VERSION}.json\" --attestations \"release-evidence/${VERSION}/attestations\" --release \"$VERSION\" --stage-packaged-verification \"artifacts/packaged-verification-${VERSION}.json\" --out \"release-evidence/${VERSION}/qualification-manifest-${VERSION}.json\"",
           "node scripts/verify_qualification_manifest.mjs --expect-source \"$RESOLVED_SHA\"",
           "node scripts/verify_release_promotion.mjs --qualified . --tag \"v${VERSION}\" --expect-source \"$RESOLVED_SHA\" --report \"artifacts/promotion-check-${VERSION}.json\""
         ]

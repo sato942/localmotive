@@ -49,7 +49,7 @@ async function withRepository(options, body) {
   }
 }
 
-function generateManifest(fixture) {
+function generateManifest(fixture, options = {}) {
   // The builder writes outPath relative to the process cwd; keep every path
   // inside the fixture so a test can never clobber the committed evidence.
   const manifestFile = join(
@@ -64,6 +64,7 @@ function generateManifest(fixture) {
     outPath: manifestFile,
     release: RELEASE,
     root: fixture.root,
+    ...options,
   });
   assert.ok(
     existsSync(manifestFile),
@@ -93,6 +94,57 @@ test("the run's own lifecycle records qualify a generated manifest and publish s
     const promotion = await promote(fixture);
     assert.deepEqual(promotion.failures, [], "a workflow-shaped set must pass");
     assert.equal(promotion.ok, true);
+  });
+});
+
+test("the staged packaged record reaches the manifest without prepopulated identical copies", async () => {
+  // F9-04: the workflow's producer/consumer layout. The package job writes the
+  // fresh record to artifacts/; the committed attestation is a DIFFERENT
+  // (stale) file. generateManifest must stage the fresh record over the
+  // attestation input, so the manifest binds the fresh record and promotion
+  // passes without anyone manually copying identical bytes into both places.
+  await withRepository({ withQualifiedSet: true }, async (fixture) => {
+    const staged = join(fixture.root, "artifacts", `packaged-verification-${RELEASE}.json`);
+    const record = JSON.parse(readFileSync(staged, "utf8"));
+    // A fresh producer run: new timestamps, identical source and artifact
+    // identity (the owner's reproduction changes only the timestamps).
+    record.started_at = "2026-09-14T00:00:00.000Z";
+    record.finished_at = "2026-09-14T00:05:00.000Z";
+    writeFileSync(staged, `${JSON.stringify(record, null, 2)}\n`);
+    // The committed attestation is stale: same producer shape, other run.
+    const stale = { ...record, started_at: "2026-01-01T00:00:00.000Z", finished_at: "2026-01-01T00:05:00.000Z" };
+    writeFileSync(attestationPath(fixture, `packaged-verification-${RELEASE}.json`), `${JSON.stringify(stale, null, 2)}\n`);
+    generateManifest(fixture, { stagePackagedVerification: `artifacts/packaged-verification-${RELEASE}.json` });
+    // The manifest now references the staged bytes, not the stale copy.
+    const manifest = JSON.parse(
+      readFileSync(join(fixture.root, "release-evidence", RELEASE, `qualification-manifest-${RELEASE}.json`), "utf8"),
+    );
+    const stagedBytes = readFileSync(staged);
+    const { createHash } = await import("node:crypto");
+    assert.equal(
+      manifest.records.packaged_verification.sha256,
+      createHash("sha256").update(stagedBytes).digest("hex"),
+      "the manifest must bind the freshly staged record",
+    );
+    // And the committed attestation now carries the staged bytes.
+    assert.equal(
+      readFileSync(attestationPath(fixture, `packaged-verification-${RELEASE}.json`), "utf8"),
+      readFileSync(staged, "utf8"),
+    );
+    const promotion = await promote(fixture);
+    assert.deepEqual(promotion.failures, [], `a freshly staged record must pass: ${promotion.failures.join("; ")}`);
+    assert.equal(promotion.ok, true);
+  });
+});
+
+test("a missing staged packaged record fails instead of binding a stale copy", async () => {
+  // F9-04: without the fresh producer file the builder must fail loudly
+  // rather than silently qualify whatever committed copy happens to exist.
+  await withRepository({ withQualifiedSet: true }, async (fixture) => {
+    assert.throws(
+      () => generateManifest(fixture, { stagePackagedVerification: `artifacts/packaged-verification-missing.json` }),
+      /staged packaged-verification producer record is missing/,
+    );
   });
 });
 
@@ -235,4 +287,11 @@ test("the produced evidence name and the promotion contract agree", () => {
     promisedAssetNames(RELEASE).includes(`packaged-verification-${RELEASE}.json`),
     "the promotion contract promises the versioned evidence name",
   );
+  // F9-04: the qualification step must stage the freshly produced record into
+  // the manifest; an unused --stage/--source pair leaves the stale committed
+  // copy bound instead.
+  assert.match(release, /--stage-packaged-verification "artifacts\/packaged-verification-/);
+  assert.doesNotMatch(release, /build_qualification_manifest\.mjs --stage artifacts/);
+  const builder = readFileSync(join(process.cwd(), "scripts", "build_qualification_manifest.mjs"), "utf8");
+  assert.match(builder, /stagePackagedVerification/);
 });

@@ -14,12 +14,21 @@
 /**
  * Classify whether the active-request boundary was actually exercised.
  * Coverage is `active` only when the previous request was observed in flight
- * immediately before the replacement invocation. An attempt made after the
- * old request already ended is `not-exercised`: neither proof of a product
- * failure nor a passing test of the boundary.
+ * immediately before the replacement invocation AND the immediate observation
+ * after the invocation still shows exactly that one in-flight request
+ * (overlap from the start, not only after a later settling delay). An attempt
+ * made after the old request already ended is `not-exercised`: neither proof
+ * of a product failure nor a passing test of the boundary. An immediate
+ * reading above "1" is overlap observed at the invocation itself.
  */
-export function classifyCoverage({ processingAtCancel, processingBeforeInvocation }) {
+export function classifyCoverage({ processingAtCancel, processingBeforeInvocation, processingAfterInvocation = null }) {
   if (processingBeforeInvocation === "1") {
+    if (processingAfterInvocation !== null && processingAfterInvocation !== "1") {
+      return {
+        coverage: "overlap",
+        detail: `requests_processing=${processingAfterInvocation} immediately after the invocation while the previous request was active (cancel sample ${processingAtCancel})`,
+      };
+    }
     return {
       coverage: "active",
       detail: `requests_processing=1 immediately before the invocation (cancel sample ${processingAtCancel})`,
@@ -50,6 +59,12 @@ export function evaluateScenario({
     return {
       status: "FAIL",
       detail: `${scenario}: replacement work ran concurrently with the previous request`,
+    };
+  }
+  if (coverage === "overlap") {
+    return {
+      status: "FAIL",
+      detail: `${scenario}: the immediate observation after the invocation shows overlapping requests while the previous request was active`,
     };
   }
   if (coverage !== "active") {
