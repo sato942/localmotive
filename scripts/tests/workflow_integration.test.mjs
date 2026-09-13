@@ -9,7 +9,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildFixture } from "./lib/manifest_fixture.mjs";
 import { ATTESTATION_RECORDS, buildQualificationManifest } from "../build_qualification_manifest.mjs";
@@ -167,6 +168,58 @@ test("the fixture writes every mandatory record under the generator's name", asy
       );
     }
   });
+});
+
+test("a controlled package-stage failure reports every missing output", async () => {
+  // F9-04: the job's failure report must name the evidence it did not produce
+  // and keep the failing outcome. Both outcomes are exercised here with the
+  // same script the workflow runs.
+  const checker = join(process.cwd(), "scripts", "check_package_outputs.ps1");
+  const root = mkdtempSync(join(tmpdir(), "lm-package-"));
+  try {
+    const failing = execFileSync(
+      "powershell",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", checker, "-Root", root, "-Version", RELEASE],
+      { encoding: "utf8", stdio: "pipe" },
+    );
+    assert.fail(`expected the missing-evidence report to fail: ${failing}`);
+  } catch (error) {
+    assert.equal(error.status, 1, "the report must exit non-zero");
+    const output = `${error.stdout ?? ""}${error.stderr ?? ""}`;
+    for (const outputName of [
+      `Localmotive_${RELEASE}_x64-portable.exe`,
+      `Localmotive_${RELEASE}_x64-setup.exe`,
+      `Localmotive_${RELEASE}_x64.msi`,
+      `candidate-inventory-${RELEASE}.json`,
+      `SHA256SUMS-${RELEASE}.txt`,
+      `packaged-verification-${RELEASE}.json`,
+    ]) {
+      assert.match(output, new RegExp(`MISSING artifacts/${outputName.replace(/[.]/g, "\.")}`));
+    }
+  }
+  try {
+    // A complete set exits zero: the report must not fire on a healthy stage.
+    const artifacts = join(root, "artifacts");
+    mkdirSync(artifacts, { recursive: true });
+    for (const outputName of [
+      `Localmotive_${RELEASE}_x64-portable.exe`,
+      `Localmotive_${RELEASE}_x64-setup.exe`,
+      `Localmotive_${RELEASE}_x64.msi`,
+      `candidate-inventory-${RELEASE}.json`,
+      `SHA256SUMS-${RELEASE}.txt`,
+      `packaged-verification-${RELEASE}.json`,
+    ]) {
+      writeFileSync(join(artifacts, outputName), "fixture");
+    }
+    const result = execFileSync(
+      "powershell",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", checker, "-Root", root, "-Version", RELEASE],
+      { encoding: "utf8", stdio: "pipe" },
+    );
+    assert.match(result, /Every expected package output exists/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("the produced evidence name and the promotion contract agree", () => {

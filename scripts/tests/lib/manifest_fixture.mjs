@@ -228,8 +228,12 @@ export function buildFixture(options = {}) {
     if (options.lifecycleWrongSource?.key === key) {
       overrides.sourceRevision = "c".repeat(40);
     }
-    if (options.carryForward?.key === key) {
-      const carried = carryForwardFixture(root, options.carryForward);
+    const carriedOption =
+      options.carryForward?.key === key
+        ? options.carryForward
+        : options.carryForwards?.find((candidate) => candidate.key === key);
+    if (carriedOption) {
+      const carried = carryForwardFixture(root, carriedOption);
       overrides.candidateDigests = carried.recordDigests;
       overrides.carriedForward = carried.entry;
     }

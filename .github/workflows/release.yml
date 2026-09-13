@@ -407,23 +407,7 @@ jobs:
         shell: pwsh
         env:
           VERSION: ${{ needs.quality.outputs.version }}
-        run: |
-          $expected = @(
-            "artifacts/Localmotive_${env:VERSION}_x64-portable.exe",
-            "artifacts/Localmotive_${env:VERSION}_x64-setup.exe",
-            "artifacts/Localmotive_${env:VERSION}_x64.msi",
-            "artifacts/candidate-inventory-${env:VERSION}.json",
-            "artifacts/SHA256SUMS-${env:VERSION}.txt",
-            "artifacts/packaged-verification-${env:VERSION}.json"
-          )
-          $missing = @($expected | Where-Object { -not (Test-Path $_) })
-          if ($missing.Count -gt 0) {
-            Write-Host "Packaging failed before producing:"
-            $missing | ForEach-Object { Write-Host " - MISSING $_" }
-          } else {
-            Write-Host "Every expected package output exists; the failure is downstream of packaging."
-          }
-          exit 1
+        run: pwsh -NoProfile -File scripts/check_package_outputs.ps1 -Root "$pwd" -Version "$env:VERSION"
 
       - name: Retain verified release candidates
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

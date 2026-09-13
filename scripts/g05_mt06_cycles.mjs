@@ -635,19 +635,27 @@ const runBoundaryScenario = async (scenario) => {
     await settle(1000);
     if ((await metricsField("llamacpp:requests_processing")) === "1") replacementInFlight = true;
   }
-  if (replacementInFlight) await clickExact("Cancel");
+  // Let the replacement COMPLETE on its own so it produces its own record: the
+  // original runs demonstrate the cancelled case (a cancel between trials can
+  // end a run without a terminal outcome), while the replacement's claim is
+  // that new work is allowed - and recorded - after cleanup.
+  // Wait for a record that is NOT the original run's: the original's own
+  // record can appear late, and its arrival must not end this poll.
+  const replacementNewRecords = () =>
+    recordPathsNow().filter((path) => !recordsBefore.includes(path) && path !== original?.path);
   let replacementRecords = [];
-  for (let attemptIndex = 0; attemptIndex < 240 && replacementRecords.length === 0; attemptIndex += 1) {
+  for (let attemptIndex = 0; attemptIndex < 480 && replacementRecords.length === 0; attemptIndex += 1) {
     await settle(500);
-    replacementRecords = recordPathsNow().filter((path) => !recordsBefore.includes(path));
+    replacementRecords = replacementNewRecords();
   }
+  if ((await buttonState("Cancel")) === "enabled") await clickExact("Cancel");
   const replacement = recordIdentity(
     replacementRecords.find((path) => path !== original?.path) ?? null,
   );
   check(
     `mt06.boundary-${scenario}-replacement-ran-after-cleanup`,
     replacementStarted && replacementInFlight && Boolean(replacement),
-    `started=${replacementStarted} inFlight=${replacementInFlight} record=${replacement?.path ?? "none"}`,
+    `started=${replacementStarted} inFlight=${replacementInFlight} newRecords=${replacementRecords.length} record=${replacement?.path ?? "none"} outcome=${replacement?.terminalOutcome ?? "none"}`,
   );
   for (let attemptIndex = 0; attemptIndex < 240; attemptIndex += 1) {
     await settle(500);

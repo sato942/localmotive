@@ -113,6 +113,7 @@ export function buildQualificationManifest({
   release,
   supersededPath = null,
   carryForward = null,
+  carryForwardGroups = null,
   root = process.cwd(),
 }) {
   const inventoryFile = resolve(root, inventoryPath);
@@ -139,18 +140,29 @@ export function buildQualificationManifest({
     records: {},
     supersededRecords: [],
   };
-  const carriedKeys = new Set(carryForward?.keys ?? []);
+  // A second freeze can carry records from two different superseded
+  // candidates, so the ledger accepts one group per citation. The single
+  // `carryForward` form stays supported (one group).
+  const groups = carryForwardGroups ?? (carryForward ? [carryForward] : []);
+  const entryFor = new Map();
+  for (const group of groups) {
+    for (const key of group.keys ?? []) entryFor.set(key, group.entry);
+  }
   for (const [key, nameFor] of Object.entries(ATTESTATION_RECORDS)) {
     const file = join(resolve(root, attestationsDir), nameFor(release));
     manifest.records[key] = recordEntry(root, file);
-    if (carriedKeys.has(key)) {
-      manifest.records[key].carriedForward = carryForward.entry;
+    const carried = entryFor.get(key);
+    if (carried) {
+      manifest.records[key].carriedForward = carried;
     }
   }
-  if (carryForward) {
+  const noteGroups = carryForwardGroups ?? (carryForward ? [carryForward] : []);
+  if (noteGroups.length > 0) {
     manifest.carryForwardNote =
       "These lifecycle records were produced against the candidate named by evidenceFrom, not this candidate: " +
-      carryForward.entry.reason;
+      noteGroups
+        .map((group) => `${(group.keys ?? []).join(", ")} -> ${group.entry?.evidenceFrom}: ${group.entry?.reason}`)
+        .join(" | ");
   }
   if (supersededPath) {
     manifest.supersededRecords.push(readJson(resolve(root, supersededPath)));
@@ -190,6 +202,16 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
           reason: option("carry-forward-reason"),
         })
       : null;
+  // --carry-forward-groups <file>: {"groups":[{keys,evidenceFrom,reason}, ...]}
+  // lets one freeze carry records from two superseded candidates at once.
+  let carryForwardGroups = null;
+  const groupsPath = option("carry-forward-groups");
+  if (groupsPath) {
+    const parsed = readJson(resolve(process.cwd(), groupsPath));
+    carryForwardGroups = (parsed.groups ?? []).map((group) =>
+      carryForwardEntries({ keys: group.keys, evidenceFrom: group.evidenceFrom, reason: group.reason }),
+    );
+  }
   const { manifest, missing } = buildQualificationManifest({
     inventoryPath,
     attestationsDir,
@@ -197,6 +219,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     release,
     supersededPath: option("superseded"),
     carryForward,
+    carryForwardGroups,
   });
   console.log(`manifest written: ${outPath}`);
   console.log(`sourceRevision: ${manifest.sourceRevision}`);

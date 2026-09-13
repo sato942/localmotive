@@ -6,13 +6,13 @@
     "tag":  "v0.6.0",
     "version":  "0.6.0",
     "previousTag":  "v0.4.1",
-    "sourceRevision":  "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
-    "harnessRevision":  "4a410d8fdbcd464fe85ca2f9a40fa285ee374479",
-    "startedAtUtc":  "2026-09-13T01:14:20.1714374Z",
-    "finishedAtUtc":  "2026-09-13T01:14:20.6230324Z",
+    "sourceRevision":  "e9a36b3aa075d72713d88af4cc74d64d561f12f8",
+    "harnessRevision":  "e9a36b3aa075d72713d88af4cc74d64d561f12f8",
+    "startedAtUtc":  "2026-09-13T03:35:49.9468669Z",
+    "finishedAtUtc":  "2026-09-13T03:35:50.4012127Z",
     "candidateDigests":  {
-                             "currentSetup":  "8398cf8a25949049b939e33aa2613330e41e7882aa951b868d064bc4fbc73bef",
-                             "currentMsi":  "2c00e0d3f9e2dc050fd3ec5fd02bc9f6b0923605b6d715b20a63f8292e30d11b"
+                             "currentSetup":  "b935033d2ca2dbaf595c0a20e629053f0b4097ebe4b1059c351d140530ab8652",
+                             "currentMsi":  "bc5c6aae332487430c1d7a238b668e3919f1514f713dd0c9d1ab80e248313b9b"
                          },
-    "candidateInventorySha256":  "73e758e3e0a6665719aa82eff0a0fd177e53807674a25e91aae6038dc51e3b00"
+    "candidateInventorySha256":  "dd0bd839775262603df21021b66410842ab07fdbac7437b3aa53bbfd0c6973e0"
 }

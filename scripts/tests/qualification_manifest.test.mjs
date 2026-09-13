@@ -6,6 +6,7 @@
 // and text-hash policy.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DIGESTS, buildFixture, verify, withFixture } from "./lib/manifest_fixture.mjs";
@@ -332,3 +333,82 @@ test("F9-03 an aggregate failure with every recorded check passing is refused", 
     assert.ok(result.failures.length > 0, "expected a refusal");
     assert.match(result.failures.join("\n"), /overall_status FAIL contradicts every PASS check/);
   }));
+
+// ---------------------------------------------------------------------------
+// F9: a second freeze carries records from two DIFFERENT superseded candidates,
+// so the ledger must accept one citation group per prior candidate and reject a
+// group whose citation does not match the record's own digests.
+import { buildQualificationManifest as buildWithGroups } from "../build_qualification_manifest.mjs";
+import { createHash } from "node:crypto";
+
+function sha256OfBytes(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function writeGroupsManifest(fixture, groups) {
+  return buildWithGroups({
+    inventoryPath: "release-evidence/0.6.0/candidate-inventory-0.6.0.json",
+    attestationsDir: "release-evidence/0.6.0/attestations",
+    outPath: join(fixture.root, "release-evidence/0.6.0/qualification-manifest-0.6.0.json"),
+    release: "0.6.0",
+    root: fixture.root,
+    carryForwardGroups: groups.map((group) => ({
+      keys: group.keys,
+      entry: {
+        evidenceFrom: group.evidenceFrom,
+        evidenceFromSha256: sha256OfBytes(readFileSync(join(fixture.root, group.evidenceFrom))),
+        reason: group.reason,
+      },
+    })),
+  });
+}
+
+test("two carry-forward groups cite their own superseded candidates", () => {
+  withFixture(
+    {
+      withQualifiedSet: true,
+      carryForwards: [
+        {
+          key: "lifecycle_upgrade_v0.4.0",
+          citePath: "release-evidence/0.6.0/history/freeze8/prior-inventory.json",
+          priorSource: "c".repeat(40),
+          priorSetup: "5".repeat(64),
+          priorMsi: "6".repeat(64),
+        },
+        {
+          key: "lifecycle_preservation_v0.4.1",
+          citePath: "release-evidence/0.6.0/history/freeze9/prior-inventory.json",
+          priorSource: "d".repeat(40),
+          priorSetup: "8".repeat(64),
+          priorMsi: "9".repeat(64),
+          recordSetup: "8".repeat(64),
+          recordMsi: "9".repeat(64),
+        },
+      ],
+    },
+    async (fixture) => {
+      // The generator records the repository head; give the fixture a real
+      // (tiny) repository so the same generator the workflow runs is exercised.
+      const git = (args) =>
+        execFileSync("git", args, { cwd: fixture.root, encoding: "utf8", windowsHide: true });
+      git(["init", "-q"]);
+      git(["add", "-A"]);
+      git(["-c", "user.email=f@test", "-c", "user.name=f", "commit", "-q", "-m", "fixture"]);
+      const groups = [
+        {
+          keys: ["lifecycle_upgrade_v0.4.0"],
+          evidenceFrom: "release-evidence/0.6.0/history/freeze8/prior-inventory.json",
+          reason: "installer and migration paths are unchanged between this candidate and the cited one",
+        },
+        {
+          keys: ["lifecycle_preservation_v0.4.1"],
+          evidenceFrom: "release-evidence/0.6.0/history/freeze9/prior-inventory.json",
+          reason: "installer and migration paths are unchanged between this candidate and the cited one",
+        },
+      ];
+      writeGroupsManifest(fixture, groups);
+      const { failures } = verify(fixture);
+      assert.deepEqual(failures, [], failures.join("; "));
+    },
+  );
+});

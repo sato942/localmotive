@@ -751,7 +751,7 @@ supervision/tamper/FE-16/FE-05.V3/catalog/churn clean, lifecycle matrix 4/4 PASS
   `lora_sha256`) caught. The prior `environment-blocked` disposition described the
   live portability matrix, which the criterion's regression-test wording does not
   require; that residual stays in the RT-06/S-25 hardware register.
-- **RT-06.V3 closed.** Packaged all-backend benchmark on this host (RTX 5090,
+- **RT-06.V3 (historical).** *(Superseded 2026-09-13: the scoped reading below and in the tracker splits this criterion into the achievable four-backend scope and the still-open seven-installed-backend acceptance portion. This paragraph is the historical freeze-8 record; it is preserved verbatim rather than rewritten.)* Packaged all-backend benchmark on this host (RTX 5090,
   catalog `b10816`): the catalog exposes all seven Windows x64 backends; four are
   eligible on a single-vendor host and were exercised (cpu/cuda-12.4/cuda-13.3
   reused in 0.17-0.75 s; vulkan freshly installed at 35,228,033 bytes in 2.9 s);
