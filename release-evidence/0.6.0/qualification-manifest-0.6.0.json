@@ -1,8 +1,8 @@
 {
   "schema": "localmotive.qualification-manifest.v1",
   "release": "0.6.0",
-  "generatedAt": "2026-09-12T23:48:13.228Z",
-  "repositoryHeadAtGeneration": "aea51d5c984a08dfad07360674d3c8a815d80746",
+  "generatedAt": "2026-09-13T00:51:09.945Z",
+  "repositoryHeadAtGeneration": "8924c0436b895d906a06d2e32d2b788e2655a737",
   "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
   "workflowFile": {
     "path": ".github/workflows/release.yml",
@@ -58,19 +58,12 @@
     "lifecycle_upgrade_v0.5.0": {
       "path": "release-evidence/0.6.0/attestations/sandbox-clean-account-lifecycle-upgrade-v0.5.0.json",
       "exists": true,
-      "sha256": "8689e74ae77f8a78ea6293a1cde94b1895df70cb937e47bf6f78efc1d1a286bc",
-      "sha256_lf": "8689e74ae77f8a78ea6293a1cde94b1895df70cb937e47bf6f78efc1d1a286bc",
+      "sha256": "5eafb3916d82959bc25007d4240754e481bf31e839a47876a8b04f12da93fec5",
+      "sha256_lf": "a2d6336984e8b54f203cd7266fa1cdebeaec2b65e4a86a64b5f9508c52f5be2d",
       "status": "PASS",
       "stage": "preservation-verification",
-      "sourceRevision": "da091a47ca6595ec37690ab5ae63542671c5f7f6",
-      "harnessRevision": "da091a47ca6595ec37690ab5ae63542671c5f7f6",
-      "carriedForward": {
-        "evidenceFrom": "release-evidence/0.6.0/history/freeze8-da091a4/candidate-inventory-0.6.0.json",
-        "evidenceFromSha256": "c03f6074e6d8cf875e3e0212e06f8eb024ada65e63566e1c0d238a2a0aa90206",
-        "evidenceFromSha256Lf": "c03f6074e6d8cf875e3e0212e06f8eb024ada65e63566e1c0d238a2a0aa90206",
-        "evidenceFromSource": "da091a47ca6595ec37690ab5ae63542671c5f7f6",
-        "reason": "Carried from freeze 8 (da091a4): no installer, migration, catalog-persistence or launch-path product code changed between da091a4 and eb01bc9 - the product delta is benchmark ownership in measurement_service.rs and raw SEC1 key parsing in local_client.rs, neither exercised by these legs; the freeze-9 harness change adds the ownership lock and the payload probe, whose behaviour is separately evidenced by witness-live-lock and the installer payload functional probe. The freeze-9 sandbox re-run is blocked on this host: Windows Sandbox cannot boot a VM (free RAM 168 MB with a stale vmmemWindowsSandbox holding ~3.8 GB), so it stays an open environment prerequisite, not a passed criterion."
-      }
+      "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
+      "harnessRevision": "8924c0436b895d906a06d2e32d2b788e2655a737"
     },
     "lifecycle_preservation_v0.4.1": {
       "path": "release-evidence/0.6.0/attestations/sandbox-clean-account-lifecycle-preservation-v0.4.1.json",
@@ -92,7 +85,7 @@
     "lifecycle_preservation_v0.5.0": {
       "path": "release-evidence/0.6.0/attestations/sandbox-clean-account-lifecycle-preservation-v0.5.0.json",
       "exists": true,
-      "sha256": "6b19be2f375d51b71dd27bb78b4eb2ed65a47584ecf9a8f3b7a31e4da64e2788",
+      "sha256": "d6ac3c19eb0f2dcf7d1ebe5d6a1f10010bcc979514b88bbd37aa1c3f430d3ca6",
       "sha256_lf": "d6ac3c19eb0f2dcf7d1ebe5d6a1f10010bcc979514b88bbd37aa1c3f430d3ca6",
       "status": "PASS",
       "stage": "preservation-verification",
@@ -169,8 +162,8 @@
     "mt06_cancellation": {
       "path": "release-evidence/0.6.0/attestations/mt06-cycles-result.json",
       "exists": true,
-      "sha256": "0fb3a2efdd91fba57a4ea709e7500cc856a8fa0570efa13661815161592f21a7",
-      "sha256_lf": "0fb3a2efdd91fba57a4ea709e7500cc856a8fa0570efa13661815161592f21a7",
+      "sha256": "95f50ed9489d5e86d42478460da809e60a495c816d6e216f21d4714549f3f07f",
+      "sha256_lf": "95f50ed9489d5e86d42478460da809e60a495c816d6e216f21d4714549f3f07f",
       "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
       "summary": "59/59 checks PASS",
       "checks": "59/59"
@@ -204,8 +197,8 @@
     "rt06_all_backends": {
       "path": "release-evidence/0.6.0/attestations/rt06-all-backends.json",
       "exists": true,
-      "sha256": "91d7f61ac46664a389f8d7a98587d8005ade799626c15581e5a92e7fce88adac",
-      "sha256_lf": "91d7f61ac46664a389f8d7a98587d8005ade799626c15581e5a92e7fce88adac",
+      "sha256": "d856fdb2b25a75d6b1afb2d6988bf75e5c685d2ea1ae815f1446edb13da3e30e",
+      "sha256_lf": "d856fdb2b25a75d6b1afb2d6988bf75e5c685d2ea1ae815f1446edb13da3e30e",
       "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
       "summary": {
         "total": 22,
@@ -217,8 +210,8 @@
     "rt06_full_run_log": {
       "path": "release-evidence/0.6.0/attestations/rt06-full-run.log",
       "exists": true,
-      "sha256": "d3d17b562b431a8e289c053357fd3ac7073341b799917b468dfb4860cddcb112",
-      "sha256_lf": "d3d17b562b431a8e289c053357fd3ac7073341b799917b468dfb4860cddcb112"
+      "sha256": "f5c7156f1d9032682a29bc9fa1f914850cc06c8a1a6f4fd9f7fa00ebf4e02f23",
+      "sha256_lf": "f5c7156f1d9032682a29bc9fa1f914850cc06c8a1a6f4fd9f7fa00ebf4e02f23"
     }
   },
   "supersededRecords": [],

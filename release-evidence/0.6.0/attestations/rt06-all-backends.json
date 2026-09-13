@@ -124,7 +124,7 @@
       "contentVerified": false
     }
   ],
-  "generatedAt": "2026-09-12T23:19:09.129Z",
+  "generatedAt": "2026-09-13T00:46:00.496Z",
   "host": {
     "cdpPort": 10137,
     "adapterId": "luid:0000000000014f4f",
@@ -208,7 +208,7 @@
       "assetBytes": 18412922,
       "companionAsset": null,
       "companionBytes": null,
-      "elapsedMs": 196,
+      "elapsedMs": 176,
       "verification": {
         "jobs_started": 0,
         "jobs_coalesced": 0,
@@ -224,7 +224,7 @@
       "assetBytes": 253942297,
       "companionAsset": "cudart-llama-bin-win-cuda-12.4-x64.zip",
       "companionBytes": 391443627,
-      "elapsedMs": 775,
+      "elapsedMs": 750,
       "verification": {
         "jobs_started": 0,
         "jobs_coalesced": 0,
@@ -240,7 +240,7 @@
       "assetBytes": 149564704,
       "companionAsset": "cudart-llama-bin-win-cuda-13.3-x64.zip",
       "companionBytes": 390970417,
-      "elapsedMs": 544,
+      "elapsedMs": 571,
       "verification": {
         "jobs_started": 0,
         "jobs_coalesced": 0,
@@ -272,7 +272,7 @@
       "outcome": "refused-by-design",
       "asset": "llama-b10816-bin-win-sycl-x64.zip",
       "assetBytes": 119727951,
-      "elapsedMs": 142,
+      "elapsedMs": 163,
       "error": "Error: GPU adapter luid:0000000000014f4f (nvidia) is incompatible with the sycl runtime"
     },
     {
@@ -283,7 +283,7 @@
       "assetBytes": 35228033,
       "companionAsset": null,
       "companionBytes": null,
-      "elapsedMs": 214,
+      "elapsedMs": 194,
       "verification": {
         "jobs_started": 0,
         "jobs_coalesced": 0,
@@ -297,7 +297,7 @@
   "listing": [
     {
       "pass": 0,
-      "elapsedMs": 5,
+      "elapsedMs": 6,
       "count": 4,
       "verification": {
         "jobs_started": 0,
@@ -308,7 +308,7 @@
     },
     {
       "pass": 1,
-      "elapsedMs": 3,
+      "elapsedMs": 4,
       "count": 4,
       "verification": {
         "jobs_started": 0,
@@ -322,8 +322,8 @@
     {
       "installKey": "cpu",
       "backend": "cpu",
-      "path": "C:\\Users\\Mubarak\\AppData\\Local\\Localmotive\\runtimes\\b10816\\cpu\\llama-server.exe",
-      "elapsedMs": 35,
+      "path": "<localappdata>\\Localmotive\\runtimes\\b10816\\cpu\\llama-server.exe",
+      "elapsedMs": 36,
       "managedVerified": true,
       "identityBackend": "cpu",
       "identityTag": "b10816",
@@ -338,8 +338,8 @@
     {
       "installKey": "cuda-12.4",
       "backend": "cuda",
-      "path": "C:\\Users\\Mubarak\\AppData\\Local\\GGUF Pilot\\runtimes\\b10816\\cuda-12.4\\llama-server.exe",
-      "elapsedMs": 2,
+      "path": "<localappdata>\\<legacy-data-root>\\runtimes\\b10816\\cuda-12.4\\llama-server.exe",
+      "elapsedMs": 3,
       "managedVerified": false,
       "identityBackend": "cuda",
       "identityTag": "b10816",
@@ -354,8 +354,8 @@
     {
       "installKey": "cuda-13.3",
       "backend": "cuda",
-      "path": "C:\\Users\\Mubarak\\AppData\\Local\\Localmotive\\runtimes\\b10816\\cuda-13.3\\llama-server.exe",
-      "elapsedMs": 393,
+      "path": "<localappdata>\\Localmotive\\runtimes\\b10816\\cuda-13.3\\llama-server.exe",
+      "elapsedMs": 400,
       "managedVerified": true,
       "identityBackend": "cuda",
       "identityTag": "b10816",
@@ -370,8 +370,8 @@
     {
       "installKey": "vulkan",
       "backend": "vulkan",
-      "path": "C:\\Users\\Mubarak\\AppData\\Local\\GGUF Pilot\\runtimes\\b10816\\vulkan\\llama-server.exe",
-      "elapsedMs": 3,
+      "path": "<localappdata>\\<legacy-data-root>\\runtimes\\b10816\\vulkan\\llama-server.exe",
+      "elapsedMs": 2,
       "managedVerified": false,
       "identityBackend": "vulkan",
       "identityTag": "b10816",
@@ -388,7 +388,7 @@
     {
       "installKey": "cpu",
       "backend": "cpu",
-      "elapsedMs": 2109,
+      "elapsedMs": 2077,
       "passed": true,
       "error": null,
       "failedStages": [
@@ -408,6 +408,22 @@
         "deterministic_completion:PASS",
         "cancellation:PASS",
         "process_and_temporary_file_cleanup:PASS"
+      ],
+      "attempts": [
+        {
+          "attempt": 1,
+          "ok": true,
+          "passed": true,
+          "failedStages": [
+            "device_enumeration:PASS:",
+            "backend_operations:PASS:",
+            "pinned_model_load:PASS:",
+            "loopback_server_health:PASS:",
+            "deterministic_completion:PASS:",
+            "cancellation:PASS:",
+            "process_and_temporary_file_cleanup:PASS:"
+          ]
+        }
       ],
       "verification": {
         "jobs_started": 0,
@@ -419,7 +435,7 @@
     {
       "installKey": "cuda-12.4",
       "backend": "cuda",
-      "elapsedMs": 4268,
+      "elapsedMs": 4260,
       "passed": true,
       "error": null,
       "failedStages": [
@@ -439,6 +455,22 @@
         "deterministic_completion:PASS",
         "cancellation:PASS",
         "process_and_temporary_file_cleanup:PASS"
+      ],
+      "attempts": [
+        {
+          "attempt": 1,
+          "ok": true,
+          "passed": true,
+          "failedStages": [
+            "device_enumeration:PASS:",
+            "backend_operations:PASS:",
+            "pinned_model_load:PASS:",
+            "loopback_server_health:PASS:",
+            "deterministic_completion:PASS:",
+            "cancellation:PASS:",
+            "process_and_temporary_file_cleanup:PASS:"
+          ]
+        }
       ],
       "verification": {
         "jobs_started": 0,
@@ -450,7 +482,7 @@
     {
       "installKey": "cuda-13.3",
       "backend": "cuda",
-      "elapsedMs": 3626,
+      "elapsedMs": 3634,
       "passed": true,
       "error": null,
       "failedStages": [
@@ -470,6 +502,22 @@
         "deterministic_completion:PASS",
         "cancellation:PASS",
         "process_and_temporary_file_cleanup:PASS"
+      ],
+      "attempts": [
+        {
+          "attempt": 1,
+          "ok": true,
+          "passed": true,
+          "failedStages": [
+            "device_enumeration:PASS:",
+            "backend_operations:PASS:",
+            "pinned_model_load:PASS:",
+            "loopback_server_health:PASS:",
+            "deterministic_completion:PASS:",
+            "cancellation:PASS:",
+            "process_and_temporary_file_cleanup:PASS:"
+          ]
+        }
       ],
       "verification": {
         "jobs_started": 0,
@@ -481,7 +529,7 @@
     {
       "installKey": "vulkan",
       "backend": "vulkan",
-      "elapsedMs": 2901,
+      "elapsedMs": 2711,
       "passed": true,
       "error": null,
       "failedStages": [
@@ -501,6 +549,22 @@
         "deterministic_completion:PASS",
         "cancellation:PASS",
         "process_and_temporary_file_cleanup:PASS"
+      ],
+      "attempts": [
+        {
+          "attempt": 1,
+          "ok": true,
+          "passed": true,
+          "failedStages": [
+            "device_enumeration:PASS:",
+            "backend_operations:PASS:",
+            "pinned_model_load:PASS:",
+            "loopback_server_health:PASS:",
+            "deterministic_completion:PASS:",
+            "cancellation:PASS:",
+            "process_and_temporary_file_cleanup:PASS:"
+          ]
+        }
       ],
       "verification": {
         "jobs_started": 0,
@@ -513,7 +577,7 @@
   "starting": {
     "installKey": "cuda-13.3",
     "backend": "cuda",
-    "elapsedMs": 3626,
+    "elapsedMs": 3634,
     "passed": true,
     "error": null,
     "failedStages": [
@@ -534,6 +598,22 @@
       "cancellation:PASS",
       "process_and_temporary_file_cleanup:PASS"
     ],
+    "attempts": [
+      {
+        "attempt": 1,
+        "ok": true,
+        "passed": true,
+        "failedStages": [
+          "device_enumeration:PASS:",
+          "backend_operations:PASS:",
+          "pinned_model_load:PASS:",
+          "loopback_server_health:PASS:",
+          "deterministic_completion:PASS:",
+          "cancellation:PASS:",
+          "process_and_temporary_file_cleanup:PASS:"
+        ]
+      }
+    ],
     "verification": {
       "jobs_started": 0,
       "jobs_coalesced": 0,
@@ -550,17 +630,17 @@
     {
       "name": "install.cpu",
       "ok": true,
-      "detail": "asset=llama-b10816-bin-win-cpu-x64.zip bytes=18412922 elapsed=196ms outcome=reused"
+      "detail": "asset=llama-b10816-bin-win-cpu-x64.zip bytes=18412922 elapsed=176ms outcome=reused"
     },
     {
       "name": "install.cuda-12.4",
       "ok": true,
-      "detail": "asset=llama-b10816-bin-win-cuda-12.4-x64.zip bytes=253942297 elapsed=775ms outcome=reused"
+      "detail": "asset=llama-b10816-bin-win-cuda-12.4-x64.zip bytes=253942297 elapsed=750ms outcome=reused"
     },
     {
       "name": "install.cuda-13.3",
       "ok": true,
-      "detail": "asset=llama-b10816-bin-win-cuda-13.3-x64.zip bytes=149564704 elapsed=544ms outcome=reused"
+      "detail": "asset=llama-b10816-bin-win-cuda-13.3-x64.zip bytes=149564704 elapsed=571ms outcome=reused"
     },
     {
       "name": "refusal.openvino",
@@ -580,7 +660,7 @@
     {
       "name": "install.vulkan",
       "ok": true,
-      "detail": "asset=llama-b10816-bin-win-vulkan-x64.zip bytes=35228033 elapsed=214ms outcome=reused"
+      "detail": "asset=llama-b10816-bin-win-vulkan-x64.zip bytes=35228033 elapsed=194ms outcome=reused"
     },
     {
       "name": "listing.reports-every-installed-runtime",
@@ -600,7 +680,7 @@
     {
       "name": "starting.cpu-health-run-passes",
       "ok": true,
-      "detail": "elapsed=2109ms"
+      "detail": "elapsed=2077ms"
     },
     {
       "name": "selecting.cpu-verified-through-its-root-boundary",
@@ -615,7 +695,7 @@
     {
       "name": "starting.cuda-12.4-health-run-passes",
       "ok": true,
-      "detail": "elapsed=4268ms"
+      "detail": "elapsed=4260ms"
     },
     {
       "name": "selecting.cuda-12.4-verified-through-its-root-boundary",
@@ -630,7 +710,7 @@
     {
       "name": "starting.cuda-13.3-health-run-passes",
       "ok": true,
-      "detail": "elapsed=3626ms"
+      "detail": "elapsed=3634ms"
     },
     {
       "name": "selecting.cuda-13.3-verified-through-its-root-boundary",
@@ -645,7 +725,7 @@
     {
       "name": "starting.vulkan-health-run-passes",
       "ok": true,
-      "detail": "elapsed=2901ms"
+      "detail": "elapsed=2711ms"
     },
     {
       "name": "selecting.vulkan-verified-through-its-root-boundary",
