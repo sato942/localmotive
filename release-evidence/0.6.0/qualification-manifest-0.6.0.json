@@ -1,8 +1,8 @@
 {
   "schema": "localmotive.qualification-manifest.v1",
   "release": "0.6.0",
-  "generatedAt": "2026-09-13T01:05:16.226Z",
-  "repositoryHeadAtGeneration": "6310c07d2e5eda424f972209e218d29b1acbcc7a",
+  "generatedAt": "2026-09-13T01:06:08.890Z",
+  "repositoryHeadAtGeneration": "950295e2d5ec04197b354993eb22bbcf606838ac",
   "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
   "workflowFile": {
     "path": ".github/workflows/release.yml",
@@ -68,19 +68,12 @@
     "lifecycle_preservation_v0.4.1": {
       "path": "release-evidence/0.6.0/attestations/sandbox-clean-account-lifecycle-preservation-v0.4.1.json",
       "exists": true,
-      "sha256": "13655ea5b7a85aa141a395519d894afe87ad1c8d062c5ca72a3dfed1f136bde5",
-      "sha256_lf": "13655ea5b7a85aa141a395519d894afe87ad1c8d062c5ca72a3dfed1f136bde5",
+      "sha256": "941bb95c200e02cb1b2e1a8514ca96acca9b7eb05060b5c8415052ee3abd3cc8",
+      "sha256_lf": "0302d0dcd1544fa21c10706e004b18aa9f564fa881641934bbf6a68c68afa3ff",
       "status": "PASS",
       "stage": "preservation-verification",
-      "sourceRevision": "da091a47ca6595ec37690ab5ae63542671c5f7f6",
-      "harnessRevision": "da091a47ca6595ec37690ab5ae63542671c5f7f6",
-      "carriedForward": {
-        "evidenceFrom": "release-evidence/0.6.0/history/freeze8-da091a4/candidate-inventory-0.6.0.json",
-        "evidenceFromSha256": "c03f6074e6d8cf875e3e0212e06f8eb024ada65e63566e1c0d238a2a0aa90206",
-        "evidenceFromSha256Lf": "c03f6074e6d8cf875e3e0212e06f8eb024ada65e63566e1c0d238a2a0aa90206",
-        "evidenceFromSource": "da091a47ca6595ec37690ab5ae63542671c5f7f6",
-        "reason": "Carried from freeze 8 (da091a4): no installer, migration, catalog-persistence or launch-path product code changed between da091a4 and eb01bc9 - the product delta is benchmark ownership in measurement_service.rs and raw SEC1 key parsing in local_client.rs, neither exercised by these legs; the freeze-9 harness change adds the ownership lock and the payload probe, whose behaviour is separately evidenced by witness-live-lock and the installer payload functional probe. The freeze-9 sandbox re-run is blocked on this host: Windows Sandbox cannot boot a VM (free RAM 168 MB with a stale vmmemWindowsSandbox holding ~3.8 GB), so it stays an open environment prerequisite, not a passed criterion."
-      }
+      "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
+      "harnessRevision": "e9c1fd3e042b8b162850fed79603f930bcffaa8c"
     },
     "lifecycle_preservation_v0.5.0": {
       "path": "release-evidence/0.6.0/attestations/sandbox-clean-account-lifecycle-preservation-v0.5.0.json",
