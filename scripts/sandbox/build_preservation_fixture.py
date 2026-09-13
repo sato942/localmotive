@@ -173,15 +173,107 @@ def build_cache_record() -> bytes:
     return json.dumps(record, indent=2).encode("utf-8")
 
 
+def build_settings_record() -> dict:
+    """The v0.4.1 SETTINGS/PROFILE fixture (F9-05).
+
+    v0.4.1 persisted settings through WebView2 localStorage under these exact
+    keys (`git show v0.4.1:src/App.tsx`, readRecord calls): model-root,
+    runtime, cloud-provider, cloud-model, per-model `profile:<id>` and
+    `tuning:<id>` records, and per-alias `benchmark:<alias>` records. The
+    profile below carries a v0.4.1-shaped LaunchProfile subset
+    (`git show v0.4.1:src/model.ts`). The values are sentinels: after the
+    upgrade the application must recover THESE values, so the host verifier
+    compares the collected reads against this fixture rather than accepting a
+    surviving file or marker.
+    """
+    profile = {
+        "name": "v041-fixture / recovered",
+        "runtime": "C:/fixtures/v041/llama-server.exe",
+        "model": "C:/fixtures/v041/models/legacy-Q4_K_M.gguf",
+        "draftModel": None,
+        "mmproj": None,
+        "host": "127.0.0.1",
+        "port": 8123,
+        "alias": "v041-legacy",
+        "context": 6144,
+        "parallel": 1,
+        "gpuLayers": "all",
+        "threads": 6,
+        "threadsBatch": 6,
+        "batch": 448,
+        "ubatch": 112,
+        "flashAttention": "auto",
+        "fit": False,
+        "cacheTypeK": "f16",
+        "cacheTypeV": "f16",
+        "temperature": 0.73,
+        "seed": 424242,
+        "metrics": True,
+        "slots": True,
+        "reasoningBudget": 777,
+        "extraArgs": [],
+    }
+    # v0.4.1 TuneReport shape (src/App.tsx: baselineTps/bestTps drive the
+    # gain notice; the current app quarantines a record whose shape drifted).
+    tuning = {
+        "baselineTps": 61.5,
+        "bestIndex": 0,
+        "bestTps": 74.25,
+        "bestProfile": profile,
+        "trials": [],
+        "stoppedReason": "Trial budget reached",
+        "objective": "short-prompt decode throughput",
+    }
+    keys = {
+        "localmotive:model-root": "C:/fixtures/v041/models",
+        "localmotive:runtime": "C:/fixtures/v041/llama-server.exe",
+        "localmotive:cloud-provider": "openrouter",
+        "localmotive:cloud-model": "fixture/v041-cloud-model",
+        "localmotive:profile:fixture/v041-legacy-model": json.dumps(profile, indent=2),
+        "localmotive:tuning:fixture/v041-legacy-model": json.dumps(tuning, indent=2),
+    }
+    return {
+        "schema": "localmotive.v041-settings.v1",
+        "source": [
+            "git show v0.4.1:src/App.tsx (readRecord/readSetting keys)",
+            "git show v0.4.1:src/model.ts (LaunchProfile shape)",
+        ],
+        "keys": keys,
+        "expect": {
+            "settings": {
+                "model-root": keys["localmotive:model-root"],
+                "runtime": keys["localmotive:runtime"],
+                "cloud-provider": "openrouter",
+                "cloud-model": "fixture/v041-cloud-model",
+            },
+            "profile": {
+                "name": profile["name"],
+                "model": profile["model"],
+                "port": profile["port"],
+                "context": profile["context"],
+                "seed": profile["seed"],
+                "temperature": profile["temperature"],
+                "threads": profile["threads"],
+                "batch": profile["batch"],
+            },
+        },
+    }
+
+
 def main() -> int:
     here = pathlib.Path(__file__).resolve().parent
     mirror = build_mirror()
     cache = build_cache_record()
+    settings = build_settings_record()
     mirror_b64 = base64.b64encode(mirror).decode("ascii")
     (here / "canary-mirror.sqlite.b64").write_text(mirror_b64 + "\n", encoding="ascii")
     (here / "canary-catalog-cache.json").write_bytes(cache)
+    (here / "canary-settings.json").write_text(
+        json.dumps(settings, indent=2) + "\n", encoding="utf-8"
+    )
     print(f"mirror bytes: {len(mirror)}")
     print(f"cache bytes: {len(cache)}")
+    print(f"settings keys: {len(settings['keys'])}")
     print(f"SENTINELS: {SENTINEL} | {NODE_SENTINEL}")
     return 0
 

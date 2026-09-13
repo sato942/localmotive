@@ -10,7 +10,7 @@ import { verifyQualificationManifest } from "../../verify_qualification_manifest
 
 const RELEASE = "0.6.0";
 const SOURCE = "a".repeat(40);
-const DIGESTS = {
+export const DIGESTS = {
   portable: "1".repeat(64),
   setup: "2".repeat(64),
   msi: "3".repeat(64),
@@ -101,6 +101,44 @@ function lifecycleRecord(digests, previousTag, inventorySha, overrides = {}) {
   };
 }
 
+/// A packaged-verification record in the shape the real producer
+/// (scripts/verify_041.mjs) writes: schema_version, verifier, source_revision,
+/// source_dirty, artifact {name, size_bytes, sha256}, per-check status and
+/// overall_status. Tests derived from this shape exercise the producer
+/// contract the manifest is supposed to validate.
+export function packagedVerificationRecord({
+  sourceRevision,
+  artifact,
+  checks,
+  overallStatus = "PASS",
+}) {
+  return {
+    schema_version: "1.0.0",
+    verifier: "scripts/verify_041.mjs",
+    source_revision: sourceRevision,
+    source_dirty: false,
+    artifact,
+    host_class: {
+      platform: "win32",
+      release: "10.0.26100",
+      architecture: "x64",
+      logical_cpus: 8,
+      memory_bytes: 1024,
+      adapters: [],
+    },
+    started_at: "2026-09-13T00:00:00Z",
+    finished_at: "2026-09-13T00:05:00Z",
+    checks: checks.map((check) => ({
+      id: check.id,
+      criterion: check.criterion ?? "recorded criterion",
+      status: check.status,
+      evidence: check.evidence ?? {},
+      reason: check.reason ?? "",
+    })),
+    overall_status: overallStatus,
+  };
+}
+
 export function buildFixture(options = {}) {
   const root = mkdtempSync(join(tmpdir(), "lm-manifest-"));
   const bodies = options.withQualifiedSet ? artifactBodies(RELEASE) : null;
@@ -154,10 +192,23 @@ export function buildFixture(options = {}) {
     root,
     `release-evidence/${RELEASE}/attestations/packaged-verification-${RELEASE}.json`,
     {
-      overall_status: "PASS",
-      sourceRevision: SOURCE,
-      candidatePortableSha256: digests.portable,
-      checks: [{ status: "PASS" }, { status: "PASS" }],
+      // Overrides are applied to the RECORD, so a test mutates the producer
+      // schema's own fields (source_revision, artifact, checks, overall_status)
+      // rather than an adapter's parameter names.
+      ...packagedVerificationRecord({
+        sourceRevision: SOURCE,
+        artifact: {
+          name: `Localmotive_${RELEASE}_x64-portable.exe`,
+          size_bytes: bodies ? Buffer.byteLength(bodies.portable) : 11,
+          sha256: digests.portable,
+        },
+        checks: [
+          { id: "candidate.artifact", status: "PASS" },
+          { id: "candidate.revision", status: "PASS" },
+        ],
+        overallStatus: "PASS",
+      }),
+      ...(options.packaged ?? {}),
     },
   );
   const scenarios = [
@@ -291,17 +342,17 @@ export function buildFixture(options = {}) {
   );
   records.a11y_packaged_verification = write(
     root,
-    `release-evidence/${RELEASE}/attestations/g05-a11y.log`,
+    `release-evidence/${RELEASE}/attestations/g05-a11y-packaged-verification.log`,
     "A11Y_PASS\n",
   );
   records.dc04_command_path = write(
     root,
-    `release-evidence/${RELEASE}/attestations/dc04.log`,
+    `release-evidence/${RELEASE}/attestations/dc04-v2-command-path-verification.log`,
     "13/13 PASS\n",
   );
   records.rt04_delayed_download = write(
     root,
-    `release-evidence/${RELEASE}/attestations/rt04.log`,
+    `release-evidence/${RELEASE}/attestations/rt04v2-delayed-download-verification.log`,
     "17/17 PASS\n",
   );
 

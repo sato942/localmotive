@@ -488,6 +488,28 @@ pub(crate) fn run_benchmark_snapshot(
     })
 }
 
+/// F9-02: publish the active benchmark slot only after the fallible client has
+/// been constructed. The previous order published the slot first and then
+/// called `local_client(&server.profile)?`, so a certificate or API-key file
+/// that became invalid after the server was launched returned an error while
+/// the slot stayed occupied - no benchmark had started, yet every later
+/// attempt was refused with "A benchmark is already running". The constructor
+/// runs before the slot is touched, and an occupied slot is never overwritten,
+/// so an older owner's state can never be cleared by a newer caller.
+fn publish_benchmark_slot<T>(
+    slot: &std::sync::Mutex<Option<Arc<AtomicBool>>>,
+    cancelled: Arc<AtomicBool>,
+    construct: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let product = construct()?;
+    let mut active = slot.lock().map_err(|_| "Benchmark state is unavailable")?;
+    if active.is_some() {
+        return Err("A benchmark is already running".into());
+    }
+    *active = Some(cancelled);
+    Ok(product)
+}
+
 #[tauri::command]
 pub(crate) async fn benchmark_v2(
     workload: evidence::Workload,
@@ -517,20 +539,15 @@ pub(crate) async fn benchmark_v2(
         validated_server_snapshot(&mut slot, "benchmarking")?
     };
     let cancelled = Arc::new(AtomicBool::new(false));
-    {
-        let mut active = state
-            .benchmark
-            .lock()
-            .map_err(|_| "Benchmark state is unavailable")?;
-        if active.is_some() {
-            return Err("A benchmark is already running".into());
-        }
-        *active = Some(cancelled.clone());
-    }
+    // F9-02: the fallible client is built BEFORE the active slot is published.
     // One client owns every request of this run: prompt preparation and the
     // measured attempts share it, so a cancellation during preparation is
-    // covered by the same worker drain as the measured attempts (R16).
-    let client = local_client(&server.profile)?;
+    // covered by the same worker drain as the measured attempts (R16). A
+    // construction failure here reports truthfully and leaves no occupied
+    // benchmark state behind.
+    let client = publish_benchmark_slot(&state.benchmark, cancelled.clone(), || {
+        local_client(&server.profile)
+    })?;
     let run_client = client.clone();
     // The drain bound is derived from this workload's own request deadline
     // before the workload is moved into the run task.
@@ -877,6 +894,72 @@ mod r16_ownership_tests {
             std::thread::sleep(Duration::from_millis(25));
         }
         predicate()
+    }
+
+    #[test]
+    fn f9_02_a_client_construction_failure_leaves_the_benchmark_slot_free() {
+        // F9-02: the previous order published the active slot and THEN called
+        // the fallible `local_client(&server.profile)?`. A certificate or
+        // API-key file that became invalid after the server launched returned
+        // an error while the slot stayed occupied, so no benchmark had started
+        // yet every later attempt was refused as "already running". The
+        // constructor now runs before the slot is touched: the failure is
+        // truthful, the slot is free, and repairing the input lets the next
+        // attempt publish and run.
+        let slot: std::sync::Mutex<Option<Arc<AtomicBool>>> = std::sync::Mutex::new(None);
+        let failed = publish_benchmark_slot(&slot, Arc::new(AtomicBool::new(false)), || {
+            Err::<u32, String>("The API key file is empty".into())
+        });
+        assert_eq!(failed.unwrap_err(), "The API key file is empty");
+        assert!(
+            slot.lock().unwrap().is_none(),
+            "a construction failure must not occupy the benchmark slot"
+        );
+
+        // Repair the input: the subsequent attempt succeeds and owns the slot.
+        let cancelled = Arc::new(AtomicBool::new(true));
+        let mut published = 0;
+        let product = publish_benchmark_slot(&slot, cancelled.clone(), || {
+            published += 1;
+            Ok::<u32, String>(42)
+        })
+        .unwrap();
+        assert_eq!(product, 42);
+        assert_eq!(published, 1);
+        let held = slot.lock().unwrap();
+        let held = held.as_ref().expect("the repaired attempt owns the slot");
+        assert!(Arc::ptr_eq(held, &cancelled));
+    }
+
+    #[test]
+    fn f9_02_a_refused_caller_never_replaces_the_occupants_state() {
+        // The occupant's slot and its cancellation flag stay exactly as the
+        // occupant left them. The fallible dependency is deliberately built
+        // before occupancy is known (that ordering is what keeps a
+        // construction failure from occupying the slot), so this test asserts
+        // the consequences that matter: the refusal is truthful, the
+        // occupant's Arc is still the slot's owner, and the refused caller's
+        // own flag was never published - an older cleanup can therefore never
+        // clear a replacement operation's state.
+        let owner = Arc::new(AtomicBool::new(false));
+        let slot: std::sync::Mutex<Option<Arc<AtomicBool>>> =
+            std::sync::Mutex::new(Some(owner.clone()));
+        let refused_flag = Arc::new(AtomicBool::new(true));
+        let product = publish_benchmark_slot(&slot, refused_flag.clone(), || Ok::<u32, String>(7));
+        assert_eq!(product.unwrap_err(), "A benchmark is already running");
+        let held = slot.lock().unwrap();
+        assert!(
+            Arc::ptr_eq(held.as_ref().unwrap(), &owner),
+            "the occupant must still own the slot"
+        );
+        assert!(
+            !owner.load(Ordering::Relaxed),
+            "the occupant's flag is untouched"
+        );
+        assert!(
+            !Arc::ptr_eq(held.as_ref().unwrap(), &refused_flag),
+            "a refused caller must never publish its own flag"
+        );
     }
 
     #[test]

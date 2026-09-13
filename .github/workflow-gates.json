@@ -86,7 +86,7 @@
       "requiredCommands": {
         "package": [
           "npm run tauri build",
-          "node scripts/verify_041.mjs $cdpPort $portable \"artifacts/packaged-verification-0.4.1.json\"",
+          "node scripts/verify_041.mjs $cdpPort $portable \"artifacts/packaged-verification-$env:VERSION.json\"",
           "node scripts/verify_candidate_inventory.mjs artifacts \"$VERSION\" \"artifacts/candidate-inventory-${VERSION}.json\"",
           "$catalogInit = (node scripts/verify_060_catalog.mjs init $catalogState \"artifacts/catalog-fixture-init.json\" | ConvertFrom-Json)",
           "node scripts/verify_060_catalog.mjs first-fill $cdpPort $catalogState \"artifacts/catalog-matrix-first-fill.json\"",

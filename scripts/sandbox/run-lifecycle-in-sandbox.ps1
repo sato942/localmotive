@@ -72,12 +72,9 @@ function Get-ProbeReply([string]$text) {
   }
   return $null
 }
-function Invoke-CdpProbe([int]$Port, [int]$TimeoutSeconds = 60) {
-  # Functional scope for the INSTALLED payload: start the real installed
-  # executable with the WebView2 debugger, attach over CDP, and evaluate the
-  # app's own rendered DOM. Process survival alone is not functional evidence;
-  # this proves the installed bytes boot WebView2, load the bundled assets and
-  # render the application shell.
+function Invoke-CdpEvaluate([int]$Port, [string]$Script, [int]$TimeoutSeconds = 60) {
+  # Attach to the installed app's page target and evaluate one expression in
+  # it; the launch itself is the caller's job. Returns the parsed value.
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
   $page = $null
   while ((Get-Date) -lt $deadline -and -not $page) {
@@ -93,7 +90,7 @@ function Invoke-CdpProbe([int]$Port, [int]$TimeoutSeconds = 60) {
   # (PowerShell would return them alongside the probe value).
   [void]$ws.ConnectAsync([Uri]$page.webSocketDebuggerUrl, [Threading.CancellationToken]::None).GetAwaiter().GetResult()
   try {
-    $expression = '(function(){const buttons=document.querySelectorAll("nav button");const text=(document.body&&document.body.innerText)||"";return JSON.stringify({navButtons:buttons.length,hasLocalmotive:/Localmotive/i.test(text),hasManagedControls:/Stop server|Start profile|HF catalog|Benchmark/i.test(text),bodyChars:text.length});})()'
+    $expression = $Script
     $request = @{ id = 1; method = "Runtime.evaluate"; params = @{ expression = $expression; returnByValue = $true } } | ConvertTo-Json -Compress -Depth 5
     $bytes = [Text.Encoding]::UTF8.GetBytes($request)
     [void]$ws.SendAsync(
@@ -117,6 +114,75 @@ function Invoke-CdpProbe([int]$Port, [int]$TimeoutSeconds = 60) {
     try { $ws.Dispose() } catch { }
   }
 }
+function Invoke-CdpProbe([int]$Port, [int]$TimeoutSeconds = 60) {
+  # Functional scope for the INSTALLED payload: the real installed executable is
+  # already running with the WebView2 debugger; this evaluates the app's own
+  # rendered DOM. Process survival alone is not functional evidence; the probe
+  # proves the installed bytes boot WebView2, load the bundled assets and render
+  # the application shell.
+  $expression = '(function(){const buttons=document.querySelectorAll("nav button");const text=(document.body&&document.body.innerText)||"";return JSON.stringify({navButtons:buttons.length,hasLocalmotive:/Localmotive/i.test(text),hasManagedControls:/Stop server|Start profile|HF catalog|Benchmark/i.test(text),bodyChars:text.length});})()'
+  return (Invoke-CdpEvaluate $Port $expression $TimeoutSeconds)
+}
+
+function Use-SettingsSession($exe, [string]$label, [scriptblock]$Body) {
+  # F9-05: one bounded launch of an installed build with the WebView2 debugger,
+  # used to seed or read the application's own persisted settings.
+  Log "$label settings session: $exe"
+  $port = 10093
+  $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$port"
+  try {
+    $p = Start-Process -FilePath $exe -PassThru
+    Start-Sleep -Seconds 8
+    if ($p.HasExited) { throw "$label exited during the settings session" }
+    & $Body $port
+    Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+  } finally {
+    Remove-Item Env:\WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS -ErrorAction SilentlyContinue
+  }
+}
+
+function Seed-SettingsV041([string]$exe) {
+  # The baseline (v0.4.1) build writes the fixture's keys through its OWN storage
+  # path, so the upgraded build can only recover them by honoring that data.
+  $fixturePath = Join-Path $Shared "canary-settings.json"
+  if (-not (Test-Path $fixturePath)) { throw "settings fixture missing: $fixturePath" }
+  $fixture = Get-Content $fixturePath -Raw | ConvertFrom-Json
+  $pairs = @()
+  foreach ($property in $fixture.keys.PSObject.Properties) {
+    $pairs += @{ key = $property.Name; value = [string]$property.Value }
+  }
+  if ($pairs.Count -lt 4) { throw "settings fixture carries too few keys: $($pairs.Count)" }
+  # Base64 keeps the values (quotes, slashes, braces) out of the expression's
+  # quoting rules.
+  $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($pairs | ConvertTo-Json -Compress -Depth 5)))
+  $expression = "(function(){const pairs=JSON.parse(decodeURIComponent(escape(atob('$payload'))));for(const p of pairs){localStorage.setItem(p.key,p.value);}return JSON.stringify({seeded:pairs.length});})()"
+  Use-SettingsSession $exe "Preservation baseline" {
+    param($port)
+    $result = Invoke-CdpEvaluate $port $expression
+    Log "Seeded $($result.seeded) v0.4.1 settings keys through the baseline build"
+  }
+}
+
+function Collect-SettingsReads([string]$exe) {
+  # Read the same keys back from the UPGRADED build. The host verifier compares
+  # these reads against the fixture: a lost key reads as null, a corrupted value
+  # reads differently, and both must fail the leg.
+  $fixture = Get-Content (Join-Path $Shared "canary-settings.json") -Raw | ConvertFrom-Json
+  $keys = @($fixture.keys.PSObject.Properties | ForEach-Object { $_.Name })
+  $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($keys | ConvertTo-Json -Compress)))
+  $expression = "(function(){const keys=JSON.parse(decodeURIComponent(escape(atob('$payload'))));const reads={};for(const k of keys){reads[k]=localStorage.getItem(k);}return JSON.stringify({reads});})()"
+  Use-SettingsSession $exe "Preservation upgrade" {
+    param($port)
+    $result = Invoke-CdpEvaluate $port $expression
+    $reads = $result.reads
+    $collected = [ordered]@{ schema = "localmotive.settings-reads.v1"; reads = $reads }
+    $collected | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $Shared "collected-settings.json") -Encoding UTF8
+    $recovered = @($keys | Where-Object { $null -ne $reads.$_ }).Count
+    Log "Collected settings reads from the upgraded build: $recovered/$($keys.Count) keys answered"
+  }
+}
+
 function Launch-Smoke($exe, [string]$label) {
   # One bounded launch that checks BOTH survival and function: the process
   # must live 8 seconds AND the rendered app must answer a CDP probe.
@@ -308,15 +374,21 @@ try {
     Install-Nsis $oldSetup
     $oldExe = Find-AppExe
     if (-not $oldExe) { Fail "Previous version missing before preservation install" }
-    Launch-Smoke $oldExe "Preservation baseline"
+    # R07/F9-05: plant the REAL baseline persistence for this leg's flavor. The
+    # mirror flavor stages a v0.5.0-schema catalog mirror with a user override
+    # row; the cache flavor stages the v0.4.1-era cache record at the path the
+    # 0.6 application still reads AND seeds the v0.4.1 settings/profile keys
+    # through the baseline build's own storage, so the upgrade must recover
+    # those values rather than a marker.
+    $preservationFlavor = if ($meta.PSObject.Properties.Name -contains "preservation") { [string]$meta.preservation } else { "mirror" }
+    if ($preservationFlavor -eq "cache") {
+      Seed-SettingsV041 $oldExe
+    } else {
+      Launch-Smoke $oldExe "Preservation baseline"
+    }
     $userData = Join-Path $env:LOCALAPPDATA "io.github.localmotive.app"
     if (-not (Test-Path $userData)) { Fail "User-data dir missing after previous install: $userData" }
     Copy-Item (Join-Path $Shared "canary-userdata.txt") (Join-Path $userData "canary-userdata.txt") -Force
-    # R07: plant the REAL baseline persistence for this leg's flavor. The
-    # mirror flavor stages a v0.5.0-schema catalog mirror with a user override
-    # row; the cache flavor stages the v0.4.1-era cache record at the path the
-    # 0.6 application still reads.
-    $preservationFlavor = if ($meta.PSObject.Properties.Name -contains "preservation") { [string]$meta.preservation } else { "mirror" }
     if ($preservationFlavor -eq "cache") {
       Copy-Item (Join-Path $Shared "canary-catalog-cache.json") (Join-Path $userData "catalog-cache.json") -Force
     } else {
@@ -329,6 +401,12 @@ try {
     Launch-Smoke $exe "Preservation upgrade"
     $canaryAfter = Join-Path $userData "canary-userdata.txt"
     if (-not (Test-Path $canaryAfter)) { Fail "User-data canary missing after upgrade" }
+    if ($preservationFlavor -eq "cache") {
+      # F9-05: the upgraded build must report the seeded v0.4.1 values back.
+      Collect-SettingsReads $exe
+      $collectedSettings = Join-Path $Shared "collected-settings.json"
+      if (-not (Test-Path $collectedSettings)) { Fail "Settings reads were not collected after the upgrade" }
+    }
     $mirrorAfter = Join-Path $userData "catalog-mirror.sqlite"
     if ($preservationFlavor -eq "cache") {
       $cacheAfter = Join-Path $userData "catalog-cache.json"
@@ -344,7 +422,12 @@ try {
     }
     Uninstall-Nsis
     if (Find-AppExe) { Fail "App still present after preservation uninstall" }
-    $steps += @{ name = "nsis-preservation-from-$($meta.previousTag)"; status = "PASS"; detail = "user-data canary and catalog mirror survived the upgrade; files collected for host verification; executable $preservedVersion" }
+    $stepDetail = if ($preservationFlavor -eq "cache") {
+      "user-data canary survived and the seeded v0.4.1 settings/profile keys were re-read from the upgraded build (collected for host value verification); catalog cache record staged and collected; executable $preservedVersion"
+    } else {
+      "user-data canary and catalog mirror survived the upgrade; files collected for host verification; executable $preservedVersion"
+    }
+    $steps += @{ name = "nsis-preservation-from-$($meta.previousTag)"; status = "PASS"; detail = $stepDetail }
     Log "Preservation path PASS"
   }
 

@@ -332,9 +332,13 @@ jobs:
           }
           $process = Start-Candidate $cdpPort
           try {
-            node scripts/verify_041.mjs $cdpPort $portable "artifacts/packaged-verification-0.4.1.json"
+            # F9-04: the produced record carries the release identity the
+            # promotion contract promises (packaged-verification-<version>.json).
+            # The verifier script keeps its historical name; it no longer
+            # determines the release asset name.
+            node scripts/verify_041.mjs $cdpPort $portable "artifacts/packaged-verification-$env:VERSION.json"
             if ($LASTEXITCODE -ne 0) { throw "verify_041 failed with code $LASTEXITCODE" }
-            $record = Get-Content "artifacts/packaged-verification-0.4.1.json" -Raw | ConvertFrom-Json
+            $record = Get-Content "artifacts/packaged-verification-$env:VERSION.json" -Raw | ConvertFrom-Json
             if ($record.overall_status -ne "PASS") { throw "Packaged verification record is not PASS" }
 
             # Catalog/SQLite matrix (audit GH-05): launch #1 first fill,
@@ -384,6 +388,42 @@ jobs:
         env:
           VERSION: ${{ needs.quality.outputs.version }}
         run: node scripts/verify_candidate_inventory.mjs artifacts "$VERSION" "artifacts/candidate-inventory-${VERSION}.json"
+
+      # F9-04: a failing package stage keeps its diagnostics and reports the
+      # evidence it did not produce, instead of leaving only a red step.
+      - name: Retain package diagnostics for every outcome
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: localmotive-${{ needs.quality.outputs.version }}-package-diagnostics
+          path: |
+            artifacts/**
+            src-tauri/target/release/bundle/**
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Report missing packaged evidence
+        if: failure()
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.quality.outputs.version }}
+        run: |
+          $expected = @(
+            "artifacts/Localmotive_${env:VERSION}_x64-portable.exe",
+            "artifacts/Localmotive_${env:VERSION}_x64-setup.exe",
+            "artifacts/Localmotive_${env:VERSION}_x64.msi",
+            "artifacts/candidate-inventory-${env:VERSION}.json",
+            "artifacts/SHA256SUMS-${env:VERSION}.txt",
+            "artifacts/packaged-verification-${env:VERSION}.json"
+          )
+          $missing = @($expected | Where-Object { -not (Test-Path $_) })
+          if ($missing.Count -gt 0) {
+            Write-Host "Packaging failed before producing:"
+            $missing | ForEach-Object { Write-Host " - MISSING $_" }
+          } else {
+            Write-Host "Every expected package output exists; the failure is downstream of packaging."
+          }
+          exit 1
 
       - name: Retain verified release candidates
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -520,6 +560,40 @@ jobs:
         with:
           name: localmotive-${{ needs.quality.outputs.version }}-verified
           path: artifacts
+
+      # F9-04: the lifecycle records this run just produced are extracted over
+      # the checkout's committed attestations, so the assembled candidate is
+      # qualified by ITS OWN records. A lifecycle leg that this run did not
+      # produce is reported below; the verifier then refuses a set whose
+      # records do not bind to this candidate.
+      - name: Retrieve the lifecycle records produced by this run
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: localmotive-${{ needs.quality.outputs.version }}-lifecycle-evidence
+          path: release-evidence/${{ needs.quality.outputs.version }}/attestations
+
+      - name: Report which mandatory records came from this run
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.quality.outputs.version }}
+        run: |
+          $attestations = "release-evidence/$env:VERSION/attestations"
+          $legs = @(
+            "sandbox-clean-account-lifecycle-upgrade-v0.4.0.json",
+            "sandbox-clean-account-lifecycle-upgrade-v0.5.0.json",
+            "sandbox-clean-account-lifecycle-preservation-v0.4.1.json",
+            "sandbox-clean-account-lifecycle-preservation-v0.5.0.json"
+          )
+          $missingLegs = @($legs | Where-Object { -not (Test-Path (Join-Path $attestations $_)) })
+          Get-ChildItem $attestations -File | ForEach-Object {
+            Write-Host "attestation: $($_.Name) ($($_.Length) bytes, $($_.LastWriteTimeUtc.ToString('s')) )"
+          }
+          if ($missingLegs.Count -gt 0) {
+            Write-Host "This run produced no record for:"
+            $missingLegs | ForEach-Object { Write-Host " - MISSING $_" }
+            Write-Host "Qualification refuses to qualify a candidate with lifecycle legs this run did not produce unless the committed record carries an explicitly permitted carry-forward ledger entry."
+          }
+          exit 0
 
       - name: Confirm the checked-out revision is the resolved release source
         shell: bash

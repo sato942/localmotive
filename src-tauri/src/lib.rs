@@ -3364,8 +3364,17 @@ mod release_security_tests {
             "the bound must be computed before the run task moves the workload"
         );
         assert!(
-            body.contains("let client = local_client(&server.profile)?;"),
+            body.contains("publish_benchmark_slot(&state.benchmark, cancelled.clone(), || {"),
+            "the command must publish its slot through the F9-02 helper, which builds the \
+             fallible client first"
+        );
+        assert!(
+            body.contains("local_client(&server.profile)"),
             "the command must own the run's client"
+        );
+        assert!(
+            !body.contains("*active = Some("),
+            "the slot publication must not bypass the fallible-client ordering (F9-02)"
         );
         let run = source
             .split_once("fn run_benchmark_snapshot(")

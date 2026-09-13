@@ -20,7 +20,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const ATTESTATION_RECORDS = {
+export const ATTESTATION_RECORDS = {
   packaged_verification: (version) => `packaged-verification-${version}.json`,
   "lifecycle_upgrade_v0.4.0": () => "sandbox-clean-account-lifecycle-upgrade-v0.4.0.json",
   "lifecycle_upgrade_v0.5.0": () => "sandbox-clean-account-lifecycle-upgrade-v0.5.0.json",

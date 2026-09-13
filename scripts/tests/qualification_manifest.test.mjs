@@ -8,7 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildFixture, verify, withFixture } from "./lib/manifest_fixture.mjs";
+import { DIGESTS, buildFixture, verify, withFixture } from "./lib/manifest_fixture.mjs";
 
 test("a coherent manifest fixture validates", () => {
   withFixture({}, (fixture) => {
@@ -217,3 +217,118 @@ test("a carry-forward that cites a path outside the history tree is refused", ()
       assert.match(result.failures.join("\n"), /must cite a history-path inventory/);
     },
   ));
+
+// ---------------------------------------------------------------------------
+// F9-03: the packaged-verification branch validates the REAL producer schema
+// (scripts/verify_041.mjs). Each case below mutates one semantic relationship
+// while the fixture recomputes the record's own hash metadata, so a rejection
+// demonstrates the relationship check rather than an incidental stale hash.
+// ---------------------------------------------------------------------------
+
+test("F9-03 a genuine producer-shaped packaged record validates unchanged", () =>
+  withFixture({}, (fixture) => {
+    const result = verify(fixture);
+    assert.deepEqual(result.failures, [], result.failures.join("\n"));
+  }));
+
+test("F9-03 a producer record whose source_revision contradicts the manifest is refused", () =>
+  withFixture(
+    { packaged: { source_revision: "d".repeat(40) } },
+    (fixture) => {
+      const result = verify(fixture);
+      assert.ok(result.failures.length > 0, "expected a refusal");
+      assert.match(result.failures.join("\n"), /source_revision .* contradicts the manifest source/);
+    },
+  ));
+
+test("F9-03 a producer record whose artifact digest contradicts the inventory is refused", () =>
+  withFixture(
+    {
+      packaged: {
+        artifact: {
+          name: "Localmotive_0.6.0_x64-portable.exe",
+          size_bytes: 11,
+          sha256: "e".repeat(64),
+        },
+      },
+    },
+    (fixture) => {
+      const result = verify(fixture);
+      assert.ok(result.failures.length > 0, "expected a refusal");
+      assert.match(result.failures.join("\n"), /artifact digest contradicts the inventory/);
+    },
+  ));
+
+test("F9-03 a producer record whose artifact size contradicts the inventory is refused", () =>
+  withFixture(
+    {
+      packaged: {
+        artifact: {
+          name: "Localmotive_0.6.0_x64-portable.exe",
+          size_bytes: 4096,
+          sha256: DIGESTS.portable,
+        },
+      },
+    },
+    (fixture) => {
+      const result = verify(fixture);
+      assert.ok(result.failures.length > 0, "expected a refusal");
+      assert.match(result.failures.join("\n"), /artifact size .* contradicts the inventory/);
+    },
+  ));
+
+test("F9-03 a producer record whose artifact name contradicts the inventory is refused", () =>
+  withFixture(
+    {
+      packaged: {
+        artifact: {
+          name: "Localmotive_0.6.0_x64-something-else.exe",
+          size_bytes: 11,
+          sha256: DIGESTS.portable,
+        },
+      },
+    },
+    (fixture) => {
+      const result = verify(fixture);
+      assert.ok(result.failures.length > 0, "expected a refusal");
+      assert.match(result.failures.join("\n"), /artifact name .* contradicts the inventory/);
+    },
+  ));
+
+test("F9-03 a producer record with no artifact identity is refused instead of skipping", () =>
+  withFixture({ packaged: { artifact: undefined } }, (fixture) => {
+    const result = verify(fixture);
+    assert.ok(result.failures.length > 0, "expected a refusal");
+    assert.match(result.failures.join("\n"), /artifact identity is missing/);
+  }));
+
+test("F9-03 a producer record without a source revision is refused instead of skipping", () =>
+  withFixture({ packaged: { source_revision: undefined } }, (fixture) => {
+    const result = verify(fixture);
+    assert.ok(result.failures.length > 0, "expected a refusal");
+    assert.match(result.failures.join("\n"), /source_revision is missing/);
+  }));
+
+test("F9-03 a failed required check under a passing aggregate is refused", () =>
+  withFixture(
+    {
+      packaged: {
+        checks: [
+          { id: "candidate.artifact", status: "PASS" },
+          { id: "health.seven-stage-pass", status: "FAIL" },
+        ],
+      },
+    },
+    (fixture) => {
+      const result = verify(fixture);
+      assert.ok(result.failures.length > 0, "expected a refusal");
+      assert.match(result.failures.join("\n"), /check health\.seven-stage-pass is FAIL/);
+    },
+  ));
+
+test("F9-03 an aggregate failure with every recorded check passing is refused", () =>
+  withFixture({ packaged: { overall_status: "FAIL" } }, (fixture) => {
+    const result = verify(fixture);
+    assert.ok(result.failures.length > 0, "expected a refusal");
+    assert.match(result.failures.join("\n"), /overall_status FAIL contradicts every PASS check/);
+  }));

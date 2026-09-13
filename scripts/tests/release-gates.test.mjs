@@ -1171,8 +1171,27 @@ test("R11: the packaged cancellation driver measures owned identities end to end
   // Bounded cleanup latency.
   assert.match(driver, /RUN_SETTLE_BOUND_MS/);
   assert.match(driver, /DRAIN_BOUND_MS/);
-  // The immediate-restart overlap scenario exists.
-  assert.match(driver, /mt06\.immediate-restart-no-overlap/);
+  // F9-01: the restart proof is exercised on one surface per scenario, the
+  // coverage sample is taken immediately before the invocation, the verdicts
+  // come from the pure rules (with their own controls), and a retry can never
+  // substitute its record for the original assertion.
+  assert.match(driver, /runBoundaryScenario\("ui"\)/);
+  assert.match(driver, /runBoundaryScenario\("api"\)/);
+  assert.match(driver, /from "\.\/lib\/mt06_verdicts\.mjs"/);
+  assert.match(driver, /processingBeforeInvocation = await metricsField\("llamacpp:requests_processing"\)/);
+  assert.doesNotMatch(driver, /finalAttempt/, "the combined UI+API attempt is gone");
+  assert.doesNotMatch(
+    driver,
+    /record = recordRetry/,
+    "a retry must never overwrite the original run's record",
+  );
+  assert.match(driver, /one-record-identity/);
+  assert.match(driver, /active-request-coverage/);
+  assert.match(driver, /replacement-ran-after-cleanup/);
+  const verdicts = await readFile(join(process.cwd(), "scripts", "lib", "mt06_verdicts.mjs"), "utf8");
+  assert.match(verdicts, /NOT-EXERCISED/);
+  assert.match(verdicts, /evaluateProhibited/);
+  assert.match(verdicts, /evaluateIdentity/);
   // A source/digest-bound result file is written.
   assert.match(driver, /localmotive\.mt06-cancellation\.v1/);
   assert.match(driver, /MT06_EVIDENCE_PATH/);
@@ -1423,7 +1442,7 @@ test("release verify step waits for the candidate WebView before driving checks"
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
   const at = release.indexOf("Verify the packaged executable");
   assert.ok(at >= 0, "verify step is missing");
-  const block = release.slice(at, at + 6000);
+  const block = release.slice(at, at + 9000);
   assert.match(block, /function Start-Candidate/);
   assert.match(block, /Start-Process \$portable/);
   // A fixed sleep races WebView startup: the launch helper must poll the
@@ -1451,7 +1470,7 @@ test("release verify step isolates the candidate behind a per-run CDP port with 
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
   const at = release.indexOf("Verify the packaged executable");
   assert.ok(at >= 0, "verify step is missing");
-  const block = release.slice(at, at + 6000);
+  const block = release.slice(at, at + 9000);
   // Fixed port 10041 plus parent-only Stop-Process leaves an orphan
   // WebView2 holding CDP; the next run attaches to the stale page.
   // RED: the step hard-codes one port with no pre/post cleanup.
@@ -2360,7 +2379,9 @@ test("R04: the benchmark run owns its cancelled workers until they exit", async 
   // One client per run: every cancellable worker of the benchmark v2 run is
   // observable on the instance the run drains (prompt preparation included).
   const run = service.split("async fn benchmark_v2")[1].split("#[cfg(test)]")[0];
-  const constructions = run.match(/let client = local_client\(&server\.profile\)\?;/g) ?? [];
+  // F9-02: the single construction happens inside publish_benchmark_slot,
+  // which builds the fallible client before the active slot is published.
+  const constructions = run.match(/local_client\(&server\.profile\)/g) ?? [];
   assert.equal(constructions.length, 1, "the v2 run constructs exactly one client");
   assert.ok(
     !/&local_client\(/.test(run.slice(run.indexOf("let run_client = client.clone();"))),

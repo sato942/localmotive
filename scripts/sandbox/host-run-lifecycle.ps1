@@ -395,17 +395,29 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
       $collectedMirror = Join-Path $Shared "collected-mirror.sqlite"
       $collectedUserdata = Join-Path $Shared "collected-userdata.txt"
       $collectedCache = Join-Path $Shared "collected-catalog-cache.json"
+      $collectedSettings = Join-Path $Shared "collected-settings.json"
       $preservationStatus = "missing-files"
       $preservationOutput = "collected files absent; the preservation step did not run"
       $preservationPresent = if ($PreservationFlavor -eq "mirror") {
         (Test-Path $collectedMirror) -and (Test-Path $collectedUserdata)
       } else {
-        (Test-Path $collectedCache) -and (Test-Path $collectedUserdata)
+        (Test-Path $collectedCache) -and (Test-Path $collectedUserdata) -and (Test-Path $collectedSettings)
       }
       if ($preservationPresent) {
         $py = Get-Command python -ErrorAction SilentlyContinue
         if ($py) {
-          $verifyOut = & $py.Source (Join-Path $PWD "scripts\sandbox\verify_preservation.py") $collectedMirror $collectedUserdata $collectedCache "--flavor" $PreservationFlavor 2>&1
+          $verifyArgs = @(
+            (Join-Path $PWD "scripts\sandbox\verify_preservation.py"),
+            $collectedMirror, $collectedUserdata, $collectedCache,
+            "--flavor", $PreservationFlavor
+          )
+          if ($PreservationFlavor -eq "cache") {
+            $verifyArgs += @(
+              "--settings-fixture", (Join-Path $PWD "scripts\sandbox\canary-settings.json"),
+              "--settings", $collectedSettings
+            )
+          }
+          $verifyOut = & $py.Source @verifyArgs 2>&1
           $verifyCode = $LASTEXITCODE
           $preservationOutput = ($verifyOut | Out-String).Trim()
           if ($verifyCode -eq 0) { $preservationStatus = "PASS" } else { $preservationStatus = "FAIL" }

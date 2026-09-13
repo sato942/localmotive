@@ -1,0 +1,33 @@
+{
+  "schema": "localmotive.v041-settings.v1",
+  "source": [
+    "git show v0.4.1:src/App.tsx (readRecord/readSetting keys)",
+    "git show v0.4.1:src/model.ts (LaunchProfile shape)"
+  ],
+  "keys": {
+    "localmotive:model-root": "C:/fixtures/v041/models",
+    "localmotive:runtime": "C:/fixtures/v041/llama-server.exe",
+    "localmotive:cloud-provider": "openrouter",
+    "localmotive:cloud-model": "fixture/v041-cloud-model",
+    "localmotive:profile:fixture/v041-legacy-model": "{\n  \"name\": \"v041-fixture / recovered\",\n  \"runtime\": \"C:/fixtures/v041/llama-server.exe\",\n  \"model\": \"C:/fixtures/v041/models/legacy-Q4_K_M.gguf\",\n  \"draftModel\": null,\n  \"mmproj\": null,\n  \"host\": \"127.0.0.1\",\n  \"port\": 8123,\n  \"alias\": \"v041-legacy\",\n  \"context\": 6144,\n  \"parallel\": 1,\n  \"gpuLayers\": \"all\",\n  \"threads\": 6,\n  \"threadsBatch\": 6,\n  \"batch\": 448,\n  \"ubatch\": 112,\n  \"flashAttention\": \"auto\",\n  \"fit\": false,\n  \"cacheTypeK\": \"f16\",\n  \"cacheTypeV\": \"f16\",\n  \"temperature\": 0.73,\n  \"seed\": 424242,\n  \"metrics\": true,\n  \"slots\": true,\n  \"reasoningBudget\": 777,\n  \"extraArgs\": []\n}",
+    "localmotive:tuning:fixture/v041-legacy-model": "{\n  \"baselineTps\": 61.5,\n  \"bestIndex\": 0,\n  \"bestTps\": 74.25,\n  \"bestProfile\": {\n    \"name\": \"v041-fixture / recovered\",\n    \"runtime\": \"C:/fixtures/v041/llama-server.exe\",\n    \"model\": \"C:/fixtures/v041/models/legacy-Q4_K_M.gguf\",\n    \"draftModel\": null,\n    \"mmproj\": null,\n    \"host\": \"127.0.0.1\",\n    \"port\": 8123,\n    \"alias\": \"v041-legacy\",\n    \"context\": 6144,\n    \"parallel\": 1,\n    \"gpuLayers\": \"all\",\n    \"threads\": 6,\n    \"threadsBatch\": 6,\n    \"batch\": 448,\n    \"ubatch\": 112,\n    \"flashAttention\": \"auto\",\n    \"fit\": false,\n    \"cacheTypeK\": \"f16\",\n    \"cacheTypeV\": \"f16\",\n    \"temperature\": 0.73,\n    \"seed\": 424242,\n    \"metrics\": true,\n    \"slots\": true,\n    \"reasoningBudget\": 777,\n    \"extraArgs\": []\n  },\n  \"trials\": [],\n  \"stoppedReason\": \"Trial budget reached\",\n  \"objective\": \"short-prompt decode throughput\"\n}"
+  },
+  "expect": {
+    "settings": {
+      "model-root": "C:/fixtures/v041/models",
+      "runtime": "C:/fixtures/v041/llama-server.exe",
+      "cloud-provider": "openrouter",
+      "cloud-model": "fixture/v041-cloud-model"
+    },
+    "profile": {
+      "name": "v041-fixture / recovered",
+      "model": "C:/fixtures/v041/models/legacy-Q4_K_M.gguf",
+      "port": 8123,
+      "context": 6144,
+      "seed": 424242,
+      "temperature": 0.73,
+      "threads": 6,
+      "batch": 448
+    }
+  }
+}

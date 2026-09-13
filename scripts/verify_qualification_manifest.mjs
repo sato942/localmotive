@@ -495,20 +495,90 @@ export function verifyQualificationManifest({ manifestPath, root = ".", expected
     }
   }
 
+  // F9-03: validate the ACTUAL producer schema (scripts/verify_041.mjs writes
+  // schema_version, verifier, source_revision, source_dirty, artifact {name,
+  // size_bytes, sha256}, per-check status and overall_status). The earlier
+  // branch read optional camelCase aliases that the producer never writes, so
+  // a record with the real fields was only checked for its aggregate string
+  // and every semantic contradiction (wrong source, wrong artifact identity,
+  // a failed check under a passing aggregate) validated silently. No field is
+  // optional here: absence is a failure, never a skipped check.
   const packaged = docs.get("packaged_verification");
   if (packaged) {
+    if (packaged.schema_version !== "1.0.0") {
+      failures.push(
+        `packaged_verification: schema_version ${packaged.schema_version} is not the producer contract`,
+      );
+    }
+    if (typeof packaged.verifier !== "string" || packaged.verifier.trim() === "") {
+      failures.push("packaged_verification: the producing verifier is not recorded");
+    }
+    if (typeof packaged.source_dirty !== "boolean") {
+      failures.push("packaged_verification: the source-dirty flag is not recorded");
+    }
+    if (!/^[0-9a-f]{40}$/.test(packaged.source_revision ?? "")) {
+      failures.push("packaged_verification: source_revision is missing or is not a full commit SHA");
+    } else if (packaged.source_revision !== manifest.sourceRevision) {
+      failures.push(
+        `packaged_verification: source_revision ${packaged.source_revision} contradicts the manifest source ${manifest.sourceRevision}`,
+      );
+    }
+    const artifact = packaged.artifact;
+    if (typeof artifact !== "object" || artifact === null) {
+      failures.push("packaged_verification: the artifact identity is missing");
+    } else {
+      if (typeof artifact.name !== "string" || artifact.name.trim() === "") {
+        failures.push("packaged_verification: the artifact name is missing");
+      }
+      if (!Number.isFinite(Number(artifact.size_bytes))) {
+        failures.push("packaged_verification: the artifact size is missing");
+      }
+      if (!/^[0-9a-f]{64}$/.test(artifact.sha256 ?? "")) {
+        failures.push("packaged_verification: the artifact digest is missing or malformed");
+      }
+      if (portableRow) {
+        if (artifact.name !== portableRow.name) {
+          failures.push(
+            `packaged_verification: artifact name ${artifact.name} contradicts the inventory ${portableRow.name}`,
+          );
+        }
+        if (Number(artifact.size_bytes) !== Number(portableRow.sizeBytes)) {
+          failures.push(
+            `packaged_verification: artifact size ${artifact.size_bytes} contradicts the inventory ${portableRow.sizeBytes}`,
+          );
+        }
+        if (artifact.sha256 !== portableRow.sha256) {
+          failures.push("packaged_verification: artifact digest contradicts the inventory");
+        }
+      }
+    }
+    if (!Array.isArray(packaged.checks) || packaged.checks.length === 0) {
+      failures.push("packaged_verification: no per-check outcomes are recorded");
+    } else {
+      let recordedFailed = false;
+      for (const [index, check] of packaged.checks.entries()) {
+        const label = `packaged_verification: check ${check?.id ?? `#${index}`}`;
+        if (typeof check?.id !== "string" || check.id.trim() === "") {
+          failures.push(`${label}: the check id is missing`);
+          continue;
+        }
+        if (check.status !== "PASS" && check.status !== "FAIL") {
+          failures.push(`${label}: status ${check.status} is not a recorded outcome`);
+          continue;
+        }
+        if (check.status === "FAIL") {
+          recordedFailed = true;
+          failures.push(`${label} is FAIL, so the aggregate cannot pass`);
+        }
+      }
+      if (!recordedFailed && packaged.overall_status !== "PASS") {
+        failures.push(
+          `packaged_verification: overall_status ${packaged.overall_status} contradicts every PASS check`,
+        );
+      }
+    }
     if (packaged.overall_status !== "PASS") {
       failures.push(`packaged_verification: overall_status ${packaged.overall_status} is not PASS`);
-    }
-    if (packaged.sourceRevision && packaged.sourceRevision !== manifest.sourceRevision) {
-      failures.push("packaged_verification: source revision contradicts the manifest source");
-    }
-    if (
-      packaged.candidatePortableSha256 &&
-      portableRow &&
-      packaged.candidatePortableSha256 !== portableRow.sha256
-    ) {
-      failures.push("packaged_verification: portable digest contradicts the inventory");
     }
   }
 
