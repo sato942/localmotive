@@ -35,6 +35,10 @@ async function versionFixture(overrides = {}) {
 /// The S-27.I2 extraction moves JSX into src/screens/*.tsx; guards that read
 /// App.tsx alone silently stop matching. Splits find real component bodies
 /// before any test-text mention because the screens come first.
+/// Line endings are normalized to LF first: a CRLF checkout (for example the
+/// default GitHub-hosted windows-latest image) must not change what the
+/// LF-anchored guard regexes match (GH-01.V1 follow-up: pr-check failed on
+/// the hosted runner while passing on LF checkouts).
 async function frontendSources() {
   const screens = [
     "AboutScreen.tsx",
@@ -50,12 +54,12 @@ async function frontendSources() {
   const parts = [];
   for (const name of screens) {
     try {
-      parts.push(await readFile(join(process.cwd(), "src", "screens", name), "utf8"));
+      parts.push((await readFile(join(process.cwd(), "src", "screens", name), "utf8")).replace(/\r\n/g, "\n"));
     } catch {
       // A screen module that does not exist yet contributes nothing.
     }
   }
-  parts.push(await readFile(join(process.cwd(), "src", "App.tsx"), "utf8"));
+  parts.push((await readFile(join(process.cwd(), "src", "App.tsx"), "utf8")).replace(/\r\n/g, "\n"));
   return parts.join("\n");
 }
 
