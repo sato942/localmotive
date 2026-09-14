@@ -300,6 +300,7 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
   [IO.File]::WriteAllBytes((Join-Path $Shared "canary-mirror.sqlite"), [Convert]::FromBase64String($b64))
   Copy-Item (Join-Path $fixtureDir "canary-userdata.txt") (Join-Path $Shared "canary-userdata.txt") -Force
   Copy-Item (Join-Path $fixtureDir "canary-catalog-cache.json") (Join-Path $Shared "canary-catalog-cache.json") -Force
+  Copy-Item (Join-Path $fixtureDir "canary-settings.json") (Join-Path $Shared "canary-settings.json") -Force
   Set-Content -Path (Join-Path $Shared "preserve.json") -Value '{"version":1}' -Encoding UTF8
 
   $stage = "prepare-sandbox"
