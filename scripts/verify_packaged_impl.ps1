@@ -156,21 +156,39 @@ function Start-OwnedFixture([string]$StateDir, [string]$InitRecordPath, [string]
   Write-Phase "fixture init starting"
   $initOut = Join-Path ([System.IO.Path]::GetTempPath()) "localmotive-fixture-init-$AttemptId.txt"
   Remove-Item -LiteralPath $initOut -Force -ErrorAction SilentlyContinue
-  $proc = Start-Process -FilePath "node" -ArgumentList @(
+  Remove-Item -LiteralPath $InitRecordPath -Force -ErrorAction SilentlyContinue
+  # Spawn the init child fire-and-forget: it writes the init record file
+  # itself (verify_060_catalog.mjs init() writes outPath on success) and
+  # spawns the detached grandchild server, then exits. Never wait on the
+  # child handle: Start-Process -Wait, Process.WaitForExit, and
+  # Start-Job/Wait-Job all hang in this environment even after init
+  # completes its work (observed 2026-09-14). Poll the record file with
+  # a deadline instead; adopt the server by pid plus verified command
+  # line, exactly as before.
+  Start-Process -FilePath "node" -ArgumentList @(
     "scripts/verify_060_catalog.mjs", "init", $StateDir, $InitRecordPath
-  ) -NoNewWindow -Wait -PassThru -RedirectStandardOutput $initOut
-  $initCode = $proc.ExitCode
-  Write-Phase "fixture init exit=$initCode"
-  if ($initCode -ne 0) {
-    $stderr = ""
-    try { $stderr = (Get-Content $initOut -Raw) } catch { }
-    throw "The catalog fixture server did not initialize (exit $initCode): $stderr"
+  ) -NoNewWindow | Out-Null
+  $deadline = (Get-Date).AddSeconds(60)
+  $initRecord = $null
+  while ((Get-Date) -lt $deadline) {
+    if (Test-Path -LiteralPath $InitRecordPath) {
+      try { $initRecord = (Get-Content $InitRecordPath -Raw | ConvertFrom-Json) } catch { $initRecord = $null }
+      if ($initRecord -and $initRecord.status -eq "PASS" -and $initRecord.fixture_url) { break }
+      $initRecord = $null
+    }
+    Start-Sleep -Milliseconds 500
   }
+  if (-not $initRecord) {
+    throw "The catalog fixture server did not initialize (no PASS init record at $InitRecordPath within 60s)"
+  }
+  $initCode = 0
+  Write-Phase "fixture init exit=$initCode"
+  # Mirror the record to the legacy stdout-capture path so downstream
+  # readers of $initOut keep working.
+  try { Copy-Item -LiteralPath $InitRecordPath -Destination $initOut -Force } catch { }
   # The init record carries the fixture URL/pubkey; the SERVER child is a
   # grandchild of this script (spawned detached by init), so adopt it by the
   # recorded pid AND a verified command line before keeping the handle.
-  $initRecord = (Get-Content $initOut -Raw | ConvertFrom-Json)
-  if ($initRecord.status -ne "PASS") { throw "The catalog fixture server did not initialize" }
   $state = (Get-Content (Join-Path $StateDir 'state.json') -Raw | ConvertFrom-Json)
   $script:fixtureProcess = Get-FixtureAdoption $state.serverPid
   Write-Phase "fixture adopted pid=$($script:fixtureProcess.Id) url=$($initRecord.fixture_url)"
