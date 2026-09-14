@@ -1884,6 +1884,14 @@ mod tests {
         server.join().unwrap();
     }
 
+    /// Cancellation that arrives after observed progress must keep resumable
+    /// partial state (audit DC-12): the progress callback fires from the
+    /// transfer loop after bytes are written, so cancelling from the callback
+    /// proves the partial bytes existed at cancellation time. A fixed sleep
+    /// cannot prove that: under load the timer can fire before the first
+    /// write, and the test then asserts on state the fixture never created
+    /// (PR #33 pr-check run 34852747749: valid partial bytes must remain
+    /// resumable, download.rs:1989).
     #[test]
     fn cancellation_retains_valid_state_and_the_next_attempt_resumes() {
         use std::io::{BufRead as _, BufReader, Write as _};
@@ -1896,14 +1904,35 @@ mod tests {
             format!("{:x}", hasher.finalize())
         };
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
         let address = listener.local_addr().unwrap();
         let server_payload = payload.clone();
         let server_digest = digest.clone();
         let resumed_starts = Arc::new(Mutex::new(Vec::new()));
         let server_resumed_starts = Arc::clone(&resumed_starts);
         let server = std::thread::spawn(move || {
-            for request_index in 0..4 {
-                let (mut stream, _) = listener.accept().unwrap();
+            // Bounded fixture: a failed test must not leave this thread in
+            // a blocking accept forever. The success path serves four
+            // requests in about 2 s; the failure path exits at the deadline
+            // and drops every socket it holds.
+            let deadline = Instant::now() + Duration::from_secs(30);
+            let mut request_index = 0_usize;
+            while request_index < 4 && Instant::now() < deadline {
+                let (mut stream, _) = match listener.accept() {
+                    Ok(accepted) => accepted,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(5));
+                        continue;
+                    }
+                    Err(error) => panic!("server accept failed: {error}"),
+                };
+                // Accepted streams inherit the listener's non-blocking mode;
+                // restore blocking I/O with a read bound so a stuck peer
+                // cannot hang the fixture past the deadline either.
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(10)))
+                    .unwrap();
                 let mut reader = BufReader::new(stream.try_clone().unwrap());
                 let mut request = String::new();
                 loop {
@@ -1952,18 +1981,32 @@ mod tests {
                         stream.write_all(body).unwrap();
                     }
                 }
+                request_index += 1;
             }
         });
 
         let root = unique_test_dir("localmotive-cancelled-download");
         std::fs::create_dir_all(&root).unwrap();
         let target = root.join("runtime.zip");
+        // Observed-progress cancellation: the 400 ms progress poll runs
+        // `on_progress` after chunk bytes are written (before the periodic
+        // durable checkpoint), so setting the flag from the callback
+        // guarantees the partial bytes existed at cancellation time. A fixed
+        // sleep cannot prove that: under load the timer can fire before the
+        // first write, and the test then asserts on state the fixture never
+        // created (PR #33 pr-check run 34852747749: valid partial bytes must
+        // remain resumable, download.rs:1989).
+        //
+        // The fixture holds the first response open for 1 s after the
+        // initial 4096 bytes so the poll observes the write and cancels
+        // before the worker can see a truncation; without the hold the
+        // worker would record a transfer failure and the returned error
+        // would not be a cancellation.
         let cancel = Arc::new(AtomicBool::new(false));
-        let cancel_after_partial = Arc::clone(&cancel);
-        let canceller = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(100));
-            cancel_after_partial.store(true, Ordering::Relaxed);
-        });
+        let callback_cancel = Arc::clone(&cancel);
+        let observed_progress = Arc::new(AtomicU64::new(0));
+        let callback_observed = Arc::clone(&observed_progress);
+        let total = payload.len() as u64;
 
         let error = download_file(
             &format!("http://{address}/runtime.zip"),
@@ -1975,11 +2018,25 @@ mod tests {
             1,
             Arc::clone(&cancel),
             Arc::new(AtomicU64::new(0)),
-            |_, _| {},
+            move |done, expected| {
+                debug_assert_eq!(expected, total);
+                if done >= 4096 && done < total {
+                    callback_observed.store(done, Ordering::SeqCst);
+                    callback_cancel.store(true, Ordering::SeqCst);
+                }
+            },
         )
         .unwrap_err();
 
-        canceller.join().unwrap();
+        // Missing progress is a test failure with a diagnostic, never a
+        // pass: without observed bytes there is nothing to assert resume on.
+        // The pre-cancelled sibling test covers the legitimate no-partial
+        // case separately.
+        let observed = observed_progress.load(Ordering::SeqCst);
+        assert!(
+            observed >= 4096 && observed < total,
+            "the progress callback never observed partial bytes before cancellation;              got {observed} of {total} — the fixture did not deliver data, not a resume finding"
+        );
         assert!(error.to_ascii_lowercase().contains("cancel"), "{error}");
         assert!(
             !target.exists(),
