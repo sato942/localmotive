@@ -956,18 +956,23 @@ test("packaged cancellation check observes progress, records completion or a bou
 });
 
 test("release package job runs the catalog/SQLite packaged matrix (GH-05)", async () => {
-  // The orchestration lives in scripts/verify_packaged_matrix.ps1 (runs
+  // The orchestration lives in scripts/verify_packaged_impl.ps1 (invoked
+  // through the thin wrapper scripts/verify_packaged_matrix.ps1; runs
   // 34819219725/34815989537: inline cleanup's stray $LASTEXITCODE failed
   // green runs); the workflow only passes identities. Assert on the union:
-  // the workflow must invoke the script with the run identities, and the
-  // script must run every matrix phase.
+  // the workflow must invoke the wrapper with the run identities, the
+  // wrapper must delegate to the impl, and the impl must run every matrix
+  // phase.
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
   const pkg = release.split("\n  package:")[1].split("\n  clean-account-lifecycle:")[0];
   assert.ok(pkg.includes("scripts/verify_packaged_matrix.ps1"), "package job must invoke the committed orchestration script");
   for (const needle of ["-Portable", "-Version", "-ResolvedSha", "-CdpPort"]) {
     assert.ok(pkg.includes(needle), `package job is missing ${needle}`);
   }
-  const script = await readFile(join(process.cwd(), "scripts", "verify_packaged_matrix.ps1"), "utf8");
+  const wrapper = await readFile(join(process.cwd(), "scripts", "verify_packaged_matrix.ps1"), "utf8");
+  assert.ok(wrapper.includes("verify_packaged_impl.ps1"), "wrapper must dot-source the impl");
+  assert.ok(wrapper.includes("Invoke-PackagedMatrix"), "wrapper must invoke the matrix");
+  const script = await readFile(join(process.cwd(), "scripts", "verify_packaged_impl.ps1"), "utf8");
   for (const needle of [
     // The fixture phase now runs through Start-OwnedFixture (owned-handle
     // spawn, exit from the handle); the remaining phases keep their literal
@@ -984,11 +989,11 @@ test("release package job runs the catalog/SQLite packaged matrix (GH-05)", asyn
     "LOCALMOTIVE_CATALOG_ROOT",
     "packaged-verification-catalog-$Version.json",
   ]) {
-    assert.ok(script.includes(needle), `orchestration script is missing ${needle}`);
+    assert.ok(script.includes(needle), `orchestration impl is missing ${needle}`);
   }
   // Two launches share the isolated profile so the restart phase runs on the
   // same application data the first-fill phase wrote.
-  assert.equal((script.match(/Start-Candidate \$CdpPort/g) ?? []).length, 2);
+  assert.equal((script.match(/doStartCandidate \$CdpPort/g) ?? []).length, 2);
 });
 
 test("rich catalog facets keep the backend camelCase contract (GH-05)", async () => {
@@ -1501,10 +1506,10 @@ test("release verify step exposes the resolved revision to every verifier phase"
 });
 
 test("release verify step waits for the candidate WebView before driving checks", async () => {
-  // The launch helper lives in scripts/verify_packaged_matrix.ps1; the
-  // workflow only invokes it. Assert the helper waits (not sleeps) and both
-  // launches go through it.
-  const script = await readFile(join(process.cwd(), "scripts", "verify_packaged_matrix.ps1"), "utf8");
+  // The launch helper lives in scripts/verify_packaged_impl.ps1 (invoked
+  // through the wrapper); the workflow only invokes the wrapper. Assert the
+  // helper waits (not sleeps) and both launches go through it.
+  const script = await readFile(join(process.cwd(), "scripts", "verify_packaged_impl.ps1"), "utf8");
   assert.match(script, /function Start-Candidate/);
   assert.match(script, /Start-Process \$Portable/);
   // A fixed sleep races WebView startup: the launch helper must poll the
@@ -1512,7 +1517,7 @@ test("release verify step waits for the candidate WebView before driving checks"
   // every verifier run must go through the helper (two launches for the
   // catalog restart matrix).
   assert.match(script, /json\/list/);
-  assert.equal((script.match(/Start-Candidate \$CdpPort/g) ?? []).length, 2);
+  assert.equal((script.match(/doStartCandidate \$CdpPort/g) ?? []).length, 2);
 });
 
 test("release workflow serializes runs so two packages never share one runner", async () => {
@@ -1530,7 +1535,7 @@ test("release workflow serializes runs so two packages never share one runner", 
 
 test("release verify step isolates the candidate behind a per-run CDP port with owned-handle cleanup", async () => {
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
-  const script = await readFile(join(process.cwd(), "scripts", "verify_packaged_matrix.ps1"), "utf8");
+  const script = await readFile(join(process.cwd(), "scripts", "verify_packaged_impl.ps1"), "utf8");
   // Fixed port 10041 plus parent-only Stop-Process leaves an orphan
   // WebView2 holding CDP; the next run attaches to the stale page.
   // RED: the step hard-codes one port with no pre/post cleanup. The port is
@@ -1553,15 +1558,64 @@ test("release verify orchestration never lets cleanup set the step outcome", asy
   // cleanup also struggles, and derive the final exit only from recorded
   // outcomes -- never from a stray $LASTEXITCODE.
   const script = await readFile(join(process.cwd(), "scripts", "verify_packaged_matrix.ps1"), "utf8");
-  assert.match(script, /\$LASTEXITCODE/);
-  assert.match(script, /already-stopped/);
-  assert.match(script, /still-alive/);
-  assert.match(script, /RESULT: PASS/);
-  assert.match(script, /RESULT: FAIL/);
-  assert.match(script, /finally/);
+  const impl = await readFile(join(process.cwd(), "scripts", "verify_packaged_impl.ps1"), "utf8");
+  assert.match(impl, /\$LASTEXITCODE/);
+  assert.match(impl, /already-stopped/);
+  assert.match(impl, /still-alive/);
+  assert.match(impl, /RESULT: PASS/);
+  assert.match(impl, /RESULT: FAIL/);
+  assert.match(impl, /finally/);
+  // U06-01: the wrapper holds no logic of its own -- the impl owns the
+  // orchestration, and the wrapper maps its return code to `exit`.
+  assert.match(script, /verify_packaged_impl\.ps1/);
+  assert.match(script, /Invoke-PackagedMatrix/);
+  assert.match(script, /exit \$code/);
+  assert.doesNotMatch(script, /taskkill/);
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
   assert.match(release, /verify_packaged_matrix\.ps1/);
   assert.match(release, /if \(\$LASTEXITCODE -ne 0\) \{ throw "Packaged verification orchestration failed/);
+});
+
+test("packaged-orchestration cleanup matrix runs in CI under pwsh (U06-01)", async () => {
+  // The matrix drives the REAL Invoke-PackagedMatrix path; if CI stops
+  // running it, a cleanup regression reaches the release workflow unseen.
+  const ci = await readFile(join(process.cwd(), ".github", "workflows", "ci.yml"), "utf8");
+  for (const job of ["  check:", "  pr-check:"]) {
+    const at = ci.indexOf(job);
+    assert.ok(at >= 0, `${job} job is missing`);
+    const block = ci.slice(at, at + 12000);
+    assert.match(block, /verify_cleanup_matrix\.ps1/, `${job} must run the cleanup matrix`);
+    assert.match(block, /shell: pwsh/, `${job} matrix step must use pwsh`);
+  }
+  const policy = JSON.parse(await readFile(join(process.cwd(), ".github", "workflow-gates.json"), "utf8"));
+  for (const job of ["check", "pr-check"]) {
+    assert.ok(
+      policy.workflows["ci.yml"].gates[job].includes("pwsh -NoProfile -File scripts/tests/verify_cleanup_matrix.ps1"),
+      `workflow-gates.json must pin the matrix in ${job}`,
+    );
+  }
+});
+
+test("candidate still-alive fails the run and preserves the verifier error (U06-01)", async () => {
+  // The reviewed revision only recorded "candidate still-alive" in the notes
+  // while the final exit stayed 0. The impl must fail the run and keep an
+  // earlier verifier error as the prefix.
+  const impl = await readFile(join(process.cwd(), "scripts", "verify_packaged_impl.ps1"), "utf8");
+  const stop = impl.slice(impl.indexOf("function Stop-Candidate"));
+  assert.match(stop, /\$script:functionalFailed = \$true/);
+  assert.match(stop, /candidate still-alive after cleanup deadline/);
+});
+
+test("fixture adoption refuses unverified identity (U06-01)", async () => {
+  // The reviewed revision accepted ANY node process when the CIM lookup
+  // threw. The impl must refuse: CIM failure, missing command line, and a
+  // foreign command line all refuse adoption.
+  const impl = await readFile(join(process.cwd(), "scripts", "verify_packaged_impl.ps1"), "utf8");
+  assert.match(impl, /function Get-FixtureAdoption/);
+  assert.match(impl, /identity is unverified \(CIM lookup failed/);
+  assert.match(impl, /has no readable command line; refusing to adopt/);
+  assert.match(impl, /does not belong to this attempt; refusing to adopt/);
+  assert.doesNotMatch(impl, /fall back to process-name check, still bounded/);
 });
 
 test("release publish verification avoids hosted-only shell dependencies", async () => {
