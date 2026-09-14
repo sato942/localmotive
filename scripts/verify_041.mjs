@@ -48,12 +48,12 @@ function safeGit(args, fallback = "") {
 const sourceRevision = (
   process.env.LOCALMOTIVE_SOURCE_REVISION ?? safeGit(["rev-parse", "HEAD"])
 ).toLowerCase();
-// The package step creates artifacts/ before this verifier runs, so the
-// verifier-owned artifacts directory never counts as source dirt. Build
-// outputs (target/, dist/, node_modules/, research worktrees) are covered
-// by .gitignore or tracking state, not by this probe.
+// The package step creates artifacts/ and sbom.cdx.json before this verifier
+// runs, so those verifier/workflow-owned outputs never count as source dirt.
+// Build outputs (target/, dist/, node_modules/, research worktrees) are
+// covered by .gitignore or tracking state, not by this probe.
 const sourceStatus = safeGit(
-  ["status", "--porcelain", "--untracked-files=all", "--", ".", ":(exclude)artifacts"],
+  ["status", "--porcelain", "--untracked-files=all", "--", ".", ":(exclude)artifacts", ":(exclude)sbom.cdx.json"],
   "UNKNOWN",
 );
 const sourceDirty = sourceStatus !== "" && sourceStatus !== "UNKNOWN";

@@ -1453,6 +1453,16 @@ test("packaged clean-source probe ignores the verifier-owned artifacts directory
   assert.match(source, /artifacts/);
 });
 
+test("packaged clean-source probe ignores the workflow-owned SBOM output", async () => {
+  // Seen live (Release verify run 34803387581): the package job writes
+  // sbom.cdx.json into the checkout root before verify_041 runs, so the
+  // untracked SBOM tripped candidate.clean-source and failed the run even
+  // though the source was clean. The probe must exclude it alongside
+  // artifacts/.
+  const source = await readFile(join(process.cwd(), "scripts", "verify_041.mjs"), "utf8");
+  assert.match(source, /sbom\.cdx\.json/);
+});
+
 test("packaged rejection detail preserves the backend error message", async () => {
   const source = await readFile(join(process.cwd(), "scripts", "verify_041.mjs"), "utf8");
   assert.match(source, /errorText/);
