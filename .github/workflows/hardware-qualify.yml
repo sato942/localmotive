@@ -87,7 +87,7 @@ jobs:
           $dir = Join-Path "release-evidence" $env:VERSION "attestations"
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
           node scripts/qualification/build_host_attestation.mjs --out (Join-Path $dir "host-zen5-blackwell.json") --cpu "$env:CPU" --gpu "$env:GPU" --os "$os" --driver "$driver" --version "$env:VERSION" --tag "$env:TAG" --source-revision "$env:SOURCE_REVISION" --run-url "$env:RUN_URL" --run-id "$env:RUN_ID"
-          if ($LASTEXITCODE -ne 0) { throw "Host attestation verdict is NO_MATCH: the intended host-proof job fails (audit GH-10 I2)." }"
+          if ($LASTEXITCODE -ne 0) { throw "Host attestation verdict is NO_MATCH: the intended host-proof job fails (audit GH-10 I2)." }
 
       - name: Job summary
         shell: pwsh
