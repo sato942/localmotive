@@ -1370,6 +1370,35 @@ test("hardware qualify workflow pins every remote action and owns the host proof
   assert.match(generator, /supportClaimPolicy/);
 });
 
+test("hardware qualify attestation block parses under pwsh (U06-03)", async () => {
+  // Run 34819219650: a trailing quote after the NO_MATCH throw made the
+  // whole step a PowerShell parser error. The emitted block must parse.
+  const { execFile } = await import("node:child_process");
+  const workflow = await readFile(join(process.cwd(), ".github", "workflows", "hardware-qualify.yml"), "utf8");
+  const at = workflow.indexOf("Derive and write the host attestation");
+  assert.ok(at >= 0, "attestation step is missing");
+  const runAt = workflow.indexOf("run: |", at);
+  const nextStep = workflow.indexOf("\n      - name:", runAt);
+  const block = workflow.slice(runAt + "run: |".length, nextStep);
+  // No line may end with a stray quote after the closing brace (the exact
+  // E07 defect shape).
+  for (const line of block.split("\n")) {
+    assert.doesNotMatch(line, /\}"+\s*$/, `stray trailing quote: ${line.trim()}`);
+  }
+  // Parse the block with the real PowerShell parser (pwsh is the workflow's
+  // declared shell for this step).
+  await new Promise((resolve, reject) => {
+    const child = execFile(
+      "pwsh",
+      ["-NoProfile", "-Command", "$e=$null;[System.Management.Automation.Language.Parser]::ParseInput([Console]::In.ReadToEnd(),[ref]$null,[ref]$e)|Out-Null;if($e.Count-gt0){$e[0].Message;exit 1}"],
+      (error, stdout) => (error ? reject(new Error(`pwsh parse failed: ${stdout}`)) : resolve()),
+    );
+    child.stdin.write(block);
+    child.stdin.end();
+  });
+  assert.match(workflow, /build_host_attestation\.mjs/);
+});
+
 test("hardware qualify workflow cannot claim L4 support from host match alone", async () => {
   const workflow = await readFile(join(process.cwd(), ".github", "workflows", "hardware-qualify.yml"), "utf8");
   const generator = await readFile(
