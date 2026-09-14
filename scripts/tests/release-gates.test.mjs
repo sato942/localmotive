@@ -2592,6 +2592,28 @@ test("witness stall legs spawn the capable shell", async () => {
   assert.doesNotMatch(witness, /Start-Process -FilePath "powershell"/);
 });
 
+// U06-04: the settings session must wait for the debugger target. A fixed
+// 8 s sleep races WebView2 initialization on the slower sandbox launch path:
+// the earlier upg040 leg died at "no CDP page target" 60 s into the evaluate
+// even though the binary was alive, because the sleep ended before the port
+// opened and the single evaluate call then spent its whole budget polling a
+// port nothing had opened yet. The session polls /json/list (up to 90 s)
+// before the evaluate runs, the same way the CDP drivers attach.
+test("settings session polls for the debugger target before evaluating", async () => {
+  const sandbox = await readFile(
+    join(process.cwd(), "scripts", "sandbox", "run-lifecycle-in-sandbox.ps1"),
+    "utf8",
+  );
+  const marker = "function Use-SettingsSession";
+  const tail = sandbox.slice(sandbox.indexOf(marker));
+  const end = tail.indexOf("function Seed-SettingsV041");
+  const session = tail.slice(0, end);
+  assert.ok(session.length > 200, "the settings session body is present");
+  assert.match(session, /AddSeconds[(]90[)]/);
+  assert.match(session, /json\/list/);
+  assert.doesNotMatch(session, /Start-Sleep -Seconds 8/);
+});
+
 test("R04: the benchmark run owns its cancelled workers until they exit", async () => {
   const service = await readFile(join(process.cwd(), "src-tauri", "src", "measurement_service.rs"), "utf8");
   const client = await readFile(join(process.cwd(), "src-tauri", "src", "local_client.rs"), "utf8");
