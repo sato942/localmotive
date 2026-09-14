@@ -5,9 +5,17 @@
 # kept getting wrong: GitHub's PowerShell runner appends
 #   if ((Test-Path -LiteralPath variable:\LASTEXITCODE)) { exit $LASTEXITCODE }
 # so the LAST native command in the step decides the step outcome even after
-# every verifier passed. A final `taskkill` of an already-dead fixture PID
+# every verifier passed. A final native kill of an already-dead fixture PID
 # (prep() already stopped it) therefore failed green runs with exit 1 and no
 # error text, ~282 ms after the merge PASS line.
+#
+# Revision 2 (paste-7 bounded repair): owned-process cleanup is bounded and
+# run-specific. The fixture child is tracked by a .NET process HANDLE captured
+# at spawn time in `init` (StopFixture stops the OWNED handle only -- PID
+# reuse on this shared runner can never redirect the kill), every stop is
+# bounded by Stopwatch deadlines, every native exit code is captured
+# immediately, and every outcome is recorded by name. No port scans, no name
+# scans, no unbounded CIM.
 #
 # Contract:
 # - Every material native command's exit code is captured immediately into a
@@ -34,61 +42,59 @@ $ErrorActionPreference = "Stop"
 $script:functionalFailed = $false
 $script:functionalError = ""
 $script:cleanupNotes = @()
+$script:lastVerifierOutput = ""
 
 function Write-Phase([string]$Message) {
   $stamp = (Get-Date).ToString("o")
   Write-Host "verify-orchestrator [$stamp] $Message"
 }
 
-# Run one native command, capture its exit code immediately, and classify it.
-# Already-gone owned processes (taskkill 128) are successful cleanup; anything
-# else nonzero is returned to the caller for an explicit decision. Nothing
-# here throws, so cleanup can never mask the functional outcome by accident.
-function Invoke-Native([string]$Description, [scriptblock]$Command) {
-  & $Command | Out-Null
-  $code = $LASTEXITCODE
-  if ($null -eq $code) { $code = 0 }
+# Run one node verifier phase and return its exit code, captured immediately
+# from the OWNED handle before any other native command can replace it.
+# Nothing here throws: the caller records the outcome and decides.
+function Invoke-Verifier([string]$Description, [string[]]$Arguments) {
+  $outFile = Join-Path ([System.IO.Path]::GetTempPath()) "localmotive-verify-phase-$AttemptId.txt"
+  Remove-Item -LiteralPath $outFile -Force -ErrorAction SilentlyContinue
+  $proc = Start-Process -FilePath "node" -ArgumentList $Arguments -NoNewWindow -Wait -PassThru -RedirectStandardOutput $outFile
+  $code = $proc.ExitCode
   Write-Phase "$Description exit=$code"
+  $script:lastVerifierOutput = ""
+  try { $script:lastVerifierOutput = (Get-Content $outFile -Raw) } catch { }
   return $code
 }
 
-function Stop-OwnedProcess([int]$TargetPid, [string]$Why) {
-  if (-not $TargetPid -or $TargetPid -eq 0) { return "skipped-no-pid" }
-  $alive = Get-Process -Id $TargetPid -ErrorAction SilentlyContinue
-  if (-not $alive) {
-    Write-Phase "cleanup $Why pid=$TargetPid already-stopped"
+function Stop-OwnedProcess([System.Diagnostics.Process]$Process, [string]$Why, [int]$DeadlineSeconds = 15) {
+  # Bounded stop of an OWNED handle: the handle was captured at spawn, so PID
+  # reuse can never redirect this kill. Already-exited is successful cleanup.
+  # A live process that will not stop inside the deadline is an explicit
+  # cleanup failure (returned by name, never thrown).
+  if (-not $Process) { return "skipped-no-handle" }
+  $targetPid = 0
+  try { $targetPid = $Process.Id } catch { return "already-stopped" }
+  try {
+    if ($Process.HasExited) {
+      Write-Phase "cleanup $Why pid=$targetPid already-stopped"
+      return "already-stopped"
+    }
+  } catch {
+    Write-Phase "cleanup $Why pid=$targetPid already-stopped"
     return "already-stopped"
   }
-  $code = Invoke-Native "taskkill $Why pid=$TargetPid" { cmd /c "taskkill /F /PID $TargetPid" 2>$null }
-  $deadline = (Get-Date).AddSeconds(15)
-  while ((Get-Date) -lt $deadline) {
-    if (-not (Get-Process -Id $TargetPid -ErrorAction SilentlyContinue)) {
-      Write-Phase "cleanup $Why pid=$TargetPid stopped"
-      return "stopped"
-    }
-    Start-Sleep -Milliseconds 500
-  }
-  Write-Phase "cleanup $Why pid=$TargetPid STILL-ALIVE"
-  return "still-alive"
-}
-
-function Stop-VerifyLeftovers([int]$Port) {
-  $pids = @()
+  Write-Phase "cleanup $Why pid=$targetPid stopping (deadline ${DeadlineSeconds}s)"
+  try { $Process.Kill() } catch { }
+  $code = 0
   try {
-    $conns = Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue
-    if ($conns) { $pids += @($conns | Select-Object -ExpandProperty OwningProcess -Unique) }
-  } catch { }
-  $pids += @(Get-Process -Name "localmotive", "msedgewebview2" -ErrorAction SilentlyContinue |
-    Where-Object { $_.Path -like "*$env:RUNNER_TEMP*" } |
-    Select-Object -ExpandProperty Id)
-  foreach ($procId in ($pids | Select-Object -Unique)) {
-    if ($procId -and $procId -ne 0) {
-      $code = Invoke-Native "taskkill leftover pid=$procId" { cmd /c "taskkill /F /T /PID $procId" 2>$null }
-      if ($code -ne 0 -and $code -ne 128) {
-        $script:cleanupNotes += "leftover pid=$procId exit=$code"
-      }
+    if (-not $Process.WaitForExit($DeadlineSeconds * 1000)) {
+      Write-Phase "cleanup $Why pid=$targetPid STILL-ALIVE"
+      return "still-alive"
     }
+  } catch {
+    Write-Phase "cleanup $Why pid=$targetPid already-stopped"
+    return "already-stopped"
   }
+  try { $code = $Process.ExitCode } catch { $code = 0 }
+  Write-Phase "cleanup $Why pid=$targetPid stopped exit=$code"
+  return "stopped"
 }
 
 function Start-Candidate([int]$Port) {
@@ -104,7 +110,7 @@ function Start-Candidate([int]$Port) {
       if ($ready.Count -gt 0) { break }
     } catch { }
     if ((Get-Date) -gt $deadline) {
-      Stop-OwnedProcess -TargetPid $process.Id -Why "candidate-startup-timeout" | Out-Null
+      Stop-OwnedProcess $process "candidate-startup-timeout" | Out-Null
       throw "Candidate WebView did not expose a page CDP target in 90s (port $Port)"
     }
     Start-Sleep -Seconds 2
@@ -114,27 +120,97 @@ function Start-Candidate([int]$Port) {
 }
 
 function Stop-Candidate($process) {
-  if ($process -and -not $process.HasExited) {
-    $outcome = Stop-OwnedProcess -TargetPid $process.Id -Why "candidate"
+  if ($process) {
+    $outcome = Stop-OwnedProcess $process "candidate"
     if ($outcome -eq "still-alive") {
-      $script:cleanupNotes += "candidate pid=$($process.Id) still-alive"
+      $script:cleanupNotes += "candidate still-alive"
     }
   }
 }
 
 # --- Run-specific isolated state (safe to clean twice) -----------------------
-$isolatedRoot = Join-Path $env:RUNNER_TEMP "localmotive-verify-appdata"
-$profile = Join-Path $env:RUNNER_TEMP "localmotive-verify-webview2"
-$catalogState = Join-Path $env:RUNNER_TEMP "localmotive-verify-catalog"
-$catalogFixture = $null
+# Every path carries the attempt identity ($AttemptId): two promotions or a
+# retry on the same runner can never share a profile, a fixture state dir, or
+# a CDP port, and cleanup only ever touches this attempt's paths and handles.
+$AttemptId = "verify-$Version-$CdpPort"
+$isolatedRoot = Join-Path $env:RUNNER_TEMP "localmotive-verify-appdata-$AttemptId"
+$profile = Join-Path $env:RUNNER_TEMP "localmotive-verify-webview2-$AttemptId"
+$catalogState = Join-Path $env:RUNNER_TEMP "localmotive-verify-catalog-$AttemptId"
+$script:fixtureProcess = $null
 $candidate = $null
+
+function Start-OwnedFixture([string]$StateDir, [string]$InitRecordPath) {
+  # Spawn the fixture server as an OWNED child and keep its HANDLE: cleanup
+  # stops exactly this process, never a PID read back from a file.
+  # (Windows PowerShell 5.1 has no ProcessStart.ArgumentList collection, so
+  # the init child is spawned via Start-Process with a stdout/stderr capture
+  # file, and its exit code is read from the OWNED handle -- never
+  # $LASTEXITCODE. The init stdout carries ONLY the init record JSON: node
+  # writes the record to its own stdout and nothing else.)
+  Write-Phase "fixture init starting"
+  $initOut = Join-Path ([System.IO.Path]::GetTempPath()) "localmotive-fixture-init-$AttemptId.txt"
+  Remove-Item -LiteralPath $initOut -Force -ErrorAction SilentlyContinue
+  $proc = Start-Process -FilePath "node" -ArgumentList @(
+    "scripts/verify_060_catalog.mjs", "init", $StateDir, $InitRecordPath
+  ) -NoNewWindow -Wait -PassThru -RedirectStandardOutput $initOut
+  $initCode = $proc.ExitCode
+  Write-Phase "fixture init exit=$initCode"
+  if ($initCode -ne 0) {
+    $stderr = ""
+    try { $stderr = (Get-Content $initOut -Raw) } catch { }
+    throw "The catalog fixture server did not initialize (exit $initCode): $stderr"
+  }
+  # The init record carries the fixture URL/pubkey; the SERVER child is a
+  # grandchild of this script (spawned detached by init), so adopt it by the
+  # recorded pid AND validate its command line before keeping the handle.
+  $initRecord = (Get-Content $initOut -Raw | ConvertFrom-Json)
+  if ($initRecord.status -ne "PASS") { throw "The catalog fixture server did not initialize" }
+  $state = (Get-Content (Join-Path $StateDir 'state.json') -Raw | ConvertFrom-Json)
+  $adopted = Get-Process -Id $state.serverPid -ErrorAction SilentlyContinue
+  if (-not $adopted) { throw "The catalog fixture server exited before adoption (pid $($state.serverPid))" }
+  # Validate the adopted process really is this run's fixture server: the
+  # server child runs `node <verifier> __serve <port>`, so its command line
+  # must carry the __serve marker. Never adopt by pid alone on a shared
+  # runner: a reused pid belonging to another process is refused.
+  $adoptedCmd = ""
+  try {
+    $adoptedCmd = (Get-CimInstance Win32_Process -Filter "ProcessId=$($adopted.Id)" -ErrorAction Stop).CommandLine
+  } catch {
+    # CIM unavailable: fall back to process-name check, still bounded.
+    if ($adopted.ProcessName -ne "node") { throw "Recorded fixture pid $($adopted.Id) is not a node process; refusing to adopt" }
+  }
+  if ($adoptedCmd -and $adoptedCmd -notlike "*__serve*") {
+    throw "Recorded fixture pid $($adopted.Id) does not belong to this attempt; refusing to adopt"
+  }
+  $script:fixtureProcess = $adopted
+  Write-Phase "fixture adopted pid=$($adopted.Id) url=$($initRecord.fixture_url)"
+  return $initRecord
+}
+
+function Stop-OwnedFixture([string]$StateDir) {
+  # Stop the OWNED fixture handle. prep() kills the server but never clears
+  # the handle, so already-exited is the expected successful path -- and a
+  # reused PID can never redirect this kill because the handle is bound.
+  if (-not $script:fixtureProcess) { return "skipped-no-fixture" }
+  $outcome = Stop-OwnedProcess $script:fixtureProcess "catalog-fixture"
+  $script:fixtureProcess = $null
+  $script:cleanupNotes += "fixture outcome=$outcome"
+  if ($outcome -eq "still-alive") {
+    $script:functionalFailed = $true
+    if (-not $script:functionalError) {
+      $script:functionalError = "Catalog fixture process could not be stopped within the deadline"
+    }
+  }
+  return $outcome
+}
 
 try {
   if (-not (Test-Path $Portable)) { throw "Portable executable was not built" }
   New-Item -ItemType Directory -Force -Path "artifacts" | Out-Null
 
-  Stop-VerifyLeftovers -Port $CdpPort
-  Stop-VerifyLeftovers -Port 10041
+  # No pre-clean of ports or process names: every path and handle in this run
+  # is attempt-scoped ($AttemptId), so a previous attempt's leftovers cannot
+  # collide -- and this run can never kill another attempt's processes.
   Remove-Item -LiteralPath $isolatedRoot, $profile -Recurse -Force -ErrorAction SilentlyContinue
   New-Item -ItemType Directory -Force -Path $isolatedRoot | Out-Null
   New-Item -ItemType Directory -Force -Path $profile | Out-Null
@@ -146,16 +222,9 @@ try {
   Remove-Item -LiteralPath $catalogState -Recurse -Force -ErrorAction SilentlyContinue
   New-Item -ItemType Directory -Force -Path $catalogState | Out-Null
 
-  # Fixture init: check the NATIVE exit code before trusting its JSON.
-  Write-Phase "fixture init starting"
-  $initRaw = node scripts/verify_060_catalog.mjs init $catalogState "artifacts/catalog-fixture-init.json"
-  $initCode = $LASTEXITCODE
-  if ($null -eq $initCode) { $initCode = 0 }
-  Write-Phase "fixture init exit=$initCode"
-  if ($initCode -ne 0) { throw "The catalog fixture server did not initialize (exit $initCode)" }
-  $catalogFixture = ($initRaw | ConvertFrom-Json)
-  if ($catalogFixture.status -ne "PASS") { throw "The catalog fixture server did not initialize" }
-  Write-Phase "fixture init pid=$($catalogFixture.serverPid) url=$($catalogFixture.fixture_url)"
+  # Fixture init: the OWNED child handle carries the exit code (never
+  # $LASTEXITCODE) and the init JSON is parsed only after exit 0.
+  $catalogFixture = Start-OwnedFixture $catalogState "artifacts/catalog-fixture-init.json"
   $env:LOCALMOTIVE_CATALOG_URL = $catalogFixture.fixture_url
   $env:LOCALMOTIVE_CATALOG_PUBKEY = $catalogFixture.fixture_pubkey
 
@@ -167,19 +236,17 @@ try {
   $candidate = Start-Candidate $CdpPort
   try {
     Write-Phase "verify_041 starting"
-    node scripts/verify_041.mjs $CdpPort $Portable "artifacts/packaged-verification-$Version.json"
-    $verifyCode = $LASTEXITCODE
-    if ($null -eq $verifyCode) { $verifyCode = 0 }
-    Write-Phase "verify_041 exit=$verifyCode"
+    $verifyCode = Invoke-Verifier "verify_041" @(
+      "scripts/verify_041.mjs", "$CdpPort", $Portable, "artifacts/packaged-verification-$Version.json"
+    )
     if ($verifyCode -ne 0) { throw "verify_041 failed with code $verifyCode" }
     $record = Get-Content "artifacts/packaged-verification-$Version.json" -Raw | ConvertFrom-Json
     if ($record.overall_status -ne "PASS") { throw "Packaged verification record is not PASS" }
 
     Write-Phase "catalog first-fill starting"
-    node scripts/verify_060_catalog.mjs first-fill $CdpPort $catalogState "artifacts/catalog-matrix-first-fill.json"
-    $fillCode = $LASTEXITCODE
-    if ($null -eq $fillCode) { $fillCode = 0 }
-    Write-Phase "catalog first-fill exit=$fillCode"
+    $fillCode = Invoke-Verifier "catalog first-fill" @(
+      "scripts/verify_060_catalog.mjs", "first-fill", $CdpPort, $catalogState, "artifacts/catalog-matrix-first-fill.json"
+    )
     if ($fillCode -ne 0) { throw "Catalog first-fill phase failed with code $fillCode" }
   } finally {
     Write-Phase "candidate shutdown (launch 1)"
@@ -188,20 +255,18 @@ try {
   }
 
   Write-Phase "catalog prep starting"
-  node scripts/verify_060_catalog.mjs prep $catalogState
-  $prepCode = $LASTEXITCODE
-  if ($null -eq $prepCode) { $prepCode = 0 }
-  Write-Phase "catalog prep exit=$prepCode"
+  $prepCode = Invoke-Verifier "catalog prep" @(
+    "scripts/verify_060_catalog.mjs", "prep", $catalogState
+  )
   if ($prepCode -ne 0) { throw "Catalog corruption phase failed with code $prepCode" }
 
   # --- Launch #2: restart matrix ----------------------------------------------
   $candidate = Start-Candidate $CdpPort
   try {
     Write-Phase "catalog restart starting"
-    node scripts/verify_060_catalog.mjs restart $CdpPort $catalogState "artifacts/catalog-matrix-restart.json"
-    $restartCode = $LASTEXITCODE
-    if ($null -eq $restartCode) { $restartCode = 0 }
-    Write-Phase "catalog restart exit=$restartCode"
+    $restartCode = Invoke-Verifier "catalog restart" @(
+      "scripts/verify_060_catalog.mjs", "restart", $CdpPort, $catalogState, "artifacts/catalog-matrix-restart.json"
+    )
     if ($restartCode -ne 0) { throw "Catalog restart phase failed with code $restartCode" }
   } finally {
     Write-Phase "candidate shutdown (launch 2)"
@@ -212,10 +277,11 @@ try {
   # --- Merge: bind the record to this run's revision ---------------------------
   $env:LOCALMOTIVE_SOURCE_REVISION = $ResolvedSha
   Write-Phase "catalog merge starting"
-  node scripts/verify_060_catalog.mjs merge $Portable "artifacts/catalog-matrix-first-fill.json" "artifacts/catalog-matrix-restart.json" "artifacts/packaged-verification-catalog-$Version.json"
-  $mergeCode = $LASTEXITCODE
-  if ($null -eq $mergeCode) { $mergeCode = 0 }
-  Write-Phase "catalog merge exit=$mergeCode"
+  $mergeCode = Invoke-Verifier "catalog merge" @(
+    "scripts/verify_060_catalog.mjs", "merge", $Portable,
+    "artifacts/catalog-matrix-first-fill.json", "artifacts/catalog-matrix-restart.json",
+    "artifacts/packaged-verification-catalog-$Version.json"
+  )
   if ($mergeCode -ne 0) { throw "The catalog/SQLite packaged matrix is not PASS" }
   $catalogRecord = Get-Content "artifacts/packaged-verification-catalog-$Version.json" -Raw | ConvertFrom-Json
   if ($catalogRecord.source_revision -ne $ResolvedSha) { throw "Catalog matrix record does not bind the resolved revision" }
@@ -228,50 +294,15 @@ try {
   # Outer cleanup: runs on success AND on early failure (fixture allocated
   # but candidate never started, verifier threw before prep, merge threw,
   # ...). Partially initialized state is handled: every handle is null-
-  # checked, and Stop-OwnedProcess treats already-gone as success.
+  # checked, and the owned-handle stop treats already-gone as success.
+  # Only OWNED handles are stopped here -- never a pid read from a file,
+  # never a port scan, never a process-name scan. Safe to run twice.
   Write-Phase "outer cleanup starting"
   if ($candidate) {
     Stop-Candidate $candidate
     $candidate = $null
   }
-  if ($catalogFixture) {
-    $fixturePid = 0
-    try {
-      # Re-read the recorded pid: prep() stops the server but leaves the pid
-      # in the state file, so the live value may be stale on purpose.
-      $fixturePid = (Get-Content (Join-Path $catalogState 'state.json') -Raw | ConvertFrom-Json).serverPid
-    } catch { }
-    # Ownership check: only stop a node process whose command line carries
-    # this run's fixture marker. A bare pid may have been reused by an
-    # unrelated process on this shared runner; never kill by pid alone.
-    $owned = $false
-    if ($fixturePid) {
-      $proc = Get-Process -Id $fixturePid -ErrorAction SilentlyContinue
-      if ($proc) {
-        try {
-          $cmd = (Get-CimInstance Win32_Process -Filter "ProcessId=$fixturePid" -ErrorAction Stop).CommandLine
-          if ($cmd -like "*verify_060_catalog.mjs*__serve*") { $owned = $true }
-          else { $script:cleanupNotes += "fixture pid=$fixturePid command mismatch; not killed" }
-        } catch {
-          # CIM unavailable: fall back to process-name check, still bounded.
-          if ($proc.ProcessName -eq "node") { $owned = $true }
-          else { $script:cleanupNotes += "fixture pid=$fixturePid name=$($proc.ProcessName); not killed" }
-        }
-      } else {
-        $script:cleanupNotes += "fixture pid=$fixturePid already-stopped"
-      }
-    }
-    if ($owned) {
-      $outcome = Stop-OwnedProcess -TargetPid $fixturePid -Why "catalog-fixture"
-      $script:cleanupNotes += "fixture pid=$fixturePid outcome=$outcome"
-      if ($outcome -eq "still-alive") {
-        $script:functionalFailed = $true
-        if (-not $script:functionalError) {
-          $script:functionalError = "Catalog fixture process $fixturePid could not be stopped within the deadline"
-        }
-      }
-    }
-  }
+  Stop-OwnedFixture $catalogState | Out-Null
   Write-Phase "outer cleanup done"
 }
 

@@ -969,11 +969,14 @@ test("release package job runs the catalog/SQLite packaged matrix (GH-05)", asyn
   }
   const script = await readFile(join(process.cwd(), "scripts", "verify_packaged_matrix.ps1"), "utf8");
   for (const needle of [
-    "verify_060_catalog.mjs init",
-    "verify_060_catalog.mjs first-fill",
-    "verify_060_catalog.mjs prep",
-    "verify_060_catalog.mjs restart",
-    "verify_060_catalog.mjs merge",
+    // The fixture phase now runs through Start-OwnedFixture (owned-handle
+    // spawn, exit from the handle); the remaining phases keep their literal
+    // verifier invocations so the contract stays greppable.
+    "Start-OwnedFixture",
+    "verify_060_catalog.mjs\", \"first-fill",
+    "verify_060_catalog.mjs\", \"prep",
+    "verify_060_catalog.mjs\", \"restart",
+    "verify_060_catalog.mjs\", \"merge",
     "LOCALMOTIVE_CATALOG_URL",
     "LOCALMOTIVE_CATALOG_PUBKEY",
     // Tauri known-folder cache paths ignore a redirected LOCALAPPDATA: the
@@ -1525,15 +1528,20 @@ test("release workflow serializes runs so two packages never share one runner", 
   assert.match(promote, /cancel-in-progress:\s*false/);
 });
 
-test("release verify step isolates the candidate behind a per-run CDP port with tree cleanup", async () => {
+test("release verify step isolates the candidate behind a per-run CDP port with owned-handle cleanup", async () => {
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
   const script = await readFile(join(process.cwd(), "scripts", "verify_packaged_matrix.ps1"), "utf8");
   // Fixed port 10041 plus parent-only Stop-Process leaves an orphan
   // WebView2 holding CDP; the next run attaches to the stale page.
   // RED: the step hard-codes one port with no pre/post cleanup. The port is
-  // unique per run (GITHUB_RUN_ID) and the script kills the whole tree.
+  // unique per run (GITHUB_RUN_ID), every path is attempt-scoped
+  // ($AttemptId), and only OWNED handles are ever stopped -- no port scans,
+  // no process-name scans, no taskkill-by-pid (runs 34819219725: a final
+  // taskkill of the already-dead fixture pid failed green runs).
   assert.match(release, /GITHUB_RUN_ID/);
-  assert.match(script, /taskkill \/F \/T/);
+  assert.match(script, /\$AttemptId/);
+  assert.match(script, /Stop-OwnedProcess/);
+  assert.doesNotMatch(script, /taskkill/);
   assert.match(script, /webSocketDebuggerUrl/);
 });
 
