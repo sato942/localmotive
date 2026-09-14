@@ -362,6 +362,13 @@ jobs:
           $env:LOCALMOTIVE_SOURCE_REVISION = $env:RESOLVED_SHA
           node scripts/verify_060_catalog.mjs merge $portable "artifacts/catalog-matrix-first-fill.json" "artifacts/catalog-matrix-restart.json" "artifacts/packaged-verification-catalog-$env:VERSION.json"
           if ($LASTEXITCODE -ne 0) { throw "The catalog/SQLite packaged matrix is not PASS" }
+          # The merge step must see the record it just wrote: a failed merge
+          # (or a merge that never ran) leaves a stale record from an earlier
+          # attempt, and every downstream identity check would then bind the
+          # wrong bytes. Fail fast here, before staging (run 34810494640:
+          # merge wrote UNKNOWN revision yet the step continued to staging).
+          $catalogRecord = Get-Content "artifacts/packaged-verification-catalog-$env:VERSION.json" -Raw | ConvertFrom-Json
+          if ($catalogRecord.source_revision -ne $env:RESOLVED_SHA) { throw "Catalog matrix record does not bind the resolved revision" }
           # Also kill the fixture server explicitly: prep already did, this is
           # belt-and-braces against an early failure before prep ran.
           if ($catalogInit -and $catalogInit.fixture_url -match ':(\d+)/') {
