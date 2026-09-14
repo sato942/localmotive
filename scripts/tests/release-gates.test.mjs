@@ -1603,6 +1603,9 @@ test("branding history set covers the archived docs layout", async () => {
   // must keep covering those paths after the move.
   // RED: HISTORICAL_FILES pins root paths that will no longer exist.
   assert.match(source, /docs\/history\/TODO-0\.4\.1\.md/);
+  // The universal 0.6 tracker lives at the repository root; the gate must
+  // cover it too, since it imports the RT-01 legacy-migration criterion text.
+  assert.match(source, /"TODO-0\.6\.md"/);
 });
 
 test("local catalog SQLite mirror stores verified models with migrations and controlled recovery", async () => {

@@ -130,7 +130,7 @@ exactly.
 
 ### v0.6 tracker (current)
 
-Read `docs/history/TODO-0.6.md` before starting v0.6 work. It is the authoritative
+Read `TODO-0.6.md` before starting v0.6 work. It is the authoritative
 remediation tracker for the 0.6.0 stabilization release; its evidence source is
 `docs/history/localmotive-comprehensive-audit.md`. Treat the audit as the source of
 truth for each finding and never treat a checkbox as verification evidence. Every
