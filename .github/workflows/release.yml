@@ -255,6 +255,7 @@ jobs:
         env:
           VERSION: ${{ needs.quality.outputs.version }}
           RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
+          LOCALMOTIVE_SOURCE_REVISION: ${{ needs.resolve.outputs.sha }}
         run: |
           $portable = "src-tauri/target/release/localmotive.exe"
           if (-not (Test-Path $portable)) { throw "Portable executable was not built" }

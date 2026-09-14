@@ -1473,6 +1473,20 @@ test("packaged rejection detail preserves the backend error message", async () =
   assert.match(source, /invalid_response/);
 });
 
+test("release verify step exposes the resolved revision to every verifier phase", async () => {
+  // Seen live (Release verify run 34807541476): the merge phase of
+  // verify_060_catalog.mjs records source_revision from
+  // LOCALMOTIVE_SOURCE_REVISION, but the "Verify the packaged executable"
+  // step only set it mid-script after the restart phase, so the merged
+  // record carried UNKNOWN and the step failed after all phases passed.
+  // The step-level env must carry the resolved SHA from the start.
+  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  const at = release.indexOf("Verify the packaged executable");
+  assert.ok(at >= 0, "verify step is missing");
+  const block = release.slice(at, at + 9000);
+  assert.match(block, /LOCALMOTIVE_SOURCE_REVISION/);
+});
+
 test("release verify step waits for the candidate WebView before driving checks", async () => {
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
   const at = release.indexOf("Verify the packaged executable");
