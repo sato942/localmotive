@@ -1642,6 +1642,21 @@ test("GH-01 pull requests run only on the isolated hosted runner", async () => {
   assert.match(pr, /runs-on: windows-latest/);
   assert.doesNotMatch(pr, /self-hosted/);
   assert.doesNotMatch(pr, /secrets\./);
+  // PR #18 follow-up (run 34786186394): the hosted pr-check hung 2h+ on the
+  // bare `cargo test --locked` step (GPU-less windows-latest, no skip, no
+  // timeout). The hosted job must fail fast with the skip set instead: a job
+  // ceiling plus step ceilings plus LOCALMOTIVE_SKIP_HARDWARE_PROBE on the
+  // Rust steps. Self-hosted push jobs keep real hardware probing (no skip).
+  assert.match(pr, /timeout-minutes: (4[0-5]|50|60)/);
+  for (const step of ["Rust linting", "Rust tests", "Rust documentation tests"]) {
+    const body = pr.split(`- name: ${step}`)[1].split("- name:")[0];
+    assert.match(body, /timeout-minutes: \d+/);
+  }
+  for (const step of ["Rust tests", "Rust documentation tests"]) {
+    const body = pr.split(`- name: ${step}`)[1].split("- name:")[0];
+    assert.match(body, /LOCALMOTIVE_SKIP_HARDWARE_PROBE/);
+  }
+  assert.match(pr, /--nocapture/);
   // Trusted self-hosted jobs are unreachable from a pull request.
   const check = ci.split("\n  check:")[1].split("\n  rust-audit:")[0];
   const audit = ci.split("\n  rust-audit:")[1].split("\n  package-smoke:")[0];
