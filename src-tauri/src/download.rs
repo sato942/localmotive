@@ -1937,10 +1937,24 @@ mod tests {
                 let mut request = String::new();
                 loop {
                     let mut line = String::new();
-                    if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                    // A pooled second connection may open while the first is
+                    // still served; it sends nothing and closes at teardown.
+                    // Treat that as an empty request, not a fatal error.
+                    match reader.read_line(&mut line) {
+                        Ok(0) => break,
+                        Ok(_) => {}
+                        Err(_) => break,
+                    }
+                    if line == "\r\n" {
                         break;
                     }
                     request.push_str(&line);
+                }
+                if request.trim_start().is_empty() {
+                    // Empty pre-connection: do not consume a request index;
+                    // drop the socket and serve the next real request.
+                    drop(stream);
+                    continue;
                 }
                 if request_index == 0 || request_index == 2 {
                     write!(
@@ -2060,9 +2074,10 @@ mod tests {
         // The fixture must outlive the resumed transfer: joining the server
         // before the resumed download completes drops the only listener and
         // turns the resume probe into a connection refusal under load
-        // (main CI 34868542494: the retained bytes must resume: Could not
-        // reach Hugging Face: error sending request). The join therefore
-        // happens after the resumed payload is verified, never before.
+        // (main CI 34868542494 and 34871574929: the retained bytes must
+        // resume: Could not reach Hugging Face: error sending request). The
+        // join therefore happens after the resumed payload is verified,
+        // never before.
         let resumed = download_file(
             &format!("http://{address}/runtime.zip"),
             &target,
