@@ -2599,6 +2599,25 @@ test("witness stall legs spawn the capable shell", async () => {
 // opened and the single evaluate call then spent its whole budget polling a
 // port nothing had opened yet. The session polls /json/list (up to 90 s)
 // before the evaluate runs, the same way the CDP drivers attach.
+// U06-04: the settings session pins an explicit WebView2 user-data dir.
+// Proven on the host against the real v0.4.0 build: with only
+// --remote-debugging-port the process stays alive but exposes no CDP target
+// within 55 s; adding --user-data-dir plus WEBVIEW2_USER_DATA_FOLDER exposes
+// a page target. Without the dir the session can never attach.
+test("settings session pins a WebView2 user-data dir", async () => {
+  const sandbox = await readFile(
+    join(process.cwd(), "scripts", "sandbox", "run-lifecycle-in-sandbox.ps1"),
+    "utf8",
+  );
+  const marker = "function Use-SettingsSession";
+  const tail = sandbox.slice(sandbox.indexOf(marker));
+  const end = tail.indexOf("function Seed-SettingsV041");
+  const session = tail.slice(0, end);
+  assert.match(session, /user-data-dir/);
+  assert.match(session, /WEBVIEW2_USER_DATA_FOLDER/);
+});
+
+
 test("settings session polls for the debugger target before evaluating", async () => {
   const sandbox = await readFile(
     join(process.cwd(), "scripts", "sandbox", "run-lifecycle-in-sandbox.ps1"),
