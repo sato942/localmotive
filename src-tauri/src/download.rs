@@ -2243,9 +2243,7 @@ mod tests {
     #[test]
     fn an_open_download_directory_cannot_be_redirected_by_path_replacement() {
         let root = unique_test_dir("localmotive-dir-race");
-        let moved = root.with_extension("moved");
-        let _ = std::fs::remove_dir_all(&root);
-        let _ = std::fs::remove_dir_all(&moved);
+        let moved = root.join("sibling-moved");
         std::fs::create_dir_all(&root).unwrap();
         let directory = open_download_directory(&root).unwrap();
 
@@ -2272,9 +2270,7 @@ mod tests {
     #[test]
     fn an_open_directory_handle_must_match_the_validated_path() {
         let root = unique_test_dir("localmotive-dir-identity");
-        let other = root.with_extension("other");
-        let _ = std::fs::remove_dir_all(&root);
-        let _ = std::fs::remove_dir_all(&other);
+        let other = root.join("sibling-other");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::create_dir_all(&other).unwrap();
         let directory = open_download_directory(&root).unwrap();
