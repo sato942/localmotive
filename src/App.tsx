@@ -509,7 +509,7 @@ function App() {
         });
         setRuntimeCatalog(null);
         setRuntimeCatalogError({
-          kind: "invalid_response",
+          kind: "invalidResponse",
           message: "Browser preview cannot retrieve the approved runtime catalog.",
           retryAfterSeconds: null,
         });

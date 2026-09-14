@@ -64,7 +64,7 @@ import {
 describe("runtime catalog presentation", () => {
   it("preserves typed rate-limit retry metadata from IPC", () => {
     const error = {
-      kind: "rate_limited" as const,
+      kind: "rateLimited" as const,
       message: "Retry later",
       retryAfterSeconds: 120,
     };
@@ -79,7 +79,7 @@ describe("runtime catalog presentation", () => {
 
   it("shows a catalog error after loading stops", () => {
     const error = {
-      kind: "rate_limited" as const,
+      kind: "rateLimited" as const,
       message: "Catalog request was rate limited",
       retryAfterSeconds: 120,
     };

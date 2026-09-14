@@ -467,7 +467,7 @@ try {
             adapterId: "luid:ffffffffffffffff:ffffffffffffffff",
           });
           requireCondition(result.rejected, "The backend accepted an unknown adapter identifier");
-          requireCondition(result.error?.kind === "invalid_response", "The rejection did not preserve the invalid-response kind");
+          requireCondition(result.error?.kind === "invalidResponse", "The rejection did not preserve the invalid-response kind");
           requireCondition(/not (?:present )?in the current hardware snapshot/i.test(result.errorText), "The rejection did not identify the hardware-snapshot mismatch");
           return { rejected: true, error: result.error };
         },

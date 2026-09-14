@@ -436,7 +436,7 @@ describe("HF catalog presentation through public interfaces", () => {
       handlers.set("load_runtime_setup", () =>
         runtimeSetup({
           catalogError: {
-            kind: "rate_limited",
+            kind: "rateLimited",
             message: "GitHub rate limit hit; retry after 60 seconds",
             retryAfterSeconds: 60,
           },
