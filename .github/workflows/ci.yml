@@ -67,6 +67,14 @@ jobs:
       - name: Test deterministic release gates (fail-fast; repeated by npm run check)
         run: node --test scripts/tests/release-gates.test.mjs
 
+      # U06-01: the packaged-orchestration acceptance matrix drives the REAL
+      # Invoke-PackagedMatrix decision path under pwsh (same shell as the
+      # release workflow). It must run in CI so a cleanup regression fails
+      # the gate instead of reaching the release workflow.
+      - name: Test packaged-orchestration cleanup matrix (pwsh)
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/tests/verify_cleanup_matrix.ps1
+
       - name: Frontend checks
         run: npm run check
 
@@ -197,6 +205,14 @@ jobs:
       # release-gates.test.mjs check.
       - name: Test deterministic release gates (fail-fast; repeated by npm run check)
         run: node --test scripts/tests/release-gates.test.mjs
+
+      # U06-01: the packaged-orchestration acceptance matrix drives the REAL
+      # Invoke-PackagedMatrix decision path under pwsh (same shell as the
+      # release workflow). It must run in CI so a cleanup regression fails
+      # the gate instead of reaching the release workflow.
+      - name: Test packaged-orchestration cleanup matrix (pwsh)
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/tests/verify_cleanup_matrix.ps1
 
       - name: Frontend checks
         run: npm run check
