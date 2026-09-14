@@ -96,7 +96,9 @@ try {
   # Leg 4: cancellation (process kill) must leave no PASS artifact at all.
   $cancellationEvidence = Join-Path $attestations "witness-cancellation.json"
   if (Test-Path $cancellationEvidence) { Remove-Item $cancellationEvidence -Force }
-  $stalled = Start-Process -FilePath "powershell" -PassThru -ArgumentList @(
+  $shellExe = (Get-Command pwsh -ErrorAction SilentlyContinue).Source
+  if (-not $shellExe) { throw "pwsh is required for the witness stall leg but was not found on PATH" }
+  $stalled = Start-Process -FilePath $shellExe -PassThru -ArgumentList @(
     "-NoProfile", "-ExecutionPolicy", "Bypass",
     "-File", "$PSScriptRoot\host-run-lifecycle.ps1",
     "-Tag", "v$Version", "-Version", $Version,
@@ -140,7 +142,9 @@ try {
   $liveLock = Join-Path $lockDir "witness-live-lock.lock"
   Remove-Witness "witness-live-lock"
   Remove-Item $liveLock -Force -ErrorAction SilentlyContinue
-  $owner = Start-Process -FilePath "powershell" -PassThru -ArgumentList @(
+  $shellExe = (Get-Command pwsh -ErrorAction SilentlyContinue).Source
+  if (-not $shellExe) { throw "pwsh is required for the witness live-lock owner but was not found on PATH" }
+  $owner = Start-Process -FilePath $shellExe -PassThru -ArgumentList @(
     "-NoProfile", "-ExecutionPolicy", "Bypass",
     "-File", "$PSScriptRoot\host-run-lifecycle.ps1",
     "-Tag", "v$Version", "-Version", $Version,

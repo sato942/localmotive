@@ -2559,6 +2559,21 @@ test("R05/R06: lifecycle pass conditions are strict and candidate-bound", async 
   assert.equal(preservation.preservation.status, "missing-files");
 });
 
+// U06-02: the witness stall/cancel legs must spawn a shell that can run the
+// harness. Windows PowerShell 5.1 cannot resolve Get-FileHash in the
+// constrained spawn context (observed: the child exits 1 before the kill and
+// the leg fails with "exited before it could be cancelled"), while pwsh runs
+// the same stall leg to a killable wait. The harness pins the child shell
+// once so both spawn sites stay on the capable shell.
+test("witness stall legs spawn the capable shell", async () => {
+  const witness = await readFile(
+    join(process.cwd(), "scripts", "sandbox", "test-fault-evidence.ps1"),
+    "utf8",
+  );
+  assert.match(witness, /\$shellExe = \(Get-Command pwsh/);
+  assert.doesNotMatch(witness, /Start-Process -FilePath "powershell"/);
+});
+
 test("R04: the benchmark run owns its cancelled workers until they exit", async () => {
   const service = await readFile(join(process.cwd(), "src-tauri", "src", "measurement_service.rs"), "utf8");
   const client = await readFile(join(process.cwd(), "src-tauri", "src", "local_client.rs"), "utf8");
