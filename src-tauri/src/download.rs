@@ -2057,6 +2057,12 @@ mod tests {
         ));
 
         cancel.store(false, Ordering::Relaxed);
+        // The fixture must outlive the resumed transfer: joining the server
+        // before the resumed download completes drops the only listener and
+        // turns the resume probe into a connection refusal under load
+        // (main CI 34868542494: the retained bytes must resume: Could not
+        // reach Hugging Face: error sending request). The join therefore
+        // happens after the resumed payload is verified, never before.
         let resumed = download_file(
             &format!("http://{address}/runtime.zip"),
             &target,
@@ -2070,8 +2076,7 @@ mod tests {
             |_, _| {},
         )
         .expect("the retained bytes must resume");
-        server.join().unwrap();
-        assert_eq!(std::fs::read(resumed).unwrap(), payload);
+        assert_eq!(std::fs::read(&resumed).unwrap(), payload);
         assert!(
             resumed_starts
                 .lock()
@@ -2081,6 +2086,10 @@ mod tests {
             "the resumed request must not restart at byte zero"
         );
         assert!(load_resume_state(&target).is_none());
+        // The server thread owns the only listener for the resumed probe
+        // and transfer; join it only after every client connection closed
+        // so a slow teardown cannot surface as a connection refusal.
+        server.join().unwrap();
         let _ = std::fs::remove_dir_all(root);
     }
 
