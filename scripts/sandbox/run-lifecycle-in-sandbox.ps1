@@ -132,8 +132,19 @@ function Use-SettingsSession($exe, [string]$label, [scriptblock]$Body) {
   $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$port"
   try {
     $p = Start-Process -FilePath $exe -PassThru
-    Start-Sleep -Seconds 8
-    if ($p.HasExited) { throw "$label exited during the settings session" }
+    # Poll for the debugger target the same way the CDP drivers do (the app
+    # only opens the port after WebView2 initializes; a fixed sleep races it,
+    # and the sandbox launch path is slower than the host launch path).
+    $deadline = (Get-Date).AddSeconds(90)
+    while ($true) {
+      try {
+        $tabs = Invoke-RestMethod "http://127.0.0.1:$port/json/list" -TimeoutSec 5
+        if ($tabs | Where-Object { $_.type -eq "page" -and $_.webSocketDebuggerUrl }) { break }
+      } catch { }
+      if ($p.HasExited) { throw "$label exited during the settings session" }
+      if ((Get-Date) -gt $deadline) { throw "$label exposed no CDP page target within 90 seconds" }
+      Start-Sleep -Milliseconds 500
+    }
     & $Body $port
     Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
