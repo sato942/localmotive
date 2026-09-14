@@ -41,7 +41,7 @@
           "npm audit --audit-level=moderate",
           "cargo fmt --check",
           "cargo clippy --locked --all-targets -- -D warnings",
-          "cargo test --locked",
+          "cargo test --locked -- --nocapture",
           "cargo test --locked --doc"
         ]
       },

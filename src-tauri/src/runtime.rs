@@ -5046,7 +5046,43 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn skipped_probe_reports_its_contract_instead_of_hardware_evidence() {
+        // Skip mode (hosted windows-latest, LOCALMOTIVE_SKIP_HARDWARE_PROBE):
+        // the report must say probing was skipped and carry no adapters.
+        // This branch only runs where the variable is set; asserting adapters
+        // here would reintroduce the run-34796009062 contradiction, and an
+        // early return would count a skip as verified hardware.
+        if std::env::var_os("LOCALMOTIVE_SKIP_HARDWARE_PROBE").is_none() {
+            eprintln!("SKIP: skip-contract test needs LOCALMOTIVE_SKIP_HARDWARE_PROBE=1");
+            return;
+        }
+        let hardware = detect_hardware();
+
+        assert!(hardware.system_memory.total_physical_bytes.value.is_some());
+        assert!(hardware.adapters.is_empty());
+        assert_eq!(hardware.vendor, "cpu");
+        assert!(
+            hardware
+                .detection_status
+                .contains("LOCALMOTIVE_SKIP_HARDWARE_PROBE"),
+            "the status must name the skip mechanism: {}",
+            hardware.detection_status
+        );
+        assert!(hardware.manual_overrides.is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn hardware_report_contains_system_and_per_adapter_evidence() {
+        // Probing mode: only meaningful where a real probe ran (self-hosted
+        // hardware runner). On skip-mode machines this test would assert
+        // adapters that the contract deliberately omits, so it exits without
+        // asserting rather than counting a skipped probe as verified
+        // hardware (PR #18 follow-up, run 34796009062).
+        if std::env::var_os("LOCALMOTIVE_SKIP_HARDWARE_PROBE").is_some() {
+            eprintln!("SKIP: adapter-evidence test needs a real hardware probe");
+            return;
+        }
         let hardware = detect_hardware();
 
         assert!(hardware.system_memory.total_physical_bytes.value.is_some());

@@ -35,6 +35,10 @@ async function versionFixture(overrides = {}) {
 /// The S-27.I2 extraction moves JSX into src/screens/*.tsx; guards that read
 /// App.tsx alone silently stop matching. Splits find real component bodies
 /// before any test-text mention because the screens come first.
+/// Line endings are normalized to LF first: a CRLF checkout (for example the
+/// default GitHub-hosted windows-latest image) must not change what the
+/// LF-anchored guard regexes match (GH-01.V1 follow-up: pr-check failed on
+/// the hosted runner while passing on LF checkouts).
 async function frontendSources() {
   const screens = [
     "AboutScreen.tsx",
@@ -50,12 +54,12 @@ async function frontendSources() {
   const parts = [];
   for (const name of screens) {
     try {
-      parts.push(await readFile(join(process.cwd(), "src", "screens", name), "utf8"));
+      parts.push((await readFile(join(process.cwd(), "src", "screens", name), "utf8")).replace(/\r\n/g, "\n"));
     } catch {
       // A screen module that does not exist yet contributes nothing.
     }
   }
-  parts.push(await readFile(join(process.cwd(), "src", "App.tsx"), "utf8"));
+  parts.push((await readFile(join(process.cwd(), "src", "App.tsx"), "utf8")).replace(/\r\n/g, "\n"));
   return parts.join("\n");
 }
 
@@ -1638,6 +1642,21 @@ test("GH-01 pull requests run only on the isolated hosted runner", async () => {
   assert.match(pr, /runs-on: windows-latest/);
   assert.doesNotMatch(pr, /self-hosted/);
   assert.doesNotMatch(pr, /secrets\./);
+  // PR #18 follow-up (run 34786186394): the hosted pr-check hung 2h+ on the
+  // bare `cargo test --locked` step (GPU-less windows-latest, no skip, no
+  // timeout). The hosted job must fail fast with the skip set instead: a job
+  // ceiling plus step ceilings plus LOCALMOTIVE_SKIP_HARDWARE_PROBE on the
+  // Rust steps. Self-hosted push jobs keep real hardware probing (no skip).
+  assert.match(pr, /timeout-minutes: (4[0-5]|50|60)/);
+  for (const step of ["Rust linting", "Rust tests", "Rust documentation tests"]) {
+    const body = pr.split(`- name: ${step}`)[1].split("- name:")[0];
+    assert.match(body, /timeout-minutes: \d+/);
+  }
+  for (const step of ["Rust tests", "Rust documentation tests"]) {
+    const body = pr.split(`- name: ${step}`)[1].split("- name:")[0];
+    assert.match(body, /LOCALMOTIVE_SKIP_HARDWARE_PROBE/);
+  }
+  assert.match(pr, /--nocapture/);
   // Trusted self-hosted jobs are unreachable from a pull request.
   const check = ci.split("\n  check:")[1].split("\n  rust-audit:")[0];
   const audit = ci.split("\n  rust-audit:")[1].split("\n  package-smoke:")[0];

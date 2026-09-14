@@ -150,6 +150,14 @@ jobs:
   pr-check:
     if: github.event_name == 'pull_request'
     runs-on: windows-latest
+    # PR #18 follow-up (run 34786186394): the hosted pr-check hung 2h+ on the
+    # bare `cargo test --locked` step (GPU-less windows-latest, no skip, no
+    # timeout). This hosted-only job must fail fast: a job ceiling plus step
+    # ceilings plus LOCALMOTIVE_SKIP_HARDWARE_PROBE on the Rust steps, with
+    # --nocapture so the next hang shows the last test name. GH-01 unchanged:
+    # PRs still run only this job on windows-latest; the push jobs that run
+    # on the local hardware fleet keep real hardware probing (no skip there).
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
@@ -202,14 +210,24 @@ jobs:
 
       - name: Rust linting
         working-directory: src-tauri
+        timeout-minutes: 20
         run: cargo clippy --locked --all-targets -- -D warnings
 
       - name: Rust tests
         working-directory: src-tauri
-        run: cargo test --locked
+        timeout-minutes: 30
+        env:
+          LOCALMOTIVE_SKIP_HARDWARE_PROBE: "1"
+          CARGO_TERM_COLOR: always
+          RUST_BACKTRACE: "1"
+        run: cargo test --locked -- --nocapture
 
       - name: Rust documentation tests
         working-directory: src-tauri
+        timeout-minutes: 15
         env:
+          LOCALMOTIVE_SKIP_HARDWARE_PROBE: "1"
+          CARGO_TERM_COLOR: always
+          RUST_BACKTRACE: "1"
           RUSTDOCFLAGS: -D warnings
         run: cargo test --locked --doc
