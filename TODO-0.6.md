@@ -94,7 +94,7 @@ Every package below maps to original criteria; close it only on its stated evide
 <a id="u06-01"></a>
 ### U06-01 — Complete packaged orchestration and executable coverage
 
-- [ ] **U06-01 — OPEN.** Correct and prove the full verification/cleanup result, under the workflow's actual `pwsh` mode.
+- [x] **U06-01 — DONE 2026-09-14 at `ae448a7` (PR 29).** Corrected and proved the full verification/cleanup result, under the workflow's actual `pwsh` mode. Evidence: ledger rows above; matrix 12/12; PR 29 pr-check pass; main CI 34845858794 SUCCESS.
 
 **Trace:** V06-GH-05.I4/V1/V2/V3, V06-GH-06.I1/V1/V2, V06-G-05.V1; audit [GH-05](docs/history/localmotive-comprehensive-audit.md#gh-05) and [GH-06](docs/history/localmotive-comprehensive-audit.md#gh-06). **Evidence:** E02/E06; [orchestrator](scripts/verify_packaged_matrix.ps1), [current matrix](scripts/tests/verify_cleanup_matrix.ps1).
 
@@ -125,7 +125,7 @@ Acceptance: one complete candidate-to-qualified-bundle rehearsal succeeds throug
 <a id="u06-03"></a>
 ### U06-03 — Repair and execute the existing host-attestation workflow
 
-- [ ] **U06-03 — OPEN.** Remove the trailing PowerShell quote in `hardware-qualify.yml` and verify the actual block parses and runs on the already available host.
+- [x] **U06-03 — DONE 2026-09-14 at `9cbb9fd` (PR 30 + run 34847400771).** Removed the trailing PowerShell quote in `hardware-qualify.yml` and verified the actual block parses and runs on the already available host. Evidence: ledger rows above; attestation MATCH downloaded.
 
 **Trace:** V06-GH-10.I2/I3/V3; audit [GH-10](docs/history/localmotive-comprehensive-audit.md#gh-10). **Evidence:** E07; [workflow](.github/workflows/hardware-qualify.yml).
 
@@ -239,6 +239,8 @@ There are 664 original criterion lines, 663 original IDs, 72 primary findings, 2
 | Date / package | Status | Source / harness / artifacts | Actual command or observation | Result and retained evidence | Remaining scope |
 |---|---|---|---|---|---|
 | 2026-09-14 / consolidation | Documentation complete; release OPEN | Reviewed 1881db9; original and residual input hashes above | Full criterion import, live CI/ruleset/PR readback, bounded source review and isolated manifest contract probe | E01..E09; no product code or historical artifact/evidence rewrite | U06-01..09; D06 hardware exclusions; non-hardware inputs as stated |
+| 2026-09-14 / U06-01 | Packaged-orchestration correction merged (PR 29, `9832131`); CI-wired pwsh matrix green | Producer `ae448a7`; harness `scripts/verify_packaged_impl.ps1` + wrapper `scripts/verify_packaged_matrix.ps1`; matrix `scripts/tests/verify_cleanup_matrix.ps1` | `pwsh matrix 12/12` (also 5.1 12/12 informative); PR 29 `pr-check` run 34844472885 pass 10m49s incl. new CI step; release-gates 147/147 + workflow-integration 10/10 locally; RED proof recorded in PR body (old Stop-Candidate never sets functionalFailed; old adoption falls back to process-name acceptance) | Merged to main `ae448a7`; main push CI 34845858794 SUCCESS (check, rust-audit, Security audit, package-smoke; pr-check skipped on push) | U06-01 done at this harness/product revision; U06-02/04/06 still need the candidate produced from this source |
+| 2026-09-14 / U06-03 | hardware-qualify trailing-quote repair merged (PR 30, `a4710b9`); host attestation executed on the available host | Workflow `.github/workflows/hardware-qualify.yml` at `9cbb9fd`; generator `scripts/qualification/build_host_attestation.mjs`; mismatch/unknown controls covered by generator tests | PR 30 `pr-check` run 34844686066 pass 11m5s; dispatched hardware-qualify run 34847400771 SUCCESS at source `9cbb9fd` (workflow_dispatch tag v0.6.0); attestation artifact `hardware-attestation-0.6.0` downloaded: MATCH (Ryzen 9 9950X3D, RTX 5090, driver 32.0.16.1074, Win 10.0.26100.0); RED proof: new gate test fails on prior source (stray quote + pwsh parse error), passes after | Attestation `.hermes-0.6/hw-attest-34847400771/host-zen5-blackwell.json`; U06-03 repair+execution done | Host proof is not inference qualification and not deferred-vendor coverage; lifecycle/qualification still open |
 
 Add actual results here; do not prefill success templates. Every new record names the producing revision and candidate bytes. Current release decisions may use inherited evidence only within the contract's explicit scope.
 
