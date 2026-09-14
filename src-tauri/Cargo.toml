@@ -40,7 +40,7 @@ hex = "0.4"
 tauri-plugin-dialog = "2"
 keyring = { version = "3", features = ["windows-native"] }
 base64 = "0.22"
-rand = "0.8"
+rand = "0.10"
 cap-std = "4.0.3"
 ed25519-dalek = { version = "2.2", features = ["std"] }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_ProcessStatus", "Win32_System_SystemInformation", "Win32_System_Threading"] }
