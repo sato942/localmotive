@@ -2559,6 +2559,24 @@ test("R05/R06: lifecycle pass conditions are strict and candidate-bound", async 
   assert.equal(preservation.preservation.status, "missing-files");
 });
 
+// U06-04: the settings canary must reach the sandbox shared dir. The in-box
+// run reads canary-settings.json from the mapped share; the host staged the
+// other canaries there but omitted this one, so cache-flavor legs died at
+// "settings fixture missing" inside the sandbox instead of exercising
+// preservation. The host pins the staged settings fixture alongside the
+// other staged canaries.
+test("lifecycle host stages the settings canary for cache legs", async () => {
+  const host = await readFile(
+    join(process.cwd(), "scripts", "sandbox", "host-run-lifecycle.ps1"),
+    "utf8",
+  );
+  assert.match(
+    host,
+    /Copy-Item.*canary-settings\.json.*\$Shared.*canary-settings\.json/,
+    "the host stages canary-settings.json into the sandbox shared dir",
+  );
+});
+
 // U06-02: the witness stall/cancel legs must spawn a shell that can run the
 // harness. Windows PowerShell 5.1 cannot resolve Get-FileHash in the
 // constrained spawn context (observed: the child exits 1 before the kill and
