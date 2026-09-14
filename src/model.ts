@@ -991,7 +991,7 @@ export type RuntimeCatalog = {
 };
 
 export type RuntimeCatalogError = {
-  kind: "busy" | "timeout" | "rate_limited" | "http" | "body_too_large" | "invalid_response" | "trust_failure" | "cache_failure";
+  kind: "busy" | "timeout" | "rateLimited" | "http" | "bodyTooLarge" | "invalidResponse" | "trustFailure" | "cacheFailure";
   message: string;
   retryAfterSeconds: number | null;
 };
@@ -999,12 +999,12 @@ export type RuntimeCatalogError = {
 const runtimeCatalogErrorKinds = new Set<RuntimeCatalogError["kind"]>([
   "busy",
   "timeout",
-  "rate_limited",
+  "rateLimited",
   "http",
-  "body_too_large",
-  "invalid_response",
-  "trust_failure",
-  "cache_failure",
+  "bodyTooLarge",
+  "invalidResponse",
+  "trustFailure",
+  "cacheFailure",
 ]);
 
 export function runtimeCatalogErrorFromUnknown(value: unknown): RuntimeCatalogError {
@@ -1012,7 +1012,7 @@ export function runtimeCatalogErrorFromUnknown(value: unknown): RuntimeCatalogEr
     try {
       return runtimeCatalogErrorFromUnknown(JSON.parse(value));
     } catch {
-      return { kind: "invalid_response", message: value, retryAfterSeconds: null };
+      return { kind: "invalidResponse", message: value, retryAfterSeconds: null };
     }
   }
   if (value && typeof value === "object") {
@@ -1033,7 +1033,7 @@ export function runtimeCatalogErrorFromUnknown(value: unknown): RuntimeCatalogEr
     }
   }
   return {
-    kind: "invalid_response",
+    kind: "invalidResponse",
     message: "The runtime catalog request failed without a structured error.",
     retryAfterSeconds: null,
   };
@@ -1086,7 +1086,7 @@ export type HealthFailureReason =
   | "malformed_output"
   | "mismatch"
   | "cancelled"
-  | "trust_failure";
+  | "trustFailure";
 
 export type HealthStageResult = {
   stage: HealthStage;

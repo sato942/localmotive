@@ -2469,7 +2469,7 @@ fn validate_catalog_cache(
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum RuntimeCatalogErrorKind {
     Busy,
     Timeout,

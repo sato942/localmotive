@@ -1517,7 +1517,7 @@ test("packaged rejection detail preserves the backend error message", async () =
   // CDP returnByValue stringifies thrown objects: the verifier must
   // serialize the raw IPC error inside the page, or kind is lost.
   assert.match(source, /JSON\.stringify\(error\)/);
-  assert.match(source, /invalid_response/);
+  assert.match(source, /invalidResponse/);
 });
 
 test("release verify step exposes the resolved revision to every verifier phase", async () => {
