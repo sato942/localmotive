@@ -86,13 +86,8 @@
       "requiredCommands": {
         "package": [
           "npm run tauri build",
-          "node scripts/verify_041.mjs $cdpPort $portable \"artifacts/packaged-verification-$env:VERSION.json\"",
-          "node scripts/verify_candidate_inventory.mjs artifacts \"$VERSION\" \"artifacts/candidate-inventory-${VERSION}.json\"",
-          "$catalogInit = (node scripts/verify_060_catalog.mjs init $catalogState \"artifacts/catalog-fixture-init.json\" | ConvertFrom-Json)",
-          "node scripts/verify_060_catalog.mjs first-fill $cdpPort $catalogState \"artifacts/catalog-matrix-first-fill.json\"",
-          "node scripts/verify_060_catalog.mjs prep $catalogState",
-          "node scripts/verify_060_catalog.mjs restart $cdpPort $catalogState \"artifacts/catalog-matrix-restart.json\"",
-          "node scripts/verify_060_catalog.mjs merge $portable \"artifacts/catalog-matrix-first-fill.json\" \"artifacts/catalog-matrix-restart.json\" \"artifacts/packaged-verification-catalog-$env:VERSION.json\""
+          "pwsh -NoProfile -File scripts/verify_packaged_matrix.ps1 -Portable $portable -Version \"$env:VERSION\" -ResolvedSha \"$env:RESOLVED_SHA\" -CdpPort $cdpPort",
+          "node scripts/verify_candidate_inventory.mjs artifacts \"$VERSION\" \"artifacts/candidate-inventory-${VERSION}.json\""
         ],
         "clean-account-lifecycle": [
           "& \".\\scripts\\sandbox\\host-run-lifecycle.ps1\" -Tag \"${{ needs.resolve.outputs.tag }}\" -Version \"${{ needs.quality.outputs.version }}\" -PreviousTag $leg.Previous -CandidateDir \"artifacts\" -EvidenceName $leg.Name -PreservationFlavor $leg.Flavor"

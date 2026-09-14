@@ -956,8 +956,18 @@ test("packaged cancellation check observes progress, records completion or a bou
 });
 
 test("release package job runs the catalog/SQLite packaged matrix (GH-05)", async () => {
+  // The orchestration lives in scripts/verify_packaged_matrix.ps1 (runs
+  // 34819219725/34815989537: inline cleanup's stray $LASTEXITCODE failed
+  // green runs); the workflow only passes identities. Assert on the union:
+  // the workflow must invoke the script with the run identities, and the
+  // script must run every matrix phase.
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
   const pkg = release.split("\n  package:")[1].split("\n  clean-account-lifecycle:")[0];
+  assert.ok(pkg.includes("scripts/verify_packaged_matrix.ps1"), "package job must invoke the committed orchestration script");
+  for (const needle of ["-Portable", "-Version", "-ResolvedSha", "-CdpPort"]) {
+    assert.ok(pkg.includes(needle), `package job is missing ${needle}`);
+  }
+  const script = await readFile(join(process.cwd(), "scripts", "verify_packaged_matrix.ps1"), "utf8");
   for (const needle of [
     "verify_060_catalog.mjs init",
     "verify_060_catalog.mjs first-fill",
@@ -969,13 +979,13 @@ test("release package job runs the catalog/SQLite packaged matrix (GH-05)", asyn
     // Tauri known-folder cache paths ignore a redirected LOCALAPPDATA: the
     // verifier must name the catalog cache root inside the isolated profile.
     "LOCALMOTIVE_CATALOG_ROOT",
-    "packaged-verification-catalog-$env:VERSION.json",
+    "packaged-verification-catalog-$Version.json",
   ]) {
-    assert.ok(pkg.includes(needle), `package job is missing ${needle}`);
+    assert.ok(script.includes(needle), `orchestration script is missing ${needle}`);
   }
   // Two launches share the isolated profile so the restart phase runs on the
   // same application data the first-fill phase wrote.
-  assert.equal((pkg.match(/Start-Candidate \$cdpPort/g) ?? []).length, 2);
+  assert.equal((script.match(/Start-Candidate \$CdpPort/g) ?? []).length, 2);
 });
 
 test("rich catalog facets keep the backend camelCase contract (GH-05)", async () => {
@@ -1488,18 +1498,18 @@ test("release verify step exposes the resolved revision to every verifier phase"
 });
 
 test("release verify step waits for the candidate WebView before driving checks", async () => {
-  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
-  const at = release.indexOf("Verify the packaged executable");
-  assert.ok(at >= 0, "verify step is missing");
-  const block = release.slice(at, at + 9000);
-  assert.match(block, /function Start-Candidate/);
-  assert.match(block, /Start-Process \$portable/);
+  // The launch helper lives in scripts/verify_packaged_matrix.ps1; the
+  // workflow only invokes it. Assert the helper waits (not sleeps) and both
+  // launches go through it.
+  const script = await readFile(join(process.cwd(), "scripts", "verify_packaged_matrix.ps1"), "utf8");
+  assert.match(script, /function Start-Candidate/);
+  assert.match(script, /Start-Process \$Portable/);
   // A fixed sleep races WebView startup: the launch helper must poll the
   // CDP endpoint until the page appears instead of assuming readiness, and
   // every verifier run must go through the helper (two launches for the
   // catalog restart matrix).
-  assert.match(block, /json\/list/);
-  assert.equal((block.match(/Start-Candidate \$cdpPort/g) ?? []).length, 2);
+  assert.match(script, /json\/list/);
+  assert.equal((script.match(/Start-Candidate \$CdpPort/g) ?? []).length, 2);
 });
 
 test("release workflow serializes runs so two packages never share one runner", async () => {
@@ -1517,15 +1527,33 @@ test("release workflow serializes runs so two packages never share one runner", 
 
 test("release verify step isolates the candidate behind a per-run CDP port with tree cleanup", async () => {
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
-  const at = release.indexOf("Verify the packaged executable");
-  assert.ok(at >= 0, "verify step is missing");
-  const block = release.slice(at, at + 9000);
+  const script = await readFile(join(process.cwd(), "scripts", "verify_packaged_matrix.ps1"), "utf8");
   // Fixed port 10041 plus parent-only Stop-Process leaves an orphan
   // WebView2 holding CDP; the next run attaches to the stale page.
-  // RED: the step hard-codes one port with no pre/post cleanup.
-  assert.match(block, /GITHUB_RUN_ID/);
-  assert.match(block, /taskkill \/F \/T/);
-  assert.match(block, /webSocketDebuggerUrl/);
+  // RED: the step hard-codes one port with no pre/post cleanup. The port is
+  // unique per run (GITHUB_RUN_ID) and the script kills the whole tree.
+  assert.match(release, /GITHUB_RUN_ID/);
+  assert.match(script, /taskkill \/F \/T/);
+  assert.match(script, /webSocketDebuggerUrl/);
+});
+
+test("release verify orchestration never lets cleanup set the step outcome", async () => {
+  // Runs 34819219725/34815989537: every verifier passed, then a final
+  // taskkill of an already-dead fixture pid left a stray $LASTEXITCODE and
+  // the step failed with no error text. The orchestration script must check
+  // each native exit code immediately, preserve the verifier failure when
+  // cleanup also struggles, and derive the final exit only from recorded
+  // outcomes -- never from a stray $LASTEXITCODE.
+  const script = await readFile(join(process.cwd(), "scripts", "verify_packaged_matrix.ps1"), "utf8");
+  assert.match(script, /\$LASTEXITCODE/);
+  assert.match(script, /already-stopped/);
+  assert.match(script, /still-alive/);
+  assert.match(script, /RESULT: PASS/);
+  assert.match(script, /RESULT: FAIL/);
+  assert.match(script, /finally/);
+  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  assert.match(release, /verify_packaged_matrix\.ps1/);
+  assert.match(release, /if \(\$LASTEXITCODE -ne 0\) \{ throw "Packaged verification orchestration failed/);
 });
 
 test("release publish verification avoids hosted-only shell dependencies", async () => {

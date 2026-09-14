@@ -277,7 +277,11 @@ test("a controlled package-stage failure reports every missing output", async ()
 test("the produced evidence name and the promotion contract agree", () => {
   const release = readFileSync(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
   // The producer must write the versioned name the promotion contract promises.
-  assert.match(release, /packaged-verification-\$env:VERSION\.json/);
+  // The name is produced inside scripts/verify_packaged_matrix.ps1 (invoked by
+  // the workflow); assert on the union so the contract survives the extraction.
+  assert.match(release, /verify_packaged_matrix\.ps1/);
+  const script = readFileSync(join(process.cwd(), "scripts", "verify_packaged_matrix.ps1"), "utf8");
+  assert.match(script, /packaged-verification-\$Version\.json/);
   assert.doesNotMatch(
     release,
     /artifacts\/packaged-verification-0\.4\.1\.json/,
