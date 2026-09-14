@@ -1956,7 +1956,25 @@ mod tests {
                     drop(stream);
                     continue;
                 }
-                if request_index == 0 || request_index == 2 {
+                // Route by request content, never by arrival order: a pooled
+                // second connection may open while the first is still served,
+                // so an index counter can misroute the resume probe/transfer
+                // (main CI 34871574929/34877657968: the retained bytes must
+                // resume: Could not reach Hugging Face: error sending
+                // request). A one-byte probe asks for `bytes=0-0`; any other
+                // Range is a transfer at its stated start.
+                let is_probe = request.lines().any(|line| {
+                    let line = line.trim();
+                    line.to_ascii_lowercase().starts_with("range:")
+                        && line.split('=').nth(1).is_some_and(|range| {
+                            let mut bounds = range.split('-');
+                            bounds.next().is_some_and(|start| {
+                                start.trim() == "0"
+                                    && bounds.next().is_some_and(|end| end.trim() == "0")
+                            })
+                        })
+                });
+                if is_probe {
                     write!(
                         stream,
                         "HTTP/1.1 206 Partial Content\r\nContent-Length: 1\r\nContent-Range: bytes 0-0/{}\r\nX-Linked-Size: {}\r\nX-Linked-ETag: \"{}\"\r\nAccept-Ranges: bytes\r\nConnection: close\r\n\r\n",
@@ -1974,23 +1992,50 @@ mod tests {
                         .and_then(|range| range.split('-').next())
                         .and_then(|value| value.trim().parse::<usize>().ok())
                         .unwrap();
-                    let response_start = if request_index == 1 { 0 } else { start };
-                    let body = &server_payload[response_start..];
-                    write!(
-                        stream,
-                        "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {}-{}/{}\r\nX-Linked-ETag: \"{}\"\r\nConnection: close\r\n\r\n",
-                        body.len(),
-                        response_start,
-                        server_payload.len() - 1,
-                        server_payload.len(),
-                        server_digest,
-                    )
-                    .unwrap();
-                    if request_index == 1 {
-                        stream.write_all(&server_payload[..4096]).unwrap();
+                    // The first transfer (from byte zero) sends only the initial
+                    // 4096 bytes and holds the connection so the progress
+                    // poll observes the write and cancels; the resumed
+                    // transfer (from a nonzero offset) sends its full body.
+                    let is_first_transfer = start == 0;
+                    if is_first_transfer {
+                        // The client asked for the whole span; answer the
+                        // requested range exactly so length/span validation
+                        // passes, but deliver only the initial 4096 bytes and
+                        // hold the connection so the progress poll observes
+                        // the write and cancels before the worker can see a
+                        // truncation.
+                        let end = request
+                            .lines()
+                            .find(|line| line.to_ascii_lowercase().starts_with("range:"))
+                            .and_then(|line| line.split('=').nth(1))
+                            .and_then(|range| range.split('-').nth(1))
+                            .and_then(|value| value.trim().parse::<u64>().ok())
+                            .unwrap();
+                        let body = &server_payload[..4096];
+                        write!(
+                            stream,
+                            "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes 0-{}/{}\r\nX-Linked-ETag: \"{}\"\r\nConnection: close\r\n\r\n",
+                            end + 1,
+                            end,
+                            server_payload.len(),
+                            server_digest,
+                        )
+                        .unwrap();
+                        stream.write_all(body).unwrap();
                         stream.flush().unwrap();
                         std::thread::sleep(Duration::from_secs(1));
                     } else {
+                        let body = &server_payload[start..];
+                        write!(
+                            stream,
+                            "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {}-{}/{}\r\nX-Linked-ETag: \"{}\"\r\nConnection: close\r\n\r\n",
+                            body.len(),
+                            start,
+                            server_payload.len() - 1,
+                            server_payload.len(),
+                            server_digest,
+                        )
+                        .unwrap();
                         server_resumed_starts.lock().unwrap().push(start as u64);
                         stream.write_all(body).unwrap();
                     }
