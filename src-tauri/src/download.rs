@@ -49,6 +49,53 @@ fn open_download_directory(root: &Path) -> Result<Dir, String> {
         .map_err(|error| format!("Could not securely open {}: {error}", root.display()))
 }
 
+/// Resolve `path` to the form the OS handle paths use, without following a
+/// final-path reparse/junction: `std::fs::canonicalize` returns the
+/// `\\?\`-prefixed long form on Windows, which is exactly what
+/// `GetFinalPathNameByHandleW` reports for the opened handle. Callers pass a
+/// path that was verified before the handle is opened; this helper only
+/// normalizes aliasing (short names, `.`/`..`), it never re-validates a path
+/// that changed underneath the caller. The production download path enters
+/// through `open_download_entries`, which validates first (audit DC-11/12
+/// lock and resume checks read through the same `DownloadEntries`), so the
+/// canonical form here cannot conceal a caller-side swap: the handle check in
+/// `open_download_entries` runs before any network or file mutation.
+fn canonicalize_for_comparison(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// Expand 8.3 short-name segments (`RUNNER~1`) to their long form so a handle
+/// path and a caller path to the same directory compare equal. Kept as the
+/// fallback when the caller could not canonicalize before opening (for
+/// example a pre-existing caller path that was verified earlier). Prefer
+/// `canonicalize_for_comparison` at handle-open time: it captures the exact
+/// pre-open identity instead of re-resolving here.
+#[cfg(windows)]
+fn expand_short_path_segments(path: &Path) -> Option<PathBuf> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetLongPathNameW;
+
+    // Only paths with a `~` segment can carry a short name; anything else is
+    // already in comparable form.
+    if !path.as_os_str().to_string_lossy().contains('~') {
+        return Some(path.to_path_buf());
+    }
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut buffer = vec![0u16; 32_768];
+    let length =
+        unsafe { GetLongPathNameW(wide.as_ptr(), buffer.as_mut_ptr(), buffer.len() as u32) };
+    if length == 0 || length as usize >= buffer.len() {
+        return None;
+    }
+    Some(PathBuf::from(String::from_utf16_lossy(
+        &buffer[..length as usize],
+    )))
+}
+
 #[cfg(windows)]
 pub(crate) fn opened_directory_matches(directory: &Dir, expected: &Path) -> Result<bool, String> {
     use std::os::windows::io::AsRawHandle;
@@ -70,7 +117,15 @@ pub(crate) fn opened_directory_matches(directory: &Dir, expected: &Path) -> Resu
     // `expected` was canonicalized before the capability was opened. Do not
     // canonicalize it again here: a replaced junction could otherwise make both
     // resolutions agree on the attacker's new target.
-    let expected = expected.to_string_lossy().to_string();
+    //
+    // Compare by long-path expansion only: the opened handle's final path is
+    // always in `\\?\`-prefixed form, while `expected` may carry an 8.3 short
+    // segment (for example `RUNNER~1` under `C:\Users` on hosted runners).
+    // Expanding just the short segments keeps the junction-swap protection:
+    // a replaced junction still resolves through the open handle, never
+    // through a fresh resolution of the expected path.
+    let expanded = expand_short_path_segments(expected).unwrap_or_else(|| expected.to_path_buf());
+    let expected = expanded.to_string_lossy().to_string();
     let normalize = |value: String| {
         let value = value
             .strip_prefix(r"\\?\UNC\")
@@ -485,6 +540,7 @@ fn open_download_entries(target: &Path) -> Result<DownloadEntries, String> {
     let parent = target
         .parent()
         .ok_or_else(|| "The download target has no parent directory.".to_string())?;
+    let parent = canonicalize_for_comparison(parent);
     let target_name = target
         .file_name()
         .map(PathBuf::from)
@@ -497,8 +553,8 @@ fn open_download_entries(target: &Path) -> Result<DownloadEntries, String> {
     let mut lock = target_name.as_os_str().to_os_string();
     lock.push(".lm-lock");
     let lock = PathBuf::from(lock);
-    let dir = open_download_directory(parent)?;
-    if !opened_directory_matches(&dir, parent)? {
+    let dir = open_download_directory(&parent)?;
+    if !opened_directory_matches(&dir, &parent)? {
         return Err("The selected model folder changed while the download was starting.".into());
     }
     Ok(DownloadEntries {
@@ -1694,6 +1750,14 @@ mod tests {
     /// produced `The selected model folder changed while the download was
     /// starting` on 32-core windows-2025 runners (351 passed, 9 failed).
     /// A random suffix gives each test a private directory instead.
+    ///
+    /// The directory is created canonicalized: on Windows the raw temp path
+    /// can carry an 8.3 short segment (for example `RUNNER~1` under
+    /// `C:\Users` on hosted runners) while the opened handle's final path
+    /// resolves to the long form. `opened_directory_matches` compares the
+    /// handle path against the path captured here, so returning the
+    /// canonical form keeps the same directory matching its own handle
+    /// (PR #18 follow-up, run 34796009062).
     #[cfg(test)]
     fn unique_test_dir(prefix: &str) -> PathBuf {
         for _ in 0..16 {
@@ -1703,6 +1767,14 @@ mod tests {
                 rand::random::<u64>()
             ));
             if std::fs::create_dir(&candidate).is_ok() {
+                let canonical = canonicalize_for_comparison(&candidate);
+                if canonical.as_path() != candidate {
+                    let _ = std::fs::remove_dir(&candidate);
+                    if std::fs::create_dir(&canonical).is_ok() {
+                        return canonical;
+                    }
+                    return candidate;
+                }
                 return candidate;
             }
         }
@@ -2242,9 +2314,20 @@ mod tests {
 
     #[test]
     fn an_open_download_directory_cannot_be_redirected_by_path_replacement() {
-        let root = unique_test_dir("localmotive-dir-race");
-        let moved = root.join("sibling-moved");
+        // The attempted replacement must be a VALID filesystem operation:
+        // `container/root` and `container/moved` are true siblings, so a
+        // rename of root onto moved is structurally legal. The old form
+        // (`moved = root.join("sibling-moved")`) moved a directory inside
+        // itself, which fails regardless of handle protection and made the
+        // Err branch meaningless (PR #18 follow-up, run 34796009062).
+        let container = unique_test_dir("localmotive-dir-race");
+        let root = container.join("root");
+        let moved = container.join("moved");
         std::fs::create_dir_all(&root).unwrap();
+        // Control first: without the protective handle open, the rename must
+        // succeed, proving the fixture performs a real replacement.
+        std::fs::rename(&root, &moved).expect("the sibling rename must be valid");
+        std::fs::rename(&moved, &root).expect("the rename back must be valid");
         let directory = open_download_directory(&root).unwrap();
 
         match std::fs::rename(&root, &moved) {
@@ -2256,23 +2339,41 @@ mod tests {
                 assert!(moved.join("probe").is_file());
                 assert!(!root.join("probe").exists());
             }
-            Err(_) => {
+            Err(error) => {
                 // Windows opens the directory without FILE_SHARE_DELETE, so a
                 // rename/reparse swap is blocked while the capability is live.
+                // Only the sharing-violation refusal counts as protection;
+                // any other error means the fixture itself is broken.
+                let code = error.raw_os_error();
+                assert_eq!(
+                    code,
+                    Some(32),
+                    "only ERROR_SHARING_VIOLATION proves handle protection, got {error:?}"
+                );
                 directory.write("probe", b"replacement blocked").unwrap();
                 assert!(root.join("probe").is_file());
             }
         }
-        let _ = std::fs::remove_dir_all(root);
-        let _ = std::fs::remove_dir_all(moved);
+        let _ = std::fs::remove_dir_all(container);
     }
 
     #[test]
     fn an_open_directory_handle_must_match_the_validated_path() {
+        // RED anchor (PR #18, run 34796009062): on hosted windows-2025 the
+        // raw temp path carries an 8.3 segment (`C:\Users\RUNNER~1\...`)
+        // while the handle's final path resolves to the long form, so the
+        // pre-canonicalization comparison returned false for the directory's
+        // own handle. `unique_test_dir` now returns the canonical form; this
+        // test pins that contract by comparing both values it exercises.
         let root = unique_test_dir("localmotive-dir-identity");
         let other = root.join("sibling-other");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::create_dir_all(&other).unwrap();
+        let canonical = std::fs::canonicalize(&root).unwrap();
+        assert_eq!(
+            root, canonical,
+            "the fixture must hand out the canonical path: root={root:?} canonical={canonical:?}"
+        );
         let directory = open_download_directory(&root).unwrap();
         assert!(opened_directory_matches(&directory, &root).unwrap());
         assert!(!opened_directory_matches(&directory, &other).unwrap());
@@ -3019,7 +3120,7 @@ mod tests {
             hasher.update(&payload);
             format!("{:x}", hasher.finalize())
         };
-        let (port, server) = serve_plain_responses(vec![
+        let (port, server, shutdown_guard) = serve_plain_responses(vec![
             (payload.clone(), true, None),
             (payload.clone(), true, None),
         ]);
@@ -3071,6 +3172,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(std::fs::read(&retried).unwrap(), payload);
+        // Releasing the guard wakes the server promptly once the plan is
+        // served; the detached `JoinHandle` would otherwise keep the thread
+        // parked in `accept()` until the 60 s backstop.
+        std::mem::forget(shutdown_guard);
         let requests = server.join().unwrap();
         assert_eq!(
             requests.len(),
@@ -3125,17 +3230,74 @@ mod tests {
     /// Serve one scripted plain-HTTP response per entry: (payload,
     /// declare_length, truncate_at). Answers every request with 200 and the
     /// full body, modelling a server that ignores Range (audit DC-02).
+    /// Shutdown guard: dropping the returned flag wakes the server loop
+    /// within ~50 ms, which also covers the panic path (`JoinHandle`
+    /// detaches on unwind, so without the guard a failing client would orphan
+    /// a thread blocked in `accept()`). The guard lives in the test thread
+    /// and is forgotten on the success path, so it only fires on early return
+    /// or panic; the backstop deadline still bounds a client that hangs
+    /// mid-transfer.
+    struct ShutdownFlag(std::sync::Arc<std::sync::atomic::AtomicBool>);
+    impl Drop for ShutdownFlag {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+    ///
+    /// Bounded fixture (PR #18, run 34796009062): the listener accepts with a
+    /// deadline, and the thread always returns after serving the plan (or the
+    /// deadline), even when the client fails before its first connection
+    /// (for example an early directory-identity refusal). Without the bound,
+    /// a client-side failure left `server.join()` waiting forever while the
+    /// test thread waited on the join: a hang, not a failure.
     fn serve_plain_responses(
         plan: Vec<(Vec<u8>, bool, Option<usize>)>,
-    ) -> (u16, std::thread::JoinHandle<Vec<String>>) {
+    ) -> (u16, std::thread::JoinHandle<Vec<String>>, ShutdownFlag) {
         use std::io::{BufRead as _, BufReader, Write as _};
         use std::net::TcpListener;
+        use std::time::{Duration, Instant};
+        // The listener stays non-blocking so the accept loop can poll the
+        // shutdown flag and wake promptly on drop; each accepted stream
+        // is restored to blocking mode because the fixture's read loop must
+        // wait for the peer's headers rather than spin on WouldBlock (the
+        // accepted stream inherits the listener's mode on Windows).
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
         let port = listener.local_addr().unwrap().port();
+        // An explicit shutdown flag instead of a bare deadline: the test
+        // thread drops the guard when the client finishes (success, early
+        // refusal, or panic via the guard below), so the server notices
+        // promptly. The 60 s deadline is only the backstop for a client that
+        // hangs mid-transfer; without the flag the no-client case always
+        // burns the full deadline (PR #18 follow-up).
+        let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let server_shutdown = std::sync::Arc::clone(&shutdown);
         let handle = std::thread::spawn(move || {
             let mut requests = Vec::new();
-            for (payload, declare_length, truncate_at) in plan {
-                let (mut stream, _) = listener.accept().unwrap();
+            let deadline = Instant::now() + Duration::from_secs(60);
+            let mut plan = plan.into_iter().peekable();
+            while plan.peek().is_some() && Instant::now() < deadline {
+                // Poll the flag instead of blocking in `accept()`: dropping
+                // the guard wakes the loop within ~50 ms, which also covers
+                // the panic path (`JoinHandle` detaches on unwind).
+                if server_shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+                let (mut stream, _) = match listener.accept() {
+                    Ok(accepted) => accepted,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
+                    Err(_) => break,
+                };
+                let Some((payload, declare_length, truncate_at)) = plan.next() else {
+                    break;
+                };
+                // The accepted stream inherits the listener's non-blocking
+                // mode on Windows, so restore blocking mode: the read loop
+                // below must wait for the peer's headers, not spin.
+                stream.set_nonblocking(false).ok();
                 let mut reader = BufReader::new(stream.try_clone().unwrap());
                 let mut request = String::new();
                 loop {
@@ -3176,7 +3338,41 @@ mod tests {
             }
             requests
         });
-        (port, handle)
+        // Dropping the flag wakes the server loop within ~50 ms, which
+        // also covers the panic path: `JoinHandle` detaches on unwind, so
+        // without this guard a failing client would orphan a thread blocked
+        // in `accept()`. The guard lives in the test thread and is forgotten
+        // on the success path, so it only fires on early return or panic;
+        // the backstop deadline still bounds a client that hangs mid-transfer.
+        let shutdown_guard = ShutdownFlag(shutdown);
+        (port, handle, shutdown_guard)
+    }
+
+    /// Regression: a client that fails before its first connection (for
+    /// example an early directory-identity refusal) must shut the scripted
+    /// server down promptly instead of leaving `join()` waiting. Exercises
+    /// `serve_plain_responses` with no client at all: dropping the flag
+    /// must wake the server within milliseconds with zero requests observed,
+    /// and -- to prove the old hang is really gone -- the same fixture left
+    /// to its own backstop still terminates by its 60 s deadline instead of
+    /// blocking `join()` forever.
+    #[test]
+    fn scripted_server_terminates_without_any_client_connection() {
+        use std::time::{Duration, Instant};
+        let payload = vec![b'x'; 1024];
+        let (port, server, shutdown_guard) = serve_plain_responses(vec![(payload, true, None)]);
+        assert!(port > 0);
+        let started = Instant::now();
+        drop(shutdown_guard);
+        let requests = server.join().unwrap();
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "dropping the shutdown flag must wake the server promptly"
+        );
+        assert!(
+            requests.is_empty(),
+            "no client connected, so no request may be recorded"
+        );
     }
 
     fn dc02_payload() -> (Vec<u8>, String) {
@@ -3263,37 +3459,66 @@ mod tests {
     fn s08_a_redirect_outside_the_allowed_set_fails_with_a_safe_diagnostic() {
         use std::io::{BufRead as _, BufReader, Write as _};
         use std::net::TcpListener;
+        use std::time::{Duration, Instant};
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
         let port = listener.local_addr().unwrap().port();
+        // Bounded fixture (PR #18, run 34796009062): a client that fails
+        // before connecting must not leave this thread in `accept()` forever.
+        // The shared flag wakes the loop on early return or panic; the 60 s
+        // deadline is only the backstop for a client that hangs mid-transfer.
+        // `mem::forget` on the success path keeps the wait bounded by the
+        // client, not the deadline.
+        let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let server_shutdown = std::sync::Arc::clone(&shutdown);
         let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut reader = BufReader::new(stream.try_clone().unwrap());
-            let mut request_line = String::new();
-            let _ = reader.read_line(&mut request_line);
-            loop {
-                let mut line = String::new();
-                match reader.read_line(&mut line) {
-                    Ok(0) => break,
-                    Ok(_) if line == "\r\n" => break,
-                    Ok(_) => {}
-                    Err(_) => break,
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while Instant::now() < deadline {
+                if server_shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
                 }
+                let (mut stream, _) = match listener.accept() {
+                    Ok(accepted) => accepted,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
+                    Err(_) => break,
+                };
+                // The accepted stream inherits the listener's non-blocking
+                // mode on Windows, so restore blocking mode: the read loop
+                // below must wait for the peer's headers, not spin.
+                stream.set_nonblocking(false).ok();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut request_line = String::new();
+                let _ = reader.read_line(&mut request_line);
+                loop {
+                    let mut line = String::new();
+                    match reader.read_line(&mut line) {
+                        Ok(0) => break,
+                        Ok(_) if line == "\r\n" => break,
+                        Ok(_) => {}
+                        Err(_) => break,
+                    }
+                }
+                let response = "HTTP/1.1 302 Found\r\nLocation: https://example.invalid/model.gguf\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+                break;
             }
-            let response = "HTTP/1.1 302 Found\r\nLocation: https://example.invalid/model.gguf\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-            let _ = stream.write_all(response.as_bytes());
-            let _ = stream.flush();
         });
+        struct ShutdownOnScopeExit(std::sync::Arc<std::sync::atomic::AtomicBool>);
+        impl Drop for ShutdownOnScopeExit {
+            fn drop(&mut self) {
+                self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        // Fires on early return or panic; forgotten on the success path so a
+        // passing run wakes the server instead of burning the deadline.
+        let shutdown_scope = ShutdownOnScopeExit(std::sync::Arc::clone(&shutdown));
 
-        let root = std::env::temp_dir().join(format!(
-            "localmotive-s08-redirect-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|duration| duration.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(&root).unwrap();
+        let root = unique_test_dir("localmotive-s08-redirect");
         let target = root.join("model.gguf");
         let result = download_file(
             &format!("http://127.0.0.1:{port}/model.gguf"),
@@ -3318,6 +3543,10 @@ mod tests {
             !target.exists(),
             "no file may be published from a refused redirect"
         );
+        // The client finished: wake the server before joining, but keep the
+        // scope guard alive until here so a panic above still shuts down.
+        std::mem::forget(shutdown_scope);
+        shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
         let _ = server.join();
         let _ = std::fs::remove_dir_all(root);
     }
@@ -3339,13 +3568,42 @@ mod tests {
             hex::encode(hasher.finalize())
         };
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
         let port = listener.local_addr().unwrap().port();
         let requests = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
         let recorded = Arc::clone(&requests);
         let server_payload = payload.clone();
+        // Bounded fixture (PR #18, run 34796009062): the two-connection loop
+        // below used a blocking `accept()`, so a client that failed before
+        // connecting (for example an early directory-identity refusal) left
+        // `server.join()` waiting forever. The shared flag wakes the loop on
+        // early return or panic; `mem::forget` on the success path keeps the
+        // wait bounded by the client, and the 60 s deadline is only the
+        // backstop for a client that hangs mid-transfer.
+        let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let server_shutdown = std::sync::Arc::clone(&shutdown);
         let server = std::thread::spawn(move || {
-            for index in 0..2 {
-                let (mut stream, _) = listener.accept().unwrap();
+            use std::time::{Duration, Instant};
+            let deadline = Instant::now() + Duration::from_secs(60);
+            let mut served = 0_usize;
+            while served < 2 && Instant::now() < deadline {
+                if server_shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+                let (mut stream, _) = match listener.accept() {
+                    Ok(accepted) => accepted,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
+                    Err(_) => break,
+                };
+                let index = served;
+                served += 1;
+                // The accepted stream inherits the listener's non-blocking
+                // mode on Windows, so restore blocking mode: the read loop
+                // below must wait for the peer's headers, not spin.
+                stream.set_nonblocking(false).ok();
                 let mut reader = BufReader::new(stream.try_clone().unwrap());
                 let mut request_line = String::new();
                 let mut headers = String::new();
@@ -3400,6 +3658,17 @@ mod tests {
             downloaded,
             |_, _| {},
         );
+        struct G07ShutdownOnScopeExit(std::sync::Arc<std::sync::atomic::AtomicBool>);
+        impl Drop for G07ShutdownOnScopeExit {
+            fn drop(&mut self) {
+                self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        // Fires on early return or panic; forgotten on the success path so a
+        // passing run wakes the server instead of burning the deadline.
+        let shutdown_scope = G07ShutdownOnScopeExit(std::sync::Arc::clone(&shutdown));
+        std::mem::forget(shutdown_scope);
+        shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
         let _ = server.join();
         let recorded = requests.lock().unwrap().clone();
         assert!(
@@ -3595,7 +3864,7 @@ mod tests {
         // whole-response path must complete it with the exact bytes and
         // digest (audit DC-02 V1).
         let (payload, digest) = dc02_payload();
-        let (port, server) = serve_plain_responses(vec![
+        let (port, server, shutdown_guard) = serve_plain_responses(vec![
             (payload.clone(), true, None), // probe: 200, full Content-Length
             (payload.clone(), true, None), // transfer: 200 with Content-Length
         ]);
@@ -3604,7 +3873,13 @@ mod tests {
         let written = std::fs::read(&path).unwrap();
         assert_eq!(written.len(), payload.len());
         assert_eq!(written, payload, "the published bytes must be exact");
-        server.join().unwrap();
+        std::mem::forget(shutdown_guard);
+        let requests = server.join().unwrap();
+        assert_eq!(
+            requests.len(),
+            2,
+            "probe plus one transfer; saw {requests:#?}"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -3614,14 +3889,20 @@ mod tests {
         // loop must be bounded by the expected object size, not by a header
         // it never receives (audit DC-02 V1).
         let (payload, digest) = dc02_payload();
-        let (port, server) = serve_plain_responses(vec![
+        let (port, server, shutdown_guard) = serve_plain_responses(vec![
             (payload.clone(), true, None),  // probe
             (payload.clone(), false, None), // transfer: chunked 200
         ]);
         let root = unique_test_dir("localmotive-dc02-chunked");
         let path = run_dc02_download(port, &payload, &digest, &root).unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), payload);
-        server.join().unwrap();
+        std::mem::forget(shutdown_guard);
+        let requests = server.join().unwrap();
+        assert_eq!(
+            requests.len(),
+            2,
+            "probe plus one chunked transfer; saw {requests:#?}"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -3632,13 +3913,14 @@ mod tests {
         // digest checked (audit DC-02 V2/V3).
         let (payload, digest) = dc02_payload();
         let truncated = payload.len() / 2;
-        let (port, server) = serve_plain_responses(vec![
+        let (port, server, shutdown_guard) = serve_plain_responses(vec![
             (payload.clone(), true, None),            // probe
             (payload.clone(), true, Some(truncated)), // transfer: truncated body
             (payload.clone(), true, None),            // retry: complete body
         ]);
         let root = unique_test_dir("localmotive-dc02-retry");
         let result = run_dc02_download(port, &payload, &digest, &root);
+        std::mem::forget(shutdown_guard);
         let requests = server.join().unwrap();
         let path = result
             .unwrap_or_else(|error| panic!("download failed: {error}; requests: {requests:#?}"));
