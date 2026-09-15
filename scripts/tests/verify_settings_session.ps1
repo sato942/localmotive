@@ -92,6 +92,12 @@ try {
     $failed = $true
   } finally { $script:failCleanup = $false }
   if (-not $failed) { throw 'Session suppressed both failures' }
+  # A failed graceful close must not leave the real child for this test's
+  # outer safety cleanup to hide. The session itself owns termination.
+  foreach ($child in $script:children) {
+    $child.Refresh()
+    if (-not $child.HasExited) { throw "Failed graceful close orphaned owned child $($child.Id)" }
+  }
   if ($env:WEBVIEW2_USER_DATA_FOLDER -ne $savedFolder -or $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS -ne $savedArguments) { throw 'Failed cleanup did not restore the environment' }
   Write-Host 'PASS: verifier and cleanup failures remain visible with the environment restored'
 } finally {

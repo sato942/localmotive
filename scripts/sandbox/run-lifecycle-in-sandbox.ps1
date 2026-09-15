@@ -160,8 +160,13 @@ function Use-SettingsSession($exe, [string]$label, [scriptblock]$Body) {
     try {
       if ($p -and -not $p.HasExited) {
         # Close the window normally so WebView2 commits its storage.
-        if (-not $p.CloseMainWindow() -or -not $p.WaitForExit(15000)) { $p.Kill() }
+        $closed = $false
+        $closeError = $null
+        try { $closed = $p.CloseMainWindow() -and $p.WaitForExit(15000) }
+        catch { $closeError = $_ }
+        if (-not $closed -and -not $p.HasExited) { $p.Kill() }
         if (-not $p.WaitForExit(15000)) { throw "Owned settings process $($p.Id) did not exit" }
+        if ($closeError) { throw $closeError }
       }
     } catch {
       if ($sessionError) { throw "$($sessionError.Exception.Message) Settings cleanup also failed: $($_.Exception.Message)" } else { throw }
