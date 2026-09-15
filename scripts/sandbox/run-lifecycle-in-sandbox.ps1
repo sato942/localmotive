@@ -129,7 +129,13 @@ function Use-SettingsSession($exe, [string]$label, [scriptblock]$Body) {
   # used to seed or read the application's own persisted settings.
   Log "$label settings session: $exe"
   $port = 10093
-  $dataRoot = Join-Path $Shared 'settings-session-data'
+  # The WebView2 profile lives OUTSIDE the mapped share: Chromium refuses to
+  # open a profile on a redirected network-backed folder, which produced a
+  # live-but-targetless v0.4.0 baseline in the sandbox even though the same
+  # bytes attach on the host. The evaluate payload only touches localStorage,
+  # so an in-sandbox temp profile still exercises the real code path; nothing
+  # is copied back except the evaluated JSON the caller already collects.
+  $dataRoot = Join-Path $env:TEMP 'lm-settings-session'
   $profile = Join-Path $dataRoot 'webview-profile'
   Remove-Item -LiteralPath $dataRoot -Recurse -Force -ErrorAction SilentlyContinue
   New-Item -ItemType Directory -Force -Path $profile | Out-Null

@@ -2620,10 +2620,30 @@ test("settings session splits the WebView2 data root from the profile dir", asyn
   const tail = sandbox.slice(sandbox.indexOf(marker));
   const end = tail.indexOf("function Seed-SettingsV041");
   const session = tail.slice(0, end);
-  assert.match(session, /settings-session-data/);
+  assert.match(session, /lm-settings-session/);
   assert.match(session, /webview-profile/);
 });
 
+
+// U06-04: the settings session must keep the WebView2 profile OUTSIDE the
+// mapped share. The share is a redirected network-backed folder and Chromium
+// refuses to open a profile on it: observed live, the v0.4.0 baseline stayed
+// alive but exposed no CDP page target in 90 s while the same bytes attach on
+// the host with a localStorage seed/read round-trip. The session already
+// collects the evaluated JSON, so nothing else needs to cross the share.
+test("settings session keeps the WebView2 profile outside the mapped share", async () => {
+  const sandbox = await readFile(
+    join(process.cwd(), "scripts", "sandbox", "run-lifecycle-in-sandbox.ps1"),
+    "utf8",
+  );
+  const marker = "function Use-SettingsSession";
+  const tail = sandbox.slice(sandbox.indexOf(marker));
+  const end = tail.indexOf("function Seed-SettingsV041");
+  const session = tail.slice(0, end);
+  assert.match(session, /lm-settings-session/);
+  assert.match(session, /\$env:TEMP/);
+  assert.doesNotMatch(session, /settings-session-data/);
+});
 
 test("settings session pins a WebView2 user-data dir", async () => {
   const sandbox = await readFile(
