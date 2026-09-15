@@ -2604,6 +2604,27 @@ test("witness stall legs spawn the capable shell", async () => {
 // --remote-debugging-port the process stays alive but exposes no CDP target
 // within 55 s; adding --user-data-dir plus WEBVIEW2_USER_DATA_FOLDER exposes
 // a page target. Without the dir the session can never attach.
+// U06-04: the settings session must split the data root from the profile
+// dir. The folder variable doubles as the WebView2 data root (the runtime
+// owns EBWebView subdirs directly under it) AND as the Chromium
+// --user-data-dir (which must hold Default/ etc. itself). Pointing both at
+// one dir produced flaky debugger targets in the sandbox; the split layout
+// (data root + webview-profile child) attaches reliably on the host against
+// the real v0.4.0 build with a localStorage seed/read round-trip.
+test("settings session splits the WebView2 data root from the profile dir", async () => {
+  const sandbox = await readFile(
+    join(process.cwd(), "scripts", "sandbox", "run-lifecycle-in-sandbox.ps1"),
+    "utf8",
+  );
+  const marker = "function Use-SettingsSession";
+  const tail = sandbox.slice(sandbox.indexOf(marker));
+  const end = tail.indexOf("function Seed-SettingsV041");
+  const session = tail.slice(0, end);
+  assert.match(session, /settings-session-data/);
+  assert.match(session, /webview-profile/);
+});
+
+
 test("settings session pins a WebView2 user-data dir", async () => {
   const sandbox = await readFile(
     join(process.cwd(), "scripts", "sandbox", "run-lifecycle-in-sandbox.ps1"),
