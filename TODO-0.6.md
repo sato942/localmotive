@@ -4,6 +4,12 @@
 
 **Target:** published `v0.6.0`, with exact candidate identity, required evidence, asset readback, and explicit deferrals.
 
+**Required outcomes:** existing supported workflows work reliably; user data survives upgrades; security, download integrity and process ownership remain enforced; one identified candidate passes the existing qualification and promotion path; public assets match the qualified bytes and disclose limitations. Features are frozen. The audit remains the traced backlog, not an expanding release boundary.
+
+**Deferred scope:** unavailable hardware remains D06-01..05 under the recorded owner decision; optional signing retains its unsigned-release disclosure. Human listening, account-dependent scenarios, independent datasets and promised compatibility retain their actual statuses below. Optional improvements do not enter 0.6 without a demonstrated defect or required-release-path failure.
+
+**Current blocker / next action:** the cancellation correction passes default-parallel local tests; verify its required CI before closing that correction. Native settings preservation remains blocked before baseline seeding by missing Sandbox CDP discovery. The same exact payloads recover six settings keys on the host; that diagnostic does not replace native installer preservation. Keep the settings work in PR 47 unmerged until its complete scenario passes. No tag changes during debugging.
+
 **Consolidated:** 2026-09-14. **Reviewed source:** `1881db93c54f1c4a181ed5070d7c1449c50a7d74`.
 
 **Engineer handoff:** [AGENT-ENGINEER-0.6.md](AGENT-ENGINEER-0.6.md).
@@ -236,6 +242,14 @@ Source imports: `TODO-0.6(2).md` is byte-identical to [the original TODO at the 
 There are 664 original criterion lines, 663 original IDs, 72 primary findings, 29 supplemental packages and 10 release-gate groups. Every criterion appears below, once per original scoped line, with its audit link and an immutable original-line/evidence pointer. The two scoped RT-06.V3 entries account for the repeated original ID. Nothing is silently deduplicated. `scripts/check_tracker.mjs` still validates the historical source tracker only; it is not claimed to validate this new file.
 
 ## Evidence ledger for subsequent execution
+
+2026-09-15 cancellation correction (base `7b924f31cd83dee8051d7baec7f76a0d638ff5cf`; settings corrections remain separate):
+
+- RED: the default-parallel diagnostic run recorded `bytes=0-0`, `bytes=0-65535`, observed progress `4096/65536`, and listener exit at `30.0040188s` after two requests. The resumed probe then failed with `Os { code: 10061, kind: ConnectionRefused }`. This is a loopback fixture-lifetime failure, not an external Hugging Face failure. Log: `.hermes-0.6/u06-cancel-diagnostic-parallel.log` in the main development checkout.
+- GREEN: scenario-owned scoped threads, concurrent connection handling, cancellation-triggered response release and explicit socket shutdown replace timing/request-count lifetime assumptions. The scenario verifies partial bytes, valid retained state, exact resumed offset, complete payload and final cleanup. Separate tests cover an idle connection, more than four probes, early return and client panic. Production download behavior is unchanged; nested loopback errors are test-only diagnostics.
+- `cargo test --manifest-path src-tauri/Cargo.toml --locked cancellation_ -- --nocapture`: 17 passed. Download module: 57 passed, 1 ignored. Three default-parallel full runs each returned 619 passed, 0 failed, 7 ignored. Formatting and locked all-target clippy with `-D warnings` passed. Logs: `.hermes-0.6/u06-cancel-{green-focused,module,default-1,default-2,default-3,clippy}.log` in the main development checkout.
+- Mutation: disabling resume-state reuse failed at `resume must use the saved offset`; the captured sequence showed the erroneous restart at byte zero. The mutation was removed and the restored cancellation suite passed 17/17. Logs: `.hermes-0.6/u06-cancel-{reset-mutant,restored}.log`. Required new-head CI remains pending; neither this correction nor the separate settings diagnostic closes final-candidate qualification.
+- Cancellation-only branch verification: `npm run check < /dev/null` passed (144 Vitest tests, 257 script tests, type checks, repository verifiers and production frontend build). Formatting, locked all-target clippy with `-D warnings`, and the default-parallel full Rust suite passed (619 passed, 0 failed, 7 ignored). Logs: `.hermes-0.6/u06-cancel-pr-{check,clippy,rust}.log` in the main development checkout. No installer or release rebuild is needed for this test-only correction.
 
 | Date / package | Status | Source / harness / artifacts | Actual command or observation | Result and retained evidence | Remaining scope |
 |---|---|---|---|---|---|
