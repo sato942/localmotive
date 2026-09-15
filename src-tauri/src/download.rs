@@ -1082,6 +1082,10 @@ fn probe_with_cancel_and_timeout(
         .header(reqwest::header::RANGE, "bytes=0-0")
         .send()
         .map_err(|error| {
+            #[cfg(test)]
+            if token.is_none() && url.starts_with("http://127.0.0.1:") {
+                eprintln!("loopback probe error: {error:?}");
+            }
             if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
                 "Download cancelled while checking the remote file.".to_string()
             } else {
@@ -1884,272 +1888,261 @@ mod tests {
         server.join().unwrap();
     }
 
-    /// Cancellation that arrives after observed progress must keep resumable
-    /// partial state (audit DC-12): the progress callback fires from the
-    /// transfer loop after bytes are written, so cancelling from the callback
-    /// proves the partial bytes existed at cancellation time. A fixed sleep
-    /// cannot prove that: under load the timer can fire before the first
-    /// write, and the test then asserts on state the fixture never created
-    /// (PR #33 pr-check run 34852747749: valid partial bytes must remain
-    /// resumable, download.rs:1989).
-    #[test]
-    fn cancellation_retains_valid_state_and_the_next_attempt_resumes() {
+    // Keep the listener until the scenario ends, including unwinding. A fixed
+    // 30 s lifetime expired after two requests in the default-parallel suite,
+    // before the cancelled client's teardown finished; resume got OS 10061.
+    fn with_cancellation_server<T>(
+        payload: &[u8],
+        digest: &str,
+        run: impl FnOnce(&str, std::sync::mpsc::Sender<()>, &Mutex<Vec<(usize, usize)>>) -> T,
+    ) -> T {
         use std::io::{BufRead as _, BufReader, Write as _};
-        use std::net::TcpListener;
+        use std::net::{Shutdown, TcpListener};
+        use std::sync::mpsc::{channel, RecvTimeoutError};
 
-        let payload = vec![b'x'; 64 * 1024];
-        let digest = {
-            let mut hasher = Sha256::new();
-            hasher.update(&payload);
-            format!("{:x}", hasher.finalize())
-        };
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let address = listener.local_addr().unwrap();
-        let server_payload = payload.clone();
-        let server_digest = digest.clone();
-        let resumed_starts = Arc::new(Mutex::new(Vec::new()));
-        let server_resumed_starts = Arc::clone(&resumed_starts);
-        let server = std::thread::spawn(move || {
-            // Bounded fixture: a failed test must not leave this thread in
-            // a blocking accept forever. The success path serves four
-            // requests in about 2 s; the failure path exits at the deadline
-            // and drops every socket it holds.
-            let deadline = Instant::now() + Duration::from_secs(30);
-            let mut request_index = 0_usize;
-            while request_index < 4 && Instant::now() < deadline {
-                let (mut stream, _) = match listener.accept() {
-                    Ok(accepted) => accepted,
-                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                        std::thread::sleep(Duration::from_millis(5));
-                        continue;
+        let requests = Mutex::new(Vec::new());
+        std::thread::scope(|scope| {
+            // Both senders drop before the scope joins, even if run panics.
+            let (stop, stopping) = channel::<()>();
+            let (release, released) = channel::<()>();
+            let requests = &requests;
+            scope.spawn(move || {
+                let released = Mutex::new(released);
+                std::thread::scope(|connections| {
+                    while matches!(
+                        stopping.recv_timeout(Duration::from_millis(5)),
+                        Err(RecvTimeoutError::Timeout)
+                    ) {
+                        let (mut stream, _) = match listener.accept() {
+                            Ok(accepted) => accepted,
+                            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => continue,
+                            Err(error) => panic!("cancel fixture accept: {error:?}"),
+                        };
+                        // Idle connections must not block the resumed probe.
+                        let released = &released;
+                        connections.spawn(move || {
+                            let result = (|| -> Result<(), String> {
+                                stream.set_nonblocking(false).map_err(|e| format!("{e:?}"))?;
+                                stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                                stream.set_write_timeout(Some(Duration::from_secs(5))).unwrap();
+                                let mut reader = BufReader::new(&stream);
+                                let mut request = String::new();
+                                loop {
+                                    let mut line = String::new();
+                                    match reader.read_line(&mut line) {
+                                        Ok(_) if line == "\r\n" => break,
+                                        Ok(0) if request.is_empty() => return Ok(()),
+                                        Ok(0) => return Err(format!("incomplete request: {request:?}")),
+                                        Ok(_) => request.push_str(&line),
+                                        Err(e) => return Err(format!("request {request:?}: {e:?}")),
+                                    }
+                                    if request.len() > 8192 { return Err("request too large".into()); }
+                                }
+                                let (start, end) = request.lines().find_map(|line| {
+                                    let (name, value) = line.split_once(':')?;
+                                    if !name.eq_ignore_ascii_case("range") { return None; }
+                                    let (start, end) = value.trim().strip_prefix("bytes=")?.split_once('-')?;
+                                    Some((start.parse::<usize>().ok()?, end.parse::<usize>().ok()?))
+                                }).ok_or_else(|| format!("invalid Range: {request:?}"))?;
+                                if start > end || end >= payload.len() { return Err(format!("invalid span {start}-{end}")); }
+                                requests.lock().unwrap().push((start, end));
+                                eprintln!("cancel fixture request: bytes={start}-{end}");
+                                write!(stream, "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {start}-{end}/{}\r\nX-Linked-ETag: \"{digest}\"\r\nAccept-Ranges: bytes\r\nConnection: close\r\n\r\n", end - start + 1, payload.len()).map_err(|e| format!("headers: {e:?}"))?;
+                                let partial = start == 0 && end > 0;
+                                let body = if partial { &payload[..4096] } else { &payload[start..=end] };
+                                stream.write_all(body).map_err(|e| format!("body: {e:?}"))?;
+                                stream.flush().map_err(|e| format!("flush: {e:?}"))?;
+                                if partial {
+                                    // Close only after observed progress caused cancellation,
+                                    // or after the client unwinds. This is not a timed hold.
+                                    match released.lock().unwrap().recv_timeout(Duration::from_secs(30)) {
+                                        Ok(()) | Err(RecvTimeoutError::Disconnected) => {},
+                                        Err(e) => return Err(format!("partial response was not released: {e:?}")),
+                                    }
+                                }
+                                Ok(())
+                            })();
+                            // Explicit shutdown also closes any inherited socket copies.
+                            let _ = stream.shutdown(Shutdown::Both);
+                            result.expect("cancellation fixture connection failed");
+                        });
                     }
-                    Err(error) => panic!("server accept failed: {error}"),
-                };
-                // Accepted streams inherit the listener's non-blocking mode;
-                // restore blocking I/O with a read bound so a stuck peer
-                // cannot hang the fixture past the deadline either.
-                stream.set_nonblocking(false).unwrap();
-                stream
-                    .set_read_timeout(Some(Duration::from_secs(10)))
-                    .unwrap();
-                let mut reader = BufReader::new(stream.try_clone().unwrap());
-                let mut request = String::new();
-                loop {
-                    let mut line = String::new();
-                    // A pooled second connection may open while the first is
-                    // still served; it sends nothing and closes at teardown.
-                    // Treat that as an empty request, not a fatal error.
-                    match reader.read_line(&mut line) {
-                        Ok(0) => break,
-                        Ok(_) => {}
-                        Err(_) => break,
-                    }
-                    if line == "\r\n" {
-                        break;
-                    }
-                    request.push_str(&line);
-                }
-                if request.trim_start().is_empty() {
-                    // Empty pre-connection: do not consume a request index;
-                    // drop the socket and serve the next real request.
-                    drop(stream);
-                    continue;
-                }
-                // Route by request content, never by arrival order: a pooled
-                // second connection may open while the first is still served,
-                // so an index counter can misroute the resume probe/transfer
-                // (main CI 34871574929/34877657968: the retained bytes must
-                // resume: Could not reach Hugging Face: error sending
-                // request). A one-byte probe asks for `bytes=0-0`; any other
-                // Range is a transfer at its stated start.
-                let is_probe = request.lines().any(|line| {
-                    let line = line.trim();
-                    line.to_ascii_lowercase().starts_with("range:")
-                        && line.split('=').nth(1).is_some_and(|range| {
-                            let mut bounds = range.split('-');
-                            bounds.next().is_some_and(|start| {
-                                start.trim() == "0"
-                                    && bounds.next().is_some_and(|end| end.trim() == "0")
-                            })
-                        })
                 });
-                if is_probe {
-                    write!(
-                        stream,
-                        "HTTP/1.1 206 Partial Content\r\nContent-Length: 1\r\nContent-Range: bytes 0-0/{}\r\nX-Linked-Size: {}\r\nX-Linked-ETag: \"{}\"\r\nAccept-Ranges: bytes\r\nConnection: close\r\n\r\n",
-                        server_payload.len(),
-                        server_payload.len(),
-                        server_digest,
-                    )
-                    .unwrap();
-                    stream.write_all(&server_payload[..1]).unwrap();
-                } else {
-                    let start = request
-                        .lines()
-                        .find(|line| line.to_ascii_lowercase().starts_with("range:"))
-                        .and_then(|line| line.split('=').nth(1))
-                        .and_then(|range| range.split('-').next())
-                        .and_then(|value| value.trim().parse::<usize>().ok())
-                        .unwrap();
-                    // The first transfer (from byte zero) sends only the initial
-                    // 4096 bytes and holds the connection so the progress
-                    // poll observes the write and cancels; the resumed
-                    // transfer (from a nonzero offset) sends its full body.
-                    let is_first_transfer = start == 0;
-                    if is_first_transfer {
-                        // The client asked for the whole span; answer the
-                        // requested range exactly so length/span validation
-                        // passes, but deliver only the initial 4096 bytes and
-                        // hold the connection so the progress poll observes
-                        // the write and cancels before the worker can see a
-                        // truncation.
-                        let end = request
-                            .lines()
-                            .find(|line| line.to_ascii_lowercase().starts_with("range:"))
-                            .and_then(|line| line.split('=').nth(1))
-                            .and_then(|range| range.split('-').nth(1))
-                            .and_then(|value| value.trim().parse::<u64>().ok())
-                            .unwrap();
-                        let body = &server_payload[..4096];
-                        write!(
-                            stream,
-                            "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes 0-{}/{}\r\nX-Linked-ETag: \"{}\"\r\nConnection: close\r\n\r\n",
-                            end + 1,
-                            end,
-                            server_payload.len(),
-                            server_digest,
-                        )
-                        .unwrap();
-                        stream.write_all(body).unwrap();
-                        stream.flush().unwrap();
-                        std::thread::sleep(Duration::from_secs(1));
-                    } else {
-                        let body = &server_payload[start..];
-                        write!(
-                            stream,
-                            "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {}-{}/{}\r\nX-Linked-ETag: \"{}\"\r\nConnection: close\r\n\r\n",
-                            body.len(),
-                            start,
-                            server_payload.len() - 1,
-                            server_payload.len(),
-                            server_digest,
-                        )
-                        .unwrap();
-                        server_resumed_starts.lock().unwrap().push(start as u64);
-                        stream.write_all(body).unwrap();
-                    }
-                }
-                request_index += 1;
-            }
-        });
+            });
+            let result = run(&format!("http://{address}/runtime.zip"), release, requests);
+            drop(stop);
+            result
+        })
+    }
 
-        let root = unique_test_dir("localmotive-cancelled-download");
-        std::fs::create_dir_all(&root).unwrap();
-        let target = root.join("runtime.zip");
-        // Observed-progress cancellation: the 400 ms progress poll runs
-        // `on_progress` after chunk bytes are written (before the periodic
-        // durable checkpoint), so setting the flag from the callback
-        // guarantees the partial bytes existed at cancellation time. A fixed
-        // sleep cannot prove that: under load the timer can fire before the
-        // first write, and the test then asserts on state the fixture never
-        // created (PR #33 pr-check run 34852747749: valid partial bytes must
-        // remain resumable, download.rs:1989).
-        //
-        // The fixture holds the first response open for 1 s after the
-        // initial 4096 bytes so the poll observes the write and cancels
-        // before the worker can see a truncation; without the hold the
-        // worker would record a transfer failure and the returned error
-        // would not be a cancellation.
-        let cancel = Arc::new(AtomicBool::new(false));
-        let callback_cancel = Arc::clone(&cancel);
-        let observed_progress = Arc::new(AtomicU64::new(0));
-        let callback_observed = Arc::clone(&observed_progress);
-        let total = payload.len() as u64;
-
-        let error = download_file(
-            &format!("http://{address}/runtime.zip"),
-            &target,
-            "test artifact",
-            payload.len() as u64,
-            &digest,
-            None,
-            1,
-            Arc::clone(&cancel),
-            Arc::new(AtomicU64::new(0)),
-            move |done, expected| {
-                debug_assert_eq!(expected, total);
-                if done >= 4096 && done < total {
-                    callback_observed.store(done, Ordering::SeqCst);
-                    callback_cancel.store(true, Ordering::SeqCst);
-                }
-            },
-        )
-        .unwrap_err();
-
-        // Missing progress is a test failure with a diagnostic, never a
-        // pass: without observed bytes there is nothing to assert resume on.
-        // The pre-cancelled sibling test covers the legitimate no-partial
-        // case separately.
-        let observed = observed_progress.load(Ordering::SeqCst);
-        assert!(
-            observed >= 4096 && observed < total,
-            "the progress callback never observed partial bytes before cancellation;              got {observed} of {total} — the fixture did not deliver data, not a resume finding"
-        );
-        assert!(error.to_ascii_lowercase().contains("cancel"), "{error}");
-        assert!(
-            !target.exists(),
-            "a cancelled download must not become final"
-        );
-        let (part, _) = part_paths(&target);
-        assert!(part.is_file(), "valid partial bytes must remain resumable");
-        let state = load_resume_state(&target).expect("resume state must be retained");
-        assert!(state.downloaded() >= 4096, "{state:?}");
-        assert!(state.downloaded() < payload.len() as u64, "{state:?}");
-        assert!(can_resume_from(
-            &state,
-            &format!("http://{address}/runtime.zip"),
-            payload.len() as u64,
-            &digest,
-            Some(&digest),
-            None,
-        ));
-
-        cancel.store(false, Ordering::Relaxed);
-        // The fixture must outlive the resumed transfer: joining the server
-        // before the resumed download completes drops the only listener and
-        // turns the resume probe into a connection refusal under load
-        // (main CI 34868542494 and 34871574929: the retained bytes must
-        // resume: Could not reach Hugging Face: error sending request). The
-        // join therefore happens after the resumed payload is verified,
-        // never before.
-        let resumed = download_file(
-            &format!("http://{address}/runtime.zip"),
-            &target,
-            "test artifact",
-            payload.len() as u64,
-            &digest,
-            None,
-            1,
-            cancel,
-            Arc::new(AtomicU64::new(0)),
-            |_, _| {},
-        )
-        .expect("the retained bytes must resume");
-        assert_eq!(std::fs::read(&resumed).unwrap(), payload);
-        assert!(
-            resumed_starts
-                .lock()
+    #[test]
+    fn cancellation_fixture_serves_probes_beside_an_idle_connection() {
+        // An idle connection cannot serialize later requests or consume a
+        // response slot. More than four probes must not end the listener.
+        with_cancellation_server(&[0; 4096], "fixture", |url, _, requests| {
+            let address = url
+                .strip_prefix("http://")
                 .unwrap()
+                .split('/')
+                .next()
+                .unwrap();
+            let _idle = std::net::TcpStream::connect(address).unwrap();
+            for _ in 0..5 {
+                assert_eq!(probe(url, None, "fixture").unwrap().size, 4096);
+            }
+            assert_eq!(requests.lock().unwrap().as_slice(), &[(0, 0); 5]);
+        });
+    }
+
+    #[test]
+    fn cancellation_fixture_joins_on_early_return_and_client_panic() {
+        // Both exits used to detach the fixture. A response held outside
+        // the panicking client also proves shutdown wakes a blocked read.
+        for panic_after_partial in [false, true] {
+            let mut address = String::new();
+            let mut response = None;
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                with_cancellation_server(&[0; 8192], "fixture", |url, _release, _| {
+                    address = url
+                        .strip_prefix("http://")
+                        .unwrap()
+                        .split('/')
+                        .next()
+                        .unwrap()
+                        .into();
+                    if panic_after_partial {
+                        let mut received = client(None, Duration::from_secs(5))
+                            .unwrap()
+                            .get(url)
+                            .header(reqwest::header::RANGE, "bytes=0-8191")
+                            .send()
+                            .unwrap();
+                        received.read_exact(&mut [0; 4096]).unwrap();
+                        response = Some(received);
+                        panic!("intentional client failure after partial response");
+                    }
+                });
+            }));
+            assert_eq!(result.is_err(), panic_after_partial);
+            assert!(
+                std::net::TcpStream::connect(&address).is_err(),
+                "fixture listener survived client exit"
+            );
+            if let Some(mut response) = response {
+                assert!(
+                    response.read(&mut [0; 1]).is_err(),
+                    "held partial response did not close"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cancellation_retains_valid_state_and_the_next_attempt_resumes() {
+        // DC-12: cancel after bytes are written, retain a valid checkpoint,
+        // resume at that checkpoint, and verify the complete payload.
+        let payload: Vec<u8> = (0..64 * 1024).map(|i| (i % 251) as u8).collect();
+        let digest = format!("{:x}", Sha256::digest(&payload));
+        let root = unique_test_dir("localmotive-cancelled-download");
+        let target = root.join("runtime.zip");
+        with_cancellation_server(&payload, &digest, |url, release, requests| {
+            let cancel = Arc::new(AtomicBool::new(false));
+            let callback_cancel = Arc::clone(&cancel);
+            let observed_progress = Arc::new(AtomicU64::new(0));
+            let callback_observed = Arc::clone(&observed_progress);
+            let total = payload.len() as u64;
+
+            let error = download_file(
+                url,
+                &target,
+                "test artifact",
+                payload.len() as u64,
+                &digest,
+                None,
+                1,
+                Arc::clone(&cancel),
+                Arc::new(AtomicU64::new(0)),
+                move |done, expected| {
+                    debug_assert_eq!(expected, total);
+                    if done >= 4096 && done < total {
+                        eprintln!("cancel-fixture progress={done}/{expected}; cancelling");
+                        callback_observed.store(done, Ordering::SeqCst);
+                        callback_cancel.store(true, Ordering::SeqCst);
+                        let _ = release.send(());
+                    }
+                },
+            )
+            .unwrap_err();
+
+            // Early cancellation has a separate test; this scenario requires real bytes.
+            let observed = observed_progress.load(Ordering::SeqCst);
+            assert!(
+                observed >= 4096 && observed < total,
+                "expected observed partial progress, got {observed}/{total}"
+            );
+            assert!(error.to_ascii_lowercase().contains("cancel"), "{error}");
+            assert!(
+                !target.exists(),
+                "a cancelled download must not become final"
+            );
+            let (part, _) = part_paths(&target);
+            assert!(part.is_file(), "valid partial bytes must remain resumable");
+            let state = load_resume_state(&target).expect("resume state must be retained");
+            assert!(state.downloaded() >= 4096, "{state:?}");
+            assert!(state.downloaded() < payload.len() as u64, "{state:?}");
+            assert!(resume_chunks_are_valid(&state.chunks, total, 1));
+            assert_eq!(state.downloaded(), observed);
+            assert_eq!(
+                &std::fs::read(&part).unwrap()[..observed as usize],
+                &payload[..observed as usize]
+            );
+            assert!(can_resume_from(
+                &state,
+                url,
+                payload.len() as u64,
+                &digest,
+                Some(&digest),
+                None,
+            ));
+
+            cancel.store(false, Ordering::Relaxed);
+            eprintln!("cancel-fixture starting resume at {}", state.downloaded());
+            let before_resume = requests.lock().unwrap().len();
+            let resumed = download_file(
+                url,
+                &target,
+                "test artifact",
+                payload.len() as u64,
+                &digest,
+                None,
+                1,
+                cancel,
+                Arc::new(AtomicU64::new(0)),
+                |_, _| {},
+            )
+            .expect("the retained bytes must resume");
+            assert_eq!(std::fs::read(&resumed).unwrap(), payload);
+            let requests = requests.lock().unwrap();
+            let resumed_transfers: Vec<_> = requests[before_resume..]
                 .iter()
-                .all(|start| *start >= 4096),
-            "the resumed request must not restart at byte zero"
-        );
-        assert!(load_resume_state(&target).is_none());
-        // The server thread owns the only listener for the resumed probe
-        // and transfer; join it only after every client connection closed
-        // so a slow teardown cannot surface as a connection refusal.
-        server.join().unwrap();
+                .filter(|range| **range != (0, 0))
+                .collect();
+            assert!(
+                !resumed_transfers.is_empty(),
+                "resume must issue a transfer: {requests:?}"
+            );
+            assert!(
+                resumed_transfers
+                    .iter()
+                    .all(|(start, _)| *start as u64 == state.downloaded()),
+                "resume must use the saved offset: {requests:?}"
+            );
+            assert!(load_resume_state(&target).is_none());
+            assert!(!part.exists());
+        });
         let _ = std::fs::remove_dir_all(root);
     }
 
