@@ -129,11 +129,12 @@ function Use-SettingsSession($exe, [string]$label, [scriptblock]$Body) {
   # used to seed or read the application's own persisted settings.
   Log "$label settings session: $exe"
   $port = 10093
-  $profile = Join-Path $Shared 'settings-session-profile'
-  Remove-Item -LiteralPath $profile -Recurse -Force -ErrorAction SilentlyContinue
+  $dataRoot = Join-Path $Shared 'settings-session-data'
+  $profile = Join-Path $dataRoot 'webview-profile'
+  Remove-Item -LiteralPath $dataRoot -Recurse -Force -ErrorAction SilentlyContinue
   New-Item -ItemType Directory -Force -Path $profile | Out-Null
+  $env:WEBVIEW2_USER_DATA_FOLDER = $dataRoot
   $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$port --user-data-dir=$profile"
-  $env:WEBVIEW2_USER_DATA_FOLDER = $profile
   try {
     $p = Start-Process -FilePath $exe -PassThru
     # Poll for the debugger target the same way the CDP drivers do (the app
