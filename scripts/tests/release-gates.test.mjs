@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
@@ -2620,10 +2620,32 @@ test("settings session splits the WebView2 data root from the profile dir", asyn
   const tail = sandbox.slice(sandbox.indexOf(marker));
   const end = tail.indexOf("function Seed-SettingsV041");
   const session = tail.slice(0, end);
-  assert.match(session, /settings-session-data/);
+  assert.match(session, /\$script:SettingsDataRoot/);
   assert.match(session, /webview-profile/);
 });
 
+
+// U06-04: the settings session must keep the WebView2 profile OUTSIDE the
+// mapped share. The share is a redirected network-backed folder and Chromium
+// refuses to open a profile on it: observed live, the v0.4.0 baseline stayed
+// alive but exposed no CDP page target in 90 s while the same bytes attach on
+// the host with a localStorage seed/read round-trip. The session already
+// collects the evaluated JSON, so nothing else needs to cross the share.
+test("settings session keeps the WebView2 profile outside the mapped share", async () => {
+  const sandbox = await readFile(
+    join(process.cwd(), "scripts", "sandbox", "run-lifecycle-in-sandbox.ps1"),
+    "utf8",
+  );
+  const marker = "function Use-SettingsSession";
+  const tail = sandbox.slice(sandbox.indexOf(marker));
+  const end = tail.indexOf("function Seed-SettingsV041");
+  const session = tail.slice(0, end);
+  assert.match(session, /\$script:SettingsDataRoot/);
+  assert.match(sandbox, /\$script:SettingsDataRoot = Join-Path \$env:TEMP \('lm-settings-session-'/);
+  assert.doesNotMatch(session, /Remove-Item -LiteralPath \$dataRoot/);
+  assert.doesNotMatch(sandbox, /Remove-Item -LiteralPath \$script:SettingsDataRoot/, "owned Sandbox teardown must clean guest storage without following a guest TEMP junction");
+  assert.doesNotMatch(session, /settings-session-data/);
+});
 
 test("settings session pins a WebView2 user-data dir", async () => {
   const sandbox = await readFile(
@@ -2652,6 +2674,92 @@ test("settings session polls for the debugger target before evaluating", async (
   assert.match(session, /AddSeconds[(]90[)]/);
   assert.match(session, /json\/list/);
   assert.doesNotMatch(session, /Start-Sleep -Seconds 8/);
+});
+
+test("settings sessions preserve storage and clean up on a verifier failure", { skip: process.platform !== "win32" }, async () => {
+  const { execFileSync } = await import("node:child_process");
+  const output = execFileSync("pwsh", ["-NoProfile", "-File", "scripts/tests/verify_settings_session.ps1"], { encoding: "utf8", timeout: 60000 });
+  assert.match(output, /PASS: baseline storage survives the upgraded session/);
+  assert.match(output, /PASS: success and failure stop owned children/);
+  assert.match(output, /PASS: launch smoke joins its owned process/);
+  assert.match(output, /PASS: verifier and cleanup failures remain visible/);
+});
+
+test("lifecycle collection handles cache-only and mirror-only baselines", { skip: process.platform !== "win32" }, async () => {
+  const { execFileSync } = await import("node:child_process");
+  const output = execFileSync("pwsh", ["-NoProfile", "-File", "scripts/tests/verify_preservation_collection.ps1"], { encoding: "utf8", timeout: 30000 });
+  assert.match(output, /PASS: cache-only baseline collects its actual files/);
+  assert.match(output, /PASS: mirror-only baseline collects its actual files/);
+  assert.match(output, /PASS: missing required preservation data is rejected/);
+});
+
+test("lifecycle cleanup targets only its Sandbox identity and reports stop failures", { skip: process.platform !== "win32" }, async () => {
+  const { execFileSync } = await import("node:child_process");
+  const output = execFileSync("pwsh", ["-NoProfile", "-File", "scripts/tests/verify_lifecycle_ownership.ps1"], { encoding: "utf8", timeout: 30000 });
+  assert.match(output, /PASS: cleanup targets only the owned Sandbox ID/);
+  assert.match(output, /PASS: cleanup failure is reported/);
+  const source = await readFile("scripts/sandbox/host-run-lifecycle.ps1", "utf8");
+  assert.doesNotMatch(source, /Get-Process -Name "WindowsSandbox"/);
+});
+
+test("lifecycle preflight restricts stored authentication to an opted-in local run", { skip: process.platform !== "win32" }, async () => {
+  const { execFileSync } = await import("node:child_process");
+  // Execute the actual preflight condition. Stub only the external CLI.
+  const output = execFileSync("pwsh", ["-NoProfile", "-Command", `
+    $ErrorActionPreference = 'Stop'
+    $env:GH_TOKEN = $null; $env:GITHUB_TOKEN = $null
+    $env:CI = $null; $env:GITHUB_ACTIONS = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD 'scripts/sandbox/host-run-lifecycle.ps1'), [ref]$null, [ref]$null)
+    $guard = $ast.Find({ param($node) $node -is [Management.Automation.Language.IfStatementAst] -and $node.Extent.Text.StartsWith('if (-not $env:GH_TOKEN -and -not $env:GITHUB_TOKEN)') }, $true)
+    if (-not $guard) { throw 'Missing auth preflight' }
+    $script:authCalls = 0
+    function gh { $script:authCalls++; $global:LASTEXITCODE = $script:authCode }
+    $script:authCode = 0
+    $AllowStoredGitHubLogin = $false
+    $refused = $false
+    try { & ([scriptblock]::Create($guard.Extent.Text)) } catch { $refused = $true }
+    if (-not $refused -or $script:authCalls -ne 0) { throw 'Stored login accessed without local opt-in' }
+    $AllowStoredGitHubLogin = $true
+    & ([scriptblock]::Create($guard.Extent.Text))
+    Write-Host 'PASS: stored login accepted'
+    $script:authCode = 1
+    $refused = $false
+    try { & ([scriptblock]::Create($guard.Extent.Text)) } catch { $refused = $true }
+    if (-not $refused) { throw 'Unauthenticated CLI was accepted' }
+    Write-Host 'PASS: missing login refused'
+    $env:CI = 'true'; $env:GITHUB_ACTIONS = 'true'
+    $script:authCode = 0; $script:authCalls = 0
+    $refused = $false
+    try { & ([scriptblock]::Create($guard.Extent.Text)) } catch { $refused = $true }
+    if (-not $refused -or $script:authCalls -ne 0) { throw 'CI accessed the stored login' }
+    Write-Host 'PASS: CI cannot use stored login even with local opt-in'
+  `], { encoding: "utf8", timeout: 30000 });
+  assert.match(output, /PASS: stored login accepted/);
+  assert.match(output, /PASS: missing login refused/);
+  assert.match(output, /PASS: CI cannot use stored login/);
+});
+
+test("lifecycle authentication failure retains a structured failure document", { skip: process.platform !== "win32" }, async () => {
+  const { spawnSync } = await import("node:child_process");
+  const root = await mkdtemp(join(tmpdir(), "lm-lifecycle-auth-"));
+  try {
+    const result = spawnSync("pwsh", ["-NoProfile", "-Command", `
+      function gh { $global:LASTEXITCODE = 1 }
+      & $env:HARNESS_PATH -Tag v0.6.0 -Version 0.6.0 -EvidenceName authentication-fixture -FaultSimulation missing-assets
+    `], {
+      cwd: root, encoding: "utf8", timeout: 30000,
+      env: { ...process.env, HARNESS_PATH: resolve("scripts/sandbox/host-run-lifecycle.ps1"), GH_TOKEN: "", GITHUB_TOKEN: "", CI: "true", GITHUB_ACTIONS: "true", TEMP: root, TMP: root, LOCALMOTIVE_SOURCE_REVISION: "" },
+    });
+    assert.equal(result.status, 1, `${result.stdout}${result.stderr}`);
+    const file = join(root, "release-evidence/0.6.0/attestations/authentication-fixture.json");
+    const raw = await readFile(file, "utf8");
+    const doc = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    assert.equal(doc.status, "FAIL");
+    assert.equal(doc.stage, "authentication");
+    assert.match(doc.error, /GH_TOKEN|GITHUB_TOKEN/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("R04: the benchmark run owns its cancelled workers until they exit", async () => {

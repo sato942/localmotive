@@ -126,7 +126,7 @@ def check_settings(fixture_path: str, collected_path: str, failures: list) -> No
         failures.append(f"settings fixture unreadable: {error}")
         return
     try:
-        with open(collected_path, encoding="utf-8") as handle:
+        with open(collected_path, encoding="utf-8-sig") as handle:
             collected = json.load(handle)
     except Exception as error:  # noqa: BLE001 - report any read failure
         failures.append(f"collected settings unreadable (profile/settings not recovered): {error}")
