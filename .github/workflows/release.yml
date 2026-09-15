@@ -350,6 +350,10 @@ jobs:
             throw "Windows Sandbox is not available on this PC. Enable it (Windows Features) then re-run."
           }
           Write-Host "Found $exe"
+          $cli = Get-Command wsb.exe -ErrorAction Stop
+          $cliVersion = & $cli.Source --version
+          if ($LASTEXITCODE -ne 0 -or -not $cliVersion) { throw "Windows Sandbox CLI could not report its version. Repair wsb.exe before lifecycle verification." }
+          Write-Host "Windows Sandbox CLI: $($cli.Source), version $cliVersion"
 
       - name: Retrieve the verified candidate installers
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

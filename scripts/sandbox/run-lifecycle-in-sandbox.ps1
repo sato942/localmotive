@@ -124,6 +124,19 @@ function Invoke-CdpProbe([int]$Port, [int]$TimeoutSeconds = 60) {
   return (Invoke-CdpEvaluate $Port $expression $TimeoutSeconds)
 }
 
+function Initialize-LifecycleBrowserDebugging([bool]$Elevated) {
+  if (-not $Elevated) { return }
+  # Elevated WebView2 hosts ignore environment/HKCU browser arguments.
+  # This documented override exists only inside the owned disposable guest.
+  $policy = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
+  if (Get-ItemProperty -LiteralPath $policy -Name 'Localmotive.exe' -ErrorAction SilentlyContinue) {
+    throw 'A Localmotive browser override already exists. Use a clean lifecycle guest; do not overwrite its policy.'
+  }
+  if (-not (Test-Path -LiteralPath $policy)) { New-Item -Path $policy -Force -ErrorAction Stop | Out-Null }
+  New-ItemProperty -Path $policy -Name 'Localmotive.exe' -PropertyType String -Value '--remote-debugging-port=10093' -ErrorAction Stop | Out-Null
+  Log 'Configured the application-scoped machine browser argument for the elevated guest; Sandbox destruction removes it'
+}
+
 function Use-SettingsSession($exe, [string]$label, [scriptblock]$Body) {
   # Both installed builds use the storage owned by the preservation scenario.
   Log "$label settings session: $exe"
@@ -352,6 +365,8 @@ try {
   if (Test-Path $ResultPath) { Remove-Item $ResultPath -Force }
   "" | Set-Content $Log -Encoding UTF8
   Log "Sandbox lifecycle starting"
+  $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+  Initialize-LifecycleBrowserDebugging ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))
 
   $metaPath = Join-Path $Shared "meta.json"
   if (-not (Test-Path $metaPath)) { Fail "meta.json missing" }

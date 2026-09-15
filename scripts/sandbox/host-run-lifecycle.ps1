@@ -418,6 +418,7 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
       $collectedUserdata = Join-Path $Shared "collected-userdata.txt"
       $collectedCache = Join-Path $Shared "collected-catalog-cache.json"
       $collectedSettings = Join-Path $Shared "collected-settings.json"
+      $settingsEvidence = $null
       $preservationStatus = "missing-files"
       $preservationOutput = "collected files absent; the preservation step did not run"
       $preservationPresent = if ($PreservationFlavor -eq "mirror") {
@@ -458,6 +459,13 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
         if (Test-Path $collectedUserdata) {
           Copy-Item $collectedUserdata (Join-Path $OutDir "$EvidenceName-collected-userdata.txt") -Force
         }
+        if (Test-Path $collectedSettings) {
+          Assert-LockOwnership
+          $settingsName = "$EvidenceName-collected-settings.json"
+          $settingsPath = Join-Path $OutDir $settingsName
+          Copy-Item -LiteralPath $collectedSettings -Destination $settingsPath -Force
+          $settingsEvidence = [ordered]@{ file = $settingsName; sha256 = (Get-FileSha256 $settingsPath) }
+        }
         Assert-LockOwnership
         $preservationOutput | Set-Content (Join-Path $OutDir "$EvidenceName-verify.log") -Encoding UTF8
       }
@@ -467,6 +475,7 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
       }
       $preservation = [ordered]@{ status = $preservationStatus; output = $preservationOutput }
       $doc | Add-Member -NotePropertyName preservation -NotePropertyValue $preservation -Force
+      if ($settingsEvidence) { $doc | Add-Member -NotePropertyName collectedSettings -NotePropertyValue $settingsEvidence -Force }
       # Bind the pass verdict to the immutable source revision, candidate
       # digests, and candidate inventory (GH-03/GH-06/R06): the in-sandbox
       # document alone cannot carry them.

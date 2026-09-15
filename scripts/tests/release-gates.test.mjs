@@ -2702,6 +2702,73 @@ test("lifecycle cleanup targets only its Sandbox identity and reports stop failu
   assert.doesNotMatch(source, /Get-Process -Name "WindowsSandbox"/);
 });
 
+test("lifecycle retains the actual settings reads under lock ownership", { skip: process.platform !== "win32" }, async () => {
+  const { execFileSync } = await import("node:child_process");
+  const output = execFileSync("pwsh", ["-NoProfile", "-File", "scripts/tests/verify_settings_retention.ps1"], { encoding: "utf8", timeout: 30000 });
+  assert.match(output, /PASS: settings reads are retained byte-for-byte/);
+  assert.match(output, /PASS: lost ownership refuses settings evidence writes/);
+  const release = (await loadWorkflows(process.cwd()))["release.yml"];
+  const upload = release.jobs["clean-account-lifecycle"].steps.find((step) => step.name === "Retain lifecycle evidence for every outcome");
+  assert.match(upload.with.path, /sandbox-clean-account-lifecycle-\*/);
+});
+
+test("lifecycle preflight checks the actual Sandbox CLI before using candidates", { skip: process.platform !== "win32" }, async () => {
+  const { spawnSync } = await import("node:child_process");
+  const release = (await loadWorkflows(process.cwd()))["release.yml"];
+  const step = release.jobs["clean-account-lifecycle"].steps.find((entry) => entry.name === "Ensure Windows Sandbox is available");
+  for (const [available, code, expected] of [[false, 0, 1], [true, 1, 1], [true, 0, 0]]) {
+    const result = spawnSync("pwsh", ["-NoProfile", "-Command", `
+      $ErrorActionPreference = 'Stop'
+      function Test-Path { return $true }
+      function Get-Command {
+        [CmdletBinding()]param([string]$Name)
+        if (-not $${available}) { throw 'fixture: wsb.exe unavailable' }
+        return [pscustomobject]@{ Source = 'Test-WsbCli' }
+      }
+      function Test-WsbCli { $global:LASTEXITCODE = ${code}; return '1.0.0-fixture' }
+      ${step.run}
+    `], { encoding: "utf8", timeout: 30000 });
+    assert.equal(result.status, expected, `CLI available=${available} exit=${code}: ${result.stdout}${result.stderr}`);
+  }
+});
+
+test("elevated guest debugging uses a new application-scoped machine override", { skip: process.platform !== "win32" }, async () => {
+  const { execFileSync } = await import("node:child_process");
+  const output = execFileSync("pwsh", ["-NoProfile", "-Command", `
+    $ErrorActionPreference = 'Stop'
+    $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD 'scripts/sandbox/run-lifecycle-in-sandbox.ps1'), [ref]$null, [ref]$null)
+    $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Initialize-LifecycleBrowserDebugging' }, $true)
+    if ($definition) { . ([scriptblock]::Create($definition.Extent.Text)) }
+    else { function Initialize-LifecycleBrowserDebugging { param($Elevated) } }
+    $script:written = @(); $script:existing = $false; $script:keyPresent = $true; $script:keyCreated = $false
+    function Log { param($message) }
+    function Test-Path { [CmdletBinding()]param($LiteralPath) return $script:keyPresent }
+    function Get-ItemProperty { [CmdletBinding()]param($LiteralPath, $Name) if ($script:existing) { return @{ existing = $true } } }
+    function New-Item {
+      [CmdletBinding()]param($Path, [switch]$Force)
+      if ($script:keyPresent) { throw 'Do not recreate an existing registry key with other application overrides' }
+      $script:keyCreated = $true
+    }
+    function New-ItemProperty {
+      [CmdletBinding()]param($Path, $Name, $PropertyType, $Value, [switch]$Force)
+      if ($Force) { throw 'A machine override must not overwrite existing configuration' }
+      $script:written += @{ path=$Path; name=$Name; value=$Value }
+    }
+    Initialize-LifecycleBrowserDebugging $false
+    if ($script:written.Count) { throw 'Non-elevated launch changed machine configuration' }
+    Initialize-LifecycleBrowserDebugging $true
+    if ($script:written.Count -ne 1 -or $script:written[0].name -ne 'Localmotive.exe' -or $script:written[0].value -ne '--remote-debugging-port=10093' -or $script:written[0].path -notlike 'HKLM:*AdditionalBrowserArguments') { throw 'Elevated guest did not configure its application-scoped machine override' }
+    $script:existing = $true; $refused = $false
+    try { Initialize-LifecycleBrowserDebugging $true } catch { $refused = $true }
+    if (-not $refused -or $script:written.Count -ne 1) { throw 'Existing machine override was not preserved' }
+    $script:existing = $false; $script:keyPresent = $false
+    Initialize-LifecycleBrowserDebugging $true
+    if (-not $script:keyCreated -or $script:written.Count -ne 2) { throw 'Missing override key was not initialized' }
+    Write-Host 'PASS: elevated guest uses an app-scoped machine override without overwriting policy'
+  `], { encoding: "utf8", timeout: 30000 });
+  assert.match(output, /PASS: elevated guest uses an app-scoped machine override/);
+});
+
 test("lifecycle preflight restricts stored authentication to an opted-in local run", { skip: process.platform !== "win32" }, async () => {
   const { execFileSync } = await import("node:child_process");
   // Execute the actual preflight condition. Stub only the external CLI.
