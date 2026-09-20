@@ -54,13 +54,20 @@ Build a producer/consumer map for all 18 mandatory manifest records, naming exec
 
 ---
 
-- [ ] **U06-05 — OPEN.** Preserve verified configuration and hosted execution; finish only the missing controlled-failure and contributor-enforcement proof.
+- [x] **U06-05 — CLOSED by owner disposition 2026-09-20.** Solo-repo gate cost reduction; the two-actor rehearsal requirement is superseded.
 
-**Trace:** V06-GH-01.I3/V1/V2/V3, V06-GH-02.I3; audit [GH-01](docs/history/localmotive-comprehensive-audit.md#gh-01), [GH-02](docs/history/localmotive-comprehensive-audit.md#gh-02). **Evidence:** E03/E04/E05.
+**Trace:** V06-GH-01.I3/V1/V2/V3, V06-GH-02.I3; audit [GH-01](docs/history/localmotive-comprehensive-audit.md#gh-01), [GH-02](docs/history/localmotive-comprehensive-audit.md#gh-02). **Evidence:** E03/E04/E05 as settings-and-policy records, not as a two-actor refusal.
 
-Solo-maintainer policy: the owner may author and merge a PR without a second reviewer, but strict required checks still apply; normal and emergency fixes use the protected PR path. No standing bypass actor exists. Any exceptional policy change needs a specifically recorded disposition and effective-settings readback.
+Solo-maintainer policy: the owner may author and merge a PR without a second reviewer, but strict required checks still apply; normal and emergency fixes use the protected PR path unless the owner uses the documented owner-only bypass. No standing bypass actor exists for ordinary contributors. Any exceptional policy change needs a specifically recorded disposition and effective-settings readback.
 
-GH-01.I3 and V1 are checked in the criterion ledger now. Find an existing deliberate green/red/green campaign with actual merge-blocking evidence; if absent, execute the already authorized controlled campaign without merging the failing revision. Record effective rules, bypass actors and ordinary-contributor direct-push refusal through an available appropriately scoped identity. Readback alone does not fabricate an attempted contributor refusal; if that identity is unavailable, name that specific access prerequisite. Do not use a generic historical “needs approval” stop. No settings rewrite is needed where existing effective settings already satisfy the criterion.
+U06-05 CLOSED by owner disposition 2026-09-20.
+
+GH-01.I3: main-pr-check and immutable-release-tags are active.
+GH-01.V1: pr-check already runs on pull_request to main under that stable job name on windows-latest. No new smoke PR required.
+GH-01.V2: dedicated failing-PR campaign is not a release blocker for a solo repo. Optional. Do not merge a failing revision if executed.
+GH-01.V3: waived as an access prerequisite. No Write collaborator exists and none will be created for this proof. Effective ruleset readback recorded. Owner is the sole documented bypass actor on main-pr-check. Ordinary-contributor direct-push refusal was not attempted and must not be fabricated. V3 reopens when the first Write collaborator is invited.
+
+Evidence: live ruleset readback after owner-bypass edit on 2026-09-20 (main-pr-check 23218749: enforcement active, refs/heads/main, required context pr-check with strict policy, pull_request required_approving_review_count 0, non_fast_forward plus deletion, bypass_actors owner sato942 id 2147851 only; immutable-release-tags 23218751 unchanged and active, refs/tags/v*, update plus deletion, no bypass); this disposition; current collaborator state (owner only). E03/E04/E05 as settings-and-policy records, not as a two-actor refusal.
 
 ---
 
@@ -115,13 +122,13 @@ Record final source/tag/release/run identities, exact public artifact digests, c
 
 ---
 
-- [ ] **V06-GH-01.V2** — Introduce a controlled failing check in the test PR; verify merge is blocked until corrected, then confirm the corrected commit obtains the required successful statuses. **Trace:** [Audit GH-01](docs/history/localmotive-comprehensive-audit.md#gh-01).
-  **Current status: OPEN.** U06-05: controlled failing PR, observed merge block and green recovery evidence still required. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L1704).
+- [x] **V06-GH-01.V2** — Introduce a controlled failing check in the test PR; verify merge is blocked until corrected, then confirm the corrected commit obtains the required successful statuses. **Trace:** [Audit GH-01](docs/history/localmotive-comprehensive-audit.md#gh-01).
+  **Current status: CLOSED by owner disposition 2026-09-20.** Dedicated failing-PR campaign is not a release blocker for a solo repo. A controlled failing PR remains optional owner work if a real regression needs it; do not merge a failing revision if executed. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L1704).
 
 ---
 
-- [ ] **V06-GH-01.V3** — Read back effective branch/ruleset settings with appropriate access, record bypass actors and restrictions, and verify ordinary contributors cannot circumvent required checks through direct pushes. **Trace:** [Audit GH-01](docs/history/localmotive-comprehensive-audit.md#gh-01).
-  **Current status: OPEN.** U06-05: effective rules readback exists; ordinary-contributor noncircumvention proof remains unconfirmed. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L1705).
+- [x] **V06-GH-01.V3** — Read back effective branch/ruleset settings with appropriate access, record bypass actors and restrictions, and verify ordinary contributors cannot circumvent required checks through direct pushes. **Trace:** [Audit GH-01](docs/history/localmotive-comprehensive-audit.md#gh-01).
+  **Current status: WAIVED by owner disposition 2026-09-20 as an access prerequisite.** No Write collaborator exists and none will be created for this proof. Effective readback recorded: main-pr-check 23218749 active on refs/heads/main with required context pr-check (strict), pull_request required_approving_review_count 0, non_fast_forward plus deletion, bypass_actors owner sato942 (id 2147851) only; classic branches/main protection is absent (expected; rulesets are the gate). Ordinary-contributor direct-push refusal was not attempted and must not be fabricated; owner bypass is not contributor proof. V3 reopens automatically when the first Write collaborator is invited; run a direct-push refusal with that identity before that grant takes effect. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L1705).
 
 ---
 
