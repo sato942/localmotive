@@ -40,12 +40,17 @@ Build a producer/consumer map for all 18 mandatory manifest records, naming exec
 
 ---
 
-- [ ] **U06-04 — OPEN; BLOCKED-ENVIRONMENT only if no suitable isolated Windows facility can actually run it.** Execute the four required current-candidate legs.
+- [x] **U06-04 — DONE (2026-09-20).** Executed the four required current-candidate legs.
 
 **Trace:** R06-01; V06-GH-04.V3, V06-G-06.I2, V06-GH-03.V1/V3, V06-GH-06.V3; audit [GH-04](docs/history/localmotive-comprehensive-audit.md#gh-04), [release exit criteria](docs/history/localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release).
 
 | Leg | Baseline | Persistence |
-|
+| 1 | v0.4.0 | upgrade + cache |
+| 2 | v0.4.1 | preservation / cache (profiles) |
+| 3 | v0.5.0 | upgrade + mirror |
+| 4 | v0.5.0 | preservation / mirror (SQLite + user-override) |
+
+**Result (2026-09-20, candidate `fb0776b6b499fc4c26121664fe3b7162e0a15d75`):** all four legs PASS on the same installer bytes. Setup SHA-256 `fb21f7d17ab2d88d098fee596e3568b62bf9cf4bb68bc525610a8fb356383b25` (`5119018` bytes). MSI SHA-256 `a9015b926506536c14b993cf89a4b0fe4e7f469cfc24f33db56077f2921de77c` (`8798208` bytes). Inventory SHA-256 `58e82b4116ce9010aa9f58c8c876dc08b5975604776b8527fb1073646c8a7a84` (`artifacts/candidate-inventory-0.6.0.json`). Each leg records exact installed identity (`0.4.0`/`0.4.1`/`0.5.0` before update, `0.6.0` after), strict uninstall outcomes, and `preservation: PASS`. Both cache legs recovered `6/6` seeded settings keys with exact equality including the tuning value (retained digest `2b7ba23c5f06c8b7abef7d93a2c0114f50f838f3f725c97b9cb129d5ff8f8391`). Both mirror legs retained schema `1` with user-override rows (`user_sourced=1`) and the userdata canary. Evidence: `release-evidence/0.6.0/attestations/sandbox-clean-account-lifecycle-upgrade-v0.4.0.{json,log}`, `sandbox-clean-account-lifecycle-upgrade-v0.5.0.{json,log}`, `sandbox-clean-account-lifecycle-preservation-v0.4.1.{json,log,collected-settings.json}`, `sandbox-clean-account-lifecycle-preservation-v0.5.0.{json,log}`. Matrix log: `.hermes-0.6/u06-04-matrix-fb0776b.log`. No boot failure occurred, so no rerun was needed. Slot is free: `wsb.exe list` is empty and the harness removed its owning locks.
 
 ---
 

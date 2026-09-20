@@ -1,53 +1,53 @@
-﻿{
-    "msiPayloadDigest":  "3a736bb9ee2928f02d73e718d51092cdc126e7920c22392eff33f909b9aa4f08",
-    "nsisPayloadDigest":  "7ec790cf67cc70e3051621b6ef36dc494a16f39d8cd35db495dcdb19a4b87e29",
-    "version":  "0.6.0",
-    "finishedAtUtc":  "2026-09-13T00:55:17.0173293Z",
-    "installedDigests":  {
-                             "Preservation upgrade":  "7ec790cf67cc70e3051621b6ef36dc494a16f39d8cd35db495dcdb19a4b87e29",
-                             "Post-update install":  "7ec790cf67cc70e3051621b6ef36dc494a16f39d8cd35db495dcdb19a4b87e29",
-                             "Pre-update install":  "67f70fc399d1c31bcd573390042a49c97e8699beeb21759591b93a678a11ee76",
-                             "MSI fresh install":  "3a736bb9ee2928f02d73e718d51092cdc126e7920c22392eff33f909b9aa4f08",
-                             "NSIS fresh install":  "7ec790cf67cc70e3051621b6ef36dc494a16f39d8cd35db495dcdb19a4b87e29"
-                         },
-    "steps":  [
-                  {
-                      "detail":  "installed version 0.6.0; uninstall removed the executable",
-                      "status":  "PASS",
-                      "name":  "nsis-fresh-install-launch-uninstall"
-                  },
-                  {
-                      "detail":  "installed version 0.6.0; uninstall removed the executable and the product registration",
-                      "status":  "PASS",
-                      "name":  "msi-fresh-install-launch-uninstall"
-                  },
-                  {
-                      "detail":  "executable version 0.5.0 -\u003e 0.6.0",
-                      "status":  "PASS",
-                      "name":  "nsis-update-from-previous-launch-uninstall"
-                  },
-                  {
-                      "detail":  "user-data canary and catalog mirror survived the upgrade; files collected for host verification; executable 0.6.0",
-                      "status":  "PASS",
-                      "name":  "nsis-preservation-from-v0.5.0"
-                  }
-              ],
-    "previousTag":  "v0.5.0",
-    "tag":  "v0.6.0",
-    "schema":  "localmotive.sandbox-lifecycle.v0",
-    "status":  "PASS",
-    "installedPayloadNote":  "Established payload expectations (R09): every NSIS path (fresh, update, preservation) must install one byte-identical executable, and the update must differ from the previous version - both enforced above. The MSI-installed executable is measured and version-verified on its own path; cross-bundler byte identity between the MSI image and the NSIS image is NOT claimed. No claim is made about sidecar files beyond the executable. Functional scope: the installed executable digest recorded here equals the payload digest that scripts/verify_installer_payloads.mjs --functional launches from the extracted installer payloads and evaluates over CDP (navigation-button count, managed-control text, body length); this leg\u0027s own in-sandbox CDP probe is best-effort and may report unavailable, which never upgrades survival into functional qualification.",
-    "coverageNote":  "NSIS and MSI fresh install/launch/uninstall and the NSIS update path with executable version and cross-path digest evidence. Eight-second process survival is a startup smoke, not full functional verification. The preservation step (staged via preserve.json) plants, per flavor, the released baseline\u0027s REAL persistence after the previous install - the v0.5.0-schema catalog mirror with a user override row, or the v0.4.1-era catalog cache record - and requires it to survive the upgrade and a launch smoke. The collected files are verified on the host (R07): the user override rows must survive with their ownership flags and sentinel values (mirror flavor), or the cache record must remain present and parseable (cache flavor).\"",
-    "stage":  "preservation-verification",
-    "preservation":  {
-                         "status":  "PASS",
-                         "output":  "PRESERVE_PASS mirror: schema version 1 intact\r\nPRESERVE_PASS mirror: user override model row recovered with user_sourced=1\r\nPRESERVE_PASS mirror: user override file row recovered with user_sourced=1\r\nPRESERVE_PASS userdata: canary content intact"
-                     },
-    "sourceRevision":  "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
-    "harnessRevision":  "8924c0436b895d906a06d2e32d2b788e2655a737",
-    "candidateDigests":  {
-                             "currentSetup":  "8398cf8a25949049b939e33aa2613330e41e7882aa951b868d064bc4fbc73bef",
-                             "currentMsi":  "2c00e0d3f9e2dc050fd3ec5fd02bc9f6b0923605b6d715b20a63f8292e30d11b"
-                         },
-    "candidateInventorySha256":  "73e758e3e0a6665719aa82eff0a0fd177e53807674a25e91aae6038dc51e3b00"
+{
+  "msiPayloadDigest": "6cb345706fa7f91f3c35f3223e7fdc095c8ee1865ae28350df99d21401b54157",
+  "nsisPayloadDigest": "d9a68b37fd8a599f102025c72433dba2d5de4c907cbe40c77c0201517110bf34",
+  "version": "0.6.0",
+  "finishedAtUtc": "2026-09-20T11:19:55.3138825Z",
+  "installedDigests": {
+    "Preservation upgrade": "d9a68b37fd8a599f102025c72433dba2d5de4c907cbe40c77c0201517110bf34",
+    "Post-update install": "d9a68b37fd8a599f102025c72433dba2d5de4c907cbe40c77c0201517110bf34",
+    "Pre-update install": "67f70fc399d1c31bcd573390042a49c97e8699beeb21759591b93a678a11ee76",
+    "MSI fresh install": "6cb345706fa7f91f3c35f3223e7fdc095c8ee1865ae28350df99d21401b54157",
+    "NSIS fresh install": "d9a68b37fd8a599f102025c72433dba2d5de4c907cbe40c77c0201517110bf34"
+  },
+  "steps": [
+    {
+      "detail": "installed version 0.6.0; uninstall removed the executable",
+      "status": "PASS",
+      "name": "nsis-fresh-install-launch-uninstall"
+    },
+    {
+      "detail": "installed version 0.6.0; uninstall removed the executable and the product registration",
+      "status": "PASS",
+      "name": "msi-fresh-install-launch-uninstall"
+    },
+    {
+      "detail": "executable version 0.5.0 -> 0.6.0",
+      "status": "PASS",
+      "name": "nsis-update-from-previous-launch-uninstall"
+    },
+    {
+      "detail": "user-data canary and catalog mirror survived the upgrade; files collected for host verification; executable 0.6.0",
+      "status": "PASS",
+      "name": "nsis-preservation-from-v0.5.0"
+    }
+  ],
+  "previousTag": "v0.5.0",
+  "tag": "v0.6.0",
+  "schema": "localmotive.sandbox-lifecycle.v0",
+  "status": "PASS",
+  "installedPayloadNote": "Established payload expectations (R09): every NSIS path (fresh, update, preservation) must install one byte-identical executable, and the update must differ from the previous version - both enforced above. The MSI-installed executable is measured and version-verified on its own path; cross-bundler byte identity between the MSI image and the NSIS image is NOT claimed. No claim is made about sidecar files beyond the executable. Functional scope: the installed executable digest recorded here equals the payload digest that scripts/verify_installer_payloads.mjs --functional launches from the extracted installer payloads and evaluates over CDP (navigation-button count, managed-control text, body length); this leg's own in-sandbox CDP probe is best-effort and may report unavailable, which never upgrades survival into functional qualification.",
+  "coverageNote": "NSIS and MSI fresh install/launch/uninstall and the NSIS update path with executable version and cross-path digest evidence. Eight-second process survival is a startup smoke, not full functional verification. The preservation step (staged via preserve.json) plants, per flavor, the released baseline's REAL persistence after the previous install - the v0.5.0-schema catalog mirror with a user override row, or the v0.4.1-era catalog cache record - and requires it to survive the upgrade and a launch smoke. The collected files are verified on the host (R07): the user override rows must survive with their ownership flags and sentinel values (mirror flavor), or the cache record must remain present and parseable (cache flavor).\"",
+  "stage": "preservation-verification",
+  "preservation": {
+    "status": "PASS",
+    "output": "PRESERVE_PASS mirror: schema version 1 intact\r\nPRESERVE_PASS mirror: user override model row recovered with user_sourced=1\r\nPRESERVE_PASS mirror: user override file row recovered with user_sourced=1\r\nPRESERVE_PASS userdata: canary content intact"
+  },
+  "sourceRevision": "fb0776b6b499fc4c26121664fe3b7162e0a15d75",
+  "harnessRevision": "fb0776b6b499fc4c26121664fe3b7162e0a15d75",
+  "candidateDigests": {
+    "currentSetup": "fb21f7d17ab2d88d098fee596e3568b62bf9cf4bb68bc525610a8fb356383b25",
+    "currentMsi": "a9015b926506536c14b993cf89a4b0fe4e7f469cfc24f33db56077f2921de77c"
+  },
+  "candidateInventorySha256": "58e82b4116ce9010aa9f58c8c876dc08b5975604776b8527fb1073646c8a7a84"
 }
