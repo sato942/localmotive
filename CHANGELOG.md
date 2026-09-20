@@ -95,6 +95,17 @@ in `TODO-0.6.md`; accepted historical evidence remains under `docs/history/`.
   freshness (sequence/expiry) with replay refusal, and an SBOM workflow
   artifact.
 
+### Settings sessions and downloads
+
+- Keeps the settings-session WebView2 profile outside the mapped share and
+  preserves settings across owned lifecycle sessions, including graceful-close
+  errors. The owned app joins cleanly after close errors.
+- Owns the download cancellation fixture through resume.
+- Discards legacy benchmark successes cancelled before finalization. Publishes
+  the benchmark slot before client construction so Cancel works during
+  construction. Refuses server and tuning starts while an abandoned benchmark
+  slot is held.
+
 ### Honesty
 
 - The UI states only what is established: shard completeness is not a
