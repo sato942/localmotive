@@ -132,13 +132,13 @@ Record final source/tag/release/run identities, exact public artifact digests, c
 
 ---
 
-- [ ] **V06-GH-02.I3** — Protect released version tags against updates and deletion, document one-time tag creation, and require a new prerelease or patch version when source changes after an earlier candidate. **Trace:** [Audit GH-02](docs/history/localmotive-comprehensive-audit.md#gh-02).
-  **Current status: OPEN.** PARTIAL / U06-05 and U06-06: active immutable-tag settings accepted; tag-history/final-identity policy disposition remains open. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L1724).
+- [x] **V06-GH-02.I3** — CLOSED 2026-09-20 on live readback + standing policy. Protect released version tags against updates and deletion, document one-time tag creation, and require a new prerelease or patch version when source changes after an earlier candidate. **Trace:** [Audit GH-02](docs/history/localmotive-comprehensive-audit.md#gh-02).
+  **Closed:** live `GET /repos/sato942/localmotive/rulesets/23218751` returns `immutable-release-tags`, enforcement `active`, target `refs/tags/v*`, rules `update` + `deletion`, `bypass_actors` empty, `current_user_can_bypass` never. Standing policy: released version tags (`refs/tags/v*`) are created once and never updated or deleted. If source changes after a candidate or a failed attempt, use a new prerelease or patch name. Do not retarget a used tag. `immutable-release-tags` is the gate. No bypass actor. No tag was published by this close. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L1724).
 
 ---
 
 - [ ] **V06-GH-02.V3** — Run a complete candidate flow and compare checkout revisions, inventory, packaged evidence and publication metadata; read back the effective tag-update/deletion protection. **Trace:** [Audit GH-02](docs/history/localmotive-comprehensive-audit.md#gh-02).
-  **Current status: OPEN.** U06-02/U06-06/U06-08: full candidate identities and publication metadata must agree. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L1731).
+  **Current status: OPEN.** Split 2026-09-20: the tag-protection readback sub-ask is satisfied by the same live JSON as V06-GH-02.I3 (`immutable-release-tags` 23218751, active, `refs/tags/v*`, `update` + `deletion`, no bypass). The complete candidate flow vs checkout / inventory / packaged evidence / publication metadata stays OPEN, blocked on U06-06 then U06-08. No fixture or older release stands in as publication proof. U06-02/U06-06/U06-08: full candidate identities and publication metadata must agree. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L1731).
 
 ---
 
