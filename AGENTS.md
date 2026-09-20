@@ -139,6 +139,9 @@ Untrusted pull requests run only on the ephemeral `windows-latest` runner with
 read-only permissions and no secrets. Trusted main pushes use the self-hosted
 runner. Preserve the required `pr-check` name, main-branch protection, and
 force-push/deletion restrictions. Workflow `needs` does not replace branch rules.
+Keep `main` plus one active lane branch. Do not create a branch per task or
+per agent run. Delete a merged branch promptly; keep only branches with an
+open PR or a live worktree.
 
 Start the self-hosted runner through `localmotive-control/start-runner.ps1`.
 Keep its `CARGO_HOME` and `RUSTUP_HOME` separate from the owner's toolchains.
