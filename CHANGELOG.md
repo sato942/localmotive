@@ -16,6 +16,9 @@ in `TODO-0.6.md`; accepted historical evidence remains under `docs/history/`.
 - Reduces release verification from six jobs to three. Checks, packaging,
   lifecycle tests, and qualification use one workspace without intermediate
   artifact transfers. Qualification and explicit publication remain separate.
+- Ships unsigned as standing policy (owner order 2026-09-20). No code-signing
+  step exists in the pipeline and none is pursued. Release notes disclose
+  SmartScreen behavior and SHA-256 checksums.
 - Validates downloaded evidence directly instead of overlaying checkout copies.
   Missing current-run lifecycle records cannot fall back to committed evidence.
 - Removes obsolete diagnostic scripts and repeated test/validator execution.

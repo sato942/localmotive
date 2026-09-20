@@ -1344,18 +1344,12 @@ test("R12: the published-inventory consumer fails closed on schema, set, and ide
   );
 });
 
-test("signed build configuration requires certificate-store identity and timestamp verification", async () => {
-  const config = JSON.parse(await readFile(
-    join(process.cwd(), "src-tauri", "tauri.signing.conf.json"),
-    "utf8",
-  ));
-  const script = await readFile(join(process.cwd(), "scripts", "sign-windows.ps1"), "utf8");
-  assert.match(config.bundle.windows.signCommand, /sign-windows\.ps1/);
-  assert.match(script, /LOCALMOTIVE_SIGNING_THUMBPRINT/);
-  assert.match(script, /LOCALMOTIVE_TIMESTAMP_URL/);
-  assert.match(script, /verify \/pa \/all \/v/);
-  assert.match(script, /TimeStamperCertificate/);
-  assert.doesNotMatch(script, /Export-PfxCertificate|ConvertTo-SecureString/);
+test("unsigned release policy keeps no signing capability in the tree", async () => {
+  await assert.rejects(
+    readFile(join(process.cwd(), "src-tauri", "tauri.signing.conf.json"), "utf8"),
+    /ENOENT/,
+  );
+  await assert.rejects(readFile(join(process.cwd(), "scripts", "sign-windows.ps1"), "utf8"), /ENOENT/);
 });
 
 test("hardware qualify workflow pins every remote action and owns the host proof", async () => {

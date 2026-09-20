@@ -349,7 +349,7 @@ Other Windows hardware may work but remains untested and unsupported until packa
 
 macOS remains out of scope for this matrix.
 
-Code signing status is DEFERRED_BY_OWNER: Authenticode is postponed until the project is more mature (owner order 2026-09-09). No paid cert. SignPath stays pending or ignored and blocks no gate.
+Code signing status is UNSIGNED-BY-POLICY: releases ship without Authenticode (owner order 2026-09-20). No certificate purchase and no signing service. Signing blocks no gate because no signing step exists.
 
 Windows installers remain honestly unsigned with disclosure. Windows SmartScreen can show a warning when you start an unsigned file. Unsigned artifacts ship as full releases, not GitHub Pre-releases, so the current tip stays visible as Latest.
 

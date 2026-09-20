@@ -127,7 +127,7 @@ jobs:
           VERIFY_RUN_ID: ${{ inputs.verify_run_id }}
         run: |
           node scripts/verify_release_promotion.mjs --qualified qualified --tag "v${VERSION}" --expect-source "$RESOLVED_SHA" --verify-run "$VERIFY_RUN_ID" --report "promotion-check-${VERSION}.json"
-          echo "Honestly unsigned full release: Authenticode is DEFERRED_BY_OWNER; no signature is claimed. SmartScreen may warn."
+          echo "Honestly unsigned full release: Authenticode is not pursued; no signature is claimed. SmartScreen may warn."
 
       - name: Retain the promotion decision record
         if: always()
@@ -213,7 +213,7 @@ jobs:
             echo
             echo "Target scope: Windows 10 and Windows 11 x64. See the qualification limitations above."
             echo ""
-            echo "This full release is honestly unsigned: Authenticode is DEFERRED_BY_OWNER, no signature is claimed, and Windows SmartScreen may warn. Verify the published SHA-256 checksums before use."
+            echo "This full release is honestly unsigned: no signature is pursued or claimed, and Windows SmartScreen may warn. Verify the published SHA-256 checksums before use."
           } > release-notes.md
 
       - name: Publish the explicitly authorized honestly unsigned full release

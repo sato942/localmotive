@@ -16,8 +16,7 @@
     "qualification:verify": "node scripts/verify_qualification.mjs",
     "research:verify-anchor": "node scripts/verify_research_anchor.mjs",
     "check": "npm test && npm run catalog:validate && npm run branding:verify && npm run research:verify-anchor && npm run qualification:verify && npm run icon:verify && npm run build",
-    "tauri": "tauri",
-    "tauri:build:signed": "tauri build --config src-tauri/tauri.signing.conf.json"
+    "tauri": "tauri"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

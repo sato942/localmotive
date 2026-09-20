@@ -122,7 +122,7 @@ These exclusions are effective now. They do not depend on another general approv
 | D06-04 | Physical same-model multi-GPU coverage in V06-RT-09.V3 and V06-G-05.I2 when hardware is available; [RT-09 audit](docs/history/localmotive-comprehensive-audit.md#rt-09) | DEFERRED-OWNER for unprovided multi-GPU rigs | Existing deterministic identity tests and supported-host evidence remain accepted. No claim that physical identical-card mapping was exercised; use stable adapter identity and display unmeasured scope. |
 | D06-05 | Hardware-dependent independent distributions within V06-S-25.I3 | DEFERRED-OWNER only for measurements requiring unprovided hosts | Do not invent population accuracy or portability. The independent dataset/program itself remains BLOCKED-INPUT if missing; available release queue/failure/retention metrics are executable under U06-07. |
 
-Human Narrator/NVDA listening and authorized cloud/HF account scenarios in G-05.I3 are **not** reclassified as hardware coverage. Their automated subset is accepted; their remaining scope must be executed or receive a policy-eligible, separately reasoned disposition. Optional SignPath/Authenticode remains the existing deferred signing decision, with unsigned/SmartScreen/checksum disclosure. No new signing prerequisite is introduced.
+Human Narrator/NVDA listening and authorized cloud/HF account scenarios in G-05.I3 are **not** reclassified as hardware coverage. Their automated subset is accepted; their remaining scope must be executed or receive a policy-eligible, separately reasoned disposition. Releases ship unsigned as standing policy with unsigned/SmartScreen/checksum disclosure. No signing step exists and no signing prerequisite is introduced.
 
 ## Finite execution packages
 
