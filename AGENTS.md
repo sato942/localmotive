@@ -60,6 +60,10 @@ Cover malformed input, rejection, interruption, and relevant boundary values.
 Do not delete a failing safety test or suppress warnings to obtain a pass.
 Remove obsolete tests only when the approved behavior is removed or retained
 coverage demonstrably replaces them.
+Restore a single file from a copied backup, never `git checkout -- <file>`
+in a dirty tree. A checkout reverts unrelated baseline work and breaks the build.
+Count a harness or reader failure as a tooling failure, never as a product
+RED or GREEN. Fix the reader and rerun.
 
 Rust tests belong beside their implementation. Pure TypeScript tests belong in
 `src/model.test.ts`. Component tests belong beside their components.
@@ -149,8 +153,9 @@ through `scripts/verify_versions.mjs`. Add user-facing changes to `CHANGELOG.md`
 qualified bundle before publishing those same bytes. Never rebuild during promotion.
 Retain artifact inventory, checksums, native lifecycle/preservation evidence,
 and public asset readback. Do not replace current-candidate evidence with old records.
-Disclose unsigned artifacts and SmartScreen limitations when signing is unavailable.
-Do not sign or publish without explicit authority for that action.
+Disclose unsigned artifacts and SmartScreen limitations in every release.
+No signing step exists and none is pursued. Do not publish without explicit
+authority for that action.
 
 ## Catalog and project records
 
@@ -159,7 +164,9 @@ Hugging Face. The application also keeps a local SQLite mirror and user override
 that mirror does not authorize downloads. Follow `catalog/README.md` for schema
 changes, signing, backward compatibility, and curation.
 
-Use `TODO-0.6.md` as the current tracker. Consult
+Use `TODO.md` as the current tracker. Use one tracker only and do not version
+its name. Never use kanban boards, kanban tools, or kanban task protocols for
+this project. Consult
 `docs/history/localmotive-comprehensive-audit.md` for the traced findings.
 Record actual regression and verification evidence in the current ledger.
 Do not treat checkboxes as proof. Do not create another release tracker.
