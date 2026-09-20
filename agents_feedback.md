@@ -30,3 +30,16 @@ AGENTS.md; the old kanban-environment entries below are void.
 - Release signing pursuit dropped. Signing capability deleted from the tree.
 - Branches trimmed to main plus the active lane. Dependabot PRs closed.
 - Trackers merged into TODO.md. Freeze-9 handoff removed by owner order.
+
+## Investigation 2026-09-20: isolated Windows environment blocker
+
+- Host reports Windows 10 IoT Enterprise, build 26100. Sandbox binaries
+  exist. A hypervisor runs on this host.
+- Sandbox booted here before (2026-09-15 evidence). The recorded failure was
+  CO_E_APPSINGLEUSE: a second instance cannot start while one runs.
+- A Sandbox server held the single slot since 2026-09-15 09:20 (PID 62780),
+  an orphan from the September test campaign. Terminated it by PID with
+  MSYS_NO_PATHCONV=1 taskkill. Zero Sandbox processes remain.
+- Blocker removed. Next step: run the U06-04 lifecycle legs while the slot
+  is free. Note: taskkill needs MSYS_NO_PATHCONV=1 under Git Bash, else
+  /PID mangles into a path.
