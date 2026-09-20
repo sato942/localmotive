@@ -1,7 +1,7 @@
 // FE-05.V3 packaged verification: benchmark profile A, leave to edit the
 // profile and start B, benchmark B, compare both records with distinct
-// provenance, and recover them through the supported saved-manifest route
-// (persisted manifests + "Add anchor" + "Replay manifest").
+// provenance, and recover them through the supported saved-manifest replay
+// route.
 //
 // Usage: node scripts/g05_fe05v3.mjs <debugPort>
 import { attach } from "./lib/cdp_client.mjs";
@@ -24,8 +24,6 @@ const BENCH_DIR = join(HOME, "AppData", "Roaming", "io.github.localmotive.app", 
 
 const clickText = (text) =>
   evaluate(`(() => { const b = [...document.querySelectorAll("button")].find(x => (x.textContent ?? "").trim() === ${JSON.stringify(text)} && !x.disabled); if (!b) return false; b.dispatchEvent(new MouseEvent("click", { bubbles: true })); return true; })()`);
-const buttonState = (text) =>
-  evaluate(`(() => { const b = [...document.querySelectorAll("button")].find(x => (x.textContent ?? "").trim() === ${JSON.stringify(text)}); return b ? { present: true, disabled: b.disabled } : { present: false, disabled: null }; })()`);
 const nav = (label) => clickText(label);
 const status = () => evaluate(`window.__TAURI_INTERNALS__.invoke("server_status")`);
 const setAriaInput = (ariaLabel, value) =>
@@ -36,8 +34,6 @@ const readAriaValue = (ariaLabel) =>
   evaluate(`(() => { const input = [...document.querySelectorAll("input,textarea")].find(x => (x.getAttribute("aria-label") ?? "") === ${JSON.stringify(ariaLabel)}); return input ? input.value : null; })()`);
 const panelResultText = () =>
   evaluate(`(() => { const section = document.querySelector("section[aria-labelledby=benchmark-v2-title]"); return section ? (section.innerText || "").replace(/\\s+/g, " ").slice(0, 1400) : null; })()`);
-const messageText = () =>
-  evaluate(`(() => (document.querySelector(".evidence-message")?.innerText ?? "").replace(/\\s+/g, " ").trim())()`);
 const waitFor = async (predicate, tries = 60, stepMs = 1000) => {
   for (let i = 0; i < tries; i += 1) {
     await settle(stepMs);
@@ -75,7 +71,7 @@ if (!st.running) {
 }
 check("fe05v3.baseline.reaches-live", st.running === true, `pid=${st.pid}`);
 
-// ---------- Profile A: benchmark and anchor ----------
+// ---------- Profile A: benchmark ----------
 await nav("Benchmark");
 await settle(1200);
 const profileNameA = await evaluate(`(() => { const label = [...document.querySelectorAll("label")].find(x => (x.textContent ?? "").includes("Profile name")); return label?.querySelector("input")?.value ?? ""; })()`);
@@ -93,11 +89,6 @@ const measuredA = /[0-9]+\.[0-9]+ tok\/s/.test(panelA ?? "");
 check("fe05v3.run-a-measured", runAClicked === true && terminalA && measuredA, `clicked=${runAClicked} measured=${measuredA}`);
 const manifestsA = manifestsWithWorkload("fe05v3-a");
 check("fe05v3.run-a-manifest-persisted", manifestsA.length >= 1, `count=${manifestsA.length} path=${manifestsA[0]?.path ?? "none"}`);
-const setEstimateA = await setNamedInput("Uncalibrated estimate", "900");
-await settle(300);
-const anchorAClicked = await clickText("Add anchor");
-const anchorAMessage = await waitFor(async () => /Calibration anchor persisted/i.test(await messageText()), 20, 500);
-check("fe05v3.run-a-anchor-from-manifest", setEstimateA === true && anchorAClicked === true && anchorAMessage, `message=${JSON.stringify(await messageText())}`);
 
 // ---------- Edit the profile and start B ----------
 await nav("Profile");
@@ -116,7 +107,7 @@ const liveB = await waitFor(async () => (await status()).running === true, 90);
 const stB = await status();
 check("fe05v3.profile-b-started", liveB && stB.pid !== st.pid, `pidA=${st.pid} pidB=${stB.pid}`);
 
-// ---------- Profile B: benchmark and anchor ----------
+// ---------- Profile B: benchmark ----------
 await nav("Benchmark");
 await settle(1200);
 await setAriaInput("Benchmark workload ID", "fe05v3-b");
@@ -155,16 +146,6 @@ check(
 );
 
 // ---------- Recovery through the supported saved-manifest route ----------
-await setNamedInput("Uncalibrated estimate", "1500");
-await settle(300);
-const anchorBClicked = await clickText("Add anchor");
-const anchorBMessage = await waitFor(async () => /Calibration anchor persisted/i.test(await messageText()), 20, 500);
-check("fe05v3.run-b-anchor-from-manifest", anchorBClicked === true && anchorBMessage, `message=${JSON.stringify(await messageText())}`);
-const records = keyB
-  ? await evaluate(`window.__TAURI_INTERNALS__.invoke("load_calibration_records", { compatibilityKey: ${JSON.stringify(keyB)} })`)
-  : null;
-const anchorsB = Array.isArray(records?.anchors) ? records.anchors : [];
-check("fe05v3.anchor-records-recoverable", anchorsB.length >= 1 && anchorsB.every((a) => typeof a.sourceRunId === "string" && a.sourceRunId.length > 0), `anchors=${anchorsB.length} keyB=${String(keyB).slice(0, 20)}`);
 const replayed = await clickText("Replay manifest");
 const replayRoundtrip = await waitFor(async () => (await readAriaValue("Benchmark workload ID")) === "fe05v3-b", 10, 500);
 check("fe05v3.replay-manifest-route", replayed === true && replayRoundtrip, `workload=${await readAriaValue("Benchmark workload ID")}`);

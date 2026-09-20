@@ -1,0 +1,616 @@
+--- before/src-tauri/src/core.rs
++++ after/src-tauri/src/core.rs
+@@ -2286,30 +2286,6 @@
+         .ok_or_else(|| "llama-server response did not include generation throughput".into())
+ }
+ 
+-fn completion_request(
+-    client: &crate::local_client::LocalHttpClient,
+-    tokens: u32,
+-) -> Result<f64, String> {
+-    // The legacy benchmark path uses the centralized local client (audit
+-    // MT-06): profile TLS/API-key configuration applies, responses are
+-    // bounded, and the deadline covers the whole operation.
+-    let body = serde_json::json!({
+-        "prompt": "Write a detailed technical explanation of speculative decoding, including verification, acceptance, and performance tradeoffs.",
+-        "n_predict": tokens,
+-        "temperature": 0,
+-        "seed": 42,
+-        "ignore_eos": true,
+-        "stream": false
+-    });
+-    let (status, bytes) = client.post_json("/completion", &body, LEGACY_BENCH_TIMEOUT)?;
+-    if status != 200 {
+-        return Err(format!("Benchmark request failed: HTTP {status}"));
+-    }
+-    let payload = String::from_utf8(bytes)
+-        .map_err(|_| "Benchmark response was not valid UTF-8".to_string())?;
+-    parse_tps(&payload)
+-}
+-
+ fn completion_request_cancellable(
+     client: &crate::local_client::LocalHttpClient,
+     tokens: u32,
+@@ -2343,22 +2319,8 @@
+     Ok(())
+ }
+ 
+-pub fn benchmark_server(
+-    client: &crate::local_client::LocalHttpClient,
+-    tokens: u32,
+-    repeats: u16,
+-) -> Result<BenchmarkSummary, String> {
+-    validate_benchmark_options(tokens, repeats)?;
+-    completion_request(client, tokens.min(64))?;
+-    let mut samples = Vec::new();
+-    for _ in 0..repeats {
+-        samples.push(completion_request(client, tokens)?);
+-    }
+-    summarize_benchmark(samples, tokens, repeats)
+-}
+-
+ /// Whole-operation deadline for one legacy benchmark generation.
+-const LEGACY_BENCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
++pub(crate) const LEGACY_BENCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+ 
+ /// The cancellable benchmark the tuner uses: identical measurements, but
+ /// every read waits in short slices and checks the cancellation flag, so a
+@@ -2437,7 +2399,7 @@
+     fn benchmark_rejects_unbounded_tokens_before_any_http_request() {
+         use std::io::{Read, Write};
+         use std::sync::Arc;
+-        for cancellable in [false, true] {
++        for tokens in [0, u32::MAX] {
+             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+             let port = listener.local_addr().unwrap().port();
+             listener.set_nonblocking(true).unwrap();
+@@ -2464,11 +2426,7 @@
+                 requests
+             });
+             let client = crate::local_client::LocalHttpClient::plain("127.0.0.1", port).unwrap();
+-            let result = if cancellable {
+-                benchmark_server_cancellable(&client, u32::MAX, 1, &AtomicBool::new(false))
+-            } else {
+-                benchmark_server(&client, u32::MAX, 1)
+-            };
++            let result = benchmark_server_cancellable(&client, tokens, 1, &AtomicBool::new(false));
+             stop.store(true, Ordering::Relaxed);
+             let requests = server.join().unwrap();
+             assert_eq!(result.unwrap_err(), "Tokens must be between 64 and 4096");
+--- before/src-tauri/src/lib.rs
++++ after/src-tauri/src/lib.rs
+@@ -123,7 +123,7 @@
+ pub(crate) struct AppState {
+     server: Mutex<Option<ManagedServer>>,
+     tuning: Mutex<Option<Arc<AtomicBool>>>,
+-    benchmark: Mutex<Option<Arc<AtomicBool>>>,
++    benchmark: Arc<Mutex<Option<Arc<AtomicBool>>>>,
+     /// Last validated catalog shown to the frontend. `None` means use bundled.
+     catalog: Mutex<Option<catalog::Catalog>>,
+     /// Cancel flags for in-flight downloads, keyed by normalized target path.
+@@ -2420,7 +2420,7 @@
+         write_test_gguf_with_identity(path, "llama", &[]);
+     }
+ 
+-    fn launch_validation_fixture() -> LaunchValidation {
++    pub(crate) fn launch_validation_fixture() -> LaunchValidation {
+         LaunchValidation {
+             runtime: RuntimeCapabilities {
+                 path: "llama-server.exe".into(),
+--- before/src-tauri/src/measurement_service.rs
++++ after/src-tauri/src/measurement_service.rs
+@@ -55,7 +55,16 @@
+     repeats: u16,
+     state: tauri::State<'_, AppState>,
+ ) -> Result<BenchmarkSummary, String> {
++    run_legacy_benchmark(tokens, repeats, &state).await
++}
++
++async fn run_legacy_benchmark(
++    tokens: u32,
++    repeats: u16,
++    state: &AppState,
++) -> Result<BenchmarkSummary, String> {
+     core::validate_benchmark_options(tokens, repeats)?;
++    let reservation = reserve_operation(&state.operations, OperationOwner::Benchmark)?;
+     let server = {
+         let mut slot = state
+             .server
+@@ -63,15 +72,43 @@
+             .map_err(|_| "Server state is unavailable".to_string())?;
+         validated_server_snapshot(&mut slot, "benchmarking")?
+     };
+-    // The legacy warm measurement blocks on loopback requests: it runs on a
+-    // blocking worker instead of the main thread or async executor
+-    // (audit IPC-01 I4).
+-    tauri::async_runtime::spawn_blocking(move || {
+-        let client = local_client(&server.profile)?;
+-        core::benchmark_server(&client, tokens, repeats)
++    let cancelled = Arc::new(AtomicBool::new(false));
++    let slot = state.benchmark.clone();
++    let signal = cancelled.clone();
++    // Client construction, requests, drain and final client drop must stay
++    // off the async executor. Publish only after construction succeeds.
++    let client = tauri::async_runtime::spawn_blocking(move || {
++        publish_benchmark_slot(&slot, signal, || local_client(&server.profile))
+     })
+     .await
+-    .map_err(|error| format!("Benchmark task failed: {error}"))?
++    .map_err(|error| format!("Benchmark client task failed: {error}"))??;
++    let run_client = client.clone();
++    let result = tauri::async_runtime::spawn_blocking(move || {
++        core::benchmark_server_cancellable(&run_client, tokens, repeats, &cancelled)
++    })
++    .await
++    .map_err(|error| format!("Benchmark task failed: {error}"));
++    // Keep both ownership slots until every request exits, including when
++    // the measurement task fails. Cancellation alone does not end its worker.
++    tauri::async_runtime::spawn_blocking(move || {
++        drain_owned_workers(
++            &client,
++            core::LEGACY_BENCH_TIMEOUT.saturating_add(WORKER_TEARDOWN_SLACK),
++        );
++    })
++    .await
++    .map_err(|error| format!("Benchmark drain task failed: {error}"))?;
++    *state
++        .benchmark
++        .lock()
++        .map_err(|_| "Benchmark state is unavailable")? = None;
++    let result = result??;
++    if !reservation.is_current() {
++        return Err(
++            "The managed server changed during the benchmark; the result was discarded.".into(),
++        );
++    }
++    Ok(result)
+ }
+ 
+ #[derive(Clone, Debug, Serialize)]
+@@ -660,6 +697,10 @@
+ 
+ #[tauri::command]
+ pub(crate) fn cancel_benchmark(state: tauri::State<'_, AppState>) -> Result<(), String> {
++    request_benchmark_cancellation(&state)
++}
++
++fn request_benchmark_cancellation(state: &AppState) -> Result<(), String> {
+     let active = state
+         .benchmark
+         .lock()
+@@ -1126,3 +1167,330 @@
+         );
+     }
+ }
++
++#[cfg(test)]
++mod legacy_ownership_tests {
++    use super::*;
++    use crate::{proc, ManagedServer};
++    use std::fs;
++    use std::io::{BufReader, Read, Write};
++    use std::net::TcpListener;
++    use std::path::PathBuf;
++    use std::process::Stdio;
++    use std::sync::atomic::AtomicUsize;
++    use std::sync::mpsc::{self, Receiver};
++    use std::time::Instant;
++
++    const FIXTURE_ROOT: &str = "LOCALMOTIVE_BENCH_FIXTURE_ROOT";
++    const WAIT: Duration = Duration::from_secs(30);
++
++    fn wait_until(mut ready: impl FnMut() -> bool) {
++        let start = Instant::now();
++        while !ready() {
++            assert!(start.elapsed() < WAIT, "fixture transition timed out");
++            std::thread::sleep(Duration::from_millis(10));
++        }
++    }
++
++    // Parent tests invoke this entry point as their contained child. It owns
++    // the listener, so the process and HTTP lifetime are the same resource.
++    #[test]
++    #[ignore = "contained HTTP fixture; invoked explicitly by legacy ownership tests"]
++    fn fixture_server() {
++        let root = PathBuf::from(std::env::var_os(FIXTURE_ROOT).expect("fixture root"));
++        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
++        listener.set_nonblocking(true).unwrap();
++        fs::write(
++            root.join("port.tmp"),
++            listener.local_addr().unwrap().port().to_string(),
++        )
++        .unwrap();
++        fs::rename(root.join("port.tmp"), root.join("port")).unwrap();
++        let count = AtomicUsize::new(0);
++        std::thread::scope(|scope| {
++            let mut connections = Vec::new();
++            while !root.join("shutdown").exists() {
++                let (mut stream, _) = match listener.accept() {
++                    Ok(connection) => connection,
++                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
++                        std::thread::sleep(Duration::from_millis(10));
++                        continue;
++                    }
++                    Err(error) => panic!("fixture accept: {error}"),
++                };
++                assert!(connections.len() < 64, "fixture request budget exceeded");
++                let root = &root;
++                let count = &count;
++                connections.push(scope.spawn(move || {
++                    stream.set_nonblocking(false).unwrap();
++                    stream.set_read_timeout(Some(WAIT)).unwrap();
++                    stream.set_write_timeout(Some(WAIT)).unwrap();
++                    let mut reader = BufReader::new(stream.try_clone().unwrap());
++                    let mut header = Vec::new();
++                    while header.len() < 16 * 1024 && !header.ends_with(b"\r\n\r\n") {
++                        let mut byte = [0];
++                        if reader.read_exact(&mut byte).is_err() {
++                            return;
++                        }
++                        header.push(byte[0]);
++                    }
++                    assert!(header.ends_with(b"\r\n\r\n"));
++                    let header = String::from_utf8(header).unwrap();
++                    assert!(header.starts_with("POST /completion HTTP/1.1\r\n"));
++                    let length = header.lines().find_map(|line| {
++                        let (name, value) = line.split_once(':')?;
++                        name.eq_ignore_ascii_case("content-length")
++                            .then(|| value.trim().parse::<usize>().unwrap())
++                    }).unwrap();
++                    assert!(length <= 16 * 1024);
++                    let mut body = vec![0; length];
++                    reader.read_exact(&mut body).unwrap();
++                    let _: serde_json::Value = serde_json::from_slice(&body).unwrap();
++                    let index = count.fetch_add(1, Ordering::SeqCst) + 1;
++                    fs::write(root.join(format!("request-{index}")), b"read").unwrap();
++                    while !root.join("release").exists() && !root.join("shutdown").exists() {
++                        std::thread::sleep(Duration::from_millis(10));
++                    }
++                    if root.join("shutdown").exists() {
++                        return;
++                    }
++                    let body = r#"{"timings":{"predicted_per_second":100.0}}"#;
++                    let response = format!(
++                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
++                        body.len()
++                    );
++                    // Cancellation can close the receiving socket first.
++                    let _ = stream.write_all(response.as_bytes());
++                }));
++            }
++            for connection in connections {
++                connection.join().unwrap();
++            }
++        });
++    }
++
++    struct Fixture {
++        state: Arc<AppState>,
++        root: PathBuf,
++    }
++
++    impl Fixture {
++        fn new() -> Self {
++            let root = (0..16)
++                .find_map(|_| {
++                    let path = std::env::temp_dir().join(format!(
++                        "localmotive-benchmark-owner-{}-{}",
++                        std::process::id(),
++                        rand::random::<u64>()
++                    ));
++                    match fs::create_dir(&path) {
++                        Ok(()) => Some(path),
++                        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
++                        Err(error) => panic!("fixture directory: {error}"),
++                    }
++                })
++                .expect("unique fixture directory");
++            let fixture = Self {
++                state: Arc::new(AppState::default()),
++                root,
++            };
++            let log = fs::File::create(fixture.root.join("child.log")).unwrap();
++            let mut command = proc::hidden_command(std::env::current_exe().unwrap());
++            command
++                .args([
++                    "--exact",
++                    "measurement_service::legacy_ownership_tests::fixture_server",
++                    "--ignored",
++                    "--nocapture",
++                ])
++                .env(FIXTURE_ROOT, &fixture.root)
++                .stdout(Stdio::from(log.try_clone().unwrap()))
++                .stderr(Stdio::from(log));
++            let mut child = proc::spawn_contained_process(&mut command).unwrap();
++            wait_until(|| {
++                if fixture.root.join("port").exists() {
++                    return true;
++                }
++                assert!(
++                    child.try_wait().unwrap().is_none(),
++                    "fixture child exited before readiness"
++                );
++                false
++            });
++            let port = fs::read_to_string(fixture.root.join("port"))
++                .unwrap()
++                .parse()
++                .unwrap();
++            *fixture.state.server.lock().unwrap() = Some(ManagedServer {
++                child,
++                profile: LaunchProfile {
++                    port,
++                    alias: "ownership-fixture".into(),
++                    ..LaunchProfile::default()
++                },
++                command: "contained test fixture".into(),
++                validation: crate::release_security_tests::launch_validation_fixture(),
++                log_path: fixture
++                    .root
++                    .join("child.log")
++                    .to_string_lossy()
++                    .into_owned(),
++                started_at: 0,
++                runtime_lease: None,
++                log_drains: Vec::new(),
++            });
++            fixture
++        }
++
++        fn run(
++            &self,
++        ) -> (
++            tauri::async_runtime::JoinHandle<()>,
++            Receiver<Result<BenchmarkSummary, String>>,
++        ) {
++            let state = self.state.clone();
++            let (sender, receiver) = mpsc::channel();
++            let task = tauri::async_runtime::spawn(async move {
++                let result = run_legacy_benchmark(64, 1, &state).await;
++                let _ = sender.send(result);
++            });
++            (task, receiver)
++        }
++
++        fn release(&self) {
++            fs::write(self.root.join("release"), b"release").unwrap();
++        }
++
++        fn shutdown(&self) {
++            fs::write(self.root.join("shutdown"), b"shutdown").unwrap();
++            if let Some(mut server) = self.state.server.lock().unwrap().take() {
++                wait_until(|| server.child.try_wait().unwrap().is_some());
++                assert!(server.child.terminate_and_wait());
++            }
++        }
++    }
++
++    impl Drop for Fixture {
++        fn drop(&mut self) {
++            let _ = fs::write(self.root.join("shutdown"), b"shutdown");
++            if let Ok(mut slot) = self.state.server.lock() {
++                // ContainedProcess drop terminates only this fixture tree,
++                // including when a failing assertion unwinds the parent test.
++                slot.take();
++            }
++            let _ = fs::remove_dir_all(&self.root);
++        }
++    }
++
++    #[test]
++    fn legacy_cancellation_holds_ownership_until_the_request_drains() {
++        let fixture = Fixture::new();
++        let (task, result) = fixture.run();
++        wait_until(|| fixture.root.join("request-1").exists());
++        let cancelled = request_benchmark_cancellation(&fixture.state);
++        // The fixture holds the response beyond the caller's cancellation
++        // slice. Returning now would release ownership of a live request.
++        let early = result.recv_timeout(Duration::from_secs(2));
++        let held = crate::active_operation_owner(&fixture.state.operations);
++        let stop_conflict = crate::stop_owner_conflict(held);
++        let replacement_refused =
++            reserve_operation(&fixture.state.operations, OperationOwner::Tuning).is_err();
++        fixture.release();
++        let finished_early = early.is_ok();
++        let outcome = early.unwrap_or_else(|_| result.recv_timeout(WAIT).unwrap());
++        tauri::async_runtime::block_on(task).unwrap();
++        let extra_request = fixture.root.join("request-2").exists();
++        let slot_cleared = fixture.state.benchmark.lock().unwrap().is_none();
++        let owner_cleared = crate::active_operation_owner(&fixture.state.operations).is_none();
++        let (retry, retry_result) = fixture.run();
++        let recovered = retry_result.recv_timeout(WAIT).unwrap();
++        tauri::async_runtime::block_on(retry).unwrap();
++        fixture.shutdown();
++        assert!(
++            cancelled.is_ok(),
++            "legacy cancellation failed: {cancelled:?}"
++        );
++        assert!(
++            !finished_early,
++            "cancellation released a request before drain"
++        );
++        assert_eq!(held, Some(OperationOwner::Benchmark));
++        assert!(stop_conflict.is_some() && replacement_refused);
++        assert!(outcome.unwrap_err().contains("cancelled"));
++        assert!(
++            !extra_request,
++            "cancellation dispatched another measurement"
++        );
++        assert!(slot_cleared && owner_cleared);
++        assert!(
++            recovered.is_ok(),
++            "a cancelled run must permit a later run: {recovered:?}"
++        );
++    }
++
++    #[test]
++    fn legacy_client_failure_does_not_publish_a_slot_or_keep_ownership() {
++        let fixture = Fixture::new();
++        let key_path = fixture.root.join("removed-key");
++        fs::write(&key_path, b"fixture-only").unwrap();
++        fixture
++            .state
++            .server
++            .lock()
++            .unwrap()
++            .as_mut()
++            .unwrap()
++            .profile
++            .api_key_file = key_path.to_string_lossy().into_owned();
++        fs::remove_file(key_path).unwrap();
++        let (task, result) = fixture.run();
++        let failure = result.recv_timeout(WAIT).unwrap().unwrap_err();
++        tauri::async_runtime::block_on(task).unwrap();
++        assert!(failure.contains("API key"), "{failure}");
++        assert!(fixture.state.benchmark.lock().unwrap().is_none());
++        assert!(crate::active_operation_owner(&fixture.state.operations).is_none());
++        assert!(!fixture.root.join("request-1").exists());
++        fixture
++            .state
++            .server
++            .lock()
++            .unwrap()
++            .as_mut()
++            .unwrap()
++            .profile
++            .api_key_file
++            .clear();
++        fixture.release();
++        let (retry, result) = fixture.run();
++        let recovered = result.recv_timeout(WAIT).unwrap();
++        tauri::async_runtime::block_on(retry).unwrap();
++        fixture.shutdown();
++        assert!(recovered.is_ok(), "{recovered:?}");
++    }
++
++    #[test]
++    fn legacy_command_rejects_an_overlapping_request_before_http() {
++        let fixture = Fixture::new();
++        let (first, first_result) = fixture.run();
++        wait_until(|| fixture.root.join("request-1").exists());
++        let (second, second_result) = fixture.run();
++        let mut refused = None;
++        wait_until(|| {
++            refused = second_result.try_recv().ok();
++            refused.is_some() || fixture.root.join("request-2").exists()
++        });
++        let overlapped = fixture.root.join("request-2").exists();
++        fixture.release();
++        let first_result = first_result.recv_timeout(WAIT).unwrap();
++        let second_result = refused.unwrap_or_else(|| second_result.recv_timeout(WAIT).unwrap());
++        tauri::async_runtime::block_on(first).unwrap();
++        tauri::async_runtime::block_on(second).unwrap();
++        fixture.shutdown();
++        assert!(first_result.is_ok(), "{first_result:?}");
++        assert!(
++            !overlapped,
++            "a second legacy command reached HTTP while the first response was held"
++        );
++        assert!(second_result.unwrap_err().contains("already active"));
++    }
++}
+--- before/src/App.tsx
++++ after/src/App.tsx
+@@ -169,9 +169,12 @@
+ 
+ function App() {
+   const [view, setView] = useState<View>(RUNTIME ? "dashboard" : "runtime");
+-  // FE-05: the active evidence run's status and cancel handle, published by
+-  // the always-mounted evidence panel so any screen can show it.
+-  const [evidenceRun, setEvidenceRun] = useState<EvidenceRun | null>(null);
++  // Keep each owner's handle separate so panel activity cannot erase a
++  // legacy run's cancellation control during navigation.
++  const [panelEvidenceRun, setEvidenceRun] = useState<EvidenceRun | null>(null);
++  const [legacyEvidenceRun, setLegacyEvidenceRun] = useState<EvidenceRun | null>(null);
++  const legacyBenchmarkActive = useRef(false);
++  const evidenceRun = legacyEvidenceRun ?? panelEvidenceRun;
+   const [extraArgsDraft, setExtraArgsDraft] = useState<string | null>(null);
+   // FE-11: every download carries the destination and revision captured at
+   // start, so cancel and progress always address the job itself.
+@@ -1257,9 +1260,19 @@
+   }
+ 
+   async function runBenchmark() {
+-    if (!status.port) return;
++    if (!status.port || evidenceRun || legacyBenchmarkActive.current) return;
+     if (benchmarkInputError) { setNotice(benchmarkInputError); return; }
++    legacyBenchmarkActive.current = true;
+     setBusy("benchmark");
++    setLegacyEvidenceRun({
++      kind: "benchmark",
++      cancel: () => {
++        void invoke<void>("cancel_benchmark").then(
++          () => setNotice("Benchmark cancellation requested; waiting for the current request to finish."),
++          (error) => setNotice(errorText(error)),
++        );
++      },
++    });
+     try {
+       const result = await invoke<BenchmarkSummary>("benchmark_server", {
+         host: profile?.host ?? "127.0.0.1",
+@@ -1275,6 +1288,8 @@
+     } catch (error) {
+       setNotice(errorText(error));
+     } finally {
++      legacyBenchmarkActive.current = false;
++      setLegacyEvidenceRun(null);
+       setBusy("");
+     }
+   }
+--- before/src/App.staleResponses.test.tsx
++++ after/src/App.staleResponses.test.tsx
+@@ -385,6 +385,54 @@
+     expect(profileInput(label).value).toBe("");
+   });
+ 
++  it("keeps a legacy cancellation handle across navigation until the backend settles", async () => {
++    const pending = deferred<unknown>();
++    handlers.set("benchmark_server", () => pending.promise);
++    handlers.set("cancel_benchmark", () => undefined);
++    handlers.set("detect_hardware", () => { throw new Error("Fixture boundary: hardware unavailable"); });
++    await click(navButton("Run benchmark"), "the legacy benchmark must start");
++    try {
++      await click(navButton("Inventory"), "navigation must remain available");
++      let band = container.querySelector(".evidence-run-band");
++      expect(band, "the legacy run must retain a visible cancel owner").not.toBeNull();
++      expect(band?.textContent).toContain("Benchmark running");
++      await click(navButton("Benchmark"), "return to the evidence panel");
++      await click(navButton("Refresh hardware"), "an unrelated panel action stays available");
++      band = container.querySelector(".evidence-run-band");
++      expect(band, "the panel must not clear the legacy run's handle").not.toBeNull();
++      const cancel = [...(band?.querySelectorAll("button") ?? [])].find((button) => button.textContent === "Cancel");
++      await click(cancel, "the running legacy benchmark must expose Cancel");
++      expect(invokeCalls.filter((call) => call.command === "cancel_benchmark")).toHaveLength(1);
++      expect(container.querySelector(".evidence-run-band")).not.toBeNull();
++      expect(text()).toContain("waiting for the current request");
++    } finally {
++      await act(async () => { pending.reject(new Error("The local request was cancelled")); });
++      await settle();
++    }
++    expect(container.querySelector(".evidence-run-band")).toBeNull();
++    expect(localStorage.getItem("localmotive:benchmark:fixture")).toBeNull();
++  });
++
++  it("rejects duplicate legacy dispatch before React publishes its busy state", async () => {
++    const pending = deferred<unknown>();
++    let requests = 0;
++    handlers.set("benchmark_server", () => {
++      requests += 1;
++      if (requests > 1) throw new Error("A benchmark is already active");
++      return pending.promise;
++    });
++    const run = navButton("Run benchmark");
++    try {
++      await act(async () => { run?.click(); run?.click(); });
++      await settle();
++      expect(invokeCalls.filter((call) => call.command === "benchmark_server")).toHaveLength(1);
++      expect(container.querySelector(".evidence-run-band")).not.toBeNull();
++    } finally {
++      await act(async () => { pending.reject(new Error("The local request was cancelled")); });
++      await settle();
++    }
++  });
++
+   it.each([
+     ["Forced output tokens", "63"], ["Forced output tokens", "4097"], ["Forced output tokens", "64.5"], ["Forced output tokens", ""], ["Forced output tokens", "1e309"],
+     ["Measured repeats", "0"], ["Measured repeats", "11"], ["Measured repeats", "1.5"], ["Measured repeats", ""], ["Measured repeats", "1e309"],

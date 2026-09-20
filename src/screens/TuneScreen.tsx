@@ -74,6 +74,7 @@ export interface TuneScreenProps {
   trialsForDisplay: TuningTrial[];
   tuneBlocker: string;
   tuneContext: number;
+  tuneInputError: string | null;
   tuneLogRef: RefObject<HTMLDivElement | null>;
   tuneProgress: TuningProgress | null;
   tuneRepeats: number;
@@ -127,6 +128,7 @@ export function TuneScreen(props: TuneScreenProps) {
     trialsForDisplay,
     tuneBlocker,
     tuneContext,
+    tuneInputError,
     tuneLogRef,
     tuneProgress,
     tuneRepeats,
@@ -155,8 +157,8 @@ export function TuneScreen(props: TuneScreenProps) {
 
       <div className="panel" aria-label="Cloud data disclosure">
         <p className="muted">
-          Cloud tuning sends a brief to the selected provider. Local inference and local
-          share export never send data anywhere — this setting affects cloud tuning only.
+          Cloud tuning sends a brief to the selected provider. Local inference never sends data
+          anywhere — this setting affects cloud tuning only.
         </p>
         <fieldset className="disclosure-choice">
           <legend>What the brief carries</legend>
@@ -195,7 +197,7 @@ export function TuneScreen(props: TuneScreenProps) {
       <div className="setup-steps" aria-label="Tuning readiness">
         <div className={credential?.configured ? "setup-step done" : "setup-step active"}><span>1</span><strong>Cloud provider</strong><small>{credential?.configured ? `${provider?.label ?? providerId} connected` : "Add a key or sign in"}</small></div>
         <div className={selected?.complete && runtimePath ? "setup-step done" : "setup-step"}><span>2</span><strong>Local model</strong><small>{selected ? selected.name : "Select in Inventory"}</small></div>
-        <div className={tuneReport ? "setup-step done" : canTune ? "setup-step active" : "setup-step"}><span>3</span><strong>Tune</strong><small>{tuning ? "Running…" : tuneReport ? "Report ready" : status.running ? "Stop the server first" : "Choose context, start"}</small></div>
+        <div className={tuneReport ? "setup-step done" : canTune ? "setup-step active" : "setup-step"}><span>3</span><strong>Tune</strong><small>{tuning ? "Running…" : tuneReport ? "Report ready" : status.running ? "Stop the server first" : tuneInputError ? "Correct tuning input" : "Choose context, start"}</small></div>
       </div>
 
       <div className="tune-layout">
@@ -269,12 +271,13 @@ export function TuneScreen(props: TuneScreenProps) {
                 <small className="field-help">Every trial runs at exactly this context; the KV cache is sized for it.</small>
               </label>
               <label>AI trials
-                <input type="number" min="1" max="12" value={tuneTrials} onChange={(e) => setTuneTrials(Number(e.target.value))} disabled={tuning} />
+                <input type="number" min="1" max="12" step="1" required value={Number.isFinite(tuneTrials) ? tuneTrials : ""} onChange={(e) => setTuneTrials(e.target.valueAsNumber)} disabled={tuning} />
                 <small className="field-help">Proposals measured after the baseline (T0). Each is one server launch.</small>
               </label>
-              <label>Tokens per measurement<input type="number" min="64" max="2048" step="64" value={tuneTokens} onChange={(e) => setTuneTokens(Number(e.target.value))} disabled={tuning} /></label>
-              <label>Repeats per trial<input type="number" min="1" max="5" value={tuneRepeats} onChange={(e) => setTuneRepeats(Number(e.target.value))} disabled={tuning} /></label>
+              <label>Tokens per measurement<input type="number" min="64" max="2048" step="1" required value={Number.isFinite(tuneTokens) ? tuneTokens : ""} onChange={(e) => setTuneTokens(e.target.valueAsNumber)} disabled={tuning} /></label>
+              <label>Repeats per trial<input type="number" min="1" max="5" step="1" required value={Number.isFinite(tuneRepeats) ? tuneRepeats : ""} onChange={(e) => setTuneRepeats(e.target.valueAsNumber)} disabled={tuning} /></label>
             </div>
+            {tuneInputError && <p className="group-note" role="status">{tuneInputError}</p>}
             <dl className="spec-list">
               <div><dt>Model</dt><dd>{selected?.name ?? "—"}</dd></div>
               <div><dt>Architecture</dt><dd>{gguf ? `${gguf.architecture.toUpperCase()} · ${gguf.sizeLabel || "?"}${gguf.expertCount ? ` · ${gguf.expertCount} EXPERTS` : ""}` : "—"}</dd></div>
@@ -306,7 +309,7 @@ export function TuneScreen(props: TuneScreenProps) {
                 {tuneReport && <div className="tune-actions"><button className="button primary" onClick={adoptTunedProfile} disabled={tuneReport.bestIndex === null}><Save size={15} /> Adopt best as profile</button><small>{tuneReport.stoppedReason}</small>
                   <small>{tuneReport.objective ?? "Measured objective: short-prompt decode throughput at the allocated context."}</small>
                   {tuneReport.finalVerification ? <small>Final verification: baseline {tuneReport.finalVerification.baselineTps.toFixed(2)} tok/s, winner {tuneReport.finalVerification.winnerTps.toFixed(2)} tok/s, required +{(tuneReport.finalVerification.requiredImprovement * 100).toFixed(1)}% — {tuneReport.finalVerification.confirmed ? "confirmed" : "not confirmed"}.</small> : null}
-                  {tuneReport.qualityAffectingChanges && tuneReport.qualityAffectingChanges.length > 0 ? <small>Quality not measured for: {tuneReport.qualityAffectingChanges.join(", ")}. Run the quality suite before adopting output-quality-sensitive changes.</small> : null}</div>}
+                  {tuneReport.qualityAffectingChanges && tuneReport.qualityAffectingChanges.length > 0 ? <small>Quality not measured for: {tuneReport.qualityAffectingChanges.join(", ")}. Review model output before adopting these changes.</small> : null}</div>}
               </>
             ) : (
               <div className="empty-result tune-empty"><Sparkles size={28} /><p>{tuning ? tuneProgress?.message ?? "Starting…" : tuneBlocker}</p></div>

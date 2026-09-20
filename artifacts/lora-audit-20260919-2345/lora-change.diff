@@ -1,0 +1,505 @@
+--- before/src-tauri/src/lib.rs
++++ after/src-tauri/src/lib.rs
+@@ -489,7 +489,7 @@
+         .map(|summary| summary.architecture.as_str())
+         .unwrap_or_default()
+         .to_string();
+-    for (label, path) in lora_references(profile)? {
++    for (label, path, _) in lora_references(profile)? {
+         let lora = require_launchable_artifact(&label, &path)?;
+         let lora_type = artifact_metadata_string(&lora, "general.type").unwrap_or_default();
+         let adapter_type = artifact_metadata_string(&lora, "adapter.type").unwrap_or_default();
+@@ -649,7 +649,7 @@
+     artifact::validate_regular_non_reparse_file(label, path)
+ }
+ 
+-fn lora_references(profile: &LaunchProfile) -> Result<Vec<(String, PathBuf)>, String> {
++fn lora_references(profile: &LaunchProfile) -> Result<Vec<(String, PathBuf, f32)>, String> {
+     let mut references = Vec::new();
+     if !profile.lora.trim().is_empty() {
+         for (index, value) in profile.lora.split(',').enumerate() {
+@@ -657,7 +657,11 @@
+             if path.is_empty() {
+                 return Err(format!("LoRA entry {} has an empty path", index + 1));
+             }
+-            references.push((format!("LoRA entry {}", index + 1), PathBuf::from(path)));
++            references.push((
++                format!("LoRA entry {}", index + 1),
++                PathBuf::from(path),
++                1.0,
++            ));
+         }
+     }
+     if !profile.lora_scaled.trim().is_empty() {
+@@ -667,7 +671,7 @@
+                 .trim()
+                 .rsplit_once(':')
+                 .ok_or_else(|| format!("Scaled LoRA entry {entry} must use path:scale syntax"))?;
+-            scale
++            let scale = scale
+                 .trim()
+                 .parse::<f32>()
+                 .ok()
+@@ -679,6 +683,7 @@
+             references.push((
+                 format!("Scaled LoRA entry {entry}"),
+                 PathBuf::from(path.trim()),
++                scale,
+             ));
+         }
+     }
+@@ -686,7 +691,7 @@
+ }
+ 
+ fn validate_lora_paths(profile: &LaunchProfile) -> Result<(), String> {
+-    for (label, path) in lora_references(profile)? {
++    for (label, path, _) in lora_references(profile)? {
+         require_regular_non_reparse_file(&label, &path)?;
+     }
+     Ok(())
+@@ -2403,7 +2408,7 @@
+         std::fs::write(path, bytes).unwrap();
+     }
+ 
+-    fn write_test_gguf_with_identity(
++    pub(crate) fn write_test_gguf_with_identity(
+         path: &Path,
+         architecture: &str,
+         extra_string_facts: &[(&str, &str)],
+--- before/src-tauri/src/measurement_service.rs
++++ after/src-tauri/src/measurement_service.rs
+@@ -42,6 +42,7 @@
+ }
+ 
+ use serde::Serialize;
++use sha2::{Digest, Sha256};
+ use std::path::Path;
+ use std::sync::atomic::{AtomicBool, Ordering};
+ use std::sync::Arc;
+@@ -96,6 +97,28 @@
+     compatibility_key: String,
+     schema_version: String,
+     unknown_identities: Vec<String>,
++}
++
++fn lora_identity_sha256(profile: &LaunchProfile) -> Result<String, String> {
++    let references = crate::lora_references(profile)?;
++    if references.is_empty() {
++        return Ok(String::new());
++    }
++    let legacy_single = references.len() == 1 && profile.lora_scaled.trim().is_empty();
++    let mut hasher = Sha256::new();
++    hasher.update(b"localmotive.lora-set.v1\0");
++    hasher.update((references.len() as u64).to_le_bytes());
++    for (label, path, scale) in references {
++        artifact::validate_regular_non_reparse_file(&label, &path)?;
++        let digest = artifact::sha256_path(&path)?;
++        if legacy_single {
++            // Preserve the identity of existing single ordinary-adapter records.
++            return Ok(digest);
++        }
++        hasher.update(digest.as_bytes());
++        hasher.update(scale.to_bits().to_le_bytes());
++    }
++    Ok(hex::encode(hasher.finalize()))
+ }
+ 
+ pub(crate) fn benchmark_execution_snapshot_from_profile(
+@@ -151,15 +174,7 @@
+         }
+         artifact::sha256_path(Path::new(trimmed))
+     };
+-    let lora_path = profile.lora.split(',').next().unwrap_or("").trim();
+-    let lora_scaled_path = profile.lora_scaled.split(',').next().unwrap_or("").trim();
+-    let lora_sha256 = if !lora_path.is_empty() {
+-        file_sha(lora_path)?
+-    } else if !lora_scaled_path.is_empty() {
+-        file_sha(lora_scaled_path)?
+-    } else {
+-        String::new()
+-    };
++    let lora_sha256 = lora_identity_sha256(profile)?;
+     let draft_model_sha256 = match profile.draft_model.as_deref() {
+         Some(path) => file_sha(path)?,
+         None => String::new(),
+@@ -715,6 +730,240 @@
+ }
+ 
+ #[cfg(test)]
++mod lora_identity_tests {
++    use super::*;
++    use std::{fs, path::PathBuf};
++
++    struct Fixture {
++        root: PathBuf,
++        profile: LaunchProfile,
++    }
++
++    impl Fixture {
++        fn new() -> Self {
++            let root = std::env::temp_dir().join(format!(
++                "localmotive-lora-identity-{}-{}",
++                std::process::id(),
++                rand::random::<u64>()
++            ));
++            fs::create_dir(&root).unwrap();
++            let model = root.join("model.gguf");
++            crate::release_security_tests::write_test_gguf_with_identity(&model, "llama", &[]);
++            fs::write(root.join("adapter a.gguf"), b"adapter-a fixture").unwrap();
++            fs::write(root.join("adapter b.gguf"), b"adapter-b fixture").unwrap();
++            Self {
++                root,
++                profile: LaunchProfile {
++                    alias: "fixture".into(),
++                    runtime: "fixture-runtime".into(),
++                    model: model.to_string_lossy().into_owned(),
++                    ..LaunchProfile::default()
++                },
++            }
++        }
++    }
++
++    impl Drop for Fixture {
++        fn drop(&mut self) {
++            fs::remove_dir_all(&self.root).unwrap();
++        }
++    }
++
++    fn snapshot_key(profile: &LaunchProfile) -> Result<String, String> {
++        // Isolate snapshot assembly from runtime execution and hardware probes.
++        // Model headers and adapter bytes are real temporary files.
++        let artifacts = vec![artifact::inspect_artifact(
++            Path::new(&profile.model),
++            &[],
++            true,
++        )?];
++        let source = evidence::EvidenceSource {
++            kind: evidence::EvidenceSourceKind::Unknown,
++            detail: "isolated identity fixture".into(),
++        };
++        let validation = LaunchValidation {
++            runtime: core::parse_capabilities("fixture", "--lora FNAME\n--lora-scaled FNAME:SCALE"),
++            artifacts: artifacts.clone(),
++            arguments: core::LaunchArgumentValidation {
++                effective_args: profile.build_args()?,
++                rejected: vec![],
++                command: String::new(),
++            },
++            effective_context: evidence::Evidence::unknown(source.clone(), 1, "not measured"),
++            unverified_requirements: vec![],
++        };
++        let runtime = runtime::RuntimeIdentity {
++            path: profile.runtime.clone(),
++            backend: "cpu".into(),
++            cuda_major: None,
++            tag: None,
++            install_key: None,
++            source: "none".into(),
++            managed_verified: false,
++        };
++        let hardware = runtime::HardwareInfo {
++            architecture: "fixture".into(),
++            gpu_names: vec![],
++            vendor: "unknown".into(),
++            cuda_major: None,
++            driver_version: String::new(),
++            detection_status: "fixture".into(),
++            recommendation: String::new(),
++            system_memory: runtime::SystemMemoryInfo {
++                total_physical_bytes: evidence::Evidence::unknown(
++                    source.clone(),
++                    1,
++                    "not measured",
++                ),
++                available_physical_bytes: evidence::Evidence::unknown(
++                    source.clone(),
++                    1,
++                    "not measured",
++                ),
++                memory_load_percent: evidence::Evidence::unknown(source, 1, "not measured"),
++            },
++            adapters: vec![],
++            manual_overrides: vec![],
++            unassigned_nvidia: vec![],
++        };
++        benchmark_execution_snapshot_from_profile(
++            profile,
++            &validation,
++            &artifacts,
++            &runtime,
++            &"a".repeat(64),
++            &hardware,
++            None,
++        )
++        .map(|outcome| outcome.compatibility_key)
++    }
++
++    #[test]
++    fn scaled_lora_snapshot_reads_the_adapter_and_binds_its_scale() {
++        let mut fixture = Fixture::new();
++        fixture.profile.lora_scaled =
++            format!("{}:0.5", fixture.root.join("adapter a.gguf").display());
++        // Independent hashlib/struct vectors pin the byte format across hosts.
++        assert_eq!(
++            lora_identity_sha256(&fixture.profile).unwrap(),
++            "a300e08a80f79c2fb59214716c7c218cefbf1495f647dbb24c2e83539229fc26"
++        );
++        let first = snapshot_key(&fixture.profile)
++            .unwrap_or_else(|error| panic!("valid scaled adapter rejected: {error}"));
++        fixture.profile.lora_scaled =
++            format!("{}:0.25", fixture.root.join("adapter a.gguf").display());
++        assert_ne!(first, snapshot_key(&fixture.profile).unwrap());
++    }
++
++    #[test]
++    fn lora_identity_preserves_empty_and_single_ordinary_digests() {
++        let mut fixture = Fixture::new();
++        assert_eq!(lora_identity_sha256(&fixture.profile).unwrap(), "");
++        let adapter = fixture.root.join("adapter a.gguf");
++        fixture.profile.lora = adapter.to_string_lossy().into_owned();
++        assert_eq!(
++            lora_identity_sha256(&fixture.profile).unwrap(),
++            artifact::sha256_path(&adapter).unwrap()
++        );
++    }
++
++    #[test]
++    fn lora_identity_binds_order_duplicates_and_later_file_bytes() {
++        let mut fixture = Fixture::new();
++        let a = fixture.root.join("adapter a.gguf");
++        let b = fixture.root.join("adapter b.gguf");
++        fixture.profile.lora = format!("{},{}", a.display(), b.display());
++        let baseline = lora_identity_sha256(&fixture.profile).unwrap();
++        assert_eq!(
++            baseline,
++            "522a47b9345706c82bef43cbe962f7d6d4c9d00f7329ee6d41291a1b3f32167d"
++        );
++        fixture.profile.lora = format!("{},{}", b.display(), a.display());
++        assert_ne!(baseline, lora_identity_sha256(&fixture.profile).unwrap());
++        fixture.profile.lora = format!("{},{}", a.display(), a.display());
++        let duplicates = lora_identity_sha256(&fixture.profile).unwrap();
++        assert_ne!(baseline, duplicates);
++        fixture.profile.lora = a.to_string_lossy().into_owned();
++        assert_ne!(duplicates, lora_identity_sha256(&fixture.profile).unwrap());
++        fixture.profile.lora = format!("{},{}", a.display(), b.display());
++        fs::write(b, b"changed adapter-b fixture").unwrap();
++        assert_ne!(baseline, lora_identity_sha256(&fixture.profile).unwrap());
++    }
++
++    #[test]
++    fn lora_identity_includes_scaled_entries_beside_ordinary_entries() {
++        let mut fixture = Fixture::new();
++        let a = fixture.root.join("adapter a.gguf");
++        let b = fixture.root.join("adapter b.gguf");
++        fixture.profile.lora = a.to_string_lossy().into_owned();
++        fixture.profile.lora_scaled = format!("{}:0.5", b.display());
++        assert_eq!(
++            lora_identity_sha256(&fixture.profile).unwrap(),
++            "2f973e052881609cd61f2b885105749312d6f36b3d54e3f1314fbdf5f1c4c64d"
++        );
++        let baseline = snapshot_key(&fixture.profile).unwrap();
++        fixture.profile.lora_scaled = format!("{}:0.25", b.display());
++        assert_ne!(baseline, snapshot_key(&fixture.profile).unwrap());
++        fixture.profile.lora_scaled = format!("{}:0.50", b.display());
++        assert_eq!(baseline, snapshot_key(&fixture.profile).unwrap());
++        fs::write(b, b"changed scaled adapter").unwrap();
++        assert_ne!(baseline, snapshot_key(&fixture.profile).unwrap());
++    }
++
++    #[test]
++    fn lora_identity_rejects_malformed_lists_and_unreadable_files() {
++        let mut fixture = Fixture::new();
++        let a = fixture.root.join("adapter a.gguf");
++        for scale in ["", "NaN", "inf", "-inf", "1e100", "not-a-number"] {
++            fixture.profile.lora_scaled = format!("{}:{scale}", a.display());
++            assert!(
++                lora_identity_sha256(&fixture.profile).is_err(),
++                "scale {scale}"
++            );
++        }
++        fixture.profile.lora_scaled = ":0.5".into();
++        assert!(lora_identity_sha256(&fixture.profile)
++            .unwrap_err()
++            .contains("empty path"));
++        fixture.profile.lora_scaled.clear();
++        fixture.profile.lora = format!("{},", a.display());
++        assert!(lora_identity_sha256(&fixture.profile)
++            .unwrap_err()
++            .contains("empty path"));
++        fixture.profile.lora = fixture.root.to_string_lossy().into_owned();
++        assert!(lora_identity_sha256(&fixture.profile).is_err());
++        let missing = fixture.root.join("missing.gguf");
++        fixture.profile.lora = missing.to_string_lossy().into_owned();
++        assert!(lora_identity_sha256(&fixture.profile).is_err());
++        assert!(!missing.exists());
++    }
++
++    #[cfg(windows)]
++    #[test]
++    fn lora_identity_refuses_a_junction_ancestor() {
++        let mut fixture = Fixture::new();
++        let target = fixture.root.join("target");
++        fs::create_dir(&target).unwrap();
++        fs::write(target.join("adapter.gguf"), b"fixture").unwrap();
++        let junction = fixture.root.join("junction");
++        let output = crate::proc::hidden_command("cmd")
++            .args(["/C", "mklink", "/J"])
++            .arg(&junction)
++            .arg(&target)
++            .output()
++            .unwrap();
++        assert!(
++            output.status.success(),
++            "could not create the junction fixture"
++        );
++        fixture.profile.lora = junction.join("adapter.gguf").to_string_lossy().into_owned();
++        let result = lora_identity_sha256(&fixture.profile);
++        fs::remove_dir(junction).unwrap();
++        assert!(result.unwrap_err().contains("reparse"));
++    }
++}
++
++#[cfg(test)]
+ mod r16_ownership_tests {
+     use super::*;
+     use crate::local_client::tests::serve_slow_body;
+--- before/src-tauri/src/core.rs
++++ after/src-tauri/src/core.rs
+@@ -1401,14 +1401,25 @@
+         "--tools",
+     ];
+     const MANAGED_FLAG_ALIASES: &[&str] = &[
++        "-md",
++        "-mdl",
+         "--batch-size",
+         "--cache-type-k",
+         "--cache-type-v",
++        "--chat-template-file",
+         "--ctx-size",
++        "--draft-model",
+         "--gpu-layers",
++        "--lora",
++        "--lora-scaled",
++        "--mmproj",
+         "--model",
++        "--model-draft",
+         "--n-gpu-layers",
+         "--parallel",
++        "--spec-draft-model",
++        "--ssl-cert-file",
++        "--ssl-key-file",
+         "--threads",
+         "--threads-batch",
+         "--ubatch-size",
+@@ -2350,6 +2361,41 @@
+         }
+         for repeats in [0, 11, u16::MAX] {
+             assert!(validate_benchmark_options(256, repeats).is_err());
++        }
++    }
++
++    #[test]
++    fn raw_file_arguments_cannot_bypass_empty_profile_fields() {
++        // Optional values must enter the same path and identity checks as
++        // configured values, rather than bypassing them through --flag=value.
++        for flag in [
++            "--lora",
++            "--lora-scaled",
++            "--mmproj",
++            "-md",
++            "-mdl",
++            "--draft-model",
++            "--model-draft",
++            "--spec-draft-model",
++            "--chat-template-file",
++            "--ssl-key-file",
++            "--ssl-cert-file",
++        ] {
++            let profile = LaunchProfile {
++                alias: "fixture".into(),
++                extra_args: vec![format!("{flag}=C:/not-selected/file.gguf")],
++                ..LaunchProfile::default()
++            };
++            let result = profile.build_args();
++            assert!(
++                result.is_err(),
++                "raw file flag bypassed the profile: {flag}"
++            );
++            let error = result.unwrap_err();
++            assert!(
++                error.contains("managed profile flag"),
++                "unexpected rejection for {flag}: {error}"
++            );
+         }
+     }
+ 
+--- before/docs/ARTIFACT-IDENTITY.md
++++ after/docs/ARTIFACT-IDENTITY.md
+@@ -27,8 +27,11 @@
+ - The **measurement snapshot** combines runtime identity, selected-artifact
+   content identities, effective arguments and workload identity. A matching
+   filename or header alone is insufficient. Unknown identity fields remain
+-  explicit. Scaled and multiple-LoRA identity coverage has an open audit
+-  finding; do not treat these records as complete LoRA compatibility proof.
++  explicit. LoRA identity includes the ordered adapter contents and f32 scale
++  values. No-adapter and single ordinary-adapter identities keep their earlier
++  representation. Older multiple/scaled-adapter records may need a fresh
++  benchmark; the application does not rewrite them. Identity coverage does
++  not prove adapter-to-model or runtime launch compatibility.
+ - The **catalog mirror** stores verified rows plus user rows; user rows never
+   authorize network files and are marked `USER ADDED · LOCAL ONLY`. The
+   mirror is a convenience index over verified content, not an authority.
+--- before/CHANGELOG.md
++++ after/CHANGELOG.md
+@@ -37,6 +37,12 @@
+ - Rejects speculative values absent from the inspected runtime help, including
+   values retained in a saved profile. GGUF reads and artifact inspection now reuse
+   the existing regular-file and reparse-ancestor checks before opening the model.
++- Corrects scaled-LoRA snapshot paths and includes every adapter and scale in
++  the LoRA identity. Keeps existing no-adapter and single ordinary-adapter
++  identities. Ambiguous older multiple/scaled records require fresh measurement.
++- Requires LoRA, projector, draft, template and TLS file options to use their
++  profile fields, even when those fields are empty. Raw arguments cannot bypass
++  the associated path validation and identity checks.
+ 
+ - Runs the whole window under a narrow Content Security Policy and scopes the
+   external-link opener to the origins the app actually uses.
+--- before/TODO-0.6.md
++++ after/TODO-0.6.md
+@@ -16,13 +16,15 @@
+ 
+ This is the single operative 0.6 tracker. It consolidates the original audit TODO and the post-076a3ee residual tracker. Update this file as evidence changes; do not create another residual TODO or a new goal hierarchy. The original audit, original TODO, and prior release evidence remain historical sources. Their old approval wording and aggregate completion claims do not override the current decisions below.
+ 
+-## Ideas audit checkpoint — 2026-09-19
++## Ideas audit checkpoint — 2026-09-20
+ 
+ The owner requested research, paper-cut fixes and simplification without increasing publishing requirements. This pass leaves AGENTS.md, `.github/`, permissions, tags and publication unchanged from the starting dirty tree at `bdb3c14c9170f0342ba0384738e2ffd23062970d`.
+ 
+ Implemented: shared bounds for 41 numeric profile fields; pre-save/preview/start/tune validation; blank-edit preservation; debounced, immediately invalidated command previews; inspected-only speculative choices with preserved unverified selections; manual release navigation; corrected release-file and credit-link documentation. Review follow-up adds Rust workload bounds, spec-value validation against inspected help, pre-read GGUF/artifact reparse checks, safe malformed-method rendering and shared evidence types. RED-before-GREEN logs and the failing 65536-port mutation are retained under `artifacts/ideas-audit-20260919-2202/`. Paper cuts are append-only in `agents_feedback.md`; research and complete review dispositions are in ignored `research/ideas-audit-20260919/`.
+ 
+-Final observed checks: `npm run check` PASS (274 script tests, 198 Vitest tests, TypeScript and production frontend build); Rust 585 passed/0 failed/6 ignored; fmt and Clippy PASS. npm audit, version/workflow checks, cleanup matrix and designmd also passed during this pass. Tauri built version 0.6.0 executable, MSI and NSIS; all are unsigned. The final executable SHA-256 is `c5a817df5eef8083f8e8ede3e44e30913ba08a0d02c4a08780926d95ea7eadaa`. Its isolated native UI diagnostic passed 13 checks plus cleanup; packaged accessibility returned `A11Y_PASS`. All four read-only reviews were reconciled. Standalone Claude review remains unavailable because OAuth expired. LoRA identity, local-manifest path privacy, companion-list/preflight bounds and other scoped findings remain open in the paper-cut log. No clean-checkout release matrix, native upgrade campaign, public release, or new inference benchmark is claimed. No release checkbox changes follow from these local results.
++Final observed checks: `npm run check` PASS (274 script tests, 198 Vitest tests, TypeScript and production frontend build); Rust 592 passed/0 failed/6 ignored; fmt and Clippy PASS. Six LoRA identity regressions also passed in release mode. npm audit, version/workflow checks, cleanup matrix and designmd passed during the earlier audit phase. Tauri built version 0.6.0 executable, MSI and NSIS; all are unsigned. The current executable SHA-256 is `be4894a6a0f003ff4cecf6891fe2f7e13dd842f82f2c1f07a28b6364d6be2f5f`. Its isolated native UI diagnostic passed 14 checks plus cleanup; packaged accessibility returned `A11Y_PASS`. Records are under `artifacts/lora-audit-20260919-2345/`; earlier audit records retain their earlier hashes. All four read-only reviews were reconciled. Standalone Claude review remains unavailable because OAuth expired. No clean-checkout release matrix, native upgrade campaign, public release, or new inference benchmark is claimed. No release checkbox changes follow from these local results.
++
++LoRA follow-up: snapshots now parse scaled paths through the shared validator and fingerprint the ordered adapter contents plus f32 scales. No-adapter and single ordinary-adapter keys matched before/after the correction. A scale-removal mutation failed the regression. Optional file flags now remain reserved when their profile fields are empty; Rust and native IPC reproduced the raw-argument bypass before the correction. Existing records remain untouched; older multiple/scaled keys can require fresh measurement. The pinned upstream scaled parser has a separate apparent Windows drive-colon limitation, which these snapshot tests do not resolve. Local-manifest path privacy, companion-list/preflight bounds and other scoped findings remain in `agents_feedback.md` and the research dispositions.
+ 
+ ## Owner decisions and completion meaning
+ 
+--- before/agents_feedback.md
++++ after/agents_feedback.md
+@@ -57,3 +57,16 @@
+ 2026-09-19T23:28:05+04:00 | artifact inspection tooling | FIXING | Windows Installer COM Execute/Close emitted null values into the metadata array. Suppress those method return values and validate the corrected three-record output. Installer versions and hashes were readable.
+ 2026-09-19T23:32:46+04:00 | artifact inspection tooling | FIXED | The corrected inspection returned exactly three artifact objects with no null entries. PE and MSI metadata report 0.6.0; signatures report NotSigned. built-artifacts.json records fresh byte counts and SHA-256 digests.
+ 2026-09-19T23:32:46+04:00 | test environment | LIMITATION | The passing frontend check still prints JSDOM's navigation-not-implemented notice. Keep that notice distinct from a native UI failure. The final WebView2 diagnostic reported zero uncaught UI errors.
++2026-09-20T00:02:55+04:00 | LoRA identity | FIXED | Reproduced the scaled-only snapshot error on a real adapter file. Reused lora_references and retained its parsed scale. The LoRA digest now covers ordered contents and scale bits, including mixed lists. Six focused tests and the restored full Rust suite passed.
++2026-09-20T00:02:55+04:00 | LoRA identity compatibility | VERIFIED | Old/new snapshot keys match for no adapter and one ordinary adapter. The scale-removal mutation made distinct scale profiles collide and failed the regression. Restored the scale contribution before full verification. No persisted record was rewritten.
++2026-09-20T00:02:55+04:00 | review precision | CORRECTED | The earlier claim that later adapter bytes never affect the complete key was too broad. validate_profile_artifacts appends all adapters, and the selected-artifact aggregate includes them. The separate LoRA-specific digest still had the scaled-path failure and omitted scale values.
++2026-09-20T00:02:55+04:00 | upstream LoRA parsing | OPEN | Pinned b10816 common/arg.cpp splits scaled entries on every colon and requires two parts. A Windows drive path supplies an additional colon. Local snapshot tests do not prove that runtime accepts that path. Keep the runtime pin and launch grammar unchanged; reproduce with qualified runtime bytes before proposing a separate upstream correction.
++2026-09-20T00:02:55+04:00 | test fixture | FIXED | The first snapshot fixture lacked general.architecture and failed the identity precondition instead of reaching the LoRA defect. Reused the existing GGUF fixture writer without weakening the identity check. The next RED run reached the intended path:scale filename failure.
++2026-09-20T00:02:55+04:00 | tooling | OPEN | search_files treated a leading --lora pattern as an rg option and misread an escaped brace pattern through the Windows shell. Narrow plain-text patterns worked. No repository rule changed.
++2026-09-20T00:02:55+04:00 | tooling | LIMITATION | The per-file Rust lint hook again reported Rust 2015 async errors on edition-2021 files. Edition-aware cargo fmt, cargo clippy --locked --all-targets -- -D warnings and cargo test passed. Do not change project edition or suppress Cargo warnings for this tool mismatch.
++2026-09-20T00:20:37+04:00 | LoRA test scope | CLARIFIED | The adapter inputs are real temporary byte fixtures, not trained LoRA checkpoints. The checks prove snapshot parsing/identity and filesystem rejection. They do not prove model compatibility, inference quality or throughput.
++2026-09-20T00:20:37+04:00 | packaging | VERIFIED LOCALLY | The new unsigned 0.6.0 executable passed 13 native smoke checks, cleanup and packaged accessibility. Its SHA-256 is badbfa60cbe7a32157a380ca17e4e5a05acc37b7a4b5b43c4dc2f77ef3d73883. Artifact sizes, PE/MSI versions and digests were read back. No new release requirement or publication attempt occurred.
++2026-09-20T00:40:52+04:00 | raw argument boundary | FIXED | An empty optional profile field left its file flag available through extraArgs. A Rust RED test and the preceding executable both accepted raw LoRA inputs. The existing managed-alias list now reserves LoRA, projector, draft, template and TLS file options regardless of field presence. Configure those files through their profile fields instead.
++2026-09-20T00:40:52+04:00 | test fixture | FIXED | The first raw-argument fixture reached the empty-alias precondition instead of the intended boundary. Adding a valid fixture alias exposed --lora acceptance. Validation rules and assertions remained intact.
++2026-09-20T00:40:52+04:00 | tooling | OPEN | Short V4A context matched multiple closing blocks, and a remembered probe return shape did not match its source. Both edits failed without changing files. Read the current function and use a unique full anchor before retrying.
++2026-09-20T00:40:52+04:00 | packaging | VERIFIED LOCALLY | The final raw-file correction passed 592 Rust tests, 274 script tests, 198 Vitest tests, 14 native UI/IPC checks and packaged accessibility. Executable SHA-256 is be4894a6a0f003ff4cecf6891fe2f7e13dd842f82f2c1f07a28b6364d6be2f5f. Earlier records retain their earlier identities. Artifacts remain unsigned and not release-qualified.

@@ -483,6 +483,8 @@ Disclosure uses typographic markers, not chevrons: `+` when closed, `−` when o
 - **Focus:** the border turns signal green; the global `:focus-visible` ring is a 2 px amber outline at 2 px offset. Focus is always visible — it is never removed for aesthetics.
 - **Disabled:** value text drops to `#8d9491`; the field keeps its recess so the layout does not shift.
 - **Help text:** 9 px/400 in `#7f8885` directly under the control, never in a tooltip. A setting that needs explanation gets it inline.
+- **Numeric profile, Tune and benchmark fields:** use Rust-compatible bounds for native validity and pre-action checks. Keep incomplete input visible. Show input problems as text. Keep an explicit zero distinct from a blank field.
+- **Speculative method:** disable selection before runtime inspection. Keep unsupported saved values visible as unverified. Put help text outside the select element.
 - **Toggle line:** a bordered 37 px row (44 px mobile) in `#1d2122` with a 15 px green-accented checkbox and its label — a switch on a panel, not a floating checkbox.
 - **Path bar:** a 45 px bordered strip in `#252a2b` holding an icon, a borderless mono path input, a count, and a picker action. The path is always editable text *and* pickable.
 
@@ -491,6 +493,7 @@ Disclosure uses typographic markers, not chevrons: `+` when closed, `−` when o
 - **Corner style:** square (0 px).
 - **Background:** `#222627` face on a `#424849` border; log and command wells drop to `#111514`.
 - **Header band:** 42 px, `#292e2f`, bottom-bordered, holding a 15 px uppercase title and an optional right-aligned state tag.
+- **Run status band:** legacy and controlled measurement runs keep status and Cancel visible across navigation. Keep each run's cancellation handle until the backend settles. Do not let unrelated panel updates remove the active run.
 - **Rows:** 38 px `spec-list` rows with `line-soft` dividers, label left in muted body, value right in 12 px condensed with `0.05em` tracking.
 - **Shadow strategy:** none. See Elevation & Depth.
 

@@ -211,125 +211,6 @@ export type BenchmarkRunResult = {
   failure: string | null;
 };
 
-export type QualityStatus = "notRun" | "passed" | "failed" | "error";
-
-export type QualityCaseResult = {
-  caseId: string;
-  status: QualityStatus;
-  detail: string;
-};
-
-export type QualitySuiteResult = {
-  suiteId: string;
-  seed: number;
-  observedAtMs: number | null;
-  modelLogicalId: string | null;
-  runtimeSha256: string | null;
-  // Full identity captured with the suite (audit MT-09). Optional so results
-  // stored by older builds still load.
-  modelContentSha256?: string | null;
-  compatibilityKey?: string | null;
-  suiteVersion?: string;
-  casesPlanned?: number;
-  status: QualityStatus;
-  cases: QualityCaseResult[];
-};
-
-export type CandidateEvidence = {
-  id: string;
-  resultClass: FitClass;
-  decodeTps: number | null;
-  prefillTps: number | null;
-  p95LatencyMs: number | null;
-  peakMemoryBytes: number | null;
-  qualityPassRate: number | null;
-  storageBytes: number | null;
-};
-
-export type RecommendationConstraints = {
-  minDecodeTps: number | null;
-  maxP95LatencyMs: number | null;
-  maxPeakMemoryBytes: number | null;
-  minQualityPassRate: number | null;
-  maxStorageBytes: number | null;
-  requireMeasured: boolean;
-};
-
-export type ObjectiveWeights = {
-  decodeTps: number;
-  prefillTps: number;
-  latency: number;
-  memory: number;
-  quality: number;
-  storage: number;
-};
-
-export type ScoreComponent = {
-  objective: string;
-  normalized: number;
-  weight: number;
-  contribution: number;
-};
-
-export type RankedCandidate = {
-  id: string;
-  feasible: boolean;
-  violations: string[];
-  pareto: boolean;
-  dominatedBy: string[];
-  // Added with the complete-set dominance policy (audit MT-10): the fraction
-  // of configured weight the candidate measured, and whether the bounded
-  // dominator list hides further entries. Optional for stored results.
-  dominatorsTruncated?: boolean;
-  evidenceCoverage?: number;
-  preferenceScore: number | null;
-  scoreComponents: ScoreComponent[];
-};
-
-export type CalibrationAnchor = {
-  compatibilityKey: string;
-  estimatedValue: number;
-  measuredValue: number;
-  observedAtMs: number;
-  // Identities added with the versioned execution snapshot (audit MT-08):
-  // the persisted run behind the sample and the estimator that produced the
-  // estimate. Empty strings appear on legacy records.
-  sourceRunId?: string;
-  estimator?: string;
-  snapshotSchemaVersion?: string;
-  unknownIdentities?: string[];
-};
-
-export type CalibrationModel = {
-  compatibilityKey: string;
-  factor: number;
-  residualStandardDeviation: number;
-  anchorCount: number;
-  createdAtMs: number;
-  expiresAtMs: number;
-  // Provenance and freshness added with the unified validator (audit MT-14).
-  sourceEvidenceAtMs?: number;
-  estimator?: string;
-  sourceRunIds?: string[];
-};
-
-export type CalibrationRecords = {
-  anchors: CalibrationAnchor[];
-  models: CalibrationModel[];
-  /** Bounded load diagnostics (audit S-16): quarantined corrupt records are
-   * reported here while compatible history keeps loading. */
-  problems?: string[];
-};
-
-export type CalibratedEstimate = {
-  value: number;
-  lowerBound: number;
-  upperBound: number;
-  evidenceLevel: EvidenceLevel;
-  compatibilityKey: string;
-  expiresAtMs: number;
-};
-
 export type DisclosureSection = {
   category: string;
   detail: string;
@@ -338,154 +219,6 @@ export type DisclosureSection = {
 };
 
 export type BriefDisclosure = "full" | "minimal";
-
-export type ExternalEvidenceState = "pending" | "verified" | "flagged" | "rejected";
-
-export type ExternalObservation = {
-  metric: string;
-  value: number;
-  unit: string;
-  observedAtMs: number;
-};
-
-/** The only provenance an external bundle can carry (audit S-17): fixed on
- * import, so a reloaded file can never claim to be a locally measured run. */
-export type ExternalProvenance = "importedExternal";
-
-export type ExternalEvidenceBundle = {
-  schema: number;
-  source: string;
-  compatibilityKey: string;
-  provenance?: ExternalProvenance;
-  /** Review state: "verified" records a USER REVIEW of this file — not a
-   * local rerun, not an origin signature, and not cryptographic proof. */
-  state: ExternalEvidenceState;
-  records: ExternalObservation[];
-};
-
-export type ShareFile = {
-  bytes: number;
-  sha256: string;
-};
-
-export type ShareRuntime = {
-  version: string;
-  build: string;
-  backend: string;
-  executableSha256: string;
-  helpSha256: string;
-};
-
-export type ShareModel = {
-  logicalId: string;
-  architecture: string;
-  ggufHeaderSha256: string;
-  shards: ShareFile[];
-  companions: ShareFile[];
-};
-
-export type ShareHardware = {
-  vendor: string;
-  backend: string | null;
-  driver: string | null;
-  dedicatedBytes: Evidence<number>;
-  sharedBytes: Evidence<number>;
-  budgetBytes: Evidence<number>;
-};
-
-export type ShareLaunch = {
-  requestedContext: number;
-  effectiveContext: Evidence<number>;
-  parallel: number;
-  gpuLayers: string;
-  batch: number;
-  ubatch: number;
-  cacheTypeK: string;
-  cacheTypeV: string;
-  splitMode: string;
-  tensorSplit: string;
-  mainGpu: number;
-  rejectedFlags: string[];
-};
-
-export type ShareObservation = {
-  trial: number;
-  durationMs: number;
-  promptTokens: number;
-  generatedTokens: number;
-  prefillTps: number | null;
-  decodeTps: number | null;
-  firstTokenMs: number | null;
-  derivedTtftMs: number | null;
-  peakProcessRssBytes: Evidence<number>;
-  outcome: AttemptOutcome;
-  succeeded: boolean;
-};
-
-export type ShareQuality = {
-  suiteId: string;
-  seed: number;
-  observedAtMs: number;
-  modelLogicalId: string;
-  runtimeSha256: string;
-  status: QualityStatus;
-  cases: Array<{ caseId: string; status: QualityStatus }>;
-};
-
-export type PrivacyReview = {
-  omittedFields: string[];
-  requiresUserConfirmation: boolean;
-};
-
-export type ShareBundle = {
-  schema: number;
-  createdAtMs: number;
-  compatibilityKey: string;
-  runtime: ShareRuntime;
-  model: ShareModel;
-  hardware: ShareHardware[];
-  launch: ShareLaunch;
-  workload: Workload;
-  warmupOutcomes: AttemptOutcome[];
-  observations: ShareObservation[];
-  terminalOutcome: AttemptOutcome | null;
-  summary: BenchmarkSummaryV2 | null;
-  quality: ShareQuality | null;
-  privacyReview: PrivacyReview;
-};
-
-export function qualityPassRate(result: QualitySuiteResult | null): number | null {
-  if (!result || result.status === "notRun" || result.status === "error") return null;
-  const scored = result.cases.filter((item) => item.status === "passed" || item.status === "failed");
-  if (!scored.length) return null;
-  return scored.filter((item) => item.status === "passed").length / scored.length;
-}
-
-export type CalibrationState =
-  | "compatible"
-  | "expired"
-  | "incompatible"
-  | "scheduled"
-  | "staleEvidence"
-  | "unavailable";
-
-/** Mirrors the backend evaluation in calibration_model_state (audit MT-14):
- * exact expiry, a creation time ahead of the clock is not yet applicable,
- * and freshness is measured from the source-run evidence, not rebuild time. */
-export function calibrationState(
-  model: CalibrationModel | null,
-  compatibilityKey: string,
-  nowMs: number,
-): CalibrationState {
-  if (!model) return "unavailable";
-  if (model.compatibilityKey !== compatibilityKey) return "incompatible";
-  if (nowMs < model.createdAtMs) return "scheduled";
-  if (nowMs >= model.expiresAtMs) return "expired";
-  const evidence = model.sourceEvidenceAtMs ?? 0;
-  const maxEvidenceAgeMs = 90 * 24 * 60 * 60 * 1_000;
-  if (evidence > 0 && nowMs - evidence > maxEvidenceAgeMs) return "staleEvidence";
-  return "compatible";
-}
 
 export function derivedEvidence<T>(
   value: T,
@@ -601,6 +334,9 @@ export function normalizeTuningReport(stored: unknown): TuningReport | undefined
     objective: typeof report.objective === "string" ? report.objective : undefined,
     requiredEffectiveContext: numberOrNull(report.requiredEffectiveContext) ?? undefined,
     finalVerification: report.finalVerification as TuningReport["finalVerification"],
+    qualityAffectingChanges: Array.isArray(report.qualityAffectingChanges)
+      ? report.qualityAffectingChanges.filter((value): value is string => typeof value === "string")
+      : undefined,
   };
 }
 
@@ -809,6 +545,79 @@ export type LaunchProfile = {
   logTimestamps: boolean;
   extraArgs: string[];
 };
+
+export type ProfileNumberField = {
+  [K in keyof LaunchProfile]: LaunchProfile[K] extends number ? K : never
+}[keyof LaunchProfile];
+
+/** Mirror core::LaunchProfile integer types and validate_domains before IPC or storage.
+ * Storage limits are not hardware recommendations. Floating-point inputs accept any step. */
+export const profileNumberLimits = {
+  port: ["Port", 1, 65535, 1],
+  context: ["Context tokens", 1, 4194304, 1],
+  parallel: ["Parallel slots", 1, 1024, 1],
+  cpuMoe: ["CPU MoE layers", 0, 65535, 1],
+  cpuFfn: ["Dense CPU FFN layers", 0, 65535, 1],
+  threads: ["Generation threads", -1, 1024, 1],
+  threadsBatch: ["Prompt threads", -1, 1024, 1],
+  batch: ["Batch size", 1, 1048576, 1],
+  ubatch: ["Physical uBatch", 1, 1048576, 1],
+  fitCtx: ["Minimum fit context", 0, 4294967295, 1],
+  mainGpu: ["Main GPU", 0, 64, 1],
+  cacheReuse: ["Cache reuse chunk", 0, 4294967295, 1],
+  cacheRam: ["Cache RAM MiB", -2147483648, 2147483647, 1],
+  contextCheckpoints: ["Context checkpoints", 0, 65535, 1],
+  sleepIdleSeconds: ["Sleep after idle seconds", -1, 86400, 1],
+  timeout: ["Request timeout seconds", 1, 86400, 1],
+  threadsHttp: ["HTTP threads", -1, 1024, 1],
+  ssePingInterval: ["SSE ping seconds", -2147483648, 2147483647, 1],
+  reasoningBudget: ["Reasoning token budget", -1, 1000000, 1],
+  temperature: ["Temperature", 0, 5, "any"],
+  topK: ["Top K", -1, 1000000, 1],
+  topP: ["Top P", 0, 1, "any"],
+  minP: ["Min P", 0, 1, "any"],
+  repeatPenalty: ["Repeat penalty", 0, 4, "any"],
+  repeatLastN: ["Repeat window", -1, 100000, 1],
+  seed: ["Seed", Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, 1],
+  dryMultiplier: ["DRY multiplier", 0, 4, "any"],
+  dryBase: ["DRY base", 0, 4, "any"],
+  draftMax: ["Maximum draft tokens", 0, 65535, 1],
+  draftMin: ["Minimum draft tokens", 0, 65535, 1],
+  draftPMin: ["Draft probability floor", 0, 1, "any"],
+  draftPSplit: ["Draft split probability", 0, 1, "any"],
+  ngramMatch: ["N-gram match length", 0, 65535, 1],
+  ngramMin: ["N-gram draft min", 0, 65535, 1],
+  ngramMax: ["N-gram draft max", 0, 65535, 1],
+  ngramSizeN: ["N-gram map size n", 1, 65535, 1],
+  ngramSizeM: ["N-gram map size m", 0, 65535, 1],
+  ngramMinHits: ["Map minimum hits", 0, 65535, 1],
+  imageMinTokens: ["Minimum image tokens", 0, 4294967295, 1],
+  imageMaxTokens: ["Maximum image tokens", 0, 4294967295, 1],
+  verbosity: ["Log verbosity", 0, 5, 1],
+} satisfies Record<ProfileNumberField, [string, number, number, 1 | "any"]>;
+
+export function profileNumberError(profile: LaunchProfile): string | null {
+  for (const field of Object.keys(profileNumberLimits) as ProfileNumberField[]) {
+    const [label, min, max, step] = profileNumberLimits[field];
+    const value = profile[field];
+    if (!Number.isFinite(value) || (step === 1 && !Number.isSafeInteger(value))) {
+      return `${label} must be ${step === 1 ? "a whole number" : "a finite number"}.`;
+    }
+    if (value < min || value > max) return `${label} must be between ${min} and ${max}.`;
+  }
+  if (profile.ubatch > profile.batch) return "Physical uBatch cannot exceed logical batch size.";
+  if (typeof profile.specType !== "string") return "Speculative method must be text.";
+  if (profile.specType.startsWith("draft-") && profile.draftMin > profile.draftMax) {
+    return "Draft minimum cannot exceed maximum.";
+  }
+  if (profile.specType === "ngram-mod" && profile.ngramMin > profile.ngramMax) {
+    return "N-gram minimum cannot exceed maximum.";
+  }
+  if (profile.imageMaxTokens > 0 && profile.imageMinTokens > profile.imageMaxTokens) {
+    return "Minimum image tokens cannot exceed maximum.";
+  }
+  return null;
+}
 
 export type MemoryMetric =
   | "dedicated"
@@ -1263,6 +1072,17 @@ export type ServerStatus = {
   failure: LaunchFailureEvidence | null;
 };
 
+/** Report invalid legacy benchmark input before IPC; Rust remains authoritative. */
+export function legacyBenchmarkInputError(tokens: number, repeats: number): string | null {
+  if (!Number.isInteger(tokens) || tokens < 64 || tokens > 4096) {
+    return "Forced output tokens must be a whole number between 64 and 4096.";
+  }
+  if (!Number.isInteger(repeats) || repeats < 1 || repeats > 10) {
+    return "Measured repeats must be a whole number between 1 and 10.";
+  }
+  return null;
+}
+
 export type BenchmarkSummary = {
   samples: number[];
   meanTps: number;
@@ -1505,6 +1325,27 @@ export type CredentialStatus = {
 };
 
 export type CloudModel = { id: string; label: string };
+
+/** Report incomplete tuning input before IPC; Rust remains authoritative. */
+export function tuningWorkloadError(workload: {
+  targetContext: number;
+  maxTrials: number;
+  tokens: number;
+  repeats: number;
+}): string | null {
+  const bounds = [
+    ["AI trials", workload.maxTrials, 1, 12],
+    ["Context length", workload.targetContext, 512, 4_194_304],
+    ["Tokens per measurement", workload.tokens, 64, 2048],
+    ["Repeats per trial", workload.repeats, 1, 5],
+  ] as const;
+  for (const [label, value, minimum, maximum] of bounds) {
+    if (!Number.isInteger(value) || value < minimum || value > maximum) {
+      return `${label} must be a whole number between ${minimum} and ${maximum}.`;
+    }
+  }
+  return null;
+}
 
 export type TuningTrial = {
   index: number;
@@ -1809,8 +1650,8 @@ export function tuningRunSummary(run: {
   return `${run.modelName} · ${run.provider} · ${run.advisor} · ${run.context.toLocaleString()} ctx`;
 }
 
-export function evidenceRunLabel(kind: "benchmark" | "quality"): string {
-  return kind === "benchmark" ? "Benchmark running" : "Quality suite running";
+export function evidenceRunLabel(kind: "benchmark"): string {
+  return kind === "benchmark" ? "Benchmark running" : "";
 }
 
 export function applySuggestedPort(

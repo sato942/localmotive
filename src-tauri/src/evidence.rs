@@ -1,7 +1,7 @@
 //! Typed provenance and validation contracts for v0.3 measurement workflows.
 //!
 //! Evidence categories describe where a value came from. They are not
-//! probabilities and must never be promoted by ranking or display code.
+//! probabilities and must not be promoted by display code.
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -630,9 +630,8 @@ pub struct BenchmarkManifest {
     #[serde(default)]
     pub scope_note: String,
     pub compatibility_key: Option<String>,
-    /// The launch-scope execution-snapshot key of the same configuration: the
-    /// identity quality evidence must match to attach to this run (audit
-    /// MT-09). Empty for manifests written before scoped identities existed.
+    /// The launch-scope execution-snapshot key of the same configuration. The
+    /// identity must match before this run evidence can attach (audit MT-09).
     #[serde(default)]
     pub launch_compatibility_key: Option<String>,
     /// Schema of the execution snapshot behind `compatibility_key` (empty for
@@ -809,8 +808,8 @@ impl BenchmarkManifest {
     }
 }
 
-/// Attempt/workload/result consistency shared by persistence, replay, share
-/// building and direct export (audit MT-13): one contract, every boundary.
+/// Attempt/workload/result consistency shared by persistence and replay
+/// (audit MT-13): one contract at every retained boundary.
 pub fn validate_attempt_consistency(
     workload: &Workload,
     observations: &[BenchmarkObservation],

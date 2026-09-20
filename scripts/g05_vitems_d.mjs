@@ -1,6 +1,6 @@
 // High-finding campaign D: FE-02.V2 (adoption with process-path proof),
-// FE-05.V1/V2/V3 (deferred run survival, cross-screen completion, provenance
-// records), MT-05.V3 (cancel/restart records + reservation release).
+// FE-05.V1/V2/V3 (deferred run survival, cross-screen completion, saved
+// manifest replay), MT-05.V3 (cancel/restart records + reservation release).
 // Usage: node scripts/g05_vitems_d.mjs <debugPort>
 import { attach } from "./lib/cdp_client.mjs";
 import { execSync } from "node:child_process";
@@ -133,19 +133,8 @@ const resultVisible = /Decode throughput/.test(afterText) && /p50/.test(afterTex
 console.log("F52_AWAY_RESULT", done, "| visibleAfterReturn", resultVisible);
 console.log("F52_RESULT_SLICE", JSON.stringify((afterText.match(/Decode throughput[^|]{0,140}/) ?? [""])[0]).slice(0, 180));
 
-// ---------- FE-05.V3 + MT-05.V3: provenance records + generations ----------
-const recBtns = await evaluate(`(() => [...document.querySelectorAll("button")].map(x => (x.textContent ?? "").trim()).filter(x => /record|anchor|calibrat|manifest|recover/i.test(x)).slice(0, 10))()`);
-console.log("F53_RECORD_BUTTONS", JSON.stringify(recBtns));
-for (const label of recBtns) {
-  const clicked = await clickText(label);
-  await settle(1500);
-  const t = await bodyText();
-  if (/compatibility|provenance|anchor|record/i.test(t)) {
-    console.log("F53_AFTER", JSON.stringify(label), JSON.stringify((t.match(/compatibilityKey[^ ]{0,80}|[a-f0-9]{12,64}/gi) ?? []).slice(0, 6)));
-    break;
-  }
-}
-console.log("F53_SCREEN_SLICE", JSON.stringify((await bodyText()).match(/CALIBRATION|RECORDS|EVIDENCE[^|]{0,200}/g) ?? []));
+// ---------- FE-05.V3 + MT-05.V3: saved-manifest replay + generations ----------
+console.log("F53_SCREEN_SLICE", JSON.stringify((await bodyText()).match(/BENCHMARK|REPLAY|MANIFEST[^|]{0,200}/gi) ?? []));
 console.log("MT05_STATUS", JSON.stringify((await bodyText()).match(/LIVE[^|]{0,100}/) ?? []));
 console.log("MT05_LLAMA", llamaCount());
 await stopServer();

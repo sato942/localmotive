@@ -1,0 +1,9 @@
+{
+  "src-tauri/src/core.rs": "79a6363afe6cdc9ee48bc7c103bb66403366b224aead49d7567e6161323ddbca",
+  "src-tauri/src/measurement.rs": "713cf3333ba5a97ec0fdf72f8ccb8a8f31554666b8ae6757af7793746931e15c",
+  "src-tauri/src/measurement_service.rs": "e629f7cbe3746bf08886797650d8710a0312ae51837de89dcdd4e7c9ec1ba658",
+  "docs/ARTIFACT-IDENTITY.md": "9c38df5abf8a008344915c1e44bba8aa6c3a8f783b0e73354b0964eb8346c6d5",
+  "CHANGELOG.md": "acf6a7334ca9a6788bb11b2383b4b6c30ef0d2438d5a8104e6617b07c90c7adb",
+  "TODO-0.6.md": "263e65e8510ed5e9aff1ab0f72bfc271ba25bc0a1dae83598bf5ba3fc09a1950",
+  "agents_feedback.md": "1cc6fd3d92216f606b2789ec2096672d03daf47b173ece63d1afecb435641aea"
+}

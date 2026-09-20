@@ -155,6 +155,8 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.useFakeTimers();
   localStorage.clear();
   (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
   (Element.prototype as unknown as { scrollTo: (options?: unknown) => void }).scrollTo = () => {};
@@ -171,6 +173,8 @@ afterEach(async () => {
   });
   container.remove();
   vi.restoreAllMocks();
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 async function mount() {
@@ -253,9 +257,57 @@ async function scanFixtureModel() {
     await settle();
   }
   expect(text(), "the scan must load the profile for the scanned model").toContain("Launch profile");
+  await act(async () => { await vi.advanceTimersByTimeAsync(300); });
 }
 
 describe("stale port suggestions and command previews (audit FE-03 V3)", () => {
+  it("composes one preview after a typing burst and removes the obsolete command immediately", async () => {
+    handlers.set("suggest_port", () => 8080);
+    handlers.set("preview_command", () => ({ powerShell: "PREVIOUS-COMMAND", argv: "", cmd: null, cmdNotice: null }));
+    await mount();
+    await scanFixtureModel();
+    expect(text()).toContain("PREVIOUS-COMMAND");
+    invokeCalls.length = 0;
+    for (const name of ["f", "fi", "finished"]) await setInputValue(profileInput("Profile name"), name);
+    expect(profileInput("Profile name").value).toBe("finished");
+    expect(text()).not.toContain("PREVIOUS-COMMAND");
+    expect(invokeCalls.filter((call) => call.command === "preview_command")).toHaveLength(0);
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    const previews = invokeCalls.filter((call) => call.command === "preview_command");
+    expect(previews).toHaveLength(1);
+    expect((previews[0].args as { profile: { name: string } }).profile.name).toBe("finished");
+  });
+
+  it("does not save or dispatch an out-of-range port", async () => {
+    handlers.set("suggest_port", () => 8080);
+    await mount();
+    await scanFixtureModel();
+    invokeCalls.length = 0;
+    await setInputValue(profileInput("Port"), "65536");
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    await click(navButton("Save"), "Save must remain visible");
+    expect(localStorage.getItem(`localmotive:profile:${scannedModel.id}`)).toBeNull();
+    expect(invokeCalls.filter((call) => call.command === "preview_command")).toHaveLength(0);
+    await click(navButton("Control"), "Control navigation must exist");
+    await click(navButton("Start profile"), "Control must offer Start profile");
+    expect(invokeCalls.filter((call) => call.command === "start_server")).toHaveLength(0);
+    expect(text()).toContain("Port");
+    expect(text()).toContain("65535");
+  });
+
+  it("keeps a cleared numeric field blank instead of silently saving zero", async () => {
+    handlers.set("suggest_port", () => 8080);
+    await mount();
+    await scanFixtureModel();
+    await setInputValue(profileInput("Context tokens"), "");
+    expect(profileInput("Context tokens").value).toBe("");
+    await click(navButton("Save"), "Save must remain visible");
+    expect(localStorage.getItem(`localmotive:profile:${scannedModel.id}`)).toBeNull();
+    await setInputValue(profileInput("Context tokens"), "4096");
+    await click(navButton("Save"), "a corrected profile can be saved");
+    expect(JSON.parse(localStorage.getItem(`localmotive:profile:${scannedModel.id}`)!).context).toBe(4096);
+  });
+
   it("never applies a port suggestion over a later manual edit", async () => {
     const suggestion = deferred<number>();
     handlers.set("suggest_port", () => suggestion.promise);
@@ -290,6 +342,7 @@ describe("stale port suggestions and command previews (audit FE-03 V3)", () => {
     // The profile loaded: preview A is in flight. Edit the name to dispatch
     // preview B for the newer revision.
     await setInputValue(profileInput("Profile name"), "fixture-edited");
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
     for (let attempt = 0; attempt < 10 && previews.length < 2; attempt += 1) {
       await settle();
     }
@@ -312,6 +365,178 @@ describe("stale port suggestions and command previews (audit FE-03 V3)", () => {
     await settle();
     expect(text(), "the newer command must stay displayed").toContain("NEWER-COMMAND");
     expect(text(), "the older command must be discarded").not.toContain("OLDER-COMMAND");
+  });
+});
+
+describe("legacy benchmark numeric inputs", () => {
+  beforeEach(async () => {
+    handlers.set("server_status", () => ({ ...idleServerStatus, running: true, phase: "healthy", pid: 1234, port: 8080, alias: "fixture", profileName: "fixture" }));
+    handlers.set("read_server_log", () => "");
+    handlers.set("benchmark_server", () => { throw new Error("Fixture boundary: no inference run."); });
+    await mount();
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    await click(navButton("Benchmark"), "Benchmark navigation must exist");
+    expect(navButton("Run benchmark")?.disabled, "the server fixture must be ready before the input test").toBe(false);
+    invokeCalls.length = 0;
+  });
+
+  it.each(["Forced output tokens", "Measured repeats"])("keeps a cleared %s field blank", async (label) => {
+    await setInputValue(profileInput(label), "");
+    expect(profileInput(label).value).toBe("");
+  });
+
+  it("keeps a legacy cancellation handle across navigation until the backend settles", async () => {
+    const pending = deferred<unknown>();
+    handlers.set("benchmark_server", () => pending.promise);
+    handlers.set("cancel_benchmark", () => undefined);
+    handlers.set("detect_hardware", () => { throw new Error("Fixture boundary: hardware unavailable"); });
+    await click(navButton("Run benchmark"), "the legacy benchmark must start");
+    try {
+      await click(navButton("Inventory"), "navigation must remain available");
+      let band = container.querySelector(".evidence-run-band");
+      expect(band, "the legacy run must retain a visible cancel owner").not.toBeNull();
+      expect(band?.textContent).toContain("Benchmark running");
+      await click(navButton("Benchmark"), "return to the evidence panel");
+      await click(navButton("Refresh hardware"), "an unrelated panel action stays available");
+      band = container.querySelector(".evidence-run-band");
+      expect(band, "the panel must not clear the legacy run's handle").not.toBeNull();
+      const cancel = [...(band?.querySelectorAll("button") ?? [])].find((button) => button.textContent === "Cancel");
+      await click(cancel, "the running legacy benchmark must expose Cancel");
+      expect(invokeCalls.filter((call) => call.command === "cancel_benchmark")).toHaveLength(1);
+      expect(container.querySelector(".evidence-run-band")).not.toBeNull();
+      expect(text()).toContain("waiting for the current request");
+    } finally {
+      await act(async () => { pending.reject(new Error("The local request was cancelled")); });
+      await settle();
+    }
+    expect(container.querySelector(".evidence-run-band")).toBeNull();
+    expect(localStorage.getItem("localmotive:benchmark:fixture")).toBeNull();
+  });
+
+  it("rejects duplicate legacy dispatch before React publishes its busy state", async () => {
+    const pending = deferred<unknown>();
+    let requests = 0;
+    handlers.set("benchmark_server", () => {
+      requests += 1;
+      if (requests > 1) throw new Error("A benchmark is already active");
+      return pending.promise;
+    });
+    const run = navButton("Run benchmark");
+    try {
+      await act(async () => { run?.click(); run?.click(); });
+      await settle();
+      expect(invokeCalls.filter((call) => call.command === "benchmark_server")).toHaveLength(1);
+      expect(container.querySelector(".evidence-run-band")).not.toBeNull();
+    } finally {
+      await act(async () => { pending.reject(new Error("The local request was cancelled")); });
+      await settle();
+    }
+  });
+
+  it.each([
+    ["Forced output tokens", "63"], ["Forced output tokens", "4097"], ["Forced output tokens", "64.5"], ["Forced output tokens", ""], ["Forced output tokens", "1e309"],
+    ["Measured repeats", "0"], ["Measured repeats", "11"], ["Measured repeats", "1.5"], ["Measured repeats", ""], ["Measured repeats", "1e309"],
+  ])("does not dispatch invalid %s=%s", async (label, value) => {
+    await setInputValue(profileInput(label), value);
+    await click(navButton("Run benchmark"), "the benchmark action must remain visible");
+    expect(invokeCalls.filter((call) => call.command === "benchmark_server")).toHaveLength(0);
+    expect(navButton("Run benchmark")?.disabled).toBe(true);
+    expect(container.querySelector('.benchmark-setup [role="status"]')?.textContent).toContain(label);
+  });
+
+  it.each(["Forced output tokens", "Measured repeats"])("marks blank %s invalid in the native control", async (label) => {
+    await setInputValue(profileInput(label), "");
+    expect(profileInput(label).checkValidity()).toBe(false);
+  });
+
+  it.each([
+    ["Forced output tokens", "64", "tokens"], ["Forced output tokens", "65", "tokens"], ["Forced output tokens", "4096", "tokens"],
+    ["Measured repeats", "1", "repeats"], ["Measured repeats", "10", "repeats"],
+  ])("dispatches corrected %s=%s without clamping", async (label, value, field) => {
+    await setInputValue(profileInput(label), "");
+    expect(navButton("Run benchmark")?.disabled).toBe(true);
+    await setInputValue(profileInput(label), value);
+    expect(profileInput(label).value).toBe(value);
+    expect(profileInput(label).checkValidity()).toBe(true);
+    expect(container.querySelector('.benchmark-setup [role="status"]')).toBeNull();
+    expect(navButton("Run benchmark")?.disabled).toBe(false);
+    await click(navButton("Run benchmark"), "a corrected workload can be dispatched");
+    const calls = invokeCalls.filter((call) => call.command === "benchmark_server");
+    expect(calls).toHaveLength(1);
+    expect(calls[0].args).toMatchObject({ [field]: Number(value) });
+  });
+
+  it("shows invalid input beside a prior result without replacing that result", async () => {
+    handlers.set("benchmark_server", () => ({ samples: [1, 1, 1], meanTps: 1, medianTps: 1, minTps: 1, maxTps: 1, tokens: 512, repeats: 3 }));
+    await click(navButton("Run benchmark"), "the fixture can record a prior result");
+    const key = "localmotive:benchmark:fixture";
+    const saved = localStorage.getItem(key);
+    expect(saved).not.toBeNull();
+    invokeCalls.length = 0;
+    await setInputValue(profileInput("Forced output tokens"), "4097");
+    await click(navButton("Run benchmark"), "the invalid action stays visible");
+    expect(invokeCalls.filter((call) => call.command === "benchmark_server")).toHaveLength(0);
+    expect(container.querySelector('.benchmark-setup [role="status"]')?.textContent).toContain("Forced output tokens");
+    expect(container.querySelector('.benchmark-screen .result-main')?.textContent).toContain("1.00");
+    expect(localStorage.getItem(key)).toBe(saved);
+  });
+});
+
+describe("tuning numeric inputs", () => {
+  beforeEach(async () => {
+    handlers.set("suggest_port", () => 8080);
+    handlers.set("cloud_providers", () => providers);
+    handlers.set("cloud_credential_status", () => ({ provider: "openrouter", configured: true, masked: "fixture" }));
+    handlers.set("cloud_list_models", () => [{ id: "advisor-alpha", label: "Fixture advisor" }]);
+    handlers.set("start_tuning", () => { throw new Error("Fixture boundary: no cloud or inference runs."); });
+    await mount();
+    await scanFixtureModel();
+    await click(navButton("AI Tune"), "AI Tune navigation must exist");
+    expect(navButton("Auto-tune fixture")?.disabled, "the fixture must be ready before testing input errors").toBe(false);
+    invokeCalls.length = 0;
+  });
+
+  it.each(["AI trials", "Tokens per measurement", "Repeats per trial"])("keeps a cleared %s field blank", async (label) => {
+    await setInputValue(profileInput(label), "");
+    expect(profileInput(label).value).toBe("");
+  });
+
+  it.each([
+    ["AI trials", "0"], ["AI trials", "13"], ["AI trials", "1.5"], ["AI trials", ""],
+    ["Tokens per measurement", "63"], ["Tokens per measurement", "2049"], ["Tokens per measurement", "64.5"], ["Tokens per measurement", ""],
+    ["Repeats per trial", "0"], ["Repeats per trial", "6"], ["Repeats per trial", "1.5"], ["Repeats per trial", ""],
+    ["AI trials", "1e309"], ["Tokens per measurement", "1e309"], ["Repeats per trial", "1e309"],
+  ])("does not dispatch invalid %s=%s", async (label, value) => {
+    await setInputValue(profileInput(label), value);
+    await click(navButton("Auto-tune fixture"), "the Tune action must remain visible");
+    expect(invokeCalls.filter((call) => call.command === "start_tuning")).toHaveLength(0);
+    expect(navButton("Auto-tune fixture")?.disabled).toBe(true);
+    expect(container.querySelector('.tune-screen [role="status"]')?.textContent).toContain(label);
+    expect(text()).not.toContain("Choose a context length and start.");
+    expect(text()).toContain("Correct tuning input");
+  });
+
+  it.each(["AI trials", "Tokens per measurement", "Repeats per trial"])("marks blank %s invalid in the native control", async (label) => {
+    await setInputValue(profileInput(label), "");
+    expect(profileInput(label).checkValidity()).toBe(false);
+  });
+
+  it.each([
+    ["AI trials", "12", "maxTrials"],
+    ["Tokens per measurement", "257", "tokens"],
+    ["Repeats per trial", "5", "repeats"],
+  ])("dispatches the corrected %s value without clamping", async (label, value, field) => {
+    await setInputValue(profileInput(label), "");
+    expect(navButton("Auto-tune fixture")?.disabled).toBe(true);
+    await setInputValue(profileInput(label), value);
+    expect(profileInput(label).value).toBe(value);
+    expect(profileInput(label).checkValidity()).toBe(true);
+    expect(container.querySelector('.tune-screen [role="status"]')).toBeNull();
+    expect(navButton("Auto-tune fixture")?.disabled).toBe(false);
+    await click(navButton("Auto-tune fixture"), "a corrected workload can be dispatched");
+    const calls = invokeCalls.filter((call) => call.command === "start_tuning");
+    expect(calls).toHaveLength(1);
+    expect(calls[0].args).toMatchObject({ request: { [field]: Number(value) } });
   });
 });
 

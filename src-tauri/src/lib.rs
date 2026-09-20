@@ -38,15 +38,9 @@ pub mod preflight;
 mod proc;
 #[cfg(test)]
 mod property_tests;
-pub mod recommend;
 mod runtime;
 mod runtime_service;
 mod server_service;
-use measurement_service::{
-    apply_calibration_model, build_calibration_model, build_compatibility_key,
-    calibration_storage_root, join_quality_candidate, rank_candidates, CalibrationRecords,
-};
-pub mod sharing;
 #[cfg(test)]
 mod test_support;
 mod tune;
@@ -129,7 +123,7 @@ impl Drop for ExclusiveOperation<'_> {
 pub(crate) struct AppState {
     server: Mutex<Option<ManagedServer>>,
     tuning: Mutex<Option<Arc<AtomicBool>>>,
-    benchmark: Mutex<Option<Arc<AtomicBool>>>,
+    benchmark: Arc<Mutex<Option<Arc<AtomicBool>>>>,
     /// Last validated catalog shown to the frontend. `None` means use bundled.
     catalog: Mutex<Option<catalog::Catalog>>,
     /// Cancel flags for in-flight downloads, keyed by normalized target path.
@@ -158,16 +152,15 @@ pub(crate) struct AppState {
 
 /// Which managed-inference operation currently owns the machine. Every
 /// subsystem that launches or drives a llama-server — ordinary startup, warm
-/// benchmarks, cold attempts, tuning sessions, and quality suites — reserves
-/// here first, so two owners can never run concurrently and every finalizer
-/// can detect that its server identity was replaced (audit MT-05).
+/// benchmarks, cold attempts, and tuning sessions — reserves here first, so
+/// two owners can never run concurrently and every finalizer can detect that
+/// its server identity was replaced (audit MT-05).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum OperationOwner {
     Server,
     Benchmark,
     ColdBenchmark,
     Tuning,
-    Quality,
 }
 
 impl OperationOwner {
@@ -177,7 +170,6 @@ impl OperationOwner {
             OperationOwner::Benchmark => "a warm-cache benchmark",
             OperationOwner::ColdBenchmark => "a cold-cache benchmark",
             OperationOwner::Tuning => "a tuning session",
-            OperationOwner::Quality => "a quality suite",
         }
     }
 }
@@ -253,6 +245,28 @@ pub(crate) fn active_operation_owner(
         .lock()
         .ok()
         .and_then(|state| state.active.map(|(owner, _)| owner))
+}
+
+/// Aborted-command shape (review deleg_16c0e72a): dropping the benchmark
+/// command future releases the operations reservation while the benchmark
+/// slot stays set and its worker can still be inferring. Replacement work
+/// must observe the slot as well as the coordinator, or it overlaps the
+/// abandoned request. A poisoned lock fails closed.
+pub(crate) fn benchmark_slot_occupied(state: &AppState) -> bool {
+    state
+        .benchmark
+        .lock()
+        .map(|slot| slot.is_some())
+        .unwrap_or(true)
+}
+
+/// Refuse replacement work while a benchmark slot is held, including the
+/// abandoned shape where the coordinator is already free.
+pub(crate) fn reject_if_benchmark_active(state: &AppState) -> Result<(), String> {
+    if benchmark_slot_occupied(state) {
+        return Err("A benchmark is already running; cancel it before starting new work.".into());
+    }
+    Ok(())
 }
 
 /// A Stop request may only act on the ordinary server owner: anything else
@@ -497,7 +511,7 @@ fn validate_profile_artifacts(
         .map(|summary| summary.architecture.as_str())
         .unwrap_or_default()
         .to_string();
-    for (label, path) in lora_references(profile)? {
+    for (label, path, _) in lora_references(profile)? {
         let lora = require_launchable_artifact(&label, &path)?;
         let lora_type = artifact_metadata_string(&lora, "general.type").unwrap_or_default();
         let adapter_type = artifact_metadata_string(&lora, "adapter.type").unwrap_or_default();
@@ -657,7 +671,7 @@ fn require_regular_non_reparse_file(label: &str, path: &Path) -> Result<(), Stri
     artifact::validate_regular_non_reparse_file(label, path)
 }
 
-fn lora_references(profile: &LaunchProfile) -> Result<Vec<(String, PathBuf)>, String> {
+fn lora_references(profile: &LaunchProfile) -> Result<Vec<(String, PathBuf, f32)>, String> {
     let mut references = Vec::new();
     if !profile.lora.trim().is_empty() {
         for (index, value) in profile.lora.split(',').enumerate() {
@@ -665,7 +679,11 @@ fn lora_references(profile: &LaunchProfile) -> Result<Vec<(String, PathBuf)>, St
             if path.is_empty() {
                 return Err(format!("LoRA entry {} has an empty path", index + 1));
             }
-            references.push((format!("LoRA entry {}", index + 1), PathBuf::from(path)));
+            references.push((
+                format!("LoRA entry {}", index + 1),
+                PathBuf::from(path),
+                1.0,
+            ));
         }
     }
     if !profile.lora_scaled.trim().is_empty() {
@@ -675,7 +693,7 @@ fn lora_references(profile: &LaunchProfile) -> Result<Vec<(String, PathBuf)>, St
                 .trim()
                 .rsplit_once(':')
                 .ok_or_else(|| format!("Scaled LoRA entry {entry} must use path:scale syntax"))?;
-            scale
+            let scale = scale
                 .trim()
                 .parse::<f32>()
                 .ok()
@@ -687,6 +705,7 @@ fn lora_references(profile: &LaunchProfile) -> Result<Vec<(String, PathBuf)>, St
             references.push((
                 format!("Scaled LoRA entry {entry}"),
                 PathBuf::from(path.trim()),
+                scale,
             ));
         }
     }
@@ -694,7 +713,7 @@ fn lora_references(profile: &LaunchProfile) -> Result<Vec<(String, PathBuf)>, St
 }
 
 fn validate_lora_paths(profile: &LaunchProfile) -> Result<(), String> {
-    for (label, path) in lora_references(profile)? {
+    for (label, path, _) in lora_references(profile)? {
         require_regular_non_reparse_file(&label, &path)?;
     }
     Ok(())
@@ -1812,241 +1831,6 @@ fn validate_launch_profile(profile: LaunchProfile) -> Result<LaunchValidation, S
 /// deadline bounds how long Stop waits for that terminal state.
 pub(crate) const STARTUP_STOP_DEADLINE_SECS: u64 = 10;
 
-#[tauri::command]
-fn store_calibration_anchor(
-    app: tauri::AppHandle,
-    anchor: calibration::CalibrationAnchor,
-) -> Result<CalibrationRecords, String> {
-    let root = calibration_storage_root(&app)?;
-    calibration::persist_calibration_anchor(&root, &anchor)?;
-    calibration::prune_records(&root, "anchors")?;
-    load_calibration_records(app, anchor.compatibility_key)
-}
-
-/// Create a calibration anchor from a persisted benchmark manifest (audit
-/// MT-08): the source-run identity, observation time, and measured value are
-/// derived in Rust from the saved run, never from a click-stamped copy of a
-/// frontend number.
-fn add_benchmark_calibration_anchor_impl(
-    root: &Path,
-    manifest_path: &Path,
-    estimated_value: f64,
-    estimator: &str,
-) -> Result<CalibrationRecords, String> {
-    const MAX_MANIFEST_BYTES: u64 = 16 * 1024 * 1024;
-    if !estimated_value.is_finite() || estimated_value <= 0.0 || estimated_value > 1_000_000_000.0 {
-        return Err("The estimate must be a positive finite tokens-per-second value".into());
-    }
-    let estimator = estimator.trim();
-    if estimator.is_empty() || estimator.len() > 64 {
-        return Err("The estimator identity must be 1-64 characters".into());
-    }
-    if !estimator
-        .chars()
-        .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '.' | '_'))
-    {
-        return Err("The estimator identity may contain letters, digits, '.', '-' and '_'".into());
-    }
-    let metadata = std::fs::metadata(manifest_path)
-        .map_err(|error| format!("The benchmark manifest could not be read: {error}"))?;
-    if !metadata.is_file() {
-        return Err("The benchmark manifest path is not a file".into());
-    }
-    if metadata.len() > MAX_MANIFEST_BYTES {
-        return Err(format!(
-            "The benchmark manifest exceeds the {MAX_MANIFEST_BYTES}-byte limit"
-        ));
-    }
-    let bytes = std::fs::read(manifest_path)
-        .map_err(|error| format!("The benchmark manifest could not be read: {error}"))?;
-    let manifest: evidence::BenchmarkManifest = serde_json::from_slice(&bytes)
-        .map_err(|error| format!("The benchmark manifest is not valid JSON: {error}"))?;
-    manifest
-        .validate_complete()
-        .map_err(|error| error.to_string())?;
-    // Eligibility policy (audit MT-08 I3): a run contributes an anchor only
-    // when it succeeded (manifests written before outcomes existed count as
-    // succeeded) and carries at least one observation.
-    match manifest.terminal_outcome {
-        None | Some(evidence::AttemptOutcome::Succeeded) => {}
-        Some(outcome) => {
-            return Err(format!(
-                "A {} benchmark run cannot become a calibration anchor",
-                match outcome {
-                    evidence::AttemptOutcome::Failed => "failed",
-                    evidence::AttemptOutcome::TimedOut => "timed-out",
-                    evidence::AttemptOutcome::Cancelled => "cancelled",
-                    evidence::AttemptOutcome::Succeeded => "succeeded",
-                }
-            ));
-        }
-    }
-    if manifest.observations.is_empty() {
-        return Err("The benchmark run contains no observations".into());
-    }
-    // Partial runs are ineligible too: a run must contain every planned
-    // trial, or its mean is not the mean of the workload it claims.
-    let planned = manifest.workload.trials as usize;
-    if planned == 0 || manifest.observations.len() < planned {
-        return Err(format!(
-            "A partial benchmark run ({} of {} planned trials) cannot become a calibration anchor",
-            manifest.observations.len(),
-            planned
-        ));
-    }
-    use sha2::Digest as _;
-    let source_run_id = hex::encode(sha2::Sha256::digest(&bytes));
-    // Observation time comes from the run itself, not from the click.
-    let observed_at_ms = manifest
-        .observations
-        .iter()
-        .map(|observation| observation.started_at_ms)
-        .max()
-        .unwrap_or(0);
-    if observed_at_ms == 0 {
-        return Err("The benchmark run does not carry observation timestamps".into());
-    }
-    let summary = measurement::summarize_observations(&manifest.observations)?;
-    let measured_value = summary.decode_tps.mean;
-    let compatibility_key = manifest
-        .compatibility_key
-        .clone()
-        .ok_or("The benchmark run does not carry a compatibility key")?;
-    let anchor = calibration::CalibrationAnchor::new_for_run(
-        &compatibility_key,
-        &manifest.execution_snapshot_schema,
-        &manifest.execution_snapshot_unknowns,
-        &source_run_id,
-        estimator,
-        estimated_value,
-        measured_value,
-        observed_at_ms,
-    );
-    calibration::persist_calibration_anchor(root, &anchor)?;
-    load_calibration_records_for(root, compatibility_key)
-}
-
-fn load_calibration_records_for(
-    root: &Path,
-    compatibility_key: String,
-) -> Result<CalibrationRecords, String> {
-    let anchors = calibration::load_calibration_anchors(root, &compatibility_key)?;
-    let models = calibration::load_calibration_models(root, &compatibility_key)?;
-    let mut problems = anchors.problems.clone();
-    problems.extend(models.problems);
-    problems.truncate(32);
-    Ok(CalibrationRecords {
-        anchors: anchors.records,
-        models: models.records,
-        problems,
-    })
-}
-
-/// Explicit cleanup of the local calibration history (audit S-16.I1).
-#[tauri::command]
-fn clear_calibration_history(app: tauri::AppHandle) -> Result<usize, String> {
-    let root = calibration_storage_root(&app)?;
-    calibration::clear_calibration_history(&root)
-}
-
-#[tauri::command]
-fn add_benchmark_calibration_anchor(
-    app: tauri::AppHandle,
-    manifest_path: String,
-    estimated_value: f64,
-    estimator: String,
-) -> Result<CalibrationRecords, String> {
-    let root = calibration_storage_root(&app)?;
-    add_benchmark_calibration_anchor_impl(
-        &root,
-        Path::new(&manifest_path),
-        estimated_value,
-        &estimator,
-    )
-}
-
-/// Backend evaluation of a stored calibration model (audit MT-14 I4): the
-/// same rules apply uses, exposed for display so frontend and backend
-/// cannot disagree about expiry or freshness.
-#[tauri::command]
-fn evaluate_calibration_model(
-    model: calibration::CalibrationModel,
-    compatibility_key: String,
-    now_ms: u64,
-) -> Result<calibration::CalibrationState, String> {
-    Ok(calibration::calibration_model_state(
-        &model,
-        &compatibility_key,
-        now_ms,
-    ))
-}
-
-#[tauri::command]
-fn store_calibration_model(
-    app: tauri::AppHandle,
-    model: calibration::CalibrationModel,
-) -> Result<CalibrationRecords, String> {
-    let root = calibration_storage_root(&app)?;
-    calibration::persist_calibration_model(&root, &model)?;
-    calibration::prune_records(&root, "models")?;
-    load_calibration_records(app, model.compatibility_key)
-}
-
-#[tauri::command]
-fn load_calibration_records(
-    app: tauri::AppHandle,
-    compatibility_key: String,
-) -> Result<CalibrationRecords, String> {
-    let root = calibration_storage_root(&app)?;
-    load_calibration_records_for(&root, compatibility_key)
-}
-
-#[tauri::command]
-fn import_external_evidence(
-    bundle: calibration::ExternalEvidenceBundle,
-) -> Result<calibration::ExternalEvidenceBundle, String> {
-    calibration::validate_external_evidence(bundle)
-}
-
-#[tauri::command]
-fn review_external_evidence(
-    bundle: calibration::ExternalEvidenceBundle,
-    state: calibration::ExternalEvidenceState,
-    confirmed: bool,
-) -> Result<calibration::ExternalEvidenceBundle, String> {
-    calibration::review_external_evidence(bundle, state, confirmed)
-}
-
-#[tauri::command]
-fn build_share_export(
-    manifest: evidence::BenchmarkManifest,
-    summary: Option<measurement::BenchmarkSummaryV2>,
-    quality: Option<recommend::QualitySuiteResult>,
-    compatibility_key: String,
-    created_at_ms: u64,
-    confirmed: bool,
-) -> Result<sharing::ShareBundle, String> {
-    sharing::require_export_confirmation(confirmed)?;
-    sharing::build_share_bundle(
-        &manifest,
-        summary.as_ref(),
-        quality.as_ref(),
-        compatibility_key,
-        created_at_ms,
-    )
-}
-
-#[tauri::command]
-fn write_share_export(
-    path: String,
-    bundle: sharing::ShareBundle,
-    confirmed: bool,
-) -> Result<String, String> {
-    sharing::require_export_confirmation(confirmed)?;
-    let written = sharing::persist_share_bundle(Path::new(&path), &bundle)?;
-    Ok(written.to_string_lossy().into_owned())
-}
-
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RuntimeSetupResponse {
@@ -2496,22 +2280,6 @@ pub fn run() {
             measurement_service::benchmark_v2,
             measurement_service::cancel_benchmark,
             measurement_service::replay_benchmark_manifest,
-            measurement_service::run_quality_suite,
-            rank_candidates,
-            join_quality_candidate,
-            build_compatibility_key,
-            build_calibration_model,
-            apply_calibration_model,
-            store_calibration_anchor,
-            add_benchmark_calibration_anchor,
-            store_calibration_model,
-            evaluate_calibration_model,
-            load_calibration_records,
-            clear_calibration_history,
-            import_external_evidence,
-            review_external_evidence,
-            build_share_export,
-            write_share_export,
             runtime_service::load_runtime_setup,
             runtime_service::detect_hardware,
             runtime_service::fetch_runtime_catalog,
@@ -2662,7 +2430,7 @@ mod release_security_tests {
         std::fs::write(path, bytes).unwrap();
     }
 
-    fn write_test_gguf_with_identity(
+    pub(crate) fn write_test_gguf_with_identity(
         path: &Path,
         architecture: &str,
         extra_string_facts: &[(&str, &str)],
@@ -2674,7 +2442,7 @@ mod release_security_tests {
         write_test_gguf_with_identity(path, "llama", &[]);
     }
 
-    fn launch_validation_fixture() -> LaunchValidation {
+    pub(crate) fn launch_validation_fixture() -> LaunchValidation {
         LaunchValidation {
             runtime: RuntimeCapabilities {
                 path: "llama-server.exe".into(),
@@ -3277,11 +3045,7 @@ mod release_security_tests {
         for (start, end) in [
             ("fn benchmark_server(", "struct BenchmarkRunResult"),
             ("async fn benchmark_v2(", "fn cancel_benchmark("),
-            (
-                "fn replay_benchmark_manifest(",
-                "async fn run_quality_suite(",
-            ),
-            ("async fn run_quality_suite(", "fn rank_candidates("),
+            ("fn replay_benchmark_manifest(", "#[cfg(test)]"),
         ] {
             let body = source
                 .split_once(start)
@@ -4450,6 +4214,26 @@ mod operation_coordinator_tests {
     }
 
     #[test]
+    fn abandoned_benchmark_slot_still_refuses_replacement_work() {
+        // Review deleg_16c0e72a (aborted-command shape): dropping the
+        // benchmark command future releases the coordinator while the slot
+        // stays set and the worker can still infer. Replacement work must
+        // observe the slot, not just the coordinator.
+        let state = AppState::default();
+        assert!(active_operation_owner(&state.operations).is_none());
+        assert!(reject_if_benchmark_active(&state).is_ok());
+        *state.benchmark.lock().unwrap() = Some(std::sync::Arc::new(
+            std::sync::atomic::AtomicBool::new(false),
+        ));
+        assert!(active_operation_owner(&state.operations).is_none());
+        let err = reject_if_benchmark_active(&state).unwrap_err();
+        assert!(err.contains("already running"), "{err}");
+        assert!(benchmark_slot_occupied(&state));
+        *state.benchmark.lock().unwrap() = None;
+        assert!(reject_if_benchmark_active(&state).is_ok());
+    }
+
+    #[test]
     fn mt05_one_operation_owns_the_machine_and_generations_advance() {
         // The audited interleavings all relied on two subsystems passing
         // their own "nothing running" checks; the reservation closes that
@@ -4495,7 +4279,7 @@ mod operation_coordinator_tests {
             generation: first.generation,
         };
         drop(first); // the server was stopped
-        let replacement = reserve_operation(&coordinator, OperationOwner::Quality).unwrap();
+        let replacement = reserve_operation(&coordinator, OperationOwner::Benchmark).unwrap();
         assert!(
             !stale.is_current(),
             "a stale reservation must not look current"
@@ -4507,7 +4291,7 @@ mod operation_coordinator_tests {
         );
         assert_eq!(
             active_operation_owner(&coordinator),
-            Some(OperationOwner::Quality)
+            Some(OperationOwner::Benchmark)
         );
     }
 
@@ -4519,7 +4303,6 @@ mod operation_coordinator_tests {
             OperationOwner::Benchmark,
             OperationOwner::ColdBenchmark,
             OperationOwner::Tuning,
-            OperationOwner::Quality,
         ] {
             let message = stop_owner_conflict(Some(owner)).expect("foreign owners must block Stop");
             assert!(message.contains(owner.label()), "{message}");
@@ -4546,11 +4329,6 @@ mod operation_coordinator_tests {
                 "async fn benchmark_v2(",
                 "fn cancel_benchmark(",
                 "OperationOwner::ColdBenchmark",
-            ),
-            (
-                "async fn run_quality_suite(",
-                "fn rank_candidates(",
-                "reserve_operation(&state.operations, OperationOwner::Quality)",
             ),
             (
                 "async fn start_tuning(",
@@ -4583,10 +4361,8 @@ mod operation_coordinator_tests {
             stop.contains("stop_owner_conflict(active_operation_owner(&state.operations))"),
             "Stop must consult the ownership gate"
         );
-        for (start, end) in [
-            ("async fn benchmark_v2(", "fn cancel_benchmark("),
-            ("async fn run_quality_suite(", "fn rank_candidates("),
-        ] {
+        {
+            let (start, end) = ("async fn benchmark_v2(", "fn cancel_benchmark(");
             let body = source
                 .split(start)
                 .nth(1)
@@ -4603,331 +4379,8 @@ mod operation_coordinator_tests {
 }
 
 #[cfg(test)]
-mod mt08_anchor_tests {
+mod ipc_contract_tests {
     use super::*;
-    use evidence::{AttemptOutcome, BenchmarkManifest, BenchmarkObservation, Evidence};
-
-    fn manifest_fixture(
-        key: &str,
-        started_at_ms: u64,
-        decode_tps: f64,
-        outcome: AttemptOutcome,
-        observations: usize,
-    ) -> BenchmarkManifest {
-        let mut manifest = BenchmarkManifest {
-            compatibility_key: Some(key.into()),
-            execution_snapshot_schema: crate::calibration::EXECUTION_SNAPSHOT_SCHEMA.into(),
-            execution_snapshot_unknowns: Vec::new(),
-            runtime: Some(evidence::RuntimeFact {
-                path: "runtime.exe".into(),
-                version: "1".into(),
-                build: "1".into(),
-                executable_sha256: Some("a".repeat(64)),
-                help_sha256: "b".repeat(64),
-                backend: "cpu".into(),
-            }),
-            model: Some(evidence::ModelFact {
-                logical_id: "fixture".into(),
-                architecture: "llama".into(),
-                shards: vec![evidence::FileFact {
-                    path: "model.gguf".into(),
-                    bytes: 1,
-                    sha256: Some("d".repeat(64)),
-                }],
-                companions: Vec::new(),
-                gguf_header_sha256: "e".repeat(64),
-            }),
-            launch: Some(evidence::LaunchFact {
-                requested_context: 4_096,
-                effective_context: Evidence {
-                    value: Some(4_096),
-                    level: evidence::EvidenceLevel::Observed,
-                    source: evidence::EvidenceSource {
-                        kind: evidence::EvidenceSourceKind::Runtime,
-                        detail: "fixture".into(),
-                    },
-                    observed_at_ms: started_at_ms,
-                    notes: Vec::new(),
-                },
-                parallel: 1,
-                gpu_layers: "0".into(),
-                batch: 512,
-                ubatch: 128,
-                cache_type_k: "F16".into(),
-                cache_type_v: "F16".into(),
-                split_mode: "none".into(),
-                ..evidence::LaunchFact::default()
-            }),
-            // A successful run carries no terminal failure outcome; the
-            // manifest validator treats a present outcome as a failure.
-            terminal_outcome: match outcome {
-                AttemptOutcome::Succeeded => None,
-                other => Some(other),
-            },
-            ..BenchmarkManifest::default()
-        };
-        // The workload validator requires at least one planned trial; the
-        // empty-observation fixture keeps trials=1 so the "no observations"
-        // check is the one that fires.
-        manifest.workload.trials = observations.max(1) as u16;
-        // Declare the measured workload so the attempt/workload contract
-        // (audit MT-13) accepts the fixture.
-        manifest.workload.prompt_tokens = 8;
-        manifest.workload.generation_tokens = 16;
-        manifest.workload.warmups = 0;
-        for trial in 1..=observations {
-            manifest.observations.push(BenchmarkObservation {
-                trial: trial as u16,
-                started_at_ms: started_at_ms + trial as u64,
-                duration_ms: 100.0,
-                prompt_tokens: 8,
-                cached_prompt_tokens: 0,
-                generated_tokens: 16,
-                prefill_tps: Some(10.0),
-                decode_tps: Some(decode_tps),
-                first_token_ms: Some(5.0),
-                derived_ttft_ms: None,
-                peak_process_rss_bytes: Evidence::unknown(
-                    evidence::EvidenceSource {
-                        kind: evidence::EvidenceSourceKind::Runtime,
-                        detail: "fixture".into(),
-                    },
-                    started_at_ms + trial as u64,
-                    "fixture",
-                ),
-                outcome: AttemptOutcome::Succeeded,
-                error: None,
-            });
-        }
-        // A terminal failure outcome must match the last observation
-        // (audit MT-13): mark the final trial as the failed attempt.
-        if let Some(failed) = manifest.terminal_outcome {
-            if let Some(last) = manifest.observations.last_mut() {
-                last.outcome = failed;
-                last.error = Some("fixture failure".into());
-            }
-        }
-        manifest
-    }
-
-    fn write_manifest(directory: &Path, manifest: &BenchmarkManifest) -> std::path::PathBuf {
-        measurement::persist_manifest(directory, manifest).unwrap()
-    }
-
-    fn temp_root(label: &str) -> std::path::PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "localmotive-mt08-{label}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        root
-    }
-
-    #[test]
-    fn mt08_three_adds_on_one_run_keep_one_anchor_and_the_gate_closed() {
-        let root = temp_root("one-run");
-        let manifest = manifest_fixture(
-            &format!("v2:{}", "c".repeat(64)),
-            1_000,
-            50.0,
-            AttemptOutcome::Succeeded,
-            2,
-        );
-        let path = write_manifest(&root, &manifest);
-
-        let first =
-            add_benchmark_calibration_anchor_impl(&root, &path, 100.0, "manual-estimate.v1")
-                .expect("first add succeeds");
-        assert_eq!(first.anchors.len(), 1);
-        assert_eq!(first.anchors[0].source_run_id.len(), 64);
-        assert_eq!(first.anchors[0].observed_at_ms, 1_002);
-
-        // Repeated clicks with different estimates: same run, so the second
-        // and third attempts cannot manufacture samples.
-        let second =
-            add_benchmark_calibration_anchor_impl(&root, &path, 150.0, "manual-estimate.v1");
-        assert!(
-            second.is_err(),
-            "a repeated add must not create a second anchor"
-        );
-        let third =
-            add_benchmark_calibration_anchor_impl(&root, &path, 200.0, "manual-estimate.v1");
-        assert!(third.is_err());
-
-        let records =
-            load_calibration_records_for(&root, format!("v2:{}", "c".repeat(64))).unwrap();
-        assert_eq!(
-            records.anchors.len(),
-            1,
-            "one run must contribute one anchor"
-        );
-
-        // The three-anchor gate stays closed with a single distinct run.
-        let error = calibration::build_calibration(&records.anchors, 10_000, 1_000).unwrap_err();
-        assert!(
-            error.contains("three"),
-            "the three-sample gate must stay closed: {error}"
-        );
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn mt08_three_distinct_runs_build_and_keep_run_times() {
-        let root = temp_root("three-runs");
-        let key = format!("v2:{}", "c".repeat(64));
-        let mut anchors = Vec::new();
-        for (index, started_at) in [1_000_u64, 2_000, 3_000].into_iter().enumerate() {
-            let manifest = manifest_fixture(
-                &key,
-                started_at,
-                40.0 + index as f64 * 10.0,
-                AttemptOutcome::Succeeded,
-                2,
-            );
-            let path = write_manifest(&root, &manifest);
-            let records = add_benchmark_calibration_anchor_impl(
-                &root,
-                &path,
-                100.0 + index as f64 * 10.0,
-                "manual-estimate.v1",
-            )
-            .unwrap();
-            anchors = records.anchors;
-        }
-        assert_eq!(anchors.len(), 3);
-        let observed = anchors
-            .iter()
-            .map(|anchor| anchor.observed_at_ms)
-            .collect::<Vec<_>>();
-        assert!(
-            observed.contains(&1_002) && observed.contains(&2_002) && observed.contains(&3_002)
-        );
-
-        let model = calibration::build_calibration(&anchors, 10_000, 1_000).unwrap();
-        assert_eq!(model.anchor_count, 3);
-
-        // Reimporting the first manifest cannot add a fourth independent
-        // sample: the source-run identity dedupes it.
-        let first = manifest_fixture(&key, 1_000, 40.0, AttemptOutcome::Succeeded, 2);
-        let first_path = write_manifest(&root, &first);
-        let again =
-            add_benchmark_calibration_anchor_impl(&root, &first_path, 100.0, "manual-estimate.v1")
-                .expect("a byte-identical reimport is idempotent");
-        assert_eq!(
-            again.anchors.len(),
-            3,
-            "a reimport must not create a new sample"
-        );
-        // A reimport with a DIFFERENT estimate cannot reuse the run either.
-        assert!(add_benchmark_calibration_anchor_impl(
-            &root,
-            &first_path,
-            111.0,
-            "manual-estimate.v1"
-        )
-        .is_err());
-
-        // Three copies of ONE run identity cannot trip the gate: the model
-        // needs three distinct persisted runs, whatever the click count.
-        let mut forged = Vec::new();
-        for offset in 0..3_u64 {
-            let mut copy = anchors[0].clone();
-            copy.observed_at_ms = 9_000 + offset * 10;
-            copy.estimated_value = 100.0 + offset as f64;
-            forged.push(copy);
-        }
-        let error = calibration::build_calibration(&forged, 10_000, 1_000).unwrap_err();
-        assert!(error.contains("three distinct measured runs"), "{error}");
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn mt08_failed_or_cancelled_runs_and_estimator_mixes_are_ineligible() {
-        let root = temp_root("ineligible");
-        let key = format!("v2:{}", "c".repeat(64));
-
-        for outcome in [
-            AttemptOutcome::Failed,
-            AttemptOutcome::TimedOut,
-            AttemptOutcome::Cancelled,
-        ] {
-            let manifest = manifest_fixture(&key, 1_000, 50.0, outcome, 2);
-            let path = write_manifest(&root, &manifest);
-            let error =
-                add_benchmark_calibration_anchor_impl(&root, &path, 100.0, "manual-estimate.v1")
-                    .unwrap_err();
-            assert!(
-                error.contains("cannot become a calibration anchor"),
-                "{error}"
-            );
-        }
-
-        // An empty run cannot even pass the shared attempt/workload contract
-        // (audit MT-13), so the fixture is written as raw JSON to prove the
-        // anchor command still refuses it independently.
-        let mut empty = manifest_fixture(&key, 1_000, 50.0, AttemptOutcome::Succeeded, 0);
-        empty.workload.trials = 1;
-        let empty_path = root.join("empty-observations.json");
-        std::fs::write(&empty_path, serde_json::to_vec_pretty(&empty).unwrap()).unwrap();
-        let error =
-            add_benchmark_calibration_anchor_impl(&root, &empty_path, 100.0, "manual-estimate.v1")
-                .unwrap_err();
-        assert!(error.contains("observation"), "{error}");
-
-        // A partial run (fewer observations than the workload's planned
-        // trials) is ineligible even when it carries no failure outcome.
-        // The shared attempt/workload contract rejects it at the boundary,
-        // so the fixture is raw JSON to prove the anchor command refuses it
-        // independently too.
-        let mut partial = manifest_fixture(&key, 1_000, 50.0, AttemptOutcome::Succeeded, 1);
-        partial.workload.trials = 3;
-        let partial_path = root.join("partial-run.json");
-        std::fs::write(&partial_path, serde_json::to_vec_pretty(&partial).unwrap()).unwrap();
-        let error = add_benchmark_calibration_anchor_impl(
-            &root,
-            &partial_path,
-            100.0,
-            "manual-estimate.v1",
-        )
-        .unwrap_err();
-        assert!(
-            error.contains("requested trials") || error.contains("partial benchmark run"),
-            "{error}"
-        );
-
-        // Estimator identities cannot mix inside one model.
-        let mut anchors = Vec::new();
-        for (index, started_at) in [1_000_u64, 2_000, 3_000].into_iter().enumerate() {
-            let manifest = manifest_fixture(
-                &key,
-                started_at,
-                40.0 + index as f64,
-                AttemptOutcome::Succeeded,
-                2,
-            );
-            let path = write_manifest(&root, &manifest);
-            let estimator = if index == 2 {
-                "other-estimator.v1"
-            } else {
-                "manual-estimate.v1"
-            };
-            let records = add_benchmark_calibration_anchor_impl(
-                &root,
-                &path,
-                100.0 + index as f64,
-                estimator,
-            )
-            .unwrap();
-            anchors = records.anchors;
-        }
-        let error = calibration::build_calibration(&anchors, 10_000, 1_000).unwrap_err();
-        assert!(error.contains("estimator identity"), "{error}");
-        let _ = std::fs::remove_dir_all(root);
-    }
 
     #[test]
     fn s18_shared_ipc_contract_fixture_matches_rust_serialization() {
@@ -4970,46 +4423,5 @@ mod mt08_anchor_tests {
             types["catalogDrop"],
             "CatalogDrop wire shape drifted"
         );
-
-        assert_eq!(
-            serde_json::to_value(calibration::ExternalEvidenceState::Pending).unwrap(),
-            types["externalEvidenceState"]
-        );
-        assert_eq!(
-            serde_json::to_value(calibration::ExternalProvenance::ImportedExternal).unwrap(),
-            types["externalProvenance"]
-        );
-        assert_eq!(
-            serde_json::to_value(calibration::RECORD_SCHEMA_VERSION).unwrap(),
-            types["calibrationRecordVersion"]
-        );
-    }
-
-    #[test]
-    fn s18_calibration_records_version_and_reject_newer_formats() {
-        let key = format!("v2:{}", "e".repeat(64));
-        let mut anchor = calibration::CalibrationAnchor::new(&key, 10.0, 11.0, 10);
-        // A record without the field (older files) defaults to version 1.
-        let json = serde_json::to_string(&anchor).unwrap();
-        let stripped = json.replace("\"schemaVersion\":1,", "");
-        let parsed: calibration::CalibrationAnchor = serde_json::from_str(&stripped).unwrap();
-        assert_eq!(
-            parsed.schema_version,
-            calibration::RECORD_SCHEMA_VERSION,
-            "older records must load as the current version"
-        );
-        // Unknown extra fields are tolerated on purpose (forward compatibility).
-        let with_extra = json.replace(
-            "\"compatibilityKey\"",
-            "\"futureField\":42,\"compatibilityKey\"",
-        );
-        let parsed: calibration::CalibrationAnchor = serde_json::from_str(&with_extra).unwrap();
-        assert_eq!(parsed.schema_version, calibration::RECORD_SCHEMA_VERSION);
-
-        // A NEWER record version is rejected with an actionable message.
-        anchor.schema_version = calibration::RECORD_SCHEMA_VERSION + 1;
-        let error = calibration::validate_persisted_anchor_for_test(&anchor).unwrap_err();
-        assert!(error.contains("record version"), "{error}");
-        assert!(error.contains("rebuild"), "{error}");
     }
 }

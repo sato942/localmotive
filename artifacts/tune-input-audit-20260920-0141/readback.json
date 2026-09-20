@@ -1,0 +1,63 @@
+{
+  "scope": "Working-tree Tune input correction; not release qualification",
+  "recordedAt": "2026-09-20T02:13:30.335518+04:00",
+  "source": "bdb3c14c9170f0342ba0384738e2ffd23062970d",
+  "sourceDirty": true,
+  "sourceDiffSha256": "52d351b9fa61004e198485ca7fff022e0dfbb1e194d9a3fecb2f34844bee7323",
+  "changedFileSha256": {
+    "src/model.ts": "ea9be88a285b0beccdc14d9c82cb12640e974ba344c287976263b080abc9b3ba",
+    "src/model.test.ts": "6bb7c762cf5a8d4dc9468a32be9f19592dd35856390e5d8bc1b7fc5beec958df",
+    "src/App.tsx": "363a61982922567544376f25b3f067bf50aa24f55616392f4f77e6b16edfa50c",
+    "src/App.staleResponses.test.tsx": "58a4fecc572e744bf387f7ef723ae9546a76867de19e72113224711b0b2a3daf",
+    "src/screens/TuneScreen.tsx": "3fa22d4c870517a6374a714176432a3d6351bf4f89a9f729da1fde125805697d",
+    "src/screens/TuneScreen.test.tsx": "ff08dd9187e4d87325f0b1a1b441b3ed0df9f350e2b16a75332a13907d2b6fa2",
+    "docs/DESIGN.md": "5e54ba274f2910707c113b890b69cd001dcc56f31b1e3bcf025bce5b44edb19a",
+    "TODO-0.6.md": "c0fd38a619cc748b60d39922e14b3c4ab0402b32ee14336dc7b951f74f1eb7af",
+    "CHANGELOG.md": "2d4d89b0ad0398edeefc63bf44c6bfde9d377f19a0e5fdf0a7be4ef14f8a539c",
+    "agents_feedback.md": "9d0d73d353ff5db296fda75ce41637ecb6da6d62f455e361268de4237ad05cc1"
+  },
+  "protectedFiles": 433,
+  "protectedFilesUnchanged": "PASS",
+  "agentsMdUnchanged": "PASS",
+  "frontend": {
+    "command": "npm run check",
+    "status": "PASS",
+    "scriptTests": 274,
+    "vitestTests": 224
+  },
+  "native": {
+    "checks": 17,
+    "status": "PASS",
+    "cleanup": "PASS",
+    "scope": "Metadata-only readiness fixture; no valid Tune dispatch"
+  },
+  "packagedAccessibility": "PASS",
+  "artifacts": [
+    {
+      "path": "C:\\Users\\Mubarak\\Documents\\Projects\\localmotive\\src-tauri\\target\\release\\localmotive.exe",
+      "bytes": 20148736,
+      "sha256": "f024dd94398f24c228b60f1b998b775bad419d345d9932bfbe4e26d6aa24ac55",
+      "signature": "NotSigned",
+      "version": "0.6.0"
+    },
+    {
+      "path": "C:\\Users\\Mubarak\\Documents\\Projects\\localmotive\\src-tauri\\target\\release\\bundle\\msi\\Localmotive_0.6.0_x64_en-US.msi",
+      "bytes": 8798208,
+      "sha256": "2d459d81927bdf7381fd7d658462ee3f5c2e59274504d0040effd1d435eb1ca6",
+      "signature": "NotSigned",
+      "version": "0.6.0"
+    },
+    {
+      "path": "C:\\Users\\Mubarak\\Documents\\Projects\\localmotive\\src-tauri\\target\\release\\bundle\\nsis\\Localmotive_0.6.0_x64-setup.exe",
+      "bytes": 5123005,
+      "sha256": "89c9a1a2ea872f8e4380ccaf14e3c206d622f15698dfec4219d4e07fc0edcbc6",
+      "signature": "NotSigned",
+      "version": "0.6.0"
+    }
+  ],
+  "independentReview": "UNKNOWN: result not delivered",
+  "standaloneDesignDetector": "UNKNOWN: no repository-supplied detector command",
+  "installerLifecycle": "UNKNOWN: not run for this candidate",
+  "releaseQualification": "UNKNOWN: not run for this candidate",
+  "publicationAttempted": false
+}

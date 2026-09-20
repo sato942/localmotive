@@ -1,0 +1,10 @@
+   Compiling localmotive v0.6.0 (C:\Users\Mubarak\Documents\Projects\localmotive\src-tauri)
+error[E0308]: mismatched types
+   --> src\server_service.rs:343:23
+    |
+343 |             log_path: std::path::PathBuf::new(),
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^ expected `String`, found `PathBuf`
+
+For more information about this error, try `rustc --explain E0308`.
+error: could not compile `localmotive` (lib test) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...

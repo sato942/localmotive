@@ -7,15 +7,16 @@
 // readiness gating on the Auto-tune action, and the blocker line.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TuneScreen, type TuneScreenProps } from "./TuneScreen";
-import type { ServerStatus } from "../model";
+import { suggestedProfile, type ServerStatus } from "../model";
 
 let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -24,6 +25,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
+  vi.unstubAllGlobals();
 });
 
 const idleStatus: ServerStatus = {
@@ -85,6 +87,7 @@ function props(overrides: Partial<TuneScreenProps> = {}): TuneScreenProps {
     trialsForDisplay: [],
     tuneBlocker: "Add a provider key first.",
     tuneContext: 8192,
+    tuneInputError: null,
     tuneLogRef: { current: null },
     tuneProgress: null,
     tuneRepeats: 2,
@@ -99,6 +102,24 @@ function props(overrides: Partial<TuneScreenProps> = {}): TuneScreenProps {
 }
 
 describe("TuneScreen presentation contract", () => {
+  it("keeps an input error visible while a prior report is displayed", () => {
+    const selected = {
+      id: "fixture", name: "fixture", directory: "C:/models", firstShard: "C:/models/fixture.gguf",
+      sizeBytes: 24, shardCount: 1, expectedShards: 1, complete: true, quant: "F16", shards: [], companions: [],
+    };
+    const trial = { index: 0, changes: {}, rationale: "Fixture report", meanTps: 1, medianTps: 1, error: null, command: "fixture" };
+    const error = "AI trials must be a whole number between 1 and 12.";
+    act(() => root.render(<TuneScreen {...props({
+      selected, canTune: false, tuneTrials: 13, tuneInputError: error, bestLive: trial, trialsForDisplay: [trial],
+      tuneReport: {
+        baselineTps: 1, bestTps: 1, bestIndex: 0, bestProfile: suggestedProfile(selected, "C:/runtime/llama-server.exe"),
+        trials: [trial], stoppedReason: "Fixture prior report.",
+      },
+    })} />));
+    expect(container.textContent).toContain("Fixture prior report.");
+    expect(container.querySelector('[role="status"]')?.textContent).toBe(error);
+  });
+
   it("reflects the persisted disclosure choice in the radio pair", () => {
     act(() => root.render(<TuneScreen {...props({ briefDisclosure: "minimal" })} />));
     const radios = Array.from(

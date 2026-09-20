@@ -1,0 +1,18 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.50s
+     Running unittests src\lib.rs (target\debug\deps\localmotive_lib-694be1a6828a4ecd.exe)
+
+running 5 tests
+test measurement::tests::replay_rejects_a_changed_launch_command ... ok
+test measurement::tests::replay_rejects_a_changed_compatibility_identity ... ok
+test core::tests::manifest_replay_handles_inline_paths_without_trusting_fingerprint_text ... ok
+test core::tests::manifest_replay_matches_legacy_paths_but_not_changed_inputs ... ok
+test measurement::tests::replay_accepts_old_and_new_path_encodings_for_the_same_current_arguments ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 598 filtered out; finished in 0.00s
+
+     Running unittests src\main.rs (target\debug\deps\localmotive-7f4f61c092604b5b.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

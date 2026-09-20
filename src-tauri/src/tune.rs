@@ -657,18 +657,19 @@ fn objective_label(inputs: &TuningInputs) -> String {
     )
 }
 
-/// Sample standard deviation of the trial samples; zero when undefined.
+/// Sample standard deviation of validated positive throughput; zero for fewer than two samples.
 fn sample_std_dev(samples: &[f64]) -> f64 {
     if samples.len() < 2 {
         return 0.0;
     }
-    let mean = samples.iter().sum::<f64>() / samples.len() as f64;
+    let scale = samples.iter().copied().fold(0.0, f64::max);
+    let mean = samples.iter().map(|sample| sample / scale).sum::<f64>() / samples.len() as f64;
     let variance = samples
         .iter()
-        .map(|sample| (sample - mean).powi(2))
+        .map(|sample| (sample / scale - mean).powi(2))
         .sum::<f64>()
         / (samples.len() as f64 - 1.0);
-    variance.sqrt()
+    variance.sqrt() * scale
 }
 
 /// Measure the baseline, then alternate propose → validate → measure until the
@@ -1123,6 +1124,71 @@ pub fn run_tuning<B: Bench, A: Advisor>(
 mod tests {
     use super::*;
     use crate::core::summarize_benchmark;
+
+    #[test]
+    fn trial_std_dev_keeps_constant_extreme_samples_at_zero() {
+        // Finite equal samples must not acquire noise from an overflowing mean.
+        for value in [f64::MAX, f64::from_bits(1)] {
+            assert_eq!(sample_std_dev(&[value, value, value]), 0.0);
+        }
+        assert_eq!(sample_std_dev(&[]), 0.0);
+        assert_eq!(sample_std_dev(&[f64::MAX]), 0.0);
+    }
+
+    #[test]
+    fn trial_std_dev_retains_sample_variance_across_scales() {
+        // Squaring before normalization overflows large spreads and erases
+        // tiny ones. The fixed vector also distinguishes sample from population SD.
+        for scale in [1.0, 1e200, 1e-200] {
+            let normalized = sample_std_dev(&[scale, 3.0 * scale]) / scale;
+            assert!(
+                (normalized - std::f64::consts::SQRT_2).abs() <= 8.0 * f64::EPSILON,
+                "scale={scale}, normalized sample deviation={normalized}"
+            );
+        }
+    }
+
+    #[test]
+    fn trial_std_dev_near_equal_samples_has_bounded_absolute_roundoff() {
+        // Mean rounding dominates relative error at a one-ULP separation.
+        // Bound absolute error for this pair without claiming relative precision.
+        let adjacent = f64::from_bits(1.0_f64.to_bits() - 1);
+        let gap = 1.0 - adjacent;
+        let reference = gap / std::f64::consts::SQRT_2;
+        let actual = sample_std_dev(&[1.0, adjacent]);
+        assert!(actual > 0.0);
+        assert!((actual - reference).abs() <= gap / 2.0);
+    }
+
+    #[test]
+    fn trial_statistics_extremes_serialize_as_numbers() {
+        for samples in [
+            vec![f64::MAX / 2.0, f64::MAX],
+            vec![f64::MAX, f64::MAX],
+            vec![f64::from_bits(1), f64::from_bits(1)],
+        ] {
+            let summary = summarize_benchmark(samples, 256, 2).unwrap();
+            let trial = TuningTrial {
+                index: 0,
+                changes: BTreeMap::new(),
+                rationale: "Numeric boundary fixture".into(),
+                mean_tps: Some(summary.mean_tps),
+                median_tps: Some(summary.median_tps),
+                error: None,
+                command: String::new(),
+                effective_context: Some(2048),
+                std_dev: Some(sample_std_dev(&summary.samples)),
+            };
+            let json = serde_json::to_string(&trial).unwrap();
+            let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+            for field in ["meanTps", "medianTps", "stdDev"] {
+                assert!(
+                    value[field].as_f64().is_some_and(f64::is_finite),
+                    "{field} must stay numeric: {json}"
+                );
+            }
+        }
+    }
 
     fn caps() -> RuntimeCapabilities {
         RuntimeCapabilities {
@@ -2072,9 +2138,8 @@ mod tests {
 
     #[test]
     fn mt11_objective_label_and_quality_affecting_changes_are_reported() {
-        // I1/I2/I4: the report states the retained short-prompt objective,
-        // the per-slot requirement, and flags winner changes that affect
-        // output quality without a quality gate.
+        // I1/I2/I4: the report states the retained short-prompt objective
+        // and the per-slot requirement.
         let base = base_profile();
         let hw = hardware();
         let cap = caps();
@@ -2110,8 +2175,9 @@ mod tests {
             report.objective
         );
         assert_eq!(
-            report.quality_affecting_changes,
-            vec!["cacheTypeK".to_string()]
+            serde_json::to_value(&report).unwrap()["qualityAffectingChanges"],
+            serde_json::json!(["cacheTypeK"]),
+            "Retiring the quality suite must not hide unmeasured tuning changes"
         );
         // Sample standard deviation of [130, 131] is sqrt(1/2); compare
         // against the computed value instead of a magic literal.

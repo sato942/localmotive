@@ -1,0 +1,157 @@
+{
+  "schema_version": "1.0.0",
+  "verifier": "scripts/verify_060_catalog.mjs",
+  "verifier_scope": "catalog-and-sqlite-workflows",
+  "source_revision": "eb9ce5828aeb4b2b284860a45371e8de35ebf353",
+  "artifact": {
+    "name": "Localmotive_0.6.0_x64-portable.exe",
+    "size_bytes": 20924416,
+    "sha256": "776a19a9d241d4567e5cdc0bbf376130fa3bfa28e9b30eec2cd44d507da4801c"
+  },
+  "phases": [
+    {
+      "schema_version": "1.0.0",
+      "verifier": "scripts/verify_060_catalog.mjs",
+      "phase": "first-fill",
+      "status": "PASS",
+      "checks": [
+        {
+          "id": "catalog.first-fill-local",
+          "description": "The local load answers without a network request",
+          "status": "PASS",
+          "detail": {
+            "origin": "bundled",
+            "model_count": 158,
+            "fixture_hits": 1
+          }
+        },
+        {
+          "id": "catalog.valid-signed-refresh",
+          "description": "A validly signed fixture catalog is accepted by the candidate",
+          "status": "PASS",
+          "detail": {
+            "origin": "network",
+            "already_throttled": false,
+            "fixture_hits": 3
+          }
+        },
+        {
+          "id": "catalog.cooldown-throttle",
+          "description": "A refresh inside the cooldown is throttled without a network request",
+          "status": "PASS",
+          "detail": {
+            "cooldown": "rejected-with-cooldown-message",
+            "fixture_hits": 3
+          }
+        },
+        {
+          "id": "catalog.ui-rows",
+          "description": "The shipped UI renders the refreshed fixture rows",
+          "status": "PASS",
+          "detail": {
+            "rows": 2,
+            "text": "2\nof 2 curated models\nLIST UPDATED 2026-09-14T21:39:38.633Z\nLAST SUCCESS 9/15/2026, 1:40:33 AM\nCOOLDOWN 1560 MIN LEFT\nfixture/alpha-GGUF\nFixture Alpha\nPARAMETERS UNKNOWN · BY fixture\n\nVerifier fixture model (Fixture Alpha).\n\n4,242 downloads\n42 likes\nGGUF\nTEXT-GENERATION\nBuild\nQ4_0 · 14.95 GiB\nQ4_1 · 16.34 GiB\nQ8_0 · 27.05 GiB\nIQ1_M · 6.27 GiB\nIQ1_S · 5.77 GiB\nIQ2_S · 7.80 GiB\nIQ2_XXS · 6.77 GiB\nIQ"
+          }
+        },
+        {
+          "id": "catalog.search-filter",
+          "description": "The search control narrows the rendered rows to the match",
+          "status": "PASS",
+          "detail": {
+            "ok": true,
+            "rows": 1,
+            "text": "1\nof 2 curated models\nLIST UPDATED 2026-09-14T21:39:38.633Z\nLAST SUCCESS 9/15/2026, 1:40:33 AM\nCOOLDOWN 1560 MIN LEFT\nfixture/alpha-GGUF\nFixture Alpha\nPARAMETERS UNKNOWN · BY fixture\n\nVerifier fixture model (Fixture Alpha).\n\n4,242 downloads\n42 likes\nGGUF\nTEXT-GENERATION\nBuild\nQ4_0 · 14.95 GiB\nQ4_1 ·"
+          }
+        },
+        {
+          "id": "catalog.search-clear",
+          "description": "Clearing the search restores every fixture row",
+          "status": "PASS",
+          "detail": {
+            "rows": 2
+          }
+        },
+        {
+          "id": "catalog.user-row-persistence",
+          "description": "A user-added row persists with userSourced provenance and can be removed",
+          "status": "PASS",
+          "detail": {
+            "marked_before_removal": 1,
+            "remaining_after_removal": 0
+          }
+        },
+        {
+          "id": "catalog.disk-evidence",
+          "description": "The verified cache and the SQLite mirror exist under the isolated profile",
+          "status": "PASS",
+          "detail": {
+            "cache_path": "[ISOLATED_ROOT]\\catalog-cache\\catalog-cache.json",
+            "mirror_path": "[ISOLATED_ROOT]\\catalog-cache\\catalog-mirror.sqlite",
+            "cache_signature_length": 88,
+            "mirror_header": "SQLite format 3"
+          }
+        }
+      ],
+      "paths": {
+        "cache": "C:\\Users\\Mubarak\\AppData\\Local\\Temp\\localmotive-verify-appdata-verify-0.6.0-14769\\catalog-cache\\catalog-cache.json",
+        "mirror": "C:\\Users\\Mubarak\\AppData\\Local\\Temp\\localmotive-verify-appdata-verify-0.6.0-14769\\catalog-cache\\catalog-mirror.sqlite"
+      },
+      "fixture_url": "http://127.0.0.1:63674/catalog.json"
+    },
+    {
+      "schema_version": "1.0.0",
+      "verifier": "scripts/verify_060_catalog.mjs",
+      "phase": "restart",
+      "status": "PASS",
+      "checks": [
+        {
+          "id": "restart.rows-without-network",
+          "description": "A restart without the fixture server still renders rows from the local snapshot",
+          "status": "PASS",
+          "detail": {
+            "origin": "bundled",
+            "model_count": 158,
+            "refresh_error": null
+          }
+        },
+        {
+          "id": "restart.honest-refresh-error",
+          "description": "A refresh against the dead fixture endpoint degrades with an honest error",
+          "status": "PASS",
+          "detail": {
+            "refresh_error": "error sending request for url (http://127.0.0.1:63674/catalog.json)",
+            "origin": "bundled",
+            "model_count": 158
+          }
+        },
+        {
+          "id": "restart.invalid-signature-fallback",
+          "description": "The corrupted cached signature is not trusted and rows survive",
+          "status": "PASS",
+          "detail": {
+            "refresh_error": "error sending request for url (http://127.0.0.1:63674/catalog.json)"
+          }
+        },
+        {
+          "id": "restart.corrupt-mirror-recovery",
+          "description": "The corrupted mirror is quarantined and rebuilt from verified bytes",
+          "status": "PASS",
+          "detail": {
+            "mirror_header": "SQLite format 3",
+            "quarantine_files": 1
+          }
+        },
+        {
+          "id": "restart.ui-honesty",
+          "description": "The restart UI renders rows and explains the local state",
+          "status": "PASS",
+          "detail": {
+            "rows": 158,
+            "text": "HF CATALOG A developer-curated list. Model bytes travel directly from Hugging Face to this machine. BUILT-IN LIST Refresh list Choose DIRECT TO MODEL FOLDER Search Use Any use 0.9b 1-bit 128k context 1M-context 1m-context 2-bit 27b 3.7b 32 bit enhanced 32b 36b 4-bit 4x7B 7b ASR COLD-FUSION Conformer"
+          }
+        }
+      ]
+    }
+  ],
+  "overall_status": "PASS"
+}

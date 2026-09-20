@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { buildFixture } from "./lib/manifest_fixture.mjs";
 import { ATTESTATION_RECORDS, buildQualificationManifest } from "../build_qualification_manifest.mjs";
 import { verifyReleasePromotion, promisedAssetNames } from "../verify_release_promotion.mjs";
+import { loadWorkflows } from "../verify_workflow_gates.mjs";
 
 const RELEASE = "0.6.0";
 const SOURCE = "a".repeat(40);
@@ -94,6 +95,28 @@ test("the run's own lifecycle records qualify a generated manifest and publish s
     const promotion = await promote(fixture);
     assert.deepEqual(promotion.failures, [], "a workflow-shaped set must pass");
     assert.equal(promotion.ok, true);
+  });
+});
+
+test("missing current-run lifecycle output cannot qualify from committed records", async () => {
+  const workflow = (await loadWorkflows(process.cwd()))["release.yml"];
+  const cleanup = Object.values(workflow.jobs).flatMap((job) => job.steps)
+    .find((step) => step.name === "Clear candidate-generated attestations");
+  await withRepository({ withQualifiedSet: true }, async (fixture) => {
+    const retained = attestationPath(fixture, "accepted-historical-record.json");
+    writeFileSync(retained, "retain these bytes\n");
+    if (cleanup) execFileSync("bash", ["-e", "-o", "pipefail", "-c", cleanup.run], {
+      cwd: fixture.root, env: { ...process.env, VERSION: RELEASE }, windowsHide: true, stdio: "pipe",
+    });
+    // Simulate a leg that produced nothing. The checkout still has its old
+    // records unless the actual workflow cleared those candidate outputs.
+    generateManifest(fixture);
+    const result = await promote(fixture);
+    assert.equal(result.ok, false, "committed records must not fill missing current-run lifecycle output");
+    for (const key of Object.keys(ATTESTATION_RECORDS).filter((name) => name.startsWith("lifecycle_"))) {
+      assert.ok(result.failures.some((failure) => failure.includes(`${key}: record missing`)));
+    }
+    assert.equal(readFileSync(retained, "utf8"), "retain these bytes\n");
   });
 });
 

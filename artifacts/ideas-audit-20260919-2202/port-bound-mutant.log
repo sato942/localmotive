@@ -1,0 +1,33 @@
+
+ RUN  v4.1.11 C:/Users/Mubarak/Documents/Projects/localmotive
+
+ ❯ src/App.staleResponses.test.tsx (8 tests | 1 failed | 7 skipped) 218ms
+     × does not save or dispatch an out-of-range port 217ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/App.staleResponses.test.tsx > stale port suggestions and command previews (audit FE-03 V3) > does not save or dispatch an out-of-range port
+AssertionError: expected '{"name":"fixture / Baseline","runtime…' to be null
+
+- Expected:
+null
+
++ Received:
+"{\"name\":\"fixture / Baseline\",\"runtime\":\"C:/runtime/llama-server.exe\",\"model\":\"C:/models/fixture/model-Q4_K_M.gguf\",\"draftModel\":null,\"mmproj\":null,\"host\":\"127.0.0.1\",\"port\":65536,\"alias\":\"fixture\",\"context\":8192,\"parallel\":1,\"gpuLayers\":\"all\",\"cpuMoe\":0,\"cpuFfn\":0,\"threads\":-1,\"threadsBatch\":-1,\"batch\":2048,\"ubatch\":512,\"flashAttention\":\"auto\",\"fit\":true,\"fitTarget\":\"1024\",\"fitCtx\":4096,\"kvOffload\":true,\"cacheTypeK\":\"f16\",\"cacheTypeV\":\"f16\",\"loadMode\":\"auto\",\"lazyMode\":\"auto\",\"splitMode\":\"layer\",\"tensorSplit\":\"\",\"mainGpu\":0,\"device\":\"\",\"continuousBatching\":true,\"cachePrompt\":true,\"cacheReuse\":0,\"cacheRam\":8192,\"contextCheckpoints\":32,\"contextShift\":false,\"warmup\":true,\"sleepIdleSeconds\":-1,\"timeout\":3600,\"threadsHttp\":-1,\"ssePingInterval\":30,\"metrics\":true,\"slots\":true,\"webUi\":true,\"corsOrigins\":\"localhost\",\"apiKeyFile\":\"\",\"sslKeyFile\":\"\",\"sslCertFile\":\"\",\"jinja\":true,\"reasoning\":\"auto\",\"reasoningEffort\":\"default\",\"reasoningBudget\":-1,\"reasoningPreserve\":false,\"chatTemplateFile\":\"\",\"temperature\":0.8,\"topK\":40,\"topP\":0.95,\"minP\":0.05,\"repeatPenalty\":1,\"repeatLastN\":64,\"seed\":-1,\"dryMultiplier\":0,\"dryBase\":1.75,\"specType\":\"none\",\"draftMax\":5,\"draftMin\":0,\"draftPMin\":0,\"draftPSplit\":0.1,\"draftGpuLayers\":\"auto\",\"draftCacheTypeK\":\"f16\",\"draftCacheTypeV\":\"f16\",\"ngramMatch\":24,\"ngramMin\":48,\"ngramMax\":64,\"ngramSizeN\":12,\"ngramSizeM\":48,\"ngramMinHits\":1,\"mmprojOffload\":true,\"mmprojDevice\":\"auto\",\"imageMinTokens\":0,\"imageMaxTokens\":0,\"lora\":\"\",\"loraScaled\":\"\",\"overrideTensor\":\"\",\"overrideKv\":\"\",\"verbosity\":3,\"logTimestamps\":true,\"extraArgs\":[]}"
+
+ ❯ src/App.staleResponses.test.tsx:289:76
+    287|     await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    288|     await click(navButton("Save"), "Save must remain visible");
+    289|     expect(localStorage.getItem(`localmotive:profile:${scannedModel.id…
+       |                                                                            ^
+    290|     expect(invokeCalls.filter((call) => call.command === "preview_comm…
+    291|     await click(navButton("Control"), "Control navigation must exist");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 7 skipped (8)
+   Start at  22:48:12
+   Duration  1.59s (transform 282ms, setup 0ms, import 436ms, tests 218ms, environment 797ms)
+

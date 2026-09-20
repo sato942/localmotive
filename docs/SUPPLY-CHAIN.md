@@ -16,8 +16,8 @@ checksums provide publisher authenticity.
 - The release workflow produces the MSI, NSIS installer, portable exe, and a
   SHA-256 manifest; published assets are read back and validated.
 - The frontend dependency SBOM (`npm sbom --sbom-format cyclonedx`) is
-  generated in the package job and retained 90 days as the `sbom-<version>`
-  workflow artifact. The Rust side's exact dependency graph is the committed
+  generated in the verify job and retained 90 days inside the
+  `localmotive-<version>-qualified` bundle. The Rust dependency graph is the committed
   `Cargo.lock`.
 - The catalog Ed25519 key is isolated to the catalog sign job and signs only
   the catalog document; it does not authenticate application installers.
@@ -35,8 +35,8 @@ checksums provide publisher authenticity.
 - **Shared build host.** Build, hardware qualification, and publication run
   on the same self-hosted Windows machine. The `CARGO_HOME`/`RUSTUP_HOME`
   isolation protects toolchain directories, not the whole environment.
-- **Retention.** Release candidates are retained 14 days, public readback 90
-  days, and the SBOM artifact 90 days; released checksums and evidence JSON
+- **Retention.** Qualified candidates, diagnostics, SBOM, and public readback
+  are retained 90 days; released checksums and evidence JSON
   persist as release assets. Keep release evidence for the supported version
   line.
 

@@ -158,7 +158,6 @@ beforeEach(() => {
   root = createRoot(container);
 
   handlers.set("preflight_model", () => preflightResult);
-  handlers.set("load_calibration_records", () => ({ anchors: [], models: [] }));
 });
 
 afterEach(() => {

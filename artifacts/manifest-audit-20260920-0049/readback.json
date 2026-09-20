@@ -1,0 +1,58 @@
+{
+  "scope": "Managed command-path privacy and read-only replay compatibility; not release qualification",
+  "recordedAt": "2026-09-19T21:26:38.471407+00:00",
+  "status": "PARTIALLY VERIFIED",
+  "protectedFilesUnchanged": 117,
+  "agentsSha256": "6a0c8eea9a3cf9ed680ea6ccb7814a59ed8d79365dd8f1a2229a1bf6dee27c4e",
+  "rust": {
+    "passed": 597,
+    "failed": 0,
+    "ignored": 6
+  },
+  "frontend": {
+    "scriptsPassed": 274,
+    "vitestPassed": 198
+  },
+  "nativeUi": "PASS",
+  "nativeUiChecks": 14,
+  "accessibility": "PASS",
+  "artifacts": [
+    {
+      "path": "C:\\Users\\Mubarak\\Documents\\Projects\\localmotive\\src-tauri\\target\\release\\localmotive.exe",
+      "bytes": 20148736,
+      "sha256": "7363c2aeb2f6fd783e01b91ed5ddf01446c5b12910605e26a5529ff2fd487b56",
+      "signature": "NotSigned",
+      "version": "0.6.0"
+    },
+    {
+      "path": "C:\\Users\\Mubarak\\Documents\\Projects\\localmotive\\src-tauri\\target\\release\\bundle\\msi\\Localmotive_0.6.0_x64_en-US.msi",
+      "bytes": 8798208,
+      "sha256": "e169f9ba765d0838724e37b710c42a8f2f513029b983fed479390acd91572d58",
+      "signature": "NotSigned",
+      "version": "0.6.0"
+    },
+    {
+      "path": "C:\\Users\\Mubarak\\Documents\\Projects\\localmotive\\src-tauri\\target\\release\\bundle\\nsis\\Localmotive_0.6.0_x64-setup.exe",
+      "bytes": 5120699,
+      "sha256": "3fbcde70998fd1570748a4f0c58945f7801aa70eeff7670459e934edeafc7e57",
+      "signature": "NotSigned",
+      "version": "0.6.0"
+    }
+  ],
+  "limitations": [
+    "Other manifest fields can contain local data",
+    "Legacy fingerprint-looking paths require a fresh record",
+    "No installer lifecycle or release qualification"
+  ],
+  "source": "bdb3c14c9170f0342ba0384738e2ffd23062970d",
+  "sourceDirty": true,
+  "changedFiles": {
+    "src-tauri/src/core.rs": "14721081d49aa41ab90fc06ee63d9d0c618e7cb34d5f936c738147ec51323c8b",
+    "src-tauri/src/measurement.rs": "d5298268c56fa70f1c6ff12e8e72b73703441b6035cdb8a1af414151803746c1",
+    "src-tauri/src/measurement_service.rs": "8aedb79d583ac90193ffbc036423a2a529d39c05bf8c74b73f6c32b5def678ac",
+    "docs/ARTIFACT-IDENTITY.md": "168b77e0b8e8c8cbe4a48ee153cffdd4fa3aadc8c665f1b947c276e5f36a369f",
+    "CHANGELOG.md": "13b5e06640725f91801a08b9e6bfe898da7a4815bb78c21ed031b68a728138bb",
+    "TODO-0.6.md": "1169b0053a14d96b43fb030c96d6d51b44000ed65f8a798d80c201554bbb2b84",
+    "agents_feedback.md": "f8c4459461bd1dc6a88f39d992f38f712d352fdf3189f7e18c09dadca3bdbdd0"
+  }
+}

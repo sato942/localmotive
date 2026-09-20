@@ -7,9 +7,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DIGESTS, buildFixture, verify, withFixture } from "./lib/manifest_fixture.mjs";
+import { DIGESTS, verify, withFixture } from "./lib/manifest_fixture.mjs";
 
 test("a coherent manifest fixture validates", () => {
   withFixture({}, (fixture) => {

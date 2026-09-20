@@ -20,6 +20,9 @@ import {
   selectionAfterRescan,
   displayedSelection,
   profileIdentity,
+  profileNumberError,
+  legacyBenchmarkInputError,
+  tuningWorkloadError,
   applySuggestedPort,
   responseIsCurrent,
   managedHealthRequest,
@@ -77,6 +80,7 @@ import { ProfileEmptyScreen } from "./screens/ProfileEmptyScreen";
 import { ProfileScreen } from "./screens/ProfileScreen";
 import { BenchmarkScreen } from "./screens/BenchmarkScreen";
 import { tauriEvidenceAdapter } from "./evidence-adapter";
+import type { EvidenceRun } from "./screens/evidence-run";
 
 type View = "dashboard" | "models" | "catalog" | "runtime" | "profile" | "tune" | "benchmark" | "about";
 
@@ -165,9 +169,12 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 
 function App() {
   const [view, setView] = useState<View>(RUNTIME ? "dashboard" : "runtime");
-  // FE-05: the active evidence run's status and cancel handle, published by
-  // the always-mounted evidence panel so any screen can show it.
-  const [evidenceRun, setEvidenceRun] = useState<{ kind: "benchmark" | "quality"; cancel: (() => void) | null } | null>(null);
+  // Keep each owner's handle separate so panel activity cannot erase a
+  // legacy run's cancellation control during navigation.
+  const [panelEvidenceRun, setEvidenceRun] = useState<EvidenceRun | null>(null);
+  const [legacyEvidenceRun, setLegacyEvidenceRun] = useState<EvidenceRun | null>(null);
+  const legacyBenchmarkActive = useRef(false);
+  const evidenceRun = legacyEvidenceRun ?? panelEvidenceRun;
   const [extraArgsDraft, setExtraArgsDraft] = useState<string | null>(null);
   // FE-11: every download carries the destination and revision captured at
   // start, so cancel and progress always address the job itself.
@@ -249,6 +256,7 @@ function App() {
   const [benchmark, setBenchmark] = useState<BenchmarkSummary | null>(null);
   const [tokens, setTokens] = useState(512);
   const [repeats, setRepeats] = useState(3);
+  const benchmarkInputError = legacyBenchmarkInputError(tokens, repeats);
   const [runtimeIdentity, setRuntimeIdentity] = useState<RuntimeIdentity | null>(null);
   const [managedRuntimes, setManagedRuntimes] = useState<ManagedRuntimeRecord[]>([]);
   const [providers, setProviders] = useState<CloudProvider[]>([]);
@@ -310,9 +318,10 @@ function App() {
   const [tuneTrials, setTuneTrials] = useState(6);
   const [tuneTokens, setTuneTokens] = useState(256);
   const [tuneRepeats, setTuneRepeats] = useState(2);
+  const tuneInputError = tuningWorkloadError({ targetContext: tuneContext, maxTrials: tuneTrials, tokens: tuneTokens, repeats: tuneRepeats });
   const [tuning, setTuning] = useState(false);
   // Cloud disclosure (audit S-20): what the brief carries and how much of it
-  // leaves the machine. Local inference and local exports are unaffected.
+  // leaves the machine. Local inference stays local.
   const [disclosureSections, setDisclosureSections] = useState<DisclosureSection[]>([]);
   const [briefDisclosure, setBriefDisclosure] = useState<BriefDisclosure>(() => {
     // Guarded read (audit FE-09 I3): a denied-storage read must not crash the
@@ -1060,6 +1069,8 @@ function App() {
 
   async function startTuning() {
     if (!profile || !selected) return;
+    const inputError = profileNumberError(profile) ?? tuneInputError;
+    if (inputError) { setNotice(inputError); return; }
     // FE-02: capture the originating identity at dispatch; nothing later can
     // change whose run this is.
     const run = {
@@ -1181,6 +1192,8 @@ function App() {
 
   function saveProfile() {
     if (!profile || !selected) return;
+    const inputError = profileNumberError(profile);
+    if (inputError) { setNotice(inputError); return; }
     if (persistRecord(`profile:${selected.id}`, JSON.stringify(profile))) {
       setNotice(`Saved ${profile.name}`);
     } else {
@@ -1192,6 +1205,11 @@ function App() {
     if (!profile) return;
     const identity = profileIdentity(profile);
     const sequence = ++previewSeq.current;
+    const inputError = profileNumberError(profile);
+    if (inputError) {
+      setCommand({ powerShell: inputError, argv: "", cmd: null, cmdNotice: null });
+      return;
+    }
     try {
       const command = await invoke<CommandPreview>("preview_command", { profile });
       // FE-03: an old preview must not overwrite a newer one; an old profile
@@ -1212,6 +1230,8 @@ function App() {
 
   async function start() {
     if (!profile) return;
+    const inputError = profileNumberError(profile);
+    if (inputError) { setNotice(inputError); return; }
     statusPollSeq.current += 1;
     setBusy("start");
     try {
@@ -1240,8 +1260,19 @@ function App() {
   }
 
   async function runBenchmark() {
-    if (!status.port) return;
+    if (!status.port || evidenceRun || legacyBenchmarkActive.current) return;
+    if (benchmarkInputError) { setNotice(benchmarkInputError); return; }
+    legacyBenchmarkActive.current = true;
     setBusy("benchmark");
+    setLegacyEvidenceRun({
+      kind: "benchmark",
+      cancel: () => {
+        void invoke<void>("cancel_benchmark").then(
+          () => setNotice("Benchmark cancellation requested; waiting for the current request to finish."),
+          (error) => setNotice(errorText(error)),
+        );
+      },
+    });
     try {
       const result = await invoke<BenchmarkSummary>("benchmark_server", {
         host: profile?.host ?? "127.0.0.1",
@@ -1257,6 +1288,8 @@ function App() {
     } catch (error) {
       setNotice(errorText(error));
     } finally {
+      legacyBenchmarkActive.current = false;
+      setLegacyEvidenceRun(null);
       setBusy("");
     }
   }
@@ -1374,9 +1407,15 @@ function App() {
     }
   }, [selected?.id]);
 
+  const previewProfile = useDebouncedValue(profile, 250);
   useEffect(() => {
-    if (profile) preview();
+    // Invalidate in-flight output immediately, including the debounce window.
+    previewSeq.current += 1;
+    setCommand(null);
   }, [profile]);
+  useEffect(() => {
+    if (profile && profile === previewProfile) void preview();
+  }, [previewProfile]);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -1435,7 +1474,7 @@ function App() {
 
   const trialsForDisplay: TuningTrial[] = tuneReport ? tuneReport.trials : tuneLive;
   const bestLive = trialsForDisplay.reduce<TuningTrial | null>((best, trial) => (trial.meanTps !== null && (best === null || (best.meanTps ?? 0) < trial.meanTps) ? trial : best), null);
-  const canTune = Boolean(profile && selected?.complete && runtimePath && credential?.configured && cloudModel && !status.running && !tuning);
+  const canTune = Boolean(profile && selected?.complete && runtimePath && credential?.configured && cloudModel && !status.running && !tuning && !tuneInputError);
   const tuneBlocker = !credential?.configured
     ? `Connect ${provider?.label ?? "a cloud provider"} to begin: sign in or store an API key.`
     : !cloudModel
@@ -1448,7 +1487,7 @@ function App() {
             ? "Install or choose a llama-server runtime first."
             : status.running
               ? "Stop the running server first; the tuner launches its own."
-              : `No tuning run for ${selected.name} yet. Choose a context length and start.`;
+              : tuneInputError ?? `No tuning run for ${selected.name} yet. Choose a context length and start.`;
 
   return (
     <div className="app-shell">
@@ -1720,6 +1759,7 @@ function App() {
             trialsForDisplay={trialsForDisplay}
             tuneBlocker={tuneBlocker}
             tuneContext={tuneContext}
+            tuneInputError={tuneInputError}
             tuneLogRef={tuneLogRef}
             tuneProgress={tuneProgress}
             tuneRepeats={tuneRepeats}
@@ -1753,6 +1793,7 @@ function App() {
           <BenchmarkScreen
             adapter={tauriEvidenceAdapter}
             benchmark={benchmark}
+            inputError={benchmarkInputError}
             busy={busy}
             evidenceRun={evidenceRun}
             hardware={hardware}

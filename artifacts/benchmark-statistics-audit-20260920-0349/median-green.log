@@ -1,0 +1,17 @@
+   Compiling localmotive v0.6.0 (C:\Users\Mubarak\Documents\Projects\localmotive\src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.41s
+     Running unittests src\lib.rs (target\debug\deps\localmotive_lib-694be1a6828a4ecd.exe)
+
+running 3 tests
+test measurement::tests::metric_summary_preserves_subnormal_medians ... ok
+test measurement::tests::metric_summary_reports_median_separately_from_nearest_rank_p50 ... ok
+test measurement::tests::metric_summary_remains_finite_for_large_finite_observations ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 602 filtered out; finished in 0.00s
+
+     Running unittests src\main.rs (target\debug\deps\localmotive-7f4f61c092604b5b.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

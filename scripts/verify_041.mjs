@@ -419,6 +419,32 @@ try {
     );
 
     await runCheck(
+      "ui.benchmark-scope",
+      "The packaged benchmark retains preflight and replay without retired optional controls.",
+      async () => {
+        const clicked = await client.evaluate(`(() => {
+          const button = [...document.querySelectorAll('nav button')]
+            .find((item) => item.textContent.trim() === 'Benchmark');
+          if (!button) return false;
+          button.click();
+          return true;
+        })()`);
+        requireCondition(clicked, "Benchmark navigation is missing");
+        await waitFor("document.querySelector('.benchmark-screen')?.getBoundingClientRect().width > 0", "Benchmark screen did not become visible");
+        const controls = await client.evaluate(`(() => {
+          const panel = document.querySelector('.benchmark-screen');
+          return [...panel.querySelectorAll('button, h2, h4')]
+            .map((item) => item.textContent.trim());
+        })()`);
+        for (const label of ["Run preflight", "Run v2 benchmark", "Replay manifest"]) {
+          requireCondition(controls.includes(label), `Missing retained control: ${label}`);
+        }
+        requireCondition(!controls.some((label) => /quality|rank|calibrat|import|export|share/i.test(label)), "A retired evidence control remains in the packaged UI");
+        return { controls, retired_controls: false };
+      },
+    );
+
+    await runCheck(
       "ipc.runtime-setup",
       "The packaged backend returns hardware and managed-runtime state independently from catalog success.",
       async () => {

@@ -1107,8 +1107,8 @@ describe("Bounded discovery diagnostics (audit S-15)", () => {
     expect(rendered, "the disclosure block content must render").toContain(
       "What the brief carries",
     );
-    expect(rendered, "local inference and export must be named separately").toContain(
-      "Local inference and local share export never send data anywhere",
+    expect(rendered, "local inference must be clearly local").toContain(
+      "Local inference never sends data anywhere",
     );
     expect(rendered, "the section list comes from Rust").toContain("Hardware");
     expect(rendered, "full-only sections must say so").toContain("(full mode only)");

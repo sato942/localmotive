@@ -1,0 +1,1 @@
+[host] FAIL during stage 'sandbox-run': Windows Sandbox start failed: Application cannot be run more than once (0x800401F6 (CO_E_APPSINGLEUSE))

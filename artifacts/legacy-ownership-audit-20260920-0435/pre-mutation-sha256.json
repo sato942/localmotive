@@ -1,0 +1,7 @@
+{
+  "src-tauri/src/core.rs": "ed9d3dabe7d0d61afab10dc40b40df4eab7145a8f1d9c7f048b8d9b9f77f7c41",
+  "src-tauri/src/lib.rs": "f4fcf413177e6f881c699b05c7043a7727885f69ff8428518768f482e9579c48",
+  "src-tauri/src/measurement_service.rs": "ff262d866f93ef4f2d1748b547015f348cecf0716f4f3cbb67ba13b9f46d30b3",
+  "src/App.tsx": "0f48d1d65ebe0f4d15695f504dca93de0792398361d914e1c33cffd3605482ad",
+  "src/App.staleResponses.test.tsx": "696d540e3ae9c0825931de6909ef90f513bdb5045cee56d97847be3dbaf9b4a0"
+}

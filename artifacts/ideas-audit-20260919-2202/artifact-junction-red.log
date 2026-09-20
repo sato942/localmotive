@@ -1,0 +1,23 @@
+   Compiling localmotive v0.6.0 (C:\Users\Mubarak\Documents\Projects\localmotive\src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 11.46s
+     Running unittests src\lib.rs (target\debug\deps\localmotive_lib-694be1a6828a4ecd.exe)
+
+running 1 test
+Junction created for C:\Users\Mubarak\AppData\Local\Temp\localmotive-gguf-junction-1276760-4293169909693092034\linked <<===>> C:\Users\Mubarak\AppData\Local\Temp\localmotive-gguf-junction-1276760-4293169909693092034\outside
+test gguf::tests::summary_read_refuses_a_junction_ancestor_before_parsing ... FAILED
+
+failures:
+
+---- gguf::tests::summary_read_refuses_a_junction_ancestor_before_parsing stdout ----
+
+thread 'gguf::tests::summary_read_refuses_a_junction_ancestor_before_parsing' (1256344) panicked at src\gguf.rs:682:28:
+called `Result::unwrap_err()` on an `Ok` value: ArtifactInspection { logical_id: "53876bb69950bd2bd37ac2ba447727515d776a1321d89c5cdb92717354b13647", content_id: Some("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"), logical_name: "model", first_shard: "C:\\Users\\Mubarak\\AppData\\Local\\Temp\\localmotive-gguf-junction-1276760-4293169909693092034\\linked\\model.gguf", expected_shards: 1, complete: false, header_consistent: false, identity_level: Derived, shard_bytes: 0, companion_bytes: 0, shards: [], companions: [], summary: None, problems: [ArtifactProblem { code: UnreadableHeader, message: "GGUF path contains a symlink or reparse-point ancestor: C:\\Users\\Mubarak\\AppData\\Local\\Temp\\localmotive-gguf-junction-1276760-4293169909693092034\\linked" }] }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    gguf::tests::summary_read_refuses_a_junction_ancestor_before_parsing
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 589 filtered out; finished in 0.03s
+
+error: test failed, to rerun pass `--lib`

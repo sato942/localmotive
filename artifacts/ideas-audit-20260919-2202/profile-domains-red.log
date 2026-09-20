@@ -1,0 +1,32 @@
+
+ RUN  v4.1.11 C:/Users/Mubarak/Documents/Projects/localmotive
+
+ ❯ src/model.test.ts (124 tests | 4 failed | 77 skipped) 18ms
+     × rejects inconsistent related bounds {"batch":512,"ubatch":513} 4ms
+     × rejects inconsistent related bounds {"specType":"draft-dspark","draftMin":6,"draftMax":5} 0ms
+     × rejects inconsistent related bounds {"specType":"ngram-mod","ngramMin":65,"ngramMax":64} 0ms
+     × rejects inconsistent related bounds {"imageMinTokens":10,"imageMaxTokens":9} 0ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/model.test.ts > profile numeric input > rejects inconsistent related bounds {"batch":512,"ubatch":513}
+ FAIL  src/model.test.ts > profile numeric input > rejects inconsistent related bounds {"specType":"draft-dspark","draftMin":6,"draftMax":5}
+ FAIL  src/model.test.ts > profile numeric input > rejects inconsistent related bounds {"specType":"ngram-mod","ngramMin":65,"ngramMax":64}
+ FAIL  src/model.test.ts > profile numeric input > rejects inconsistent related bounds {"imageMinTokens":10,"imageMaxTokens":9}
+AssertionError: the given combination of arguments (null and string) is invalid for this assertion. You can use an array, a map, an object, a set, a string, or a weakset instead of a string
+ ❯ src/model.test.ts:522:65
+    520|     [{ imageMinTokens: 10, imageMaxTokens: 9 }, "Minimum image tokens"…
+    521|   ] as const)("rejects inconsistent related bounds %j", (overrides, la…
+    522|     expect(profileNumberError({ ...baseline(), ...overrides })).toCont…
+       |                                                                 ^
+    523|   });
+    524| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 43 passed | 77 skipped (124)
+   Start at  22:12:43
+   Duration  287ms (transform 75ms, setup 0ms, import 97ms, tests 18ms, environment 0ms)
+

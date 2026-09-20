@@ -5,8 +5,9 @@
 use crate::core::LaunchProfile;
 use crate::tune;
 use crate::{
-    cloud, core, gguf, local_client, proc, reserve_operation, runtime, spawn_server, status_from,
-    update_launch_effective_context, wait_until_healthy_cancellable, AppState, OperationOwner,
+    cloud, core, gguf, local_client, proc, reject_if_benchmark_active, reserve_operation, runtime,
+    spawn_server, status_from, update_launch_effective_context, wait_until_healthy_cancellable,
+    AppState, OperationOwner,
 };
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -186,6 +187,24 @@ pub(crate) struct TuningRequest {
     disclosure: tune::BriefDisclosure,
 }
 
+impl TuningRequest {
+    fn validate_workload(&self) -> Result<(), String> {
+        if !(1..=12).contains(&self.max_trials) {
+            return Err("Trials must be between 1 and 12".into());
+        }
+        if !(512..=4_194_304).contains(&self.target_context) {
+            return Err("Target context must be between 512 and 4194304 tokens".into());
+        }
+        if !(64..=2048).contains(&self.tokens) {
+            return Err("Tuning tokens must be between 64 and 2048".into());
+        }
+        if !(1..=5).contains(&self.repeats) {
+            return Err("Tuning repeats must be between 1 and 5".into());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TuningProgress {
@@ -207,6 +226,7 @@ pub(crate) async fn start_tuning(
     request: TuningRequest,
     state: tauri::State<'_, AppState>,
 ) -> Result<tune::TuningReport, String> {
+    request.validate_workload()?;
     {
         let mut slot = state
             .server
@@ -216,9 +236,13 @@ pub(crate) async fn start_tuning(
             return Err("Stop the running server before tuning; the tuner launches its own".into());
         }
     }
-    // One machine owner: a benchmark, quality suite, or another server may
+    // One machine owner: a benchmark, tuning session, or another server may
     // not be replaced silently by a tuning session (audit MT-05).
     let _reservation = reserve_operation(&state.operations, OperationOwner::Tuning)?;
+    // Aborted-command shape (review deleg_16c0e72a): refuse tuning while an
+    // abandoned benchmark worker can still infer, even when its reservation
+    // already released.
+    reject_if_benchmark_active(&state)?;
     let cancel = Arc::new(AtomicBool::new(false));
     {
         let mut tuning = state
@@ -229,14 +253,6 @@ pub(crate) async fn start_tuning(
             return Err("A tuning session is already running".into());
         }
         *tuning = Some(cancel.clone());
-    }
-    if !(1..=12).contains(&request.max_trials) {
-        clear_tuning(&state);
-        return Err("Trials must be between 1 and 12".into());
-    }
-    if request.target_context < 512 {
-        clear_tuning(&state);
-        return Err("Target context must be at least 512 tokens".into());
     }
 
     let handle = app.clone();
@@ -285,8 +301,8 @@ pub(crate) async fn start_tuning(
         let mut bench = LiveBench {
             app: &handle,
             cancel: cancel.clone(),
-            tokens: request.tokens.clamp(64, 2048),
-            repeats: request.repeats.clamp(1, 5),
+            tokens: request.tokens,
+            repeats: request.repeats,
         };
         let store = cloud::KeyringStore;
         let mut advisor = cloud::CloudAdvisor {
@@ -362,6 +378,37 @@ pub(crate) fn system_ram_bytes() -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tuning_workload_rejects_values_that_would_describe_a_different_measurement() {
+        let mut request: TuningRequest = serde_json::from_value(serde_json::json!({
+            "profile": {}, "provider": "fixture", "model": "fixture", "targetContext": 4096,
+            "maxTrials": 1, "tokens": 256, "repeats": 2, "companions": []
+        }))
+        .unwrap();
+        for tokens in [0, 63, 2049, u32::MAX] {
+            request.tokens = tokens;
+            assert!(request
+                .validate_workload()
+                .unwrap_err()
+                .contains("Tuning tokens"));
+        }
+        request.tokens = 256;
+        for repeats in [0, 6, u16::MAX] {
+            request.repeats = repeats;
+            assert!(request
+                .validate_workload()
+                .unwrap_err()
+                .contains("Tuning repeats"));
+        }
+        for tokens in [64, 2048] {
+            for repeats in [1, 5] {
+                request.tokens = tokens;
+                request.repeats = repeats;
+                assert!(request.validate_workload().is_ok());
+            }
+        }
+    }
 
     /// QC2 regression (S-27 slice 3c): the mutation "cancel stores false
     /// instead of true" passed every test before this one existed. A cancel

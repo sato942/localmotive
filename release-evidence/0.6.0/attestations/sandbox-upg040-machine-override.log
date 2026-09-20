@@ -1,0 +1,37 @@
+﻿
+[2026-09-15T05:14:46.0793991Z] Sandbox lifecycle starting
+[2026-09-15T05:14:46.2201507Z] Configured the application-scoped machine browser argument for the elevated guest; Sandbox destruction removes it
+[2026-09-15T05:14:46.4080342Z] NSIS install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.6.0_x64-setup.exe
+[2026-09-15T05:15:33.2319982Z] NSIS fresh install executable version 0.6.0 digest 7891d815756d646963b9e529da261be0b8f505e603c1b57b1926a7c657c0f18b at C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-15T05:15:33.2319982Z] NSIS fresh install launch probe: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-15T05:15:42.0520633Z] NSIS fresh install launch probe OK: process survived 8 s; rendered shell navButtons=8 bodyChars=6745 managedControls=True
+[2026-09-15T05:15:42.0550979Z] NSIS uninstall: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\uninstall.exe
+[2026-09-15T05:15:46.4183145Z] NSIS fresh path PASS
+[2026-09-15T05:15:46.4211428Z] MSI install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.6.0_x64.msi
+[2026-09-15T05:17:50.3991394Z] MSI fresh install executable version 0.6.0 digest a3bf1580f566da8a6eafab61f8e39ec61dc65bf96fd84210049a5b2bb72f98f1 at C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-15T05:17:50.4148093Z] MSI fresh install launch probe: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-15T05:17:58.6370229Z] MSI fresh install launch probe OK: process survived 8 s; rendered shell navButtons=8 bodyChars=6745 managedControls=True
+[2026-09-15T05:17:58.6421475Z] MSI uninstall via package: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.6.0_x64.msi
+[2026-09-15T05:18:04.6618801Z] MSI fresh path PASS
+[2026-09-15T05:18:04.6700424Z] NSIS install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.4.0_x64-setup.exe
+[2026-09-15T05:18:07.8122335Z] Pre-update install executable version 0.4.0 digest af9f01ac31730798b584efd1aee8f8854e97cc894573106c6935acb0461ebb93 at C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-15T05:18:07.8165859Z] NSIS install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.6.0_x64-setup.exe
+[2026-09-15T05:18:10.9692031Z] Post-update install executable version 0.6.0 digest 7891d815756d646963b9e529da261be0b8f505e603c1b57b1926a7c657c0f18b at C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-15T05:18:10.9760759Z] Post-update install launch probe: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-15T05:18:19.1910668Z] Post-update install launch probe OK: process survived 8 s; rendered shell navButtons=8 bodyChars=6745 managedControls=True
+[2026-09-15T05:18:19.1910668Z] NSIS uninstall: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\uninstall.exe
+[2026-09-15T05:18:23.0955358Z] NSIS update path PASS
+[2026-09-15T05:18:23.0955358Z] NSIS install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.4.0_x64-setup.exe
+[2026-09-15T05:18:26.2555205Z] Preservation baseline settings session: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-15T05:18:26.9543537Z] Seeded 6 v0.4.1 settings keys through the baseline build
+[2026-09-15T05:18:28.7767555Z] NSIS install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.6.0_x64-setup.exe
+[2026-09-15T05:18:31.9234188Z] Preservation upgrade executable version 0.6.0 digest 7891d815756d646963b9e529da261be0b8f505e603c1b57b1926a7c657c0f18b at C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-15T05:18:31.9324793Z] Preservation upgrade launch probe: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-15T05:18:40.1418073Z] Preservation upgrade launch probe OK: process survived 8 s; rendered shell navButtons=8 bodyChars=6745 managedControls=True
+[2026-09-15T05:18:40.1565305Z] Preservation upgrade settings session: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-15T05:18:40.7479621Z] Collected settings reads from the upgraded build: 6/6 keys answered
+[2026-09-15T05:18:40.8014473Z] NSIS uninstall: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\uninstall.exe
+[2026-09-15T05:18:44.7042828Z] Preservation path PASS
+[2026-09-15T05:18:44.7190677Z] NSIS-family installed payload digest consistent: 7891d815756d646963b9e529da261be0b8f505e603c1b57b1926a7c657c0f18b
+[2026-09-15T05:18:44.7360149Z] OBSERVED: MSI payload digest a3bf1580f566da8a6eafab61f8e39ec61dc65bf96fd84210049a5b2bb72f98f1 differs from the NSIS payload digest 7891d815756d646963b9e529da261be0b8f505e603c1b57b1926a7c657c0f18b
+[2026-09-15T05:18:44.7504722Z] ALL PASS

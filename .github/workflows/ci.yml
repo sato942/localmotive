@@ -59,14 +59,6 @@ jobs:
       - name: Verify fail-fast workflow gates
         run: node scripts/verify_workflow_gates.mjs
 
-      # Fail fast (audit S-26 I2): the release gates ALSO run inside
-      # `npm run check` below (whose `npm test` includes them); the explicit
-      # step exists so a gate failure surfaces in seconds instead of after
-      # the full frontend build, and this pairing is pinned by a
-      # release-gates.test.mjs check.
-      - name: Test deterministic release gates (fail-fast; repeated by npm run check)
-        run: node --test scripts/tests/release-gates.test.mjs
-
       # U06-01: the packaged-orchestration acceptance matrix drives the REAL
       # Invoke-PackagedMatrix decision path under pwsh (same shell as the
       # release workflow). It must run in CI so a cleanup regression fails
@@ -91,13 +83,9 @@ jobs:
 
       - name: Rust tests
         working-directory: src-tauri
-        run: cargo test --locked
-
-      - name: Rust documentation tests
-        working-directory: src-tauri
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo test --locked --doc
+        run: cargo test --locked
 
 
   rust-audit:
@@ -198,14 +186,6 @@ jobs:
       - name: Verify fail-fast workflow gates
         run: node scripts/verify_workflow_gates.mjs
 
-      # Fail fast (audit S-26 I2): the release gates ALSO run inside
-      # `npm run check` below (whose `npm test` includes them); the explicit
-      # step exists so a gate failure surfaces in seconds instead of after
-      # the full frontend build, and this pairing is pinned by a
-      # release-gates.test.mjs check.
-      - name: Test deterministic release gates (fail-fast; repeated by npm run check)
-        run: node --test scripts/tests/release-gates.test.mjs
-
       # U06-01: the packaged-orchestration acceptance matrix drives the REAL
       # Invoke-PackagedMatrix decision path under pwsh (same shell as the
       # release workflow). It must run in CI so a cleanup regression fails
@@ -236,14 +216,5 @@ jobs:
           LOCALMOTIVE_SKIP_HARDWARE_PROBE: "1"
           CARGO_TERM_COLOR: always
           RUST_BACKTRACE: "1"
-        run: cargo test --locked -- --nocapture
-
-      - name: Rust documentation tests
-        working-directory: src-tauri
-        timeout-minutes: 15
-        env:
-          LOCALMOTIVE_SKIP_HARDWARE_PROBE: "1"
-          CARGO_TERM_COLOR: always
-          RUST_BACKTRACE: "1"
           RUSTDOCFLAGS: -D warnings
-        run: cargo test --locked --doc
+        run: cargo test --locked -- --nocapture

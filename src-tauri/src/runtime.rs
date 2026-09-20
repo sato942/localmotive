@@ -2324,20 +2324,6 @@ fn require_explicit_device_selection(
     )
 }
 
-/// Recommend one approved catalog entry from already-bound options.
-///
-/// Removed in Phase 2: `recommend_capability_option` replaces the 0.3
-/// vendor preference order with device checks. The old body is deleted so
-/// no unpinned preference path remains in the build.
-#[cfg(test)]
-#[allow(dead_code)]
-fn recommend_approved_option<'a>(
-    _options: &'a mut [RuntimeOption],
-    _hardware: &HardwareInfo,
-) -> Option<&'a RuntimeOption> {
-    None
-}
-
 fn sanitize_component(value: &str) -> String {
     let sanitized: String = value
         .chars()
@@ -5361,35 +5347,6 @@ mod tests {
                 .collect(),
         };
         (release, approved, jobs)
-    }
-
-    fn approved_sample_release() -> GithubRelease {
-        GithubRelease {
-            tag_name: "b10816".into(),
-            target_commitish: "427291b5b34cd914a31b3fd3b61a68f6184f4b9f".into(),
-            published_at: Some("2026-09-04T19:57:56Z".into()),
-            assets: vec![
-                GithubAsset::sample("llama-b10816-bin-win-cpu-x64.zip"),
-                GithubAsset::sample("llama-b10816-bin-win-vulkan-x64.zip"),
-                GithubAsset::sample("llama-b10816-bin-win-rocm-10.0-x64.zip"),
-                GithubAsset::sample("llama-b10816-bin-win-sycl-x64.zip"),
-                GithubAsset::sample("llama-b10816-bin-win-cuda-12.4-x64.zip"),
-                GithubAsset::sample("cudart-llama-bin-win-cuda-12.4-x64.zip"),
-                GithubAsset::sample("llama-b10816-bin-win-cuda-13.3-x64.zip"),
-                GithubAsset::sample("cudart-llama-bin-win-cuda-13.3-x64.zip"),
-                GithubAsset::sample("llama-b10816-bin-win-cpu-arm64.zip"),
-            ],
-        }
-    }
-
-    #[allow(dead_code)]
-    fn release() -> GithubRelease {
-        approved_sample_release()
-    }
-
-    #[allow(dead_code)]
-    fn legacy_b10736_release() -> GithubRelease {
-        approved_sample_release()
     }
 
     #[test]

@@ -1,0 +1,33 @@
+
+ RUN  v4.1.11 C:/Users/Mubarak/Documents/Projects/localmotive
+
+ ❯ src/App.staleResponses.test.tsx (54 tests | 1 failed | 53 skipped) 130ms
+     × rejects duplicate legacy dispatch before React publishes its busy state 129ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/App.staleResponses.test.tsx > legacy benchmark numeric inputs > rejects duplicate legacy dispatch before React publishes its busy state
+AssertionError: expected [ { …(2) }, { …(2) } ] to have a length of 1 but got 2
+
+- Expected
++ Received
+
+- 1
++ 2
+
+ ❯ src/App.staleResponses.test.tsx:428:81
+    426|       await act(async () => { run?.click(); run?.click(); });
+    427|       await settle();
+    428|       expect(invokeCalls.filter((call) => call.command === "benchmark_…
+       |                                                                                 ^
+    429|       expect(container.querySelector(".evidence-run-band")).not.toBeNu…
+    430|     } finally {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 53 skipped (54)
+   Start at  05:16:20
+   Duration  1.38s (transform 282ms, setup 0ms, import 413ms, tests 130ms, environment 717ms)
+

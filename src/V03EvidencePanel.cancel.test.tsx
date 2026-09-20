@@ -5,6 +5,7 @@
 // and its affordance, a "no benchmark is running" race surfaces distinctly,
 // and only the original run's terminal outcome releases ownership. The IPC
 // boundary is mocked with controllable deferred promises; nothing else is.
+// Numeric editing checks keep incomplete workloads away from that boundary.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -13,12 +14,10 @@ import { V03EvidencePanel } from "./V03EvidencePanel";
 
 type Handler = (args: unknown) => unknown | Promise<unknown>;
 
-const invokeCalls: Array<{ command: string; args: Record<string, unknown> }> = [];
 const handlers = new Map<string, Handler>();
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (command: string, args?: unknown) => {
-    invokeCalls.push({ command, args: (args ?? {}) as Record<string, unknown> });
     const handler = handlers.get(command);
     if (handler) {
       try {
@@ -154,18 +153,18 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
-  invokeCalls.length = 0;
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   handlers.clear();
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
 
-  handlers.set("load_calibration_records", () => ({ anchors: [], models: [] }));
 });
 
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
+  vi.unstubAllGlobals();
 });
 
 function render() {
@@ -213,6 +212,90 @@ function text() {
   return container.textContent ?? "";
 }
 
+async function setWorkloadInput(label: string, value: string) {
+  const input = container.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`);
+  if (!input) throw new Error(`workload input not found: ${label}`);
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await flush();
+  return input;
+}
+
+describe("benchmark workload editing", () => {
+  it.each(["Benchmark prompt tokens", "Benchmark generated tokens", "Benchmark warmups", "Benchmark trials"])("keeps a cleared %s field blank", async (label) => {
+    render();
+    await flush();
+    expect(runButton().disabled, "the running-server fixture must be ready before the edit").toBe(false);
+    const input = await setWorkloadInput(label, "");
+    expect(input.value).toBe("");
+    expect(input.checkValidity()).toBe(false);
+    expect(runButton().disabled).toBe(true);
+  });
+
+  it("does not treat a blank warmup as permission to skip warmup", async () => {
+    const benchmark = vi.fn(() => { throw new Error("Fixture boundary: no inference run."); });
+    handlers.set("benchmark_v2", benchmark);
+    render();
+    await flush();
+    expect(runButton().disabled).toBe(false);
+    await setWorkloadInput("Benchmark warmups", "");
+    act(() => clickByText("Run v2 benchmark"));
+    await flush();
+    expect(benchmark).not.toHaveBeenCalled();
+    expect(runButton().disabled).toBe(true);
+    expect(container.querySelector('[aria-label="Workload validation errors"]')?.textContent).toContain("workload.warmups");
+  });
+
+  it.each([
+    ["Benchmark prompt tokens", "promptTokens", "1"],
+    ["Benchmark prompt tokens", "promptTokens", "1048576"],
+    ["Benchmark generated tokens", "generationTokens", "1"],
+    ["Benchmark generated tokens", "generationTokens", "65536"],
+    ["Benchmark warmups", "warmups", "0"],
+    ["Benchmark warmups", "warmups", "10"],
+    ["Benchmark trials", "trials", "1"],
+    ["Benchmark trials", "trials", "100"],
+  ])("dispatches corrected %s (%s=%s) without clamping", async (label, field, value) => {
+    const benchmark = vi.fn(() => { throw new Error("Fixture boundary: no inference run."); });
+    handlers.set("benchmark_v2", benchmark);
+    render();
+    await flush();
+    await setWorkloadInput(label, "");
+    expect(runButton().disabled).toBe(true);
+    const input = await setWorkloadInput(label, value);
+    expect(input.value).toBe(value);
+    expect(input.checkValidity()).toBe(true);
+    expect(runButton().disabled).toBe(false);
+    expect(container.querySelector('[aria-label="Workload validation errors"]')).toBeNull();
+    act(() => clickByText("Run v2 benchmark"));
+    await flush();
+    expect(benchmark).toHaveBeenCalledTimes(1);
+    expect(benchmark).toHaveBeenCalledWith({ workload: expect.objectContaining({ [field]: Number(value) }) });
+  });
+
+  it.each([
+    ["Benchmark prompt tokens", "0"], ["Benchmark prompt tokens", "1048577"], ["Benchmark prompt tokens", "1.5"],
+    ["Benchmark generated tokens", "0"], ["Benchmark generated tokens", "65537"], ["Benchmark generated tokens", "1.5"],
+    ["Benchmark warmups", "-1"], ["Benchmark warmups", "11"], ["Benchmark warmups", "0.5"],
+    ["Benchmark trials", "0"], ["Benchmark trials", "101"], ["Benchmark trials", "1.5"],
+  ])("does not dispatch invalid %s=%s", async (label, value) => {
+    const benchmark = vi.fn(() => { throw new Error("Fixture boundary: no inference run."); });
+    handlers.set("benchmark_v2", benchmark);
+    render();
+    await flush();
+    expect(runButton().disabled).toBe(false);
+    const input = await setWorkloadInput(label, value);
+    expect(input.value).toBe(value);
+    expect(input.checkValidity()).toBe(false);
+    act(() => clickByText("Run v2 benchmark"));
+    await flush();
+    expect(benchmark).not.toHaveBeenCalled();
+    expect(runButton().disabled).toBe(true);
+  });
+});
+
 describe("benchmark cancellation lifecycle (audit FE-07)", () => {
   it("recognizes a void acknowledgement as success and keeps the run owned (V1/V2)", async () => {
     const run = deferred<unknown>();
@@ -234,7 +317,6 @@ describe("benchmark cancellation lifecycle (audit FE-07)", () => {
     expect(text()).toContain("Benchmark cancellation requested; the run ends after the current attempt.");
     expect(runButton().textContent).toContain("Benchmarking…");
     expect(runButton().disabled).toBe(true);
-    expect(buttonByText("Run quality suite").disabled).toBe(true);
     expect(buttonByText("Replay manifest").disabled).toBe(true);
 
     // Only the original run's terminal outcome releases ownership.
@@ -245,7 +327,6 @@ describe("benchmark cancellation lifecycle (audit FE-07)", () => {
     expect(text()).toContain("The measured benchmark manifest was saved.");
     expect(runButton().textContent).toContain("Run v2 benchmark");
     expect(runButton().disabled).toBe(false);
-    expect(buttonByText("Run quality suite").disabled).toBe(false);
   });
 
   it("keeps the run and the cancel affordance when cancellation is rejected (V2)", async () => {
@@ -325,7 +406,6 @@ describe("benchmark cancellation lifecycle (audit FE-07)", () => {
     expect(text()).toContain("health timed out");
     expect(runButton().textContent).toContain("Run v2 benchmark");
     expect(runButton().disabled).toBe(false);
-    expect(buttonByText("Run quality suite").disabled).toBe(false);
     // No result was recorded for the failed run.
     expect(text()).toContain("No v2 result");
   });

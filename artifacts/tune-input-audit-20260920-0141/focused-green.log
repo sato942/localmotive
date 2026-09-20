@@ -1,0 +1,13 @@
+
+ RUN  v4.1.11 C:/Users/Mubarak/Documents/Projects/localmotive
+
+
+ Test Files  2 passed (2)
+      Tests  159 passed (159)
+   Start at  01:48:50
+   Duration  3.81s (transform 333ms, setup 0ms, import 496ms, tests 2.49s, environment 839ms)
+
+src/screens/TuneScreen.test.tsx(47,3): error TS2322: Type '{ adoptTunedProfile: () => void; bestLive: TuningTrial | null; briefDisclosure: BriefDisclosure; busy: string; canTune: boolean; ... 44 more ...; tuning: boolean; }' is not assignable to type 'TuneScreenProps'.
+  Types of property 'tuneInputError' are incompatible.
+    Type 'string | null | undefined' is not assignable to type 'string | null'.
+      Type 'undefined' is not assignable to type 'string | null'.

@@ -1,0 +1,580 @@
+
+> localmotive@0.6.0 check
+> npm test && npm run catalog:validate && npm run branding:verify && npm run research:verify-anchor && npm run qualification:verify && npm run icon:verify && npm run build
+
+
+> localmotive@0.6.0 test
+> node --test scripts/tests/release-gates.test.mjs scripts/tests/catalog_schema.test.mjs scripts/tests/http_retry.test.mjs scripts/tests/ipc_contract.test.mjs scripts/tests/health_cancel.test.mjs scripts/tests/qualification_manifest.test.mjs scripts/tests/installer_payloads.test.mjs scripts/tests/release_promotion.test.mjs scripts/tests/mt06_verdicts.test.mjs scripts/tests/preservation_verifier.test.mjs scripts/tests/workflow_integration.test.mjs && vitest run
+
+✔ catalog schema: valid single row (1.6808ms)
+✔ catalog schema: missing id (0.1125ms)
+✔ catalog schema: invalid repository (0.1369ms)
+✔ catalog schema: no files (0.1335ms)
+✔ catalog schema: unsafe filename traversal (0.0986ms)
+✔ catalog schema: unsafe filename ADS (0.0815ms)
+✔ catalog schema: unsafe revision traversal (0.1299ms)
+✔ catalog schema: invalid sha256 (0.096ms)
+✔ catalog schema: duplicate repository row is dropped not unreachable (0.1331ms)
+✔ catalog schema: duplicate model id is fatal (1.0495ms)
+✔ catalog schema: duplicate filename is fatal (0.1453ms)
+✔ catalog schema: all rows dropped is an empty catalog error (0.087ms)
+✔ catalog schema: missing quant label (0.0631ms)
+✔ catalog schema: invalid date is dropped (0.3036ms)
+✔ catalog schema: oversize beyond safe integers is dropped (0.0956ms)
+✔ catalog schema: absent revision defaults to main (0.1127ms)
+✔ catalog schema: Windows reserved device name is refused (0.0497ms)
+✔ catalog schema: trailing dot filename is refused (0.0608ms)
+✔ catalog schema: too many files in one row is dropped (0.3056ms)
+✔ catalog schema: too many tags or an overlong tag is dropped (0.1335ms)
+✔ catalog schema: many bounded rows are accepted, Unicode names are legal (0.6929ms)
+✔ slow fixture progress: an accepted cancel records the cancelled contract (1.1662ms)
+✔ slow fixture progress: a cancelled run without attribution fails (1.1908ms)
+✔ fast fixture progress: completion before the cancel is recorded, not failed (0.1333ms)
+✔ fast fixture progress: a completed run without the full PASS contract fails (0.1801ms)
+✔ a refused cancellation that did not pass surfaces its reason (0.1546ms)
+✔ a bounded wait with no observable phase is a bounded diagnostic failure (0.1552ms)
+✔ retry-after: numeric seconds parse and clamp (0.8265ms)
+✔ retry-after: a sane HTTP date is honored, stale or extreme dates are not (1.6996ms)
+✔ retry-after: malformed and hostile values fall back to bounded backoff (0.2181ms)
+✔ fetch retries a 429 with the header delay and stops at success (1.1856ms)
+✔ fetch gives up at the attempts limit and the total budget is bounded (0.4472ms)
+✔ a stalled fetch is aborted by the request deadline (213.168ms)
+✔ a payload that differs only by the bundle-type marker passes (0.5952ms)
+✔ a marker that does not belong to the bundle type fails (0.2059ms)
+✔ a payload that differs anywhere else fails instead of being excused (0.0851ms)
+✔ a size difference fails before any byte walk (0.0576ms)
+✔ a portable executable that is not the unbundled build fails (0.2659ms)
+✔ IPC contract: fixture entries match the TypeScript wire expectations (1.104ms)
+✔ coverage is active only when the request is in flight immediately before the invocation (1.7144ms)
+✔ the immediate after-sample reaches the verdict: overlap at the invocation fails (0.3235ms)
+✔ a drained or unavailable after-sample is not exercised, never overlap and never active (0.2785ms)
+✔ genuine drain-loop overlap still fails with an incomplete immediate sample (0.1255ms)
+✔ an already-inactive attempt is not exercised, not a failure and not a pass (0.0839ms)
+✔ the API scenario is refused only by the API outcome, never by a disabled UI (0.0901ms)
+✔ the UI scenario credits a refusal from the click or the disabled control (0.1271ms)
+✔ prohibited backend overlap is rejected as a negative control (0.1279ms)
+✔ substitution of an unrelated saved record is rejected as a negative control (0.1803ms)
+PRESERVE_FAIL setting localmotive:runtime not recovered: None != 'C:/fixtures/v041/llama-server.exe'
+PRESERVE_FAIL profile record localmotive:profile:fixture/v041-legacy-model unparseable: Expecting value: line 1 column 1 (char 0)
+PRESERVE_FAIL cache record schemaVersion None != 1 (the v0.4.1 contract)
+PRESERVE_FAIL cache record models field is not an array (the v0.4.1 contract requires an array): 'invalid'
+PRESERVE_FAIL setting localmotive:runtime not recovered: None != 'C:/fixtures/v041/llama-server.exe'
+PRESERVE_FAIL profile record localmotive:profile:fixture/v041-legacy-model unparseable: Expecting value: line 1 column 1 (char 0)
+PRESERVE_FAIL collected settings do not carry a reads map
+PRESERVE_FAIL cache flavor requires --settings-fixture and --settings: the v0.4.1 profile/settings recovery must be asserted, not just cache survival
+✔ recovered v0.4.1 settings and profiles pass (117.6687ms)
+✔ PowerShell UTF-8 settings output accepts preserved values (104.5803ms)
+✔ PowerShell UTF-8 settings output still rejects a lost value (108.3205ms)
+✔ PowerShell UTF-8 settings output still rejects a corrupt profile (106.2612ms)
+✔ a null cache schemaVersion fails (the reviewed verifier accepted it) (101.7547ms)
+✔ a models field that is not an array fails (the v0.4.1 contract requires an array) (100.4888ms)
+✔ a lost setting key fails with the missing value named (102.3412ms)
+✔ a corrupted profile value fails (96.0156ms)
+✔ a malformed collected settings structure fails (97.8405ms)
+✔ the cache flavor refuses to run without the settings assertion (97.0862ms)
+✔ the committed fixture is derived from the v0.4.1 keys (1.0825ms)
+✔ a coherent manifest fixture validates (31.9367ms)
+✔ the expected reviewed revision is enforced when requested (30.3833ms)
+✔ a source-only mismatch between inventory and manifest is refused (28.6384ms)
+✔ a digest-only mismatch between inventory and manifest is refused (26.7524ms)
+✔ a syntactically valid but foreign artifact digest in the manifest is refused (26.0131ms)
+✔ a missing required record is refused (26.1903ms)
+✔ an incorrect outcome inside a record is refused (28.8515ms)
+✔ a witness that lost its required outcome is refused (30.8011ms)
+✔ a lifecycle record whose staged digests contradict the inventory is refused (27.7532ms)
+✔ a lifecycle record bound to a different source is refused (27.0546ms)
+✔ a lifecycle record missing a required step is refused (27.9553ms)
+✔ installed payload digests that contradict the staged installers are refused (26.3846ms)
+✔ a record path that escapes the repository is refused (26.0416ms)
+✔ a text record without its newline-normalized digest is refused (24.1484ms)
+✔ a lifecycle record carried forward from a superseded candidate validates when its citation matches (32.2935ms)
+✔ a carried-forward record whose citation digest drifted is refused (30.0013ms)
+✔ a carried-forward record whose staged digests contradict its cited inventory is refused (29.7086ms)
+✔ a carry-forward that cites a path outside the history tree is refused (29.0013ms)
+✔ F9-03 a genuine producer-shaped packaged record validates unchanged (28.7136ms)
+✔ F9-03 a producer record whose source_revision contradicts the manifest is refused (27.3776ms)
+✔ F9-03 a producer record whose artifact digest contradicts the inventory is refused (26.1554ms)
+✔ F9-03 a producer record whose artifact size contradicts the inventory is refused (27.0803ms)
+✔ F9-03 a producer record whose artifact name contradicts the inventory is refused (27.7367ms)
+✔ F9-03 a producer record with no artifact identity is refused instead of skipping (31.7818ms)
+✔ F9-03 a producer record without a source revision is refused instead of skipping (30.7328ms)
+✔ F9-03 a failed required check under a passing aggregate is refused (26.5378ms)
+✔ F9-03 an aggregate failure with every recorded check passing is refused (27.4359ms)
+✔ two carry-forward groups cite their own superseded candidates (413.5505ms)
+✔ version gate checks every release version field (19.2751ms)
+✔ version gate rejects a mismatched Cargo.lock package entry (6.9432ms)
+✔ version gate accepts no fabricated browser About version (9.2952ms)
+✔ workflow pin gate rejects mutable action references (0.7364ms)
+✔ workflow pin gate rejects an annotated tag object as the executable pin (0.2481ms)
+✔ workflow pin gate accepts the peeled commit and records its tag object (0.1271ms)
+✔ workflow gate rejects package jobs without every material dependency (0.7578ms)
+✔ workflow gate rejects package jobs that omit packaged verification (0.2032ms)
+✔ catalog v2 schema, builder, and signed publish wiring stay consistent (5.3999ms)
+✔ release evidence uses one resolved immutable revision (30.7615ms)
+✔ release promotion reads published assets back (1.0842ms)
+✔ a controlled nonzero native command remains nonzero (44.0998ms)
+✔ icon gate requires every Windows icon surface and ICO layer (1.1174ms)
+✔ Windows installers use the bootstrapper WebView2 mode until offline bundling is fixed (1.0127ms)
+✔ README matches the shipped product and the unsigned Latest policy (0.7221ms)
+✔ launch profiles reject oversize input at the Rust boundary (0.8034ms)
+✔ catalog commands reject oversize input at the Rust boundary (1.122ms)
+✔ catalog refresh honors cooldown, lock, and last-success display (7.8476ms)
+✔ model catalog exposes rich filters with hardware auto-fit defaults (4.8145ms)
+✔ runtime catalog exposes an accessible refresh action in every terminal state (3.1478ms)
+✔ production frontend never fabricates model or runtime inspection results (4.0106ms)
+✔ frontend renders backend-owned managed runtime trust (2.9755ms)
+✔ runtime inspection commits one latest atomic result (2.9913ms)
+✔ runtime setup refresh preserves the selected adapter recommendation (4.1606ms)
+✔ runtime catalog text actions meet the 44 pixel target minimum (2.6596ms)
+✔ a rejected catalog invocation removes the spinner (3.4795ms)
+✔ error state never renders a spinner (2.7038ms)
+✔ loading state has an accessible status label (2.8535ms)
+✔ blocked CUDA shows job server-cuda and its evidence URL (3.2018ms)
+✔ L2 rows render DIRECT RUNTIME · L2 (2.8152ms)
+✔ no row renders SUPPORTED without the required evidence (4.6229ms)
+✔ public 0.4.1 documentation states the L2 evidence ceiling (0.7502ms)
+✔ public links resolve without a gitignored local path (2.515ms)
+✔ MSI manufacturer equals the approved publisher value (28.1899ms)
+✔ honestly unsigned full release verifies checksums and inventory instead of Authenticode (1.1839ms)
+✔ honestly unsigned full release reads back Latest with the unsigned asset set (0.5537ms)
+✔ correct the three L2 claims in the new 0.4.1 changelog section (0.6098ms)
+✔ the 0.4.0 corrective note stays review-gated, not silently published (0.482ms)
+✔ small icon layers remain readable at native resolution (1.632ms)
+✔ the packaged NSIS installer and uninstaller use the LM icon (0.4507ms)
+✔ frontend renders backend catalog facts without owning support classification (3.73ms)
+✔ hardware panel does not present heuristic hardware advice as the catalog recommendation (2.9237ms)
+✔ runtime setup ignores stale responses and owns a separate loading state (4.7268ms)
+✔ runtime setup invalidates pending responses during unmount (3.5193ms)
+✔ runtime install cancellation is available before progress and ignores stale events (3.237ms)
+✔ managed health progress is correlated to the active install key (3.2441ms)
+✔ runtime and health cancellation expose a pending UI state (3.0599ms)
+✔ adapter catalog IPC preserves structured retry metadata (0.5666ms)
+✔ branding gate rejects legacy names outside documented history and migration code (0.3923ms)
+✔ qualification gate permits disclosed gaps but never promotes them to support (0.363ms)
+✔ qualification gate preserves each frozen P0 hardware and backend scope (0.138ms)
+✔ qualification gate rejects a failed attestation on an L4 row (0.1336ms)
+✔ hardware waiver does not waive clean-account lifecycle evidence (0.1176ms)
+✔ research anchor gate rejects changed tracked manifest bytes (0.894ms)
+✔ research anchor gate rejects a missing verification ledger (0.1271ms)
+✔ research anchor gate rejects fabricated verification counts and commands (0.1384ms)
+✔ research anchor gate rejects an unbound independent-review pass (0.1251ms)
+✔ research anchor gate rejects an untracked independent-review report (0.237ms)
+✔ research anchor gate rejects an independent review for another research tree (0.2198ms)
+✔ packaged verifier checks the reduced benchmark surface (1.6891ms)
+✔ packaged verifier contains no private React-state injection (QD-03) (0.4889ms)
+✔ packaged cancellation check observes progress, records completion or a bounded diagnostic (QD-03) (0.9985ms)
+✔ release package job runs the catalog/SQLite packaged matrix (GH-05) (1.0472ms)
+✔ rich catalog facets keep the backend camelCase contract (GH-05) (3.7477ms)
+✔ verifier-only catalog overrides stay gated to the isolated verifier profile (GH-05) (0.831ms)
+✔ component test environment owns the catalog presentation scenarios (QD-02, QD-03) (0.6156ms)
+✔ packaged verifier requires successful health, cancellation, and restart (0.4522ms)
+✔ packaged verification schema rejects false-green overall status (32.9429ms)
+✔ packaged verification schema rejects false-red overall status (16.9366ms)
+✔ candidate inventory rejects a checksum that does not bind the staged bytes (6.2993ms)
+✔ R10: TLS transport validation parses real structures and matches the pair (0.8719ms)
+✔ R15: the loopback client never hops, and its bounds are structural (0.8237ms)
+✔ R07: preservation fixtures carry real released-version data, not markers (2.4533ms)
+✔ R11: the packaged cancellation driver measures owned identities end to end (1.0875ms)
+✔ R13: publication rechecks the tag and trusts exact bytes, with failure diagnostics (16.728ms)
+✔ R09: installed version identity is exact and payload expectations are stated (1.0219ms)
+✔ R12: the published-inventory consumer fails closed on schema, set, and identity drift (16.657ms)
+✔ signed build configuration requires certificate-store identity and timestamp verification (0.8647ms)
+✔ hardware qualify workflow pins every remote action and owns the host proof (1.1002ms)
+✔ hardware qualify attestation block parses under pwsh (U06-03) (272.7228ms)
+✔ hardware qualify workflow cannot claim L4 support from host match alone (1.2671ms)
+✔ workflow gate policy covers the hardware qualify night path (0.638ms)
+✔ release ship gates default to the self-hosted runner, never windows-latest (1.1837ms)
+✔ release checkout pins line endings so the packaged clean-source probe is honest (0.866ms)
+fatal: path 'src/screens/AboutScreen.test.tsx' exists on disk, but not in 'HEAD'
+fatal: path 'src/screens/ProfileScreen.test.tsx' exists on disk, but not in 'HEAD'
+✔ no working-tree source file is a line-ending-only rewrite of its committed bytes (1176.9692ms)
+✔ packaged clean-source probe ignores the verifier-owned artifacts directory (0.8974ms)
+✔ packaged clean-source probe ignores the workflow-owned SBOM output (0.544ms)
+✔ packaged rejection detail preserves the backend error message (0.6328ms)
+✔ release verify step exposes the resolved revision to every verifier phase (11.6224ms)
+✔ release verify step waits for the candidate WebView before driving checks (1.0366ms)
+✔ release workflow serializes runs so two packages never share one runner (0.8493ms)
+✔ release verify step isolates the candidate behind a per-run CDP port with owned-handle cleanup (0.5897ms)
+✔ release verify orchestration never lets cleanup set the step outcome (0.7616ms)
+✔ packaged-orchestration cleanup matrix runs in CI under pwsh (U06-01) (0.7776ms)
+✔ candidate still-alive fails the run and preserves the verifier error (U06-01) (0.4467ms)
+✔ fixture adoption refuses unverified identity (U06-01) (0.4503ms)
+✔ release publish verification avoids hosted-only shell dependencies (0.6142ms)
+✔ a tag push verifies without publishing and publication needs explicit authorization (0.9443ms)
+✔ branding history set covers the archived docs layout (0.607ms)
+✔ local catalog SQLite mirror stores verified models with migrations and controlled recovery (0.5766ms)
+✔ catalog browse uses one merged collection and never the snapshot alone (2.5309ms)
+✔ override saves reject mixed-origin collisions inside an immediate transaction (0.5727ms)
+✔ FE-01 selection and runtime commit as coordinated transitions (2.7938ms)
+✔ FE-02 tuning adoption binds to the originating run (3.131ms)
+✔ FE-07 cancellation state is separate from the run lifecycle (0.766ms)
+✔ GH-01 pull requests run only on the isolated hosted runner (0.6813ms)
+✔ GH-03 the lifecycle consumes candidates instead of waiting for publication (10.1998ms)
+✔ GH-04 installer verdicts fail on leftovers and verify installed versions (0.8556ms)
+✔ GH-06 lifecycle evidence survives every terminal outcome (11.8767ms)
+✔ GH-10 host attestation statuses derive from detected hardware (2.4166ms)
+✔ GH-02 release jobs share one resolved immutable revision (11.2258ms)
+✔ FE-04 previews compose provisionally and launch trust stays authoritative (3.4558ms)
+✔ FE-16 status polling is single-flight with sequence guards (2.9301ms)
+✔ the cancellable local client never re-issues a slow-but-healthy response (MT-06) (0.6479ms)
+✔ FE-16 and FE-05.V3 packaged walks drive the real routes (0.7037ms)
+✔ FE-05 benchmark evidence and active runs survive navigation (3.1884ms)
+✔ FE-03 stale responses are guarded before they can commit (2.8908ms)
+✔ user catalog overrides stay local, marked, and outside network verification (3.91ms)
+✔ IPC-02 production CSP and opener scope are narrow and audited (5.569ms)
+✔ FE-12 path-bar inputs keep a visible keyboard-focus ring (1.2045ms)
+✔ FE-14 small-text colors keep at least 4.5:1 on their panels (1.8168ms)
+✔ DC-09 quant labels come from the file's own token and stay canonical (2.884ms)
+✔ DC-10 the builder pins immutable revisions and signed freshness fields (0.8767ms)
+✔ QD-01 the catalog cutoff follows the build clock (2.8762ms)
+✔ QD-04 active docs agree with the shipped unsigned policy and current platform (1.8064ms)
+✔ QD-05 the toolchain minimum is declared (2.0877ms)
+✔ QD-06 vendored upstream docs carry provenance and links resolve elsewhere (1.2621ms)
+✔ QD-06 local doc links resolve (the vendored upstream README is excluded) (9.4186ms)
+✔ GH-07 the evidence matrix exists and the README reads it (1.45ms)
+✔ GH-08 supply-chain posture and SBOM step are documented (10.359ms)
+✔ GH-09 governance files exist and dependency updates are configured (1.9386ms)
+✔ adapter invokes wrap Rust commands whose only parameter is `request` (2.2385ms)
+✔ release verification keeps checks, packaging, lifecycle, and qualification in one workspace (11.3965ms)
+✔ S-26: version gates stay dynamic and deterministic tests run once before packaging (13.5047ms)
+✔ promotion validates each downloaded bundle once without repeating manifest and checksum checks (11.5538ms)
+✔ publication consumes the retained candidate inventory and validates it (2026-09-12 review) (0.9357ms)
+✔ the RT-04.V2 health-model delay seam is loopback-only and verifier-gated (1.3676ms)
+✔ lifecycle evidence binds to the candidate inventory, never a substituted HEAD (0.516ms)
+✔ MT-06 extension pins worker ownership and duplicate-free cancellation (0.7514ms)
+✔ R05/R06: lifecycle pass conditions are strict and candidate-bound (2.4346ms)
+✔ lifecycle host stages the settings canary for cache legs (0.5513ms)
+✔ witness stall legs spawn the capable shell (0.4765ms)
+✔ settings session splits the WebView2 data root from the profile dir (0.5222ms)
+✔ settings session keeps the WebView2 profile outside the mapped share (0.4682ms)
+✔ settings session pins a WebView2 user-data dir (0.4762ms)
+✔ settings session polls for the debugger target before evaluating (0.5087ms)
+✔ settings sessions preserve storage and clean up on a verifier failure (739.0714ms)
+✔ lifecycle collection handles cache-only and mirror-only baselines (418.1872ms)
+✔ lifecycle cleanup targets only its Sandbox identity and reports stop failures (349.971ms)
+✔ lifecycle retains the actual settings reads under lock ownership (393.9804ms)
+✔ lifecycle preflight checks the actual Sandbox CLI before using candidates (1034.3902ms)
+✔ elevated guest debugging uses a new application-scoped machine override (346.993ms)
+✔ lifecycle preflight restricts stored authentication to an opted-in local run (303.9357ms)
+✔ lifecycle authentication failure retains a structured failure document (559.0046ms)
+✔ R04: the benchmark run owns its cancelled workers until they exit (1.8105ms)
+✔ the stalled-fetch deadline stays injectable and bounded in tests (CI cancellation fix) (0.587ms)
+✔ publish promotes the verified bytes only after every material gate (G-06/G-09) (19.8434ms)
+✔ the gate policy refuses a verify workflow that can publish (0.264ms)
+✔ DC-04.V2 the authority distinction stays visible end to end (1.138ms)
+✔ DC-04.V2 the download seam is loopback-only and verifier-gated (0.5785ms)
+✔ S-26: the hardware probe runs only in its explicit qualification job (0.961ms)
+✔ no workflow mapping key is comment-only (GitHub rejects the whole file) (2.3957ms)
+✔ lifecycle harness refuses to race evidence for one scenario (0.6298ms)
+✔ the qualification manifest validates and references only committed records (5.7026ms)
+✔ a coherent qualified set is safe to publish (54.6647ms)
+✔ a downloaded bundle cannot fall back to the checkout's manifest or lifecycle record (176.9102ms)
+✔ a wrong expected source revision is refused even when the set is intact (37.7117ms)
+✔ bytes that changed after qualification are refused (41.0358ms)
+✔ a missing promised asset is refused (35.6292ms)
+✔ missing lifecycle evidence is refused (35.326ms)
+✔ a moved or relabelled tag is refused (52.3942ms)
+✔ the inventory asset must match the manifest's producer record (39.0678ms)
+✔ a packaged-verification asset that is not the producer record is refused (39.5056ms)
+✔ a checksum file that lists the wrong file set is refused (42.175ms)
+✔ the checksum parser refuses duplicates and unparseable lines (0.4546ms)
+✔ the single promotion CLI rejects manifest and artifact failures without companion commands (457.1864ms)
+✔ the run's own lifecycle records qualify a generated manifest and publish set (356.8643ms)
+✔ missing current-run lifecycle output cannot qualify from committed records (518.6703ms)
+✔ the staged packaged record reaches the manifest without prepopulated identical copies (351.141ms)
+✔ a missing staged packaged record fails instead of binding a stale copy (268.7597ms)
+✔ a missing lifecycle record fails qualification (321.9382ms)
+✔ an unrelated run's lifecycle record fails without a permitted carry-forward (322.3536ms)
+✔ a legacy evidence filename fails instead of passing silently (283.9766ms)
+✔ an artifact contradiction fails even when every value is well formed (304.6012ms)
+✔ the fixture writes every mandatory record under the generator's name (239.9136ms)
+✔ a controlled package-stage failure reports every missing output (545.1199ms)
+✔ the produced evidence name and the promotion contract agree (0.7043ms)
+ℹ tests 274
+ℹ suites 0
+ℹ pass 274
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 6436.1499
+
+ RUN  v4.1.11 C:/Users/Mubarak/Documents/Projects/localmotive
+
+stderr | src/App.storage.test.tsx > denied browser storage (audit FE-09 I3) > reports a failed profile save without losing the edit (save, not crash)
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.storage.test.tsx > denied browser storage (audit FE-09 I3) > reports a failed profile save without losing the edit (save, not crash)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.storage.test.tsx > denied browser storage (audit FE-09 I3) > reports a failed profile save without losing the edit (save, not crash)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.storage.test.tsx > denied browser storage (audit FE-09 I3) > reports a failed profile save without losing the edit (save, not crash)
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.storage.test.tsx > denied browser storage (audit FE-09 I3) > reports a failed profile save without losing the edit (save, not crash)
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.storage.test.tsx > denied browser storage (audit FE-09 I3) > reports a failed profile save without losing the edit (save, not crash)
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.storage.test.tsx > denied browser storage (audit FE-09 I3) > reports a failed profile save without losing the edit (save, not crash)
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.storage.test.tsx > denied browser storage (audit FE-09 I3) > reports a failed profile save without losing the edit (save, not crash)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.storage.test.tsx > denied browser storage (audit FE-09 I3) > reports a failed profile save without losing the edit (save, not crash)
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.storage.test.tsx > denied browser storage (audit FE-09 I3) > reports a failed profile save without losing the edit (save, not crash)
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.storage.test.tsx > denied browser storage (audit FE-09 I3) > reports a failed profile save without losing the edit (save, not crash)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.storage.test.tsx > denied browser storage (audit FE-09 I3) > reports a failed profile save without losing the edit (save, not crash)
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.storage.test.tsx > denied browser storage (audit FE-09 I3) > reports a failed profile save without losing the edit (save, not crash)
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.storage.test.tsx > denied browser storage (audit FE-09 I3) > keeps a finished tuning report visible when its save fails
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.storage.test.tsx > denied browser storage (audit FE-09 I3) > keeps a finished tuning report visible when its save fails
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.storage.test.tsx > denied browser storage (audit FE-09 I3) > keeps a finished tuning report visible when its save fails
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.storage.test.tsx > denied browser storage (audit FE-09 I3) > keeps a finished tuning report visible when its save fails
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.storage.test.tsx > denied browser storage (audit FE-09 I3) > keeps a finished tuning report visible when its save fails
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.storage.test.tsx > denied browser storage (audit FE-09 I3) > keeps a finished tuning report visible when its save fails
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.storage.test.tsx > denied browser storage (audit FE-09 I3) > keeps a finished tuning report visible when its save fails
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.storage.test.tsx > denied browser storage (audit FE-09 I3) > keeps a finished tuning report visible when its save fails
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.storage.test.tsx > denied browser storage (audit FE-09 I3) > keeps a finished tuning report visible when its save fails
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.storage.test.tsx > denied browser storage (audit FE-09 I3) > keeps a finished tuning report visible when its save fails
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.storage.test.tsx > denied browser storage (audit FE-09 I3) > keeps a finished tuning report visible when its save fails
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.storage.test.tsx > denied browser storage (audit FE-09 I3) > keeps a finished tuning report visible when its save fails
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.storage.test.tsx > denied browser storage (audit FE-09 I3) > keeps a finished tuning report visible when its save fails
+The current testing environment is not configured to support act(...)
+
+ ❯ src/App.storage.test.tsx (4 tests | 2 failed) 502ms
+     × reports a failed profile save without losing the edit (save, not crash) 217ms
+     × keeps a finished tuning report visible when its save fails 96ms
+Not implemented: navigation to another Document
+stderr | src/App.catalog.test.tsx > capability and status words stay honest (audit FE-15) > says shards complete, path selected and not inspected instead of overstating
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.catalog.test.tsx > capability and status words stay honest (audit FE-15) > says shards complete, path selected and not inspected instead of overstating
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.catalog.test.tsx > capability and status words stay honest (audit FE-15) > says shards complete, path selected and not inspected instead of overstating
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.catalog.test.tsx > capability and status words stay honest (audit FE-15) > says shards complete, path selected and not inspected instead of overstating
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.catalog.test.tsx > capability and status words stay honest (audit FE-15) > says shards complete, path selected and not inspected instead of overstating
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.catalog.test.tsx > capability and status words stay honest (audit FE-15) > says shards complete, path selected and not inspected instead of overstating
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.catalog.test.tsx > capability and status words stay honest (audit FE-15) > says shards complete, path selected and not inspected instead of overstating
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.catalog.test.tsx > capability and status words stay honest (audit FE-15) > says shards complete, path selected and not inspected instead of overstating
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.catalog.test.tsx > capability and status words stay honest (audit FE-15) > says shards complete, path selected and not inspected instead of overstating
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.catalog.test.tsx > capability and status words stay honest (audit FE-15) > says shards complete, path selected and not inspected instead of overstating
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.catalog.test.tsx > capability and status words stay honest (audit FE-15) > says shards complete, path selected and not inspected instead of overstating
+The current testing environment is not configured to support act(...)
+
+stderr | src/App.catalog.test.tsx > capability and status words stay honest (audit FE-15) > says shards complete, path selected and not inspected instead of overstating
+The current testing environment is not configured to support act(...)
+
+ ❯ src/App.catalog.test.tsx (30 tests | 1 failed) 2234ms
+     × says shards complete, path selected and not inspected instead of overstating 151ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/App.catalog.test.tsx > capability and status words stay honest (audit FE-15) > says shards complete, path selected and not inspected instead of overstating
+AssertionError: provisional before inspection: expected 'LMControlInventoryHF CatalogRuntimePr…' to contain 'provisional'
+
+Expected: "provisional"
+Received: "LMControlInventoryHF CatalogRuntimeProfileAI TuneBenchmarkAboutIDLELOCALMOTIVELocal inference control planeNo runtime configuredSYSPort 8080 is in use. Trying null; launch validation will confirm it.Launch profileEvery field becomes an explicit llama-server argument. Save StartPort must be a whole number.Essentials firstCommon fit, speed, acceleration, and chat controls stay visible.Jump to AdvancedIdentity & runtimeProfile namellama-server executableInspect selected runtimeHostPortAPI aliasEveryday performanceThe settings most likely to affect whether a model fits and how fast it runs.Context tokensShared by prompt and output.Parallel slotsUse 1 for best single-user latency.GPU layersauto, all, or a layer count.CPU MoE layersUseful for large mixture-of-experts models.Flash attentionAutomaticOnOffModel loadingAutomaticMemory mapMap + lock in RAMLock in RAMLoad normallyDirect I/OKV cache Kf16bf16q8_0q4_0q4_1iq4_nlq5_0q5_1f32KV cache Vf16bf16q8_0q4_0q4_1iq4_nlq5_0q5_1f32 Smart memory fit Keep KV cache on GPUAcceleration & model featuresSpeculative methodnoneInspect the selected runtime before choosing a speculative method.Draft / companion GGUFRequired by DSpark, DFlash, EAGLE-3, and simple draft models.Maximum draft tokensVision projectorChat behaviorReasoningAutomaticOnOffReasoning effortdefaultminimallowmediumhighxhighmax Jinja chat templates Reuse prompt cacheAdvanced optionsFine-tune placement, cache, sampling, security, vision, and adaptersCPU, batching & throughputGeneration threads-1 lets llama.cpp decide.Prompt threadsBatch sizePhysical uBatchDense CPU FFN layersHTTP threads Continuous batching Startup warmupGPU placement & memory fittingSplit modeSingle GPULayer splitRow splitTensor split (experimental)Tensor splitMain GPUDevicesFit margin MiBMinimum fit contextPrompt cache & server lifecycleCache RAM MiBCache reuse chunkContext checkpointsSleep after idle secondsRequest timeout secondsSSE ping seconds Infinite-generation context shift Slots monitoring endpoint Prometheus metrics llama.cpp WebUISpeculative fine tuningMinimum draft tokensDraft probability floorDraft split probabilityDraft GPU layersDraft cache Kf16bf16q8_0q4_0q4_1Draft cache Vf16bf16q8_0q4_0q4_1N-gram match lengthN-gram draft minN-gram draft maxN-gram map size nN-gram map size mMap minimum hitsSampling defaultsTemperatureTop KTop PMin PRepeat penaltyRepeat windowSeedDRY multiplierDRY baseVision & multimodal Offload projector to GPUProjector deviceMinimum image tokensMaximum image tokensNetwork & securityLAN binding requires an API key file and restricted CORS origins. Secrets are read from a file rather than exposed in the command line.Allowed CORS originsAPI key fileSSL private keySSL certificateTemplates, adapters & low-level overridesReasoning token budget Preserve reasoning historyCustom chat template fileLoRA filesScaled LoRAsTensor overridesModel metadata overridesLog verbosity Log timestampsRaw extra argumentsUse self-contained `--flag` or `--flag=value` tokens; quote values that contain spaces. The list is applied when you leave the field. Typed-field overrides and privileged capabilities are rejected.Provisional commandEdit a setting to compose the command.Composed without probing the runtime: capability filtering, artifact checks, and managed-runtime trust are enforced when the profile is validated and launched.RUNTIME CAPABILITIESOnly methods advertised by this executable are offered. Raw arguments remain available for new llama.cpp features.Generation benchmarkOne warmup, fixed deterministic workload, repeated server-reported throughput. Run benchmarkServer requiredStart a profile before measuring it.Test setupForced output tokensMeasured repeatsSamplingGREEDYSeed42Early EOSIGNOREDWarmup64 TOKENSMeasured resultNo measurement recorded for this session.v0.3 evidenceFit and measureArtifact inspection, preflight proof, controlled benchmarks, and saved-manifest replay keep measured evidence explicit.Artifact and preflight evidenceChoose adapters explicitly. Unknown inputs remain visible.Refresh hardwareInspect artifactRun preflightArtifactUnknownArchitecture unknownPreflight classUnknownExecution path unknownRequired: UnknownAvailable: UnknownPolicy reserve: UnknownResident storage: UnknownLaunch proofunknownNo launch validationEffective context: Unknown (unknown)Adapters included in preflightNo GPU adapter evidence is available.Manual dedicated capacity (GiB)Override noteManual capacity remains userOverride evidence. Localmotive does not combine dedicated and shared memory.Benchmark v2Use one fixed workload. Raw failures remain in the saved manifest.Run v2 benchmarkCancelReplay manifestWorkload IDPrompt tokensGenerated tokensWarmupsTrialsCache modeWarmCold (requires a fresh runtime)Result classUnknownNo v2 resultDecode throughputUnknownNo measured statisticFirst-token latencyUnknownDerived TTFT unavailableControlled greedy microbenchmark: one fixed prompt, temperature 0, one request at a time on a warm server. It does not represent every workload class; speculative-decoding gains measured here do not generalize to other prompts.Peak working set is the server process lifetime CPU working-set evidence. It excludes dedicated GPU memory and is not an isolated request allocation."
+
+ ❯ src/App.catalog.test.tsx:964:53
+    962|     // The profile's speculation list is marked provisional until insp…
+    963|     await click(navButton("Profile"), "Profile navigation");
+    964|     expect(text(), "provisional before inspection").toContain("provisi…
+       |                                                     ^
+    965|     // Inspecting binds the list to this executable…
+    966|     handlers.set("inspect_runtime", () => ({ build: "b9999", specTypes…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  src/App.storage.test.tsx > denied browser storage (audit FE-09 I3) > reports a failed profile save without losing the edit (save, not crash)
+AssertionError: expected 'LMControlInventoryHF CatalogRuntimePr…' to contain 'Could not save fixture-renamed'
+
+Expected: "Could not save fixture-renamed"
+Received: "LMControlInventoryHF CatalogRuntimeProfileAI TuneBenchmarkAboutIDLELOCALMOTIVELocal inference control planeNo runtime configuredSYSPort must be a whole number.Launch profileEvery field becomes an explicit llama-server argument. Save StartPort must be a whole number.Essentials firstCommon fit, speed, acceleration, and chat controls stay visible.Jump to AdvancedIdentity & runtimeProfile namellama-server executableInspect selected runtimeHostPortAPI aliasEveryday performanceThe settings most likely to affect whether a model fits and how fast it runs.Context tokensShared by prompt and output.Parallel slotsUse 1 for best single-user latency.GPU layersauto, all, or a layer count.CPU MoE layersUseful for large mixture-of-experts models.Flash attentionAutomaticOnOffModel loadingAutomaticMemory mapMap + lock in RAMLock in RAMLoad normallyDirect I/OKV cache Kf16bf16q8_0q4_0q4_1iq4_nlq5_0q5_1f32KV cache Vf16bf16q8_0q4_0q4_1iq4_nlq5_0q5_1f32 Smart memory fit Keep KV cache on GPUAcceleration & model featuresSpeculative methodnoneInspect the selected runtime before choosing a speculative method.Draft / companion GGUFRequired by DSpark, DFlash, EAGLE-3, and simple draft models.Maximum draft tokensVision projectorChat behaviorReasoningAutomaticOnOffReasoning effortdefaultminimallowmediumhighxhighmax Jinja chat templates Reuse prompt cacheAdvanced optionsFine-tune placement, cache, sampling, security, vision, and adaptersCPU, batching & throughputGeneration threads-1 lets llama.cpp decide.Prompt threadsBatch sizePhysical uBatchDense CPU FFN layersHTTP threads Continuous batching Startup warmupGPU placement & memory fittingSplit modeSingle GPULayer splitRow splitTensor split (experimental)Tensor splitMain GPUDevicesFit margin MiBMinimum fit contextPrompt cache & server lifecycleCache RAM MiBCache reuse chunkContext checkpointsSleep after idle secondsRequest timeout secondsSSE ping seconds Infinite-generation context shift Slots monitoring endpoint Prometheus metrics llama.cpp WebUISpeculative fine tuningMinimum draft tokensDraft probability floorDraft split probabilityDraft GPU layersDraft cache Kf16bf16q8_0q4_0q4_1Draft cache Vf16bf16q8_0q4_0q4_1N-gram match lengthN-gram draft minN-gram draft maxN-gram map size nN-gram map size mMap minimum hitsSampling defaultsTemperatureTop KTop PMin PRepeat penaltyRepeat windowSeedDRY multiplierDRY baseVision & multimodal Offload projector to GPUProjector deviceMinimum image tokensMaximum image tokensNetwork & securityLAN binding requires an API key file and restricted CORS origins. Secrets are read from a file rather than exposed in the command line.Allowed CORS originsAPI key fileSSL private keySSL certificateTemplates, adapters & low-level overridesReasoning token budget Preserve reasoning historyCustom chat template fileLoRA filesScaled LoRAsTensor overridesModel metadata overridesLog verbosity Log timestampsRaw extra argumentsUse self-contained `--flag` or `--flag=value` tokens; quote values that contain spaces. The list is applied when you leave the field. Typed-field overrides and privileged capabilities are rejected.Provisional commandEdit a setting to compose the command.Composed without probing the runtime: capability filtering, artifact checks, and managed-runtime trust are enforced when the profile is validated and launched.RUNTIME CAPABILITIESOnly methods advertised by this executable are offered. Raw arguments remain available for new llama.cpp features.Generation benchmarkOne warmup, fixed deterministic workload, repeated server-reported throughput. Run benchmarkServer requiredStart a profile before measuring it.Test setupForced output tokensMeasured repeatsSamplingGREEDYSeed42Early EOSIGNOREDWarmup64 TOKENSMeasured resultNo measurement recorded for this session.v0.3 evidenceFit and measureArtifact inspection, preflight proof, controlled benchmarks, and saved-manifest replay keep measured evidence explicit.Artifact and preflight evidenceChoose adapters explicitly. Unknown inputs remain visible.Refresh hardwareInspect artifactRun preflightArtifactUnknownArchitecture unknownPreflight classUnknownExecution path unknownRequired: UnknownAvailable: UnknownPolicy reserve: UnknownResident storage: UnknownLaunch proofunknownNo launch validationEffective context: Unknown (unknown)Adapters included in preflightNo GPU adapter evidence is available.Manual dedicated capacity (GiB)Override noteManual capacity remains userOverride evidence. Localmotive does not combine dedicated and shared memory.Benchmark v2Use one fixed workload. Raw failures remain in the saved manifest.Run v2 benchmarkCancelReplay manifestWorkload IDPrompt tokensGenerated tokensWarmupsTrialsCache modeWarmCold (requires a fresh runtime)Result classUnknownNo v2 resultDecode throughputUnknownNo measured statisticFirst-token latencyUnknownDerived TTFT unavailableControlled greedy microbenchmark: one fixed prompt, temperature 0, one request at a time on a warm server. It does not represent every workload class; speculative-decoding gains measured here do not generalize to other prompts.Peak working set is the server process lifetime CPU working-set evidence. It excludes dedicated GPU memory and is not an isolated request allocation."
+
+ ❯ src/App.storage.test.tsx:294:22
+    292|         "the Save action must exist",
+    293|       );
+    294|       expect(text()).toContain("Could not save fixture-renamed");
+       |                      ^
+    295|       expect(text()).toContain("could not be saved to browser storage"…
+    296|       // The edit is still visible; the app did not navigate away or c…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  src/App.storage.test.tsx > denied browser storage (audit FE-09 I3) > keeps a finished tuning report visible when its save fails
+AssertionError: expected 'LMControlInventoryHF CatalogRuntimePr…' to contain 'Tuning finished'
+
+Expected: "Tuning finished"
+Received: "LMControlInventoryHF CatalogRuntimeProfileAI TuneBenchmarkAboutIDLELOCALMOTIVELocal inference control planeNo runtime configuredSYSPort must be a whole number.AI tuningA cloud model proposes llama-server settings; this PC measures them. The best measured configuration wins. Auto-tune fixtureCloud tuning sends a brief to the selected provider. Local inference never sends data anywhere — this setting affects cloud tuning only.What the brief carriesFull — every measured value, including local pathsMinimal — directories and user names removed; file names, flags and measurements stayStored cloud credentials are never part of the brief, in either mode.1Cloud provideropenrouter connected2Local modelfixture3TuneChoose context, startCloud providerCONNECTED sk-or-…1234API key StoreStored under “Localmotive” in Windows Credential Manager, not in this app’s settings. Advisor modeladvisor-1Pick a strong reasoning model; each trial costs one short request with the full measurement history. Test connection Forget keyTuning targetContext length2,0484,0968,192 (native max)Every trial runs at exactly this context; the KV cache is sized for it.AI trialsProposals measured after the baseline (T0). Each is one server launch.Tokens per measurementRepeats per trialModelfixtureArchitectureLLAMA · 4 GBLayers / native context32 / 8,192CompanionsNONERuntime—HardwareUNKNOWNThe advisor may change only throughput-relevant fields (offload, threads, batching, KV cache type, flash attention, speculative settings). Host, port, alias, paths, and security settings are never touched. Nothing runs on this PC except llama-server with the proposed flags.ResultNo tuning run for fixture yet. Choose a context length and start.Trial logNo trials yetStart tuning to see each proposal, its rationale, and its measurement.Generation benchmarkOne warmup, fixed deterministic workload, repeated server-reported throughput. Run benchmarkServer requiredStart a profile before measuring it.Test setupForced output tokensMeasured repeatsSamplingGREEDYSeed42Early EOSIGNOREDWarmup64 TOKENSMeasured resultNo measurement recorded for this session.v0.3 evidenceFit and measureArtifact inspection, preflight proof, controlled benchmarks, and saved-manifest replay keep measured evidence explicit.Artifact and preflight evidenceChoose adapters explicitly. Unknown inputs remain visible.Refresh hardwareInspect artifactRun preflightArtifactUnknownArchitecture unknownPreflight classUnknownExecution path unknownRequired: UnknownAvailable: UnknownPolicy reserve: UnknownResident storage: UnknownLaunch proofunknownNo launch validationEffective context: Unknown (unknown)Adapters included in preflightNo GPU adapter evidence is available.Manual dedicated capacity (GiB)Override noteManual capacity remains userOverride evidence. Localmotive does not combine dedicated and shared memory.Benchmark v2Use one fixed workload. Raw failures remain in the saved manifest.Run v2 benchmarkCancelReplay manifestWorkload IDPrompt tokensGenerated tokensWarmupsTrialsCache modeWarmCold (requires a fresh runtime)Result classUnknownNo v2 resultDecode throughputUnknownNo measured statisticFirst-token latencyUnknownDerived TTFT unavailableControlled greedy microbenchmark: one fixed prompt, temperature 0, one request at a time on a warm server. It does not represent every workload class; speculative-decoding gains measured here do not generalize to other prompts.Peak working set is the server process lifetime CPU working-set evidence. It excludes dedicated GPU memory and is not an isolated request allocation."
+
+ ❯ src/App.storage.test.tsx:384:22
+    382|       await click(autoTune, "the Auto-tune action must exist");
+    383|       // The run finished; the report is visible and the phase is not …
+    384|       expect(text()).toContain("Tuning finished");
+       |                      ^
+    385|       expect(text()).toContain("Report ready");
+    386|       expect(text()).toContain("could not be saved to browser storage"…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  2 failed | 11 passed (13)
+      Tests  3 failed | 190 passed (193)
+   Start at  22:33:25
+   Duration  4.85s (transform 2.31s, setup 0ms, import 4.42s, tests 5.04s, environment 23.56s)
+

@@ -1,0 +1,22 @@
+   Compiling localmotive v0.6.0 (C:\Users\Mubarak\Documents\Projects\localmotive\src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.92s
+     Running unittests src\lib.rs (target\debug\deps\localmotive_lib-694be1a6828a4ecd.exe)
+
+running 1 test
+test server_service::stop_ownership_tests::stop_claim_rechecks_the_epoch_after_a_completed_interleaving ... FAILED
+
+failures:
+
+---- server_service::stop_ownership_tests::stop_claim_rechecks_the_epoch_after_a_completed_interleaving stdout ----
+
+thread 'server_service::stop_ownership_tests::stop_claim_rechecks_the_epoch_after_a_completed_interleaving' (174220) panicked at src\server_service.rs:419:9:
+assertion failed: reserve_stop(&state, request).is_err()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    server_service::stop_ownership_tests::stop_claim_rechecks_the_epoch_after_a_completed_interleaving
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 625 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`

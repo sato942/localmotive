@@ -2,12 +2,66 @@
 
 ## 0.6.0
 
-This is the stabilization release: every fix below traces to a confirmed
-finding in `docs/history/localmotive-comprehensive-audit.md`, lands with a
-regression test, and is recorded with its evidence in
-`docs/history/TODO-0.6.md`.
+This release combines the traced audit fixes with the owner-requested
+application and release-pipeline reduction. Current verification is recorded
+in `TODO-0.6.md`; accepted historical evidence remains under `docs/history/`.
+
+### Simplification
+
+- Removes quality-suite ranking, calibration fitting and storage controls,
+  external-evidence import/review, and share export from the UI and IPC surface.
+  Existing calibration and exchange files remain untouched but unsupported.
+- Retains v2 benchmarking, preflight, cancellation, replay, execution identity,
+  runtime and model management, launch profiles, and AI Tune.
+- Reduces release verification from six jobs to three. Checks, packaging,
+  lifecycle tests, and qualification use one workspace without intermediate
+  artifact transfers. Qualification and explicit publication remain separate.
+- Validates downloaded evidence directly instead of overlaying checkout copies.
+  Missing current-run lifecycle records cannot fall back to committed evidence.
+- Removes obsolete diagnostic scripts and repeated test/validator execution.
 
 ### Security and robustness
+
+- Binds Stop requests to the server-operation generation observed before queuing.
+  Stale requests cannot terminate a replacement process or cancel its startup.
+  Stop retains the shared reservation through process termination and its bounded
+  log-drain wait.
+- Serializes legacy benchmark requests with other owned operations. Adds a
+  navigation-safe Cancel control and retains ownership until request workers exit.
+  Rejects duplicate clicks before the next render and removes the unused
+  uncancellable sampler.
+- Prevents finite benchmark samples from overflowing into null summary fields.
+  Keeps very small medians positive and scales tuning variance before squaring.
+  Sample standard deviation retains its existing `n - 1` denominator.
+- Validates all profile numeric fields before saving or sending preview, launch,
+  or tuning requests. Empty fields stay empty while editing. Invalid ranges,
+  fractional integer fields, and inconsistent batch/draft/image limits get a
+  field-specific message instead of an unusable saved profile.
+- Debounces command composition during typing and clears stale previews immediately.
+- Shows only runtime-advertised speculative choices after inspection. A saved
+  unsupported choice stays visible as unverified instead of appearing as `none`.
+- Adds an About link for manual release checks and repairs the Lucide credit link
+  without expanding opener permissions. Automatic updating remains unavailable.
+- Rejects oversized legacy benchmark workloads before HTTP requests and rejects
+  invalid tuning workloads before runtime preparation. The Tune editor keeps
+  blank edits visible and reports invalid counts before dispatch. Tuning reports
+  and trials use the same validated token and repetition counts.
+- Keeps v2 benchmark fields blank during incomplete edits. A blank warmup no
+  longer becomes a zero-warmup request. An explicit zero remains valid.
+- Keeps legacy benchmark edits blank and rejects invalid counts before IPC.
+  Corrected counts pass through unchanged; prior results remain intact.
+- Rejects speculative values absent from the inspected runtime help, including
+  values retained in a saved profile. GGUF reads and artifact inspection now reuse
+  the existing regular-file and reparse-ancestor checks before opening the model.
+- Corrects scaled-LoRA snapshot paths and includes every adapter and scale in
+  the LoRA identity. Keeps existing no-adapter and single ordinary-adapter
+  identities. Ambiguous older multiple/scaled records require fresh measurement.
+- Requires LoRA, projector, draft, template and TLS file options to use their
+  profile fields, even when those fields are empty. Raw arguments cannot bypass
+  the associated path validation and identity checks.
+- Fingerprints managed draft and LoRA paths in new benchmark command records.
+  Reads the prior argument format without rewriting saved records or bypassing
+  model and compatibility-key checks. Raw local records are not anonymized.
 
 - Runs the whole window under a narrow Content Security Policy and scopes the
   external-link opener to the origins the app actually uses.
