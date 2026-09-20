@@ -215,6 +215,14 @@ async function click(target: Element | undefined, why: string) {
   await settle();
 }
 
+/// The FE-03 provider tests exercise the cloud-provider step, which only
+/// shows the connection label while the advisor opt-in is on (advisor-off
+/// sessions need no key and show "Local search" instead).
+async function enableAdvisor() {
+  const toggle = container.querySelector('input[type="checkbox"]');
+  await click(toggle ?? undefined, "the advisor opt-in must render");
+}
+
 async function setInputValue(input: HTMLInputElement, value: string) {
   await act(async () => {
     const proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!;
@@ -496,16 +504,16 @@ describe("tuning numeric inputs", () => {
     invokeCalls.length = 0;
   });
 
-  it.each(["AI trials", "Tokens per measurement", "Repeats per trial"])("keeps a cleared %s field blank", async (label) => {
+  it.each(["Search trials", "Tokens per measurement", "Repeats per trial"])("keeps a cleared %s field blank", async (label) => {
     await setInputValue(profileInput(label), "");
     expect(profileInput(label).value).toBe("");
   });
 
   it.each([
-    ["AI trials", "0"], ["AI trials", "13"], ["AI trials", "1.5"], ["AI trials", ""],
+    ["Search trials", "0"], ["Search trials", "13"], ["Search trials", "1.5"], ["Search trials", ""],
     ["Tokens per measurement", "63"], ["Tokens per measurement", "2049"], ["Tokens per measurement", "64.5"], ["Tokens per measurement", ""],
     ["Repeats per trial", "0"], ["Repeats per trial", "6"], ["Repeats per trial", "1.5"], ["Repeats per trial", ""],
-    ["AI trials", "1e309"], ["Tokens per measurement", "1e309"], ["Repeats per trial", "1e309"],
+    ["Search trials", "1e309"], ["Tokens per measurement", "1e309"], ["Repeats per trial", "1e309"],
   ])("does not dispatch invalid %s=%s", async (label, value) => {
     await setInputValue(profileInput(label), value);
     await click(navButton("Auto-tune fixture"), "the Tune action must remain visible");
@@ -516,13 +524,13 @@ describe("tuning numeric inputs", () => {
     expect(text()).toContain("Correct tuning input");
   });
 
-  it.each(["AI trials", "Tokens per measurement", "Repeats per trial"])("marks blank %s invalid in the native control", async (label) => {
+  it.each(["Search trials", "Tokens per measurement", "Repeats per trial"])("marks blank %s invalid in the native control", async (label) => {
     await setInputValue(profileInput(label), "");
     expect(profileInput(label).checkValidity()).toBe(false);
   });
 
   it.each([
-    ["AI trials", "12", "maxTrials"],
+    ["Search trials", "12", "maxTrials"],
     ["Tokens per measurement", "257", "tokens"],
     ["Repeats per trial", "5", "repeats"],
   ])("dispatches the corrected %s value without clamping", async (label, value, field) => {
@@ -555,6 +563,7 @@ describe("provider responses that resolve after a switch (audit FE-03 V1)", () =
     handlers.set("cloud_list_models", () => betaModels.promise);
     await mount();
     await click(navButton("AI Tune"), "the AI Tune navigation must exist");
+    await enableAdvisor();
     // The OpenRouter status request is still pending; switch to Anthropic.
     await click(tabButton("Anthropic"), "the Anthropic provider tab must exist");
     await act(async () => {
@@ -590,6 +599,7 @@ describe("provider responses that resolve after a switch (audit FE-03 V1)", () =
     handlers.set("cloud_save_credential", () => betaSave.promise);
     await mount();
     await click(navButton("AI Tune"), "the AI Tune navigation must exist");
+    await enableAdvisor();
     await click(tabButton("Anthropic"), "the Anthropic provider tab must exist");
     const keyInput = container.querySelector('input[aria-label="API key"]') as HTMLInputElement | null;
     expect(keyInput, "the API key input must render").toBeTruthy();
@@ -627,6 +637,7 @@ describe("provider responses that resolve after a switch (audit FE-03 V1)", () =
     handlers.set("cloud_probe", () => probe.promise);
     await mount();
     await click(navButton("AI Tune"), "the AI Tune navigation must exist");
+    await enableAdvisor();
     await click(tabButton("Anthropic"), "the Anthropic provider tab must exist");
     await click(
       [...container.querySelectorAll("button")].find((button) =>

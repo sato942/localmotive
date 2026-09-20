@@ -185,6 +185,11 @@ pub(crate) struct TuningRequest {
     /// older callers keep the previous behaviour.
     #[serde(default)]
     disclosure: tune::BriefDisclosure,
+    /// Explicit extra step, off by default: the session runs local grid +
+    /// nudge search either way, and only consults the cloud advisor for one
+    /// extra try when this is true.
+    #[serde(default)]
+    use_advisor: bool,
 }
 
 impl TuningRequest {
@@ -272,6 +277,9 @@ pub(crate) async fn start_tuning(
         let capabilities = core::inspect_runtime(Path::new(&request.profile.runtime))?;
         let gguf = gguf::read_summary(Path::new(&request.profile.model)).ok();
         let system_ram_bytes = system_ram_bytes();
+        if request.use_advisor && (request.provider.is_empty() || request.model.is_empty()) {
+            return Err("Choose an advisor provider and model for the extra advisor try.".into());
+        }
         let inputs = tune::TuningInputs {
             objective: "Maximise measured short-prompt decode throughput at the target allocated context while the server starts and answers. Quality and latency are not measured.",
             target_context: request.target_context,
@@ -297,6 +305,11 @@ pub(crate) async fn start_tuning(
             cancel: Some(cancel.as_ref()),
             disclosure: request.disclosure,
             home_dir: None,
+            // The default session is local search only; the advisor is one
+            // explicit extra try, never the first proposer.
+            local_search: true,
+            enable_advisor: request.use_advisor,
+            advisor_extra_trials: 1,
         };
         let mut bench = LiveBench {
             app: &handle,
@@ -304,16 +317,8 @@ pub(crate) async fn start_tuning(
             tokens: request.tokens,
             repeats: request.repeats,
         };
-        let store = cloud::KeyringStore;
-        let mut advisor = cloud::CloudAdvisor {
-            store: &store,
-            provider_id: request.provider.clone(),
-            model: request.model.clone(),
-            last_raw_reply: String::new(),
-            deadline: Some(std::time::Instant::now() + Duration::from_secs(tune::TUNING_DEADLINE_SECS)),
-        };
         let progress_handle = handle.clone();
-        tune::run_tuning(&request.profile, &inputs, &mut bench, &mut advisor, |trial| {
+        let mut on_trial = |trial: &tune::TuningTrial| {
             let _ = progress_handle.emit(
                 "tuning-progress",
                 TuningProgress {
@@ -326,7 +331,33 @@ pub(crate) async fn start_tuning(
                     trial: Some(trial.clone()),
                 },
             );
-        })
+        };
+        if request.use_advisor {
+            let store = cloud::KeyringStore;
+            let mut advisor = cloud::CloudAdvisor {
+                store: &store,
+                provider_id: request.provider.clone(),
+                model: request.model.clone(),
+                last_raw_reply: String::new(),
+                deadline: Some(std::time::Instant::now() + Duration::from_secs(tune::TUNING_DEADLINE_SECS)),
+            };
+            tune::run_tuning(
+                &request.profile,
+                &inputs,
+                &mut bench,
+                &mut advisor,
+                &mut on_trial,
+            )
+        } else {
+            let mut advisor = tune::NoAdvisor::default();
+            tune::run_tuning(
+                &request.profile,
+                &inputs,
+                &mut bench,
+                &mut advisor,
+                &mut on_trial,
+            )
+        }
     })
     .await
     .map_err(|error| error.to_string());
@@ -360,6 +391,35 @@ pub(crate) fn cancel_tuning_with(state: &AppState) -> Result<bool, String> {
         }
         None => Ok(false),
     }
+}
+
+/// One history-table row, re-applied: the row's recorded changes run through
+/// the same validation as any proposal, against the session's baseline
+/// profile and companions, so the user can adopt any measured row — not only
+/// the winner. A row that changes nothing is refused instead of stored.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ApplyTrialRequest {
+    baseline_profile: LaunchProfile,
+    companions: Vec<String>,
+    spec_types: Vec<String>,
+    changes: std::collections::BTreeMap<String, serde_json::Value>,
+}
+
+#[tauri::command]
+pub(crate) fn apply_tuning_trial_changes(
+    request: ApplyTrialRequest,
+) -> Result<LaunchProfile, String> {
+    let (profile, applied) = tune::apply_changes_with_companions(
+        &request.baseline_profile,
+        &request.changes,
+        &request.spec_types,
+        &request.companions,
+    )?;
+    if applied.is_empty() {
+        return Err("The selected trial changes nothing against its session baseline.".into());
+    }
+    Ok(profile)
 }
 
 pub(crate) fn system_ram_bytes() -> Option<u64> {

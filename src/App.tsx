@@ -320,6 +320,9 @@ function App() {
   const [tuneRepeats, setTuneRepeats] = useState(2);
   const tuneInputError = tuningWorkloadError({ targetContext: tuneContext, maxTrials: tuneTrials, tokens: tuneTokens, repeats: tuneRepeats });
   const [tuning, setTuning] = useState(false);
+  // Search-first tuner: local grid + nudge search is the default session. The
+  // cloud advisor is an explicit extra try, never the first proposer.
+  const [useAdvisor, setUseAdvisor] = useState(false);
   // Cloud disclosure (audit S-20): what the brief carries and how much of it
   // leaves the machine. Local inference stays local.
   const [disclosureSections, setDisclosureSections] = useState<DisclosureSection[]>([]);
@@ -339,6 +342,7 @@ function App() {
     provider: string;
     advisor: string;
     context: number;
+    useAdvisor: boolean;
   } | null>(null);
   const [tuneReportOrigin, setTuneReportOrigin] = useState<{
     modelId: string;
@@ -1077,8 +1081,9 @@ function App() {
       modelId: selected.id,
       modelName: selected.name,
       provider: providerId,
-      advisor: cloudModel,
+      advisor: useAdvisor ? cloudModel : "local search",
       context: tuneContext,
+      useAdvisor,
     };
     setTuning(true);
     setTuneRun(run);
@@ -1086,7 +1091,7 @@ function App() {
     setTuneReportOrigin(null);
     setTuneLive([]);
     setTuneProgress({ phase: "prepare", message: "Preparing…", trial: null });
-    setNotice(`AI tuning started: ${tuneTrials} trials at ${run.context.toLocaleString()} context via ${providers.find((entry) => entry.id === run.provider)?.label ?? run.provider} (${run.advisor}).`);
+    setNotice(`Tuning started: ${tuneTrials} search trials at ${run.context.toLocaleString()} context${run.useAdvisor ? ` plus one ${providers.find((entry) => entry.id === run.provider)?.label ?? run.provider} advisor try (${run.advisor})` : " (local search only)"}.`);
     try {
       const report = await invoke<TuningReport>("start_tuning", {
         request: {
@@ -1099,6 +1104,7 @@ function App() {
           repeats: tuneRepeats,
           companions: selected.companions.map((c) => `${c.role}: ${c.path}`),
           disclosure: briefDisclosure,
+          useAdvisor: run.useAdvisor,
         },
       });
       setTuneReport(report);
@@ -1135,8 +1141,11 @@ function App() {
     // established normalization policy implicitly (it is the measured
     // runtime, applied through the same editable draft the loader uses).
     if (!tuneReport || !tuneReportOrigin) return;
-    const origin = tuneReportOrigin;
-    const adopted = { ...tuneReport.bestProfile, name: `${origin.modelName} / AI-tuned @${origin.context.toLocaleString()}` };
+    adoptProfile(tuneReport.bestProfile, `${tuneReportOrigin.modelName} / AI-tuned @${tuneReportOrigin.context.toLocaleString()}`, tuneReportOrigin);
+  }
+
+  function adoptProfile(adoptedProfile: LaunchProfile, name: string, origin: { modelId: string; modelName: string }) {
+    const adopted = { ...adoptedProfile, name };
     const adoptedSaved = persistRecord(`profile:${origin.modelId}`, JSON.stringify(adopted));
     const savedNote = adoptedSaved ? "" : ` ${persistenceFailureNote("The tuned profile")}`;
     if (selectedId === origin.modelId) {
@@ -1145,6 +1154,36 @@ function App() {
       setView("profile");
     } else {
       setNotice(`Saved the tuned profile for ${origin.modelName}; it applies when that model is selected.${savedNote}`);
+    }
+  }
+
+  async function applyTuningTrial(trial: TuningTrial) {
+    // Any measured history-table row can be adopted, not only the winner: the
+    // row's recorded changes run through the same validation as any proposal,
+    // against the session's own baseline and companions.
+    if (!tuneReport || !tuneReportOrigin || !tuneReport.baselineProfile) {
+      setNotice("This report predates the history table; only the winning configuration can be adopted.");
+      return;
+    }
+    if (trial.meanTps === null) {
+      setNotice(`Trial T${trial.index} has no measurement, so there is nothing to adopt.`);
+      return;
+    }
+    setBusy("tune-apply");
+    try {
+      const applied = await invoke<LaunchProfile>("apply_tuning_trial_changes", {
+        request: {
+          baselineProfile: tuneReport.baselineProfile,
+          companions: tuneReport.companions ?? [],
+          specTypes: runtime?.specTypes ?? [],
+          changes: trial.changes,
+        },
+      });
+      adoptProfile(applied, `${tuneReportOrigin.modelName} / tuned T${trial.index} @${tuneReportOrigin.context.toLocaleString()}`, tuneReportOrigin);
+    } catch (error) {
+      setNotice(errorText(error));
+    } finally {
+      setBusy("");
     }
   }
 
@@ -1474,19 +1513,19 @@ function App() {
 
   const trialsForDisplay: TuningTrial[] = tuneReport ? tuneReport.trials : tuneLive;
   const bestLive = trialsForDisplay.reduce<TuningTrial | null>((best, trial) => (trial.meanTps !== null && (best === null || (best.meanTps ?? 0) < trial.meanTps) ? trial : best), null);
-  const canTune = Boolean(profile && selected?.complete && runtimePath && credential?.configured && cloudModel && !status.running && !tuning && !tuneInputError);
-  const tuneBlocker = !credential?.configured
-    ? `Connect ${provider?.label ?? "a cloud provider"} to begin: sign in or store an API key.`
-    : !cloudModel
-      ? "Choose an advisor model."
-      : !selected
-        ? "Select a model in Inventory."
-        : !selected.complete
-          ? `${selected.name} is incomplete; choose a model with every shard present.`
-          : !runtimePath
-            ? "Install or choose a llama-server runtime first."
-            : status.running
-              ? "Stop the running server first; the tuner launches its own."
+  const canTune = Boolean(profile && selected?.complete && runtimePath && (!useAdvisor || (credential?.configured && cloudModel)) && !status.running && !tuning && !tuneInputError);
+  const tuneBlocker = !selected
+    ? "Select a model in Inventory."
+    : !selected.complete
+      ? `${selected.name} is incomplete; choose a model with every shard present.`
+      : !runtimePath
+        ? "Install or choose a llama-server runtime first."
+        : status.running
+          ? "Stop the running server first; the tuner launches its own."
+          : useAdvisor && !credential?.configured
+            ? `Connect ${provider?.label ?? "a cloud provider"} for the extra advisor try: sign in or store an API key.`
+            : useAdvisor && !cloudModel
+              ? "Choose an advisor model for the extra advisor try."
               : tuneInputError ?? `No tuning run for ${selected.name} yet. Choose a context length and start.`;
 
   return (
@@ -1720,6 +1759,7 @@ function App() {
         {view === "tune" && (
           <TuneScreen
             adoptTunedProfile={adoptTunedProfile}
+            applyTuningTrial={applyTuningTrial}
             bestLive={bestLive}
             briefDisclosure={briefDisclosure}
             busy={busy}
@@ -1753,6 +1793,7 @@ function App() {
             setTuneRepeats={setTuneRepeats}
             setTuneTokens={setTuneTokens}
             setTuneTrials={setTuneTrials}
+            setUseAdvisor={setUseAdvisor}
             startTuning={startTuning}
             status={status}
             switchProvider={switchProvider}
@@ -1769,6 +1810,7 @@ function App() {
             tuneTokens={tuneTokens}
             tuneTrials={tuneTrials}
             tuning={tuning}
+            useAdvisor={useAdvisor}
           />
         )}
         {view === "about" && (

@@ -529,7 +529,7 @@ Advanced settings live in one `details` zone with a `#53605a` border and a 58 px
 
 ### Setup Steps
 
-A three-cell bordered strip of 60 px steps, each a 22 px square number badge beside a 11 px title and 9 px caption. Active fills `#292d25` and inverts the badge to green-on-dark; complete keeps a green outlined badge. First-run progress is structure, not a modal. The AI Tune screen reuses the strip as a readiness gauge (provider → model → tune).
+A three-cell bordered strip of 60 px steps, each a 22 px square number badge beside a 11 px title and 9 px caption. Active fills `#292d25` and inverts the badge to green-on-dark; complete keeps a green outlined badge. First-run progress is structure, not a modal. The AI Tune screen reuses the strip as a readiness gauge (provider → model → tune); while the advisor opt-in is off, the first cell reads Local search and needs no key.
 
 ### Runtime Option States
 
@@ -548,7 +548,7 @@ A bordered strip of equal-width 40 px tabs (`#1d2122`, 10 px condensed uppercase
 
 ### Trial Ledger
 
-The tuning log is a terminal well (`#111514`) of 12 px-padded entries divided by `#1f2526` rules. Each entry heads with a 26 × 20 px bordered index chip (`T0`, `T1`…), the changed fields as `key=value` mono, and the measured tok/s as a 15 px condensed figure in signal green. The best entry lifts to `#14201a` with a green index chip; a failed entry prints `FAILED` in stop red and its error in a red-plated mono block capped at 120 px. Trial bars reuse the benchmark bars: best in green, others in `#5d6a61`, failures as a red-deep stub. The ledger is evidence — nothing in it is summarized away.
+The tuning log is a terminal well (`#111514`) of 12 px-padded entries divided by `#1f2526` rules. Each entry heads with a 26 × 20 px bordered index chip (`T0`, `T1`…), the changed fields as `key=value` mono, and the measured tok/s as a 15 px condensed figure in signal green. The best entry lifts to `#14201a` with a green index chip; a failed entry prints `FAILED` in stop red and its error in a red-plated mono block capped at 120 px. Below the rationale, a meta row carries the outcome tag (green when measured, amber otherwise — amber means the operator looks, per the One Meaning Rule), the untoned choice tag (`BASELINE`, `GRID`, `NUDGE`, `CONFIRM`, `ADVISOR`), spread and effective context, and an `Apply this trial` text-link on measured rows. Trial bars reuse the benchmark bars: best in green, others in `#5d6a61`, failures as a red-deep stub. The ledger is evidence — nothing in it is summarized away.
 
 ## Do's and Don'ts
 

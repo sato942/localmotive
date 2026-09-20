@@ -137,6 +137,44 @@ pub struct TuningTrial {
     /// checked against observed variation (audit MT-11 I4).
     #[serde(default)]
     pub std_dev: Option<f64>,
+    /// What happened to this trial. Failures stay in the table with their
+    /// outcome; only user cancellation removes a row (it is terminal, never
+    /// a candidate failure).
+    pub outcome: TrialOutcome,
+    /// How this trial entered the session. The default path is local search
+    /// only (`grid` then `nudge`); the cloud advisor contributes at most one
+    /// extra try and only when the user explicitly enables it.
+    pub chosen: TrialChoice,
+    /// Milliseconds since the Unix epoch when the trial was recorded, so the
+    /// history table shows when each configuration ran.
+    pub timestamp_ms: u64,
+    /// Identity of the measured settings: FNV-1a over the canonical applied
+    /// changes, so duplicate configurations are recognised even when they
+    /// arrive through different proposal maps.
+    pub config_hash: String,
+}
+
+/// Outcome taxonomy for the session history table. Every row carries one;
+/// a row with throughput is `ok`, any other row names why it has none.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TrialOutcome {
+    Ok,
+    Oom,
+    LaunchFail,
+    Cancelled,
+    ContextShort,
+}
+
+/// How a trial entered the session.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TrialChoice {
+    Baseline,
+    Grid,
+    Nudge,
+    Confirm,
+    Advisor,
 }
 
 /// What the cloud model must return.
@@ -572,6 +610,173 @@ pub trait Advisor {
     fn propose(&mut self, brief: &TuningBrief) -> Result<Proposal, String>;
 }
 
+/// Advisor for sessions with the cloud step disabled: it counts calls so
+/// tests prove zero paid requests, and converges immediately if the loop ever
+/// reaches it (which the disabled path must not).
+#[derive(Clone, Debug, Default)]
+pub struct NoAdvisor {
+    pub calls: u32,
+}
+
+impl Advisor for NoAdvisor {
+    fn propose(&mut self, _brief: &TuningBrief) -> Result<Proposal, String> {
+        self.calls += 1;
+        Ok(Proposal {
+            changes: BTreeMap::new(),
+            rationale: "Advisor disabled for this session.".into(),
+            done: true,
+        })
+    }
+}
+
+/// Milliseconds since the Unix epoch for history-table timestamps.
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| duration.as_millis().try_into().ok())
+        .unwrap_or(0)
+}
+
+/// Identity of measured settings: FNV-1a over the canonical applied changes.
+fn config_hash(changes: &BTreeMap<String, serde_json::Value>) -> String {
+    let canonical = serde_json::to_string(changes).unwrap_or_default();
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in canonical.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
+}
+
+/// Name the outcome of a failed measurement from its error text. Cancellation
+/// maps here when a bench reports it, but the loop still treats a set Stop
+/// flag as terminal and records no candidate row for it (audit MT-04).
+fn classify_error(error: &str) -> TrialOutcome {
+    let lower = error.to_ascii_lowercase();
+    if lower.contains("cancel") {
+        return TrialOutcome::Cancelled;
+    }
+    for marker in [
+        "out of memory",
+        "out of vram",
+        "failed to allocate",
+        "cannot allocate",
+        "insufficient memory",
+        "allocation failed",
+        "memory allocation",
+    ] {
+        if lower.contains(marker) {
+            return TrialOutcome::Oom;
+        }
+    }
+    TrialOutcome::LaunchFail
+}
+
+/// One deterministic local-search candidate: absolute field values applied
+/// onto the baseline profile, with the reason the menu chose them.
+#[derive(Clone, Debug)]
+struct LocalCandidate {
+    changes: BTreeMap<String, serde_json::Value>,
+    rationale: String,
+}
+
+fn local_candidate(pairs: &[(&str, serde_json::Value)], rationale: String) -> LocalCandidate {
+    LocalCandidate {
+        changes: pairs
+            .iter()
+            .map(|(field, value)| ((*field).to_string(), value.clone()))
+            .collect(),
+        rationale,
+    }
+}
+
+/// The short deterministic grid over the smallest useful menu: a flash
+/// attention flip, two batch sizes, and one KV cache pair. Values derive from
+/// the baseline profile so the menu adapts without growing.
+fn grid_menu(baseline: &LaunchProfile) -> Vec<LocalCandidate> {
+    let mut menu = Vec::new();
+    let flash = if baseline.flash_attention == "on" {
+        "off"
+    } else {
+        "on"
+    };
+    menu.push(local_candidate(
+        &[("flashAttention", serde_json::Value::String(flash.into()))],
+        format!(
+            "Local grid: flash attention {flash} (baseline is {})",
+            baseline.flash_attention
+        ),
+    ));
+    let mut batches = 0;
+    for batch in [512_u32, 1024, 4096] {
+        if batch == baseline.batch {
+            continue;
+        }
+        let mut pairs = vec![("batch", serde_json::json!(batch))];
+        if baseline.ubatch > batch {
+            // Keep the micro-batch within the batch; still one axis.
+            pairs.push(("ubatch", serde_json::json!(batch)));
+        }
+        menu.push(local_candidate(
+            &pairs,
+            format!("Local grid: logical batch {batch}"),
+        ));
+        batches += 1;
+        if batches >= 2 {
+            break;
+        }
+    }
+    if baseline.cache_type_k != "q8_0" || baseline.cache_type_v != "q8_0" {
+        menu.push(local_candidate(
+            &[
+                ("cacheTypeK", serde_json::Value::String("q8_0".into())),
+                ("cacheTypeV", serde_json::Value::String("q8_0".into())),
+            ],
+            "Local grid: KV cache q8_0 pair (quality is not measured; review output before adopting)".into(),
+        ));
+    }
+    menu
+}
+
+/// Nudge one axis at a time from the best configuration so far. Each entry
+/// changes at most two fields, inside the three-field attribution policy.
+fn nudge_menu(best: &LaunchProfile) -> Vec<LocalCandidate> {
+    let mut menu = Vec::new();
+    let wider = (best.batch.saturating_mul(2)).min(8192);
+    if wider != best.batch {
+        let mut pairs = vec![("batch", serde_json::json!(wider))];
+        if best.ubatch > wider {
+            pairs.push(("ubatch", serde_json::json!(wider)));
+        }
+        menu.push(local_candidate(
+            &pairs,
+            format!("Nudge: widen batch {} to {wider}", best.batch),
+        ));
+    }
+    let narrower = (best.batch / 2).max(128);
+    if narrower != best.batch {
+        let mut pairs = vec![("batch", serde_json::json!(narrower))];
+        if best.ubatch > narrower {
+            pairs.push(("ubatch", serde_json::json!(narrower)));
+        }
+        menu.push(local_candidate(
+            &pairs,
+            format!("Nudge: narrow batch {} to {narrower}", best.batch),
+        ));
+    }
+    if best.ubatch != best.batch {
+        menu.push(local_candidate(
+            &[("ubatch", serde_json::json!(best.batch))],
+            format!(
+                "Nudge: fill micro-batch {} to batch {}",
+                best.ubatch, best.batch
+            ),
+        ));
+    }
+    menu
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TuningReport {
@@ -597,6 +802,22 @@ pub struct TuningReport {
     /// gated in this session (audit MT-11 I4).
     #[serde(default)]
     pub quality_affecting_changes: Vec<String>,
+    /// The profile the session started from, so any history-table row can be
+    /// re-applied later through its recorded changes.
+    #[serde(default)]
+    pub baseline_profile: LaunchProfile,
+    /// Companion entries (`"<role>: <path>"`) the session resolved drafts
+    /// from; needed to re-apply rows that select a model-backed method.
+    #[serde(default)]
+    pub companions: Vec<String>,
+    /// Identity of what was measured: the runtime build, the hardware, and
+    /// the model the session ran against.
+    #[serde(default)]
+    pub runtime_build: String,
+    #[serde(default)]
+    pub hardware_label: String,
+    #[serde(default)]
+    pub model_label: String,
 }
 
 pub struct TuningInputs<'a> {
@@ -622,6 +843,16 @@ pub struct TuningInputs<'a> {
     /// Test seam for the home directory redacted by minimal disclosure;
     /// production reads `USERPROFILE`.
     pub home_dir: Option<String>,
+    /// Run the local grid + nudge search before any advisor call. This is the
+    /// default path: a session with the advisor disabled still ranks trials
+    /// and confirms a winner from local measurements alone.
+    pub local_search: bool,
+    /// Consult the cloud advisor after local search. Off by default; the
+    /// advisor is an explicit extra step, never the first proposer.
+    pub enable_advisor: bool,
+    /// Measured trials the advisor phase may add after local search. The
+    /// production path allows exactly one extra try.
+    pub advisor_extra_trials: u32,
 }
 
 /// Record one bounded rejection (no-op, duplicate, invalid, or oversized) as
@@ -643,9 +874,103 @@ fn push_rejection(
         command: String::new(),
         effective_context: None,
         std_dev: None,
+        outcome: TrialOutcome::LaunchFail,
+        chosen: TrialChoice::Advisor,
+        timestamp_ms: now_ms(),
+        config_hash: config_hash(&proposal.changes),
     };
     on_trial(&trial);
     trials.push(trial);
+}
+
+/// A measurement classified for the history table, before best-tracking.
+struct ScoredOutcome {
+    mean_tps: Option<f64>,
+    median_tps: Option<f64>,
+    error: Option<String>,
+    command: String,
+    effective_context: Option<u32>,
+    std_dev: Option<f64>,
+    outcome: TrialOutcome,
+}
+
+/// Classify one measurement: scoreable throughput, a named failure, or a
+/// context-short row that keeps its observed values but cannot win.
+fn score_outcome(
+    outcome: &Result<TrialMeasurement, String>,
+    required_context: u32,
+) -> ScoredOutcome {
+    match outcome {
+        Ok(measurement) => match measurement.effective_context {
+            Some(observed) if observed >= required_context => ScoredOutcome {
+                mean_tps: Some(measurement.summary.mean_tps),
+                median_tps: Some(measurement.summary.median_tps),
+                error: None,
+                command: measurement.command.clone(),
+                effective_context: Some(observed),
+                std_dev: Some(sample_std_dev(&measurement.summary.samples)),
+                outcome: TrialOutcome::Ok,
+            },
+            Some(observed) => ScoredOutcome {
+                mean_tps: None,
+                median_tps: None,
+                error: Some(format!(
+                    "Effective per-slot context was {observed} tokens, below the required {required_context}; the candidate cannot win the requested-capacity objective"
+                )),
+                command: measurement.command.clone(),
+                effective_context: measurement.effective_context,
+                std_dev: None,
+                outcome: TrialOutcome::ContextShort,
+            },
+            None => ScoredOutcome {
+                mean_tps: None,
+                median_tps: None,
+                error: Some(
+                    "The effective per-slot context could not be observed, so the candidate cannot be scored for the requested-capacity objective"
+                        .into(),
+                ),
+                command: measurement.command.clone(),
+                effective_context: None,
+                std_dev: None,
+                outcome: TrialOutcome::ContextShort,
+            },
+        },
+        Err(error) => ScoredOutcome {
+            mean_tps: None,
+            median_tps: None,
+            error: Some(error.clone()),
+            command: String::new(),
+            effective_context: None,
+            std_dev: None,
+            outcome: classify_error(error),
+        },
+    }
+}
+
+/// Build one history-table row from applied changes and a classified outcome.
+fn build_trial(
+    index: u32,
+    changes: BTreeMap<String, serde_json::Value>,
+    rationale: String,
+    chosen: TrialChoice,
+    scored: ScoredOutcome,
+) -> TuningTrial {
+    let config_hash = config_hash(&changes);
+    TuningTrial {
+        index,
+        changes,
+        rationale,
+        mean_tps: scored.mean_tps,
+        median_tps: scored.median_tps,
+        error: scored.error,
+        command: scored.command,
+        effective_context: scored.effective_context,
+        std_dev: scored.std_dev,
+        outcome: scored.outcome,
+        chosen,
+        timestamp_ms: now_ms(),
+        config_hash,
+    }
 }
 
 /// The measured objective, stated plainly (audit MT-11 I1/I2): the retained
@@ -672,9 +997,29 @@ fn sample_std_dev(samples: &[f64]) -> f64 {
     variance.sqrt() * scale
 }
 
-/// Measure the baseline, then alternate propose → validate → measure until the
-/// budget is spent or the advisor declares convergence. Failed launches are
-/// recorded as trials (with the error) so the advisor can learn from them.
+/// Identity of what a session measured, fixed for the whole history table:
+/// the runtime build, the hardware, and the profile's model.
+fn session_identities(base: &LaunchProfile, inputs: &TuningInputs) -> (String, String, String) {
+    let runtime_build = inputs.capabilities.build.clone();
+    let hardware_label = if inputs.hardware.gpu_names.is_empty() {
+        format!(
+            "{} (driver {})",
+            inputs.hardware.vendor, inputs.hardware.driver_version
+        )
+    } else {
+        format!(
+            "{} ({}; driver {})",
+            inputs.hardware.gpu_names.join(" + "),
+            inputs.hardware.vendor,
+            inputs.hardware.driver_version
+        )
+    };
+    (runtime_build, hardware_label, base.model.clone())
+}
+
+/// Measure the baseline, run the local grid + nudge search, optionally take
+/// one advisor try, then confirm the winner. Failed launches are recorded as
+/// trials (with the error) so the table shows them.
 pub fn run_tuning<B: Bench, A: Advisor>(
     base: &LaunchProfile,
     inputs: &TuningInputs,
@@ -692,69 +1037,45 @@ pub fn run_tuning<B: Bench, A: Advisor>(
 
     let record = |trials: &mut Vec<TuningTrial>,
                   best: &mut Option<(u32, f64, LaunchProfile)>,
+                  best_applied: &mut BTreeMap<String, serde_json::Value>,
                   on_trial: &mut dyn FnMut(&TuningTrial),
                   profile: &LaunchProfile,
                   changes: BTreeMap<String, serde_json::Value>,
                   rationale: String,
+                  chosen: TrialChoice,
                   outcome: Result<TrialMeasurement, String>| {
         let index = trials.len() as u32;
-        let trial = match outcome {
-            Ok(measurement) => {
-                let scoreable = match measurement.effective_context {
-                    Some(observed) if observed >= required_context => Ok(observed),
-                    Some(observed) => Err(format!(
-                        "Effective per-slot context was {observed} tokens, below the required {required_context}; the candidate cannot win the requested-capacity objective"
-                    )),
-                    None => Err(
-                        "The effective per-slot context could not be observed, so the candidate cannot be scored for the requested-capacity objective"
-                            .into(),
-                    ),
-                };
-                match scoreable {
-                    Ok(observed) => {
-                        if best
-                            .as_ref()
-                            .is_none_or(|(_, tps, _)| measurement.summary.mean_tps > *tps)
-                        {
-                            *best = Some((index, measurement.summary.mean_tps, profile.clone()));
-                        }
-                        TuningTrial {
-                            index,
-                            changes,
-                            rationale,
-                            mean_tps: Some(measurement.summary.mean_tps),
-                            median_tps: Some(measurement.summary.median_tps),
-                            error: None,
-                            command: measurement.command,
-                            effective_context: Some(observed),
-                            std_dev: Some(sample_std_dev(&measurement.summary.samples)),
-                        }
-                    }
-                    Err(error) => TuningTrial {
-                        index,
-                        changes,
-                        rationale,
-                        mean_tps: None,
-                        median_tps: None,
-                        error: Some(error),
-                        command: measurement.command,
-                        effective_context: measurement.effective_context,
-                        std_dev: None,
-                    },
-                }
+        let trial = build_trial(
+            index,
+            changes.clone(),
+            rationale,
+            chosen,
+            score_outcome(&outcome, required_context),
+        );
+        if let Some(mean) = trial.mean_tps {
+            if best.as_ref().is_none_or(|(_, tps, _)| mean > *tps) {
+                *best = Some((index, mean, profile.clone()));
+                *best_applied = changes;
             }
-            Err(error) => TuningTrial {
-                index,
-                changes,
-                rationale,
-                mean_tps: None,
-                median_tps: None,
-                error: Some(error),
-                command: String::new(),
-                effective_context: None,
-                std_dev: None,
-            },
-        };
+        }
+        on_trial(&trial);
+        trials.push(trial);
+    };
+    // Final-verification re-measurements are history-table rows too, but they
+    // never move the best: the verification decision reads its own values.
+    let record_confirm = |trials: &mut Vec<TuningTrial>,
+                          on_trial: &mut dyn FnMut(&TuningTrial),
+                          changes: BTreeMap<String, serde_json::Value>,
+                          rationale: String,
+                          outcome: Result<TrialMeasurement, String>| {
+        let index = trials.len() as u32;
+        let trial = build_trial(
+            index,
+            changes,
+            rationale,
+            TrialChoice::Confirm,
+            score_outcome(&outcome, required_context),
+        );
         on_trial(&trial);
         trials.push(trial);
     };
@@ -770,6 +1091,8 @@ pub fn run_tuning<B: Bench, A: Advisor>(
             .deadline
             .is_some_and(|deadline| std::time::Instant::now() >= deadline)
     };
+    // Identity rows for the history table, fixed for the whole session.
+    let (runtime_build, hardware_label, model_label) = session_identities(base, inputs);
     if is_cancelled(inputs) {
         return Ok(TuningReport {
             baseline_tps: None,
@@ -782,15 +1105,23 @@ pub fn run_tuning<B: Bench, A: Advisor>(
             required_effective_context: required_context,
             final_verification: None,
             quality_affecting_changes: Vec::new(),
+            baseline_profile: baseline.clone(),
+            companions: inputs.companions.to_vec(),
+            runtime_build: runtime_build.clone(),
+            hardware_label: hardware_label.clone(),
+            model_label: model_label.clone(),
         });
     }
+    let mut best_applied: BTreeMap<String, serde_json::Value> = BTreeMap::new();
     record(
         &mut trials,
         &mut best,
+        &mut best_applied,
         &mut on_trial,
         &baseline,
         BTreeMap::new(),
         "Baseline: the profile exactly as configured, at the target context.".into(),
+        TrialChoice::Baseline,
         bench.measure(&baseline),
     );
     let baseline_tps = trials[0].mean_tps;
@@ -808,12 +1139,36 @@ pub fn run_tuning<B: Bench, A: Advisor>(
                 required_effective_context: required_context,
                 final_verification: None,
                 quality_affecting_changes: Vec::new(),
+                baseline_profile: baseline.clone(),
+                companions: inputs.companions.to_vec(),
+                runtime_build: runtime_build.clone(),
+                hardware_label: hardware_label.clone(),
+                model_label: model_label.clone(),
             });
         }
-        return Err(format!(
+        // Fail fast at the requested context, but keep the failure row: the
+        // returned table records what failed instead of hiding it in an Err.
+        let reason = format!(
             "Baseline failed, so there is nothing to tune from: {}",
             trials[0].error.clone().unwrap_or_default()
-        ));
+        );
+        return Ok(TuningReport {
+            baseline_tps: None,
+            best_index: None,
+            best_tps: None,
+            best_profile: baseline.clone(),
+            trials,
+            stopped_reason: reason,
+            objective: objective_label(inputs),
+            required_effective_context: required_context,
+            final_verification: None,
+            quality_affecting_changes: Vec::new(),
+            baseline_profile: baseline.clone(),
+            companions: inputs.companions.to_vec(),
+            runtime_build,
+            hardware_label,
+            model_label,
+        });
     }
 
     // Every effective configuration seen so far, canonicalized AFTER coercion
@@ -828,7 +1183,171 @@ pub fn run_tuning<B: Bench, A: Advisor>(
     // Measured trials only: rejection rows are recorded in the history but
     // must not silently spend the measurement budget (audit MT-03).
     let mut measured_trials = 1_u32;
-    while measured_trials <= inputs.max_trials {
+    // Local search first: the short grid, then one-axis nudges from the best
+    // so far. The cloud advisor never proposes before this table exists.
+    if inputs.local_search {
+        for candidate in grid_menu(&baseline) {
+            if is_cancelled(inputs) {
+                stopped_reason = "Cancelled by the user".into();
+                break;
+            }
+            if deadline_reached(inputs) {
+                stopped_reason = format!(
+                    "Overall tuning deadline reached ({} minutes)",
+                    TUNING_DEADLINE_SECS / 60
+                );
+                break;
+            }
+            if measured_trials > inputs.max_trials {
+                stopped_reason = "Trial budget exhausted".to_string();
+                break;
+            }
+            let (profile, applied) = match apply_changes_with_companions(
+                &baseline,
+                &candidate.changes,
+                &inputs.capabilities.spec_types,
+                inputs.companions,
+            ) {
+                Ok(result) => result,
+                // Our own menu produced an invalid combination: skip it
+                // without recording or measuring rather than blaming the
+                // machine.
+                Err(_) => continue,
+            };
+            if applied.is_empty() || seen_effective.iter().any(|seen| seen == &applied) {
+                continue;
+            }
+            seen_effective.push(applied.clone());
+            measured_trials += 1;
+            let outcome = bench.measure(&profile);
+            if is_cancelled(inputs) {
+                stopped_reason = "Cancelled by the user during a measurement".into();
+                break;
+            }
+            record(
+                &mut trials,
+                &mut best,
+                &mut best_applied,
+                &mut on_trial,
+                &profile,
+                applied,
+                candidate.rationale,
+                TrialChoice::Grid,
+                outcome,
+            );
+        }
+        let mut nudge_misses = 0_u32;
+        'nudge: loop {
+            if is_cancelled(inputs) {
+                stopped_reason = "Cancelled by the user".into();
+                break;
+            }
+            if deadline_reached(inputs) {
+                stopped_reason = format!(
+                    "Overall tuning deadline reached ({} minutes)",
+                    TUNING_DEADLINE_SECS / 60
+                );
+                break;
+            }
+            if measured_trials > inputs.max_trials {
+                stopped_reason = "Trial budget exhausted".to_string();
+                break;
+            }
+            let Some((_, _, best_profile)) = best.clone() else {
+                break;
+            };
+            let menu = nudge_menu(&best_profile);
+            if menu.is_empty() {
+                stopped_reason = "Local search exhausted the nudge menu".into();
+                break;
+            }
+            let mut measured_this_pass = false;
+            for candidate in menu {
+                if is_cancelled(inputs) {
+                    stopped_reason = "Cancelled by the user".into();
+                    break 'nudge;
+                }
+                if deadline_reached(inputs) {
+                    stopped_reason = format!(
+                        "Overall tuning deadline reached ({} minutes)",
+                        TUNING_DEADLINE_SECS / 60
+                    );
+                    break 'nudge;
+                }
+                if measured_trials > inputs.max_trials {
+                    stopped_reason = "Trial budget exhausted".to_string();
+                    break 'nudge;
+                }
+                // A nudge rides on the best configuration measured so far, so
+                // its changes are the best's applied changes plus one axis.
+                let mut changes = best_applied.clone();
+                for (field, value) in &candidate.changes {
+                    changes.insert(field.clone(), value.clone());
+                }
+                if changes.len() > MAX_CHANGED_FIELDS_PER_PROPOSAL {
+                    continue;
+                }
+                let (profile, applied) = match apply_changes_with_companions(
+                    &baseline,
+                    &changes,
+                    &inputs.capabilities.spec_types,
+                    inputs.companions,
+                ) {
+                    Ok(result) => result,
+                    Err(_) => continue,
+                };
+                if applied.is_empty() || seen_effective.iter().any(|seen| seen == &applied) {
+                    continue;
+                }
+                seen_effective.push(applied.clone());
+                measured_trials += 1;
+                let outcome = bench.measure(&profile);
+                if is_cancelled(inputs) {
+                    stopped_reason = "Cancelled by the user during a measurement".into();
+                    break 'nudge;
+                }
+                let previous_best = best.as_ref().map(|(_, tps, _)| *tps);
+                record(
+                    &mut trials,
+                    &mut best,
+                    &mut best_applied,
+                    &mut on_trial,
+                    &profile,
+                    applied,
+                    candidate.rationale,
+                    TrialChoice::Nudge,
+                    outcome,
+                );
+                measured_this_pass = true;
+                let improved = best
+                    .as_ref()
+                    .is_some_and(|(_, tps, _)| Some(*tps) != previous_best);
+                if improved {
+                    nudge_misses = 0;
+                } else {
+                    nudge_misses += 1;
+                    if nudge_misses >= 2 {
+                        stopped_reason =
+                            "Local search stopped after two consecutive nudges without improvement"
+                                .into();
+                        break 'nudge;
+                    }
+                }
+            }
+            if !measured_this_pass {
+                stopped_reason = "Local search exhausted the nudge menu".into();
+                break;
+            }
+        }
+    }
+    // The advisor is an explicit extra step after local search: at most one
+    // measured extra try, and no paid call at all when the trial budget is
+    // already spent.
+    let mut advisor_measured = 0_u32;
+    while inputs.enable_advisor
+        && inputs.advisor_extra_trials > 0
+        && measured_trials <= inputs.max_trials
+    {
         if is_cancelled(inputs) {
             stopped_reason = "Cancelled by the user".into();
             break;
@@ -1012,12 +1531,20 @@ pub fn run_tuning<B: Bench, A: Advisor>(
         record(
             &mut trials,
             &mut best,
+            &mut best_applied,
             &mut on_trial,
             &candidate,
             applied,
             proposal.rationale,
+            TrialChoice::Advisor,
             outcome,
         );
+        advisor_measured += 1;
+        if advisor_measured >= inputs.advisor_extra_trials {
+            stopped_reason =
+                format!("Advisor extra-trial budget spent ({advisor_measured} measured trial)");
+            break;
+        }
     }
 
     let mut quality_affecting_changes: Vec<String> = Vec::new();
@@ -1054,6 +1581,28 @@ pub fn run_tuning<B: Bench, A: Advisor>(
             } else {
                 bench.measure(&winner_profile)
             };
+            // Both re-measurements are history-table rows, even when they
+            // fail: the table shows the confirmation attempt, not just its
+            // verdict.
+            record_confirm(
+                &mut trials,
+                &mut on_trial,
+                BTreeMap::new(),
+                "Final verification: re-measured baseline.".into(),
+                remeasure_baseline.clone(),
+            );
+            let winner_changes = trials
+                .iter()
+                .find(|trial| trial.index == index)
+                .map(|trial| trial.changes.clone())
+                .unwrap_or_default();
+            record_confirm(
+                &mut trials,
+                &mut on_trial,
+                winner_changes,
+                "Final verification: re-measured winner.".into(),
+                remeasure_winner.clone(),
+            );
             match (remeasure_baseline, remeasure_winner) {
                 (Ok(baseline_again), Ok(winner_again)) => {
                     let b = baseline_again.summary.mean_tps;
@@ -1117,6 +1666,11 @@ pub fn run_tuning<B: Bench, A: Advisor>(
         required_effective_context: required_context,
         final_verification,
         quality_affecting_changes,
+        baseline_profile: baseline.clone(),
+        companions: inputs.companions.to_vec(),
+        runtime_build,
+        hardware_label,
+        model_label,
     })
 }
 
@@ -1178,6 +1732,10 @@ mod tests {
                 command: String::new(),
                 effective_context: Some(2048),
                 std_dev: Some(sample_std_dev(&summary.samples)),
+                outcome: TrialOutcome::Ok,
+                chosen: TrialChoice::Baseline,
+                timestamp_ms: 0,
+                config_hash: String::new(),
             };
             let json = serde_json::to_string(&trial).unwrap();
             let value: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -1482,6 +2040,9 @@ mod tests {
             cancel: None,
             disclosure: BriefDisclosure::Full,
             home_dir: None,
+            local_search: false,
+            enable_advisor: true,
+            advisor_extra_trials: u32::MAX,
         };
         let mut bench = FakeBench { calls: vec![] };
         let mut advisor = ScriptedAdvisor {
@@ -1500,7 +2061,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(report.baseline_tps, Some(100.5));
-        assert_eq!(report.trials.len(), 5, "{:#?}", report.trials);
+        assert_eq!(report.trials.len(), 7, "{:#?}", report.trials);
         assert!(report.trials[0].changes.is_empty());
         assert_eq!(report.trials[1].mean_tps, Some(120.5));
         assert!(report.trials[2]
@@ -1527,7 +2088,7 @@ mod tests {
             6,
             "the rejected proposal must not be measured; the winner and baseline are re-measured for final verification"
         );
-        assert_eq!(seen, vec![0, 1, 2, 3, 4]);
+        assert_eq!(seen, vec![0, 1, 2, 3, 4, 5, 6]);
         assert_eq!(
             advisor.briefs_seen.first(),
             Some(&1),
@@ -1555,6 +2116,9 @@ mod tests {
             cancel: None,
             disclosure: BriefDisclosure::Full,
             home_dir: None,
+            local_search: false,
+            enable_advisor: true,
+            advisor_extra_trials: u32::MAX,
         };
         let mut bench = FakeBench { calls: vec![] };
         let mut advisor = ScriptedAdvisor {
@@ -1569,7 +2133,7 @@ mod tests {
             briefs_seen: vec![],
         };
         let report = run_tuning(&base, &inputs, &mut bench, &mut advisor, |_| {}).unwrap();
-        assert_eq!(report.trials.len(), 2, "{:#?}", report.trials);
+        assert_eq!(report.trials.len(), 4, "{:#?}", report.trials);
         assert_eq!(report.trials[1].mean_tps, Some(120.5));
         assert_eq!(report.best_index, Some(1));
         assert!(
@@ -1588,6 +2152,9 @@ mod tests {
 
     #[test]
     fn tuning_loop_fails_fast_when_baseline_cannot_run() {
+        // Fail fast at the requested context, but keep the failure row in the
+        // returned table: a baseline failure is a recorded outcome, not a
+        // vanished Err.
         let mut base = base_profile();
         base.cache_type_k = "q4_0".into();
         let inputs = TuningInputs {
@@ -1605,14 +2172,22 @@ mod tests {
             cancel: None,
             disclosure: BriefDisclosure::Full,
             home_dir: None,
+            local_search: true,
+            enable_advisor: true,
+            advisor_extra_trials: u32::MAX,
         };
         let mut bench = FakeBench { calls: vec![] };
         let mut advisor = ScriptedAdvisor {
             replies: vec![],
             briefs_seen: vec![],
         };
-        let error = run_tuning(&base, &inputs, &mut bench, &mut advisor, |_| {}).unwrap_err();
-        assert!(error.contains("Baseline failed"));
+        let report = run_tuning(&base, &inputs, &mut bench, &mut advisor, |_| {}).unwrap();
+        assert_eq!(report.trials.len(), 1);
+        assert!(
+            report.stopped_reason.contains("Baseline failed"),
+            "{}",
+            report.stopped_reason
+        );
         assert!(
             advisor.briefs_seen.is_empty(),
             "advisor is never consulted without a baseline"
@@ -1687,6 +2262,9 @@ mod tests {
             cancel,
             disclosure: BriefDisclosure::Full,
             home_dir: None,
+            local_search: false,
+            enable_advisor: true,
+            advisor_extra_trials: u32::MAX,
         }
     }
 
@@ -2289,6 +2867,10 @@ mod tests {
             command: "cmd".into(),
             effective_context: None,
             std_dev: None,
+            outcome: TrialOutcome::LaunchFail,
+            chosen: TrialChoice::Advisor,
+            timestamp_ms: 0,
+            config_hash: String::new(),
         }];
         let mut brief = TuningBrief {
             objective: "max tok/s",
@@ -2377,6 +2959,9 @@ mod tests {
             budgets: TuningBudgets::default(),
             cancel: None,
             disclosure: BriefDisclosure::Minimal,
+            local_search: false,
+            enable_advisor: true,
+            advisor_extra_trials: u32::MAX,
             home_dir: Some("C:\\Users\\canary-user".into()),
         };
         let mut bench = FakeBench { calls: vec![] };
@@ -2390,5 +2975,293 @@ mod tests {
             );
             assert!(wire.contains("alpha-Q4_K_M.gguf"));
         }
+    }
+
+    fn search_inputs<'a>(
+        hardware: &'a HardwareInfo,
+        capabilities: &'a RuntimeCapabilities,
+        max_trials: u32,
+    ) -> TuningInputs<'a> {
+        TuningInputs {
+            objective: "max tok/s",
+            target_context: 4096,
+            hardware,
+            system_ram_bytes: None,
+            gguf: None,
+            capabilities,
+            companions: &[],
+            max_trials,
+            measured_tokens: 256,
+            measured_repeats: 2,
+            budgets: TuningBudgets::default(),
+            cancel: None,
+            disclosure: BriefDisclosure::Full,
+            home_dir: None,
+            local_search: true,
+            enable_advisor: false,
+            advisor_extra_trials: 0,
+        }
+    }
+
+    /// A bench that fails the narrow-batch grid leg with an out-of-memory
+    /// error and otherwise scores flash attention exactly like FakeBench.
+    struct OomBatchBench {
+        calls: Vec<LaunchProfile>,
+    }
+    impl Bench for OomBatchBench {
+        fn measure(&mut self, profile: &LaunchProfile) -> Result<TrialMeasurement, String> {
+            self.calls.push(profile.clone());
+            if profile.batch == 512 {
+                return Err("CUDA out of memory: failed to allocate 512 MiB on device 0".into());
+            }
+            let tps = 100.0
+                + if profile.flash_attention == "on" {
+                    20.0
+                } else {
+                    0.0
+                };
+            Ok(TrialMeasurement {
+                summary: summarize_benchmark(vec![tps, tps + 1.0], 256, 2).unwrap(),
+                command: format!("cmd batch={} fa={}", profile.batch, profile.flash_attention),
+                effective_context: Some(4096),
+            })
+        }
+    }
+
+    #[test]
+    fn search_first_advisor_off_confirms_a_winner_without_any_advisor_call() {
+        // Owner direction: the default session is local search only. No paid
+        // call happens, yet the session still ranks trials and confirms a
+        // winner through the existing final verification.
+        let base = base_profile();
+        let hw = hardware();
+        let cap = caps();
+        let inputs = search_inputs(&hw, &cap, 8);
+        let mut bench = FakeBench { calls: vec![] };
+        let mut advisor = NoAdvisor { calls: 0 };
+        let report = run_tuning(&base, &inputs, &mut bench, &mut advisor, |_| {}).unwrap();
+
+        assert_eq!(advisor.calls, 0, "advisor-off means zero paid calls");
+        // Baseline + 4 grid rows + 2 nudges + 2 final-verification rows.
+        assert_eq!(report.trials.len(), 9, "{:#?}", report.trials);
+        let choices: Vec<TrialChoice> = report.trials.iter().map(|trial| trial.chosen).collect();
+        assert_eq!(
+            choices,
+            vec![
+                TrialChoice::Baseline,
+                TrialChoice::Grid,
+                TrialChoice::Grid,
+                TrialChoice::Grid,
+                TrialChoice::Grid,
+                TrialChoice::Nudge,
+                TrialChoice::Nudge,
+                TrialChoice::Confirm,
+                TrialChoice::Confirm,
+            ]
+        );
+        assert!(
+            report
+                .trials
+                .iter()
+                .all(|trial| trial.outcome == TrialOutcome::Ok),
+            "{:#?}",
+            report.trials
+        );
+        for trial in &report.trials {
+            assert!(
+                !trial.config_hash.is_empty(),
+                "every row carries a settings identity"
+            );
+        }
+        assert_eq!(report.best_index, Some(1));
+        let verification = report.final_verification.expect("verification ran");
+        assert!(verification.confirmed);
+        assert_eq!(report.best_tps, Some(120.5));
+        assert_eq!(
+            report.stopped_reason,
+            "Local search stopped after two consecutive nudges without improvement"
+        );
+    }
+
+    #[test]
+    fn local_search_records_failures_with_outcomes_and_keeps_going() {
+        // A failed grid leg stays in the table with its outcome; the session
+        // still ranks the surviving rows and confirms a winner.
+        let base = base_profile();
+        let hw = hardware();
+        let cap = caps();
+        let inputs = search_inputs(&hw, &cap, 8);
+        let mut bench = OomBatchBench { calls: vec![] };
+        let mut advisor = NoAdvisor { calls: 0 };
+        let report = run_tuning(&base, &inputs, &mut bench, &mut advisor, |_| {}).unwrap();
+
+        assert_eq!(advisor.calls, 0);
+        let failed: Vec<&TuningTrial> = report
+            .trials
+            .iter()
+            .filter(|trial| trial.mean_tps.is_none())
+            .collect();
+        assert_eq!(failed.len(), 1, "{:#?}", report.trials);
+        assert_eq!(failed[0].chosen, TrialChoice::Grid);
+        assert_eq!(failed[0].outcome, TrialOutcome::Oom);
+        assert!(
+            failed[0]
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("out of memory"),
+            "{:?}",
+            failed[0].error
+        );
+        assert_eq!(report.best_index, Some(1));
+        assert!(report.final_verification.is_some_and(|v| v.confirmed));
+    }
+
+    #[test]
+    fn local_nudges_stop_early_and_skip_already_measured_configs() {
+        // Nothing beats the baseline, so both nudges miss: the second miss
+        // stops the search, and the batch-halving nudge is skipped silently
+        // because the grid already measured that configuration.
+        let base = base_profile();
+        let hw = hardware();
+        let cap = caps();
+        let inputs = search_inputs(&hw, &cap, 12);
+        let mut bench = ScriptedBench {
+            calls: vec![],
+            script: vec![(100.0, Some(4096))],
+        };
+        let mut advisor = NoAdvisor { calls: 0 };
+        let report = run_tuning(&base, &inputs, &mut bench, &mut advisor, |_| {}).unwrap();
+
+        assert_eq!(advisor.calls, 0);
+        // Baseline + 4 grid rows + 2 nudges; no winner, so no verification.
+        assert_eq!(report.trials.len(), 7, "{:#?}", report.trials);
+        let choices: Vec<TrialChoice> = report.trials.iter().map(|trial| trial.chosen).collect();
+        assert_eq!(
+            choices,
+            vec![
+                TrialChoice::Baseline,
+                TrialChoice::Grid,
+                TrialChoice::Grid,
+                TrialChoice::Grid,
+                TrialChoice::Grid,
+                TrialChoice::Nudge,
+                TrialChoice::Nudge,
+            ]
+        );
+        let mut hashes: Vec<&str> = report
+            .trials
+            .iter()
+            .map(|trial| trial.config_hash.as_str())
+            .collect();
+        hashes.sort_unstable();
+        hashes.dedup();
+        assert_eq!(
+            hashes.len(),
+            7,
+            "no configuration is stored twice: {:#?}",
+            report.trials
+        );
+        assert_eq!(report.best_index, None, "nothing beat the baseline");
+        assert!(
+            report
+                .stopped_reason
+                .contains("two consecutive nudges without improvement"),
+            "{}",
+            report.stopped_reason
+        );
+    }
+
+    #[test]
+    fn baseline_failure_is_recorded_in_the_table_not_hidden() {
+        // Fail fast at the requested context, but the failure row stays in
+        // the returned table instead of vanishing inside an Err.
+        let mut base = base_profile();
+        base.cache_type_k = "q4_0".into();
+        let hw = hardware();
+        let cap = caps();
+        let inputs = search_inputs(&hw, &cap, 3);
+        let mut bench = FakeBench { calls: vec![] };
+        let mut advisor = NoAdvisor { calls: 0 };
+        let report = run_tuning(&base, &inputs, &mut bench, &mut advisor, |_| {}).unwrap();
+
+        assert_eq!(
+            advisor.calls, 0,
+            "advisor is never consulted without a baseline"
+        );
+        assert_eq!(report.trials.len(), 1);
+        assert_eq!(report.trials[0].chosen, TrialChoice::Baseline);
+        assert_eq!(report.trials[0].outcome, TrialOutcome::LaunchFail);
+        assert!(report.trials[0]
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("exited"));
+        assert_eq!(report.baseline_tps, None);
+        assert_eq!(report.best_index, None);
+        assert!(
+            report.stopped_reason.contains("Baseline failed"),
+            "{}",
+            report.stopped_reason
+        );
+    }
+
+    #[test]
+    fn error_classification_names_oom_launch_fail_and_context_short() {
+        assert_eq!(
+            classify_error("CUDA out of memory: failed to allocate 1 GiB"),
+            TrialOutcome::Oom
+        );
+        assert_eq!(
+            classify_error("server exited with code 1"),
+            TrialOutcome::LaunchFail
+        );
+        assert_eq!(
+            classify_error("Cancelled by the user"),
+            TrialOutcome::Cancelled
+        );
+        // The context gate maps to its own outcome through a measured run.
+        let base = base_profile();
+        let hw = hardware();
+        let cap = caps();
+        let mut inputs = search_inputs(&hw, &cap, 4);
+        inputs.local_search = false;
+        inputs.enable_advisor = true;
+        inputs.advisor_extra_trials = u32::MAX;
+        let mut bench = ScriptedBench {
+            calls: vec![],
+            script: vec![(100.0, Some(4096)), (999.0, Some(1024))],
+        };
+        let mut advisor = ScriptedAdvisor {
+            replies: vec![
+                r#"{"changes":{"flashAttention":"on"},"rationale":"fast","done":false}"#,
+                r#"{"changes":{},"rationale":"converged","done":true}"#,
+            ],
+            briefs_seen: vec![],
+        };
+        let report = run_tuning(&base, &inputs, &mut bench, &mut advisor, |_| {}).unwrap();
+        assert_eq!(report.trials[1].outcome, TrialOutcome::ContextShort);
+        assert_eq!(report.trials[1].chosen, TrialChoice::Advisor);
+    }
+
+    #[test]
+    fn grid_menu_stays_tiny_tunable_and_within_the_three_field_policy() {
+        let menu = grid_menu(&base_profile());
+        assert!((1..=4).contains(&menu.len()), "{menu:?}");
+        for candidate in &menu {
+            assert!(
+                candidate.changes.len() <= MAX_CHANGED_FIELDS_PER_PROPOSAL,
+                "{candidate:?}"
+            );
+            assert!(
+                candidate.changes.keys().all(|field| is_tunable(field)),
+                "{candidate:?}"
+            );
+        }
+        assert!(
+            menu.iter()
+                .any(|candidate| candidate.changes.contains_key("flashAttention")),
+            "the smallest menu flips flash attention: {menu:?}"
+        );
     }
 }

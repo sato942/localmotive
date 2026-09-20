@@ -131,7 +131,10 @@ A successful build is not installer-upgrade evidence or release approval.
 - Keep keyboard access, visible focus, labels, reduced motion, and words on status tags.
   Keep mobile targets at least 44 px and 110 px clearance above fixed navigation.
 - After UI changes, run the design detector and fix its findings.
-  Add new components to `docs/DESIGN.md` and keep `designmd lint` error-free.
+  Add new components to `docs/DESIGN.md` and keep the design linter
+  error-free: `npx -y -p @google/design.md designmd lint docs/DESIGN.md`.
+  Do not install or invoke the npm package named `designmd` (designmd.ai
+  catalog); it is a different binary.
 
 ## CI and publication
 

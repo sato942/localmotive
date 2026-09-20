@@ -88,7 +88,7 @@ describe("tuning workload input", () => {
 
   it.each([
     ["targetContext", 512, 4_194_304, "Context length"],
-    ["maxTrials", 1, 12, "AI trials"],
+    ["maxTrials", 1, 12, "Search trials"],
     ["tokens", 64, 2048, "Tokens per measurement"],
     ["repeats", 1, 5, "Repeats per trial"],
   ] as const)("keeps %s within the Rust workload domain", (field, minimum, maximum, label) => {
@@ -1036,6 +1036,33 @@ describe("persisted record validation (FE-09)", () => {
     expect(report?.bestTps).toBe(42.5);
     expect(report?.trials).toHaveLength(2);
     expect(report?.trials[1].error).toBe("boom");
+  });
+
+  it("fills search-first history defaults for reports stored by older builds", () => {
+    // Pre-table sessions were advisor-driven after a measured baseline, so a
+    // legacy row with a measurement normalizes to ok/advisor, and row zero to
+    // baseline. New rows always carry explicit values.
+    const report = normalizeTuningReport({
+      baselineTps: 10,
+      bestIndex: 1,
+      bestTps: 12,
+      bestProfile: { name: "p" },
+      trials: [
+        { index: 0, changes: {}, rationale: "b", meanTps: 10, medianTps: 10, error: null, command: "c" },
+        { index: 1, changes: { flashAttention: "on" }, rationale: "a", meanTps: null, medianTps: null, error: "boom", command: "" },
+        { index: 2, changes: {}, rationale: "n", meanTps: 12, medianTps: 12, error: null, command: "c", outcome: "ok", chosen: "nudge", timestampMs: 7, configHash: "ff" },
+      ],
+      stoppedReason: "done",
+    });
+    expect(report?.trials[0].outcome).toBe("ok");
+    expect(report?.trials[0].chosen).toBe("baseline");
+    expect(report?.trials[0].timestampMs).toBe(0);
+    expect(report?.trials[1].outcome).toBe("launch-fail");
+    expect(report?.trials[1].chosen).toBe("advisor");
+    expect(report?.trials[2].outcome).toBe("ok");
+    expect(report?.trials[2].chosen).toBe("nudge");
+    expect(report?.trials[2].timestampMs).toBe(7);
+    expect(report?.trials[2].configHash).toBe("ff");
   });
 
   it("parses JSON without throwing", () => {

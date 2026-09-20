@@ -310,6 +310,20 @@ export function normalizeTuningReport(stored: unknown): TuningReport | undefined
       typeof trial.changes === "object" && trial.changes !== null
         ? (trial.changes as Record<string, unknown>)
         : {};
+    const outcomeRaw = typeof trial.outcome === "string" ? trial.outcome : "";
+    const outcome: TrialOutcome =
+      outcomeRaw === "ok" || outcomeRaw === "oom" || outcomeRaw === "launch-fail" || outcomeRaw === "cancelled" || outcomeRaw === "context-short"
+        ? outcomeRaw
+        : trial.meanTps !== null && typeof trial.meanTps === "number" && Number.isFinite(trial.meanTps)
+          ? "ok"
+          : "launch-fail";
+    const chosenRaw = typeof trial.chosen === "string" ? trial.chosen : "";
+    const chosen: TrialChoice =
+      chosenRaw === "baseline" || chosenRaw === "grid" || chosenRaw === "nudge" || chosenRaw === "confirm" || chosenRaw === "advisor"
+        ? chosenRaw
+        : typeof trial.index === "number" && trial.index === 0
+          ? "baseline"
+          : "advisor";
     trials.push({
       index: typeof trial.index === "number" ? trial.index : trials.length,
       changes,
@@ -320,6 +334,10 @@ export function normalizeTuningReport(stored: unknown): TuningReport | undefined
       command: typeof trial.command === "string" ? trial.command : "",
       effectiveContext: numberOrNull(trial.effectiveContext),
       stdDev: numberOrNull(trial.stdDev),
+      outcome,
+      chosen,
+      timestampMs: typeof trial.timestampMs === "number" && Number.isFinite(trial.timestampMs) ? trial.timestampMs : 0,
+      configHash: typeof trial.configHash === "string" ? trial.configHash : "",
     });
   }
   if (report.bestIndex !== null && typeof report.bestIndex !== "number") return undefined;
@@ -337,6 +355,15 @@ export function normalizeTuningReport(stored: unknown): TuningReport | undefined
     qualityAffectingChanges: Array.isArray(report.qualityAffectingChanges)
       ? report.qualityAffectingChanges.filter((value): value is string => typeof value === "string")
       : undefined,
+    baselineProfile: typeof report.baselineProfile === "object" && report.baselineProfile !== null
+      ? (report.baselineProfile as TuningReport["baselineProfile"])
+      : undefined,
+    companions: Array.isArray(report.companions)
+      ? report.companions.filter((value): value is string => typeof value === "string")
+      : undefined,
+    runtimeBuild: typeof report.runtimeBuild === "string" ? report.runtimeBuild : undefined,
+    hardwareLabel: typeof report.hardwareLabel === "string" ? report.hardwareLabel : undefined,
+    modelLabel: typeof report.modelLabel === "string" ? report.modelLabel : undefined,
   };
 }
 
@@ -1334,7 +1361,7 @@ export function tuningWorkloadError(workload: {
   repeats: number;
 }): string | null {
   const bounds = [
-    ["AI trials", workload.maxTrials, 1, 12],
+    ["Search trials", workload.maxTrials, 1, 12],
     ["Context length", workload.targetContext, 512, 4_194_304],
     ["Tokens per measurement", workload.tokens, 64, 2048],
     ["Repeats per trial", workload.repeats, 1, 5],
@@ -1347,6 +1374,9 @@ export function tuningWorkloadError(workload: {
   return null;
 }
 
+export type TrialOutcome = "ok" | "oom" | "launch-fail" | "cancelled" | "context-short";
+export type TrialChoice = "baseline" | "grid" | "nudge" | "confirm" | "advisor";
+
 export type TuningTrial = {
   index: number;
   changes: Record<string, unknown>;
@@ -1357,6 +1387,13 @@ export type TuningTrial = {
   command: string;
   effectiveContext?: number | null;
   stdDev?: number | null;
+  // Search-first history table: every trial carries its outcome, how it was
+  // chosen, a timestamp, and a settings identity. Optional so a report
+  // stored by an older build still loads (normalizeTuningReport fills them).
+  outcome?: TrialOutcome;
+  chosen?: TrialChoice;
+  timestampMs?: number;
+  configHash?: string;
 };
 
 export type TuningReport = {
@@ -1377,6 +1414,14 @@ export type TuningReport = {
     confirmed: boolean;
   } | null;
   qualityAffectingChanges?: string[];
+  // Search-first session identity: the baseline the table diffs against, the
+  // companions it applied with, and what was measured. Optional so a report
+  // stored by an older build still loads.
+  baselineProfile?: LaunchProfile;
+  companions?: string[];
+  runtimeBuild?: string;
+  hardwareLabel?: string;
+  modelLabel?: string;
 };
 
 export type TuningProgress = {

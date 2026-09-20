@@ -26,7 +26,9 @@ cargo test
 
 Behavioural changes ship with a regression test, written failing first. UI
 changes run the design detector and keep `docs/DESIGN.md` at zero lint
-errors. `scripts/tests/release-gates.test.mjs` guards the release contracts;
+errors (`npx -y -p @google/design.md designmd lint docs/DESIGN.md`; do not
+install or invoke the npm package named `designmd` — designmd.ai catalog —
+it is a different binary). `scripts/tests/release-gates.test.mjs` guards the release contracts;
 extend it when you touch workflows, gates, or release documentation.
 
 ## Pull requests

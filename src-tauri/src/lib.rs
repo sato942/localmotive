@@ -2302,6 +2302,7 @@ pub fn run() {
             tune_service::start_tuning,
             tune_service::tune_disclosure_list,
             tune_service::cancel_tuning,
+            tune_service::apply_tuning_trial_changes,
             suggest_port,
             about_info,
             catalog_service::load_model_catalog,
