@@ -36,7 +36,36 @@ Rule: a box closes only on its stated evidence. A checkbox is not evidence.
 Build a producer/consumer map for all 18 mandatory manifest records, naming executable, prerequisite, output path, source/byte binding, artifact upload/download, validation and any explicitly supported historical scope. Confirm that the files consumed are the files produced by this run. Eight source-bound historical inputs must be regenerated/staged:
 
 | Records | Existing producer / prerequisite | Required binding |
-|
+|---|---|---|
+
+**Map refresh 2026-09-21 (map check only — U06-02 stays OPEN).**
+producer detail lives in `docs/QUALIFICATION-MAP-0.6.md` (refreshed same
+day). Branch HEAD: `1dc0793`. All 18 `ATTESTATION_RECORDS` files are
+present in `release-evidence/0.6.0/attestations/`; presence is not HEAD
+binding — no record binds `1dc0793` (committed manifest binds `e9a36b3`,
+working manifest binds `da091a4`).
+
+| Record | Producer → consumer | Present? | Bound to HEAD? | Gap |
+|---|---|---|---|---|
+| `packaged_verification` | `verify_packaged_matrix.ps1` → manifest (staged) | yes | no (`da091a4` era) | regenerate per candidate |
+| `lifecycle_upgrade_v0.4.0` / `v0.5.0` | `host-run-lifecycle.ps1` → manifest | yes | no | sha256 mismatch + not a parsed document (test 3169) |
+| `lifecycle_preservation_v0.4.1` / `v0.5.0` | same harness → manifest | yes | no | sha256 mismatch + not a parsed document (test 3169) |
+| `witness_missing_assets` / `timeout` / `malformed_result` / `preservation_missing` / `stale_lock` / `live_lock` | `test-fault-evidence.ps1` → manifest | yes | no (`85edee6` era) | regenerate 4 source-bound witness rows per candidate |
+| `mt06_cancellation` | `g05_mt06_cycles.mjs` → manifest | yes | no | regenerate per candidate |
+| `installer_payload_identity` | `verify_installer_payloads.mjs` → manifest + release-gates | yes | no | sha256 mismatch (test 3169) |
+| `dc04_command_path` | `g05_dc04_override.mjs` + loopback → manifest | yes | log scope retained | re-run with the candidate |
+| `rt04_delayed_download` | `run-rt04v2.sh` + packaged candidate → manifest | yes | log scope retained | re-run with the candidate |
+| `a11y_packaged_verification` | `verify_a11y.mjs` → manifest | yes | A11Y_PASS stands | none for U06-02 |
+| `rt06_all_backends` / `rt06_full_run_log` | `g05_rt06_all_backends.mjs` → manifest | yes | no | regenerate per candidate |
+| release.yml digest | — | — | — | workflow file digest drifted (test 3169) |
+
+Eight source-bound historical inputs (must be regenerated/staged, not
+carried): `installer_payload_identity`, `mt06_cancellation`,
+`rt06_all_backends` (+ log), `witness_timeout`, `witness_malformed_result`,
+`witness_preservation_missing`, `witness_stale_lock`, `witness_live_lock`.
+
+**U06-02 remains OPEN.** No release/qualify/promote run executed; no hash
+rewritten; no attestation regenerated.
 
 ---
 
@@ -89,7 +118,7 @@ Acceptance: applicable required CI, resolve, audit, quality, package, native lif
 
 Reuse accepted FE-05 navigation, completion visibility, two-profile saved-manifest/anchor provenance and I1-I5 regression mappings. Do not invent a personal owner review or repeat the A/B walkthrough solely to generate a signature. Record who made the delegated evidence assessment and cite the actual owner authorization.
 
-Hardware D06-01..D06-05 is CLOSED-DEFERRED-FAR-FUTURE 2026-09-21 (owner scope): 0.6 will not obtain other-vendor GPUs, a second adapter, HDD/SATA targets, or an OS-crash/power-loss rig, and U06-07 does not wait on those rows. Not executed, not PASS. For S-25, the split is: (1) independent benchmark distributions and baseline drift stay BLOCKED-INPUT; (2) held-out calibration error and interval coverage stay BLOCKED-INPUT; (3) release queue/failure/evidence-retention metrics are collected in V06-S-25.I3. The tuner history table is in-sample evidence and closes neither science third. For G-05, retain the automated a11y PASS scope; obtain a human listening pass and use only actually authorized test accounts when available. If a non-hardware residual is eligible for deferral under the existing Medium/Low/supplemental policy, make a separately reasoned delegated decision with owner, risk, workaround, supported scope, milestone and evidence gap; do not label the current hardware instruction as that decision. Mandatory High/native gates stay required.
+Hardware D06-01..D06-05 is CLOSED-DEFERRED-FAR-FUTURE 2026-09-21 (owner scope): 0.6 will not obtain other-vendor GPUs, a second adapter, HDD/SATA targets, or an OS-crash/power-loss rig, and U06-07 does not wait on those rows. Not executed, not PASS. For S-25, the split is: (1) independent benchmark distributions and baseline drift stay BLOCKED-INPUT; (2) held-out calibration error and interval coverage stay BLOCKED-INPUT; (3) release queue/failure/evidence-retention metrics are collected in V06-S-25.I3. The tuner history table is in-sample evidence and closes neither science third. For G-05, retain the automated a11y PASS scope; manual Narrator/NVDA listening and authorized live-account scenarios are CLOSED-DEFERRED-USER-REPORTS 2026-09-21 and U06-07 does not wait on them. If a non-hardware residual is eligible for deferral under the existing Medium/Low/supplemental policy, make a separately reasoned delegated decision with owner, risk, workaround, supported scope, milestone and evidence gap; do not label the current hardware instruction as that decision. Mandatory High/native gates stay required.
 
 Acceptance: current evidence supports the stated release scope, no unresolved mandatory High/native gate is hidden, all unavailable hardware coverage is excluded honestly, every remaining non-hardware criterion has an executed result or policy-eligible explicit disposition. Final ship decision is based on prepublication evidence; publication/readback is the next action, not a circular prerequisite to that decision.
 
@@ -162,8 +191,8 @@ Record final source/tag/release/run identities, exact public artifact digests, c
 
 ---
 
-- [ ] **V06-GH-10.V3** — Run on the intended Windows host and compare emitted identity fields to directly observed hardware/driver/source values; verify no host-only record claims successful CUDA/Vulkan inference or complete L4 support. **Trace:** [Audit GH-10](docs/history/localmotive-comprehensive-audit.md#gh-10).
-  **Current status: OPEN.** E07 / U06-03: current host-attestation workflow fails to parse; historical generator tests stay accepted. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L1941).
+- [x] **V06-GH-10.V3** — CLOSED 2026-09-21 on this-host comparison (existing Windows NVIDIA host; no new hardware, no fixtures, no invented MATCH). The recorded E07 parse defect (run 34819219650 trailing quote) is already repaired: `hardware qualify attestation block parses under pwsh (U06-03)` PASS 2026-09-21 under the real PowerShell parser, so no new parser fix was needed. Generator run 2026-09-21 with directly observed values (CPU `AMD Ryzen 9 9950X3D 16-Core Processor`, GPU `NVIDIA GeForce RTX 5090`, driver `32.0.16.1074`, OS `10.0.26100.0`, source `1dc0793`) emitted verdict MATCH: rows `amd-zen5-cpu`, `nvidia-blackwell-cuda`, `nvidia-blackwell-vulkan` all HOST_MATCH carrying the detected observations. Every row note requires packaged L4 checks; `supportClaimPolicy` forbids L4_PASS from host presence; `cannot claim L4 support` test PASS 2026-09-21. No host-only record claims CUDA/Vulkan inference success or complete L4. The comparison output was scratch-only, not filed as producer evidence. **Trace:** [Audit GH-10](docs/history/localmotive-comprehensive-audit.md#gh-10).
+  **Current status: CLOSED 2026-09-21.** Historical generator tests stay accepted. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L1941).
 
 ---
 
@@ -172,8 +201,8 @@ Record final source/tag/release/run identities, exact public artifact digests, c
 
 ---
 
-- [ ] **V06-G-05.I3** — Perform keyboard/Narrator or NVDA, high-DPI/zoom/high-contrast and reduced-motion checks. Perform live cloud/HF credential scenarios only where an explicitly authorized test account and suitable environment are available. **Covered in the packaged probe:** keyboard traversal with visible focus, reduced motion, high-DPI/zoom, forced-colors high contrast (`verify_a11y.mjs` A11Y_PASS; evidence `release-evidence/0.6.0/attestations/g05-a11y-packaged-verification.log`). **Remaining (blocked):** a manual Narrator or NVDA pass on the packaged app, and live cloud/HF credential scenarios, which require an explicitly authorized test account and suitable environment. **Trace:** [Remaining target verification](docs/history/localmotive-comprehensive-audit.md#remaining-verification-requiring-the-target-environment).
-  **Current status: OPEN.** PARTIAL / U06-07: automated a11y accepted; manual listening and authorized live-account scenarios remain distinct from hardware deferral. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L2854).
+- [x] **V06-G-05.I3** — CLOSED-DEFERRED-USER-REPORTS 2026-09-21 (owner scope). Manual Narrator/NVDA listening and authorized live cloud/HF credential scenarios are out of current 0.6 agent/owner campaign. Not executed. Not PASS. Automated a11y evidence stands as-is. Further accessibility and live-account defects will be handled when real users open issues; that is the accepted feedback path for this slice. Reopen only if the owner schedules a dedicated listening/live-account pass. **Covered in the packaged probe (unchanged PASS):** keyboard traversal with visible focus, reduced motion, high-DPI/zoom, forced-colors high contrast (`verify_a11y.mjs` A11Y_PASS; evidence `release-evidence/0.6.0/attestations/g05-a11y-packaged-verification.log`). Not upgraded to screen-reader verified or live HF verified. **Trace:** [Remaining target verification](docs/history/localmotive-comprehensive-audit.md#remaining-verification-requiring-the-target-environment).
+  **Current status: CLOSED 2026-09-21 (leftovers only).** U06-07 does not wait on manual listening or live-account scenarios. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L2854).
 
 ---
 
@@ -224,6 +253,11 @@ Record final source/tag/release/run identities, exact public artifact digests, c
   storage-class and OS-crash facility, unprovided physical configurations,
   same-model multi-GPU rig, and hardware-dependent metrics. They are out of
   0.6 scope, not open gates.
+- V06-MT-07.V2 live portability matrix is CLOSED-DEFERRED-FAR-FUTURE
+  2026-09-21 (owner scope): not executed, not PASS; 0.6 will not obtain a
+  CPU-only (or other extra) machine to prove calibration identity on that
+  class. Unit-level snapshot identity stays accepted; no claim that
+  calibration works on CPU-only hosts.
 - Search-first tuner CLOSED 2026-09-20 by owner acceptance: advisor-off
   default session (local grid + one-axis nudge, persisted trial table with
   outcome/choice rows, confirm bar, one optional advisor try after the

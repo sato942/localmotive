@@ -45,3 +45,31 @@ qualification. Nothing here re-labels them.
 - `node scripts/verify_qualification_manifest.mjs --expect-source e9a36b3…`: all 18 records PASS + 4 carry-forward notes; exactly 1 FAIL — `workflow file digest drifted: .github/workflows/release.yml` (manifest pins `091a0d16…`, checkout is `6cbf7f99…` after the U06-01 extraction). This is the expected staleness signal, not a waiver.
 - Negative controls (missing record, old-source/current-inventory, wrong bytes) are covered by `scripts/tests/qualification_manifest.test.mjs` (28/28 pass) — no historical bytes were edited for this map.
 - Full assembly validation (all 18 transferred + manifest + promotion validators green) is due with the final candidate's own records; this map does not claim it.
+
+## Map refresh (2026-09-21, U06-02 map check only — box stays OPEN)
+
+Map source (branch HEAD): `1dc0793`. Committed manifest
+(`release-evidence/0.6.0/qualification-manifest-0.6.0.json`) binds source
+`e9a36b3aa075d72713d88af4cc74d64d561f12f8`. Working manifest
+(`.hermes-0.6/qualification-manifest-0.6.0.json`) binds `da091a47ca6595ec37690ab5ae63542671c5f7f6`.
+Neither binds the current HEAD. All 18 `ATTESTATION_RECORDS` files are
+present in `release-evidence/0.6.0/attestations/` (checked 2026-09-21);
+presence is not HEAD binding.
+
+Per-record HEAD binding at `1dc0793`: none. Every source-bound record still
+carries an older revision (lifecycle/mt06/negative rows `da091a4`; witness
+rows `85edee6`; negatives at `7c32fa9`/`cb8ab64`). The eight source-bound
+records named above MUST still be regenerated against the final candidate;
+nothing here re-labels them.
+
+Gaps (exact text from `release-gates.test.mjs` "the qualification manifest
+validates and references only committed records", run 2026-09-21 — listed,
+not repaired in this pass): workflow file digest drifted
+(`.github/workflows/release.yml`); `lifecycle_upgrade_v0.4.0`,
+`lifecycle_upgrade_v0.5.0`, `lifecycle_preservation_v0.4.1`,
+`lifecycle_preservation_v0.5.0`, `installer_payload_identity`: sha256
+mismatch at their `release-evidence/0.6.0/attestations/` paths; the four
+lifecycle rows: carried-forward record is not a parsed document.
+
+**U06-02 remains OPEN.** No release/qualify/promote run was executed for
+this refresh; no hash was rewritten and no attestation regenerated.
