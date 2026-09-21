@@ -522,6 +522,18 @@ try {
         "ui.runtime-cards",
         "Every rendered runtime card keeps one scope element, frontend-owned fields empty, and the static upstream-evidence limits.",
         async () => {
+          // The benchmark-scope check above navigates away from the Runtime
+          // screen and the frontend unmounts it, so return there before
+          // asserting on the rendered cards (added 2026-09-21: the check
+          // could never pass without this navigation).
+          const back = await client.evaluate(`(() => {
+            const button = [...document.querySelectorAll('nav button')]
+              .find((item) => item.textContent.trim() === 'Runtime');
+            if (!button) return false;
+            button.click();
+            return true;
+          })()`);
+          requireCondition(back, "Runtime navigation is missing");
           await waitFor(
             "document.querySelectorAll('.runtime-option').length >= 1",
             "The real runtime catalog did not render any card",
