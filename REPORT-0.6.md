@@ -38,8 +38,10 @@ The statuses below distinguish implementation, verification and closure
 explicitly. An item is "fully closed" only when both its implementation and its
 verification boxes are checked with recorded evidence.
 
-- Findings (72): **63 fully closed**; 4 environment-blocked where the required
-  hardware/environment does not exist on this host (RT-04, RT-06, DC-12,
+- Findings (72): **63 fully closed**; 2 closed-deferred-far-future 2026-09-21
+  (owner scope: RT-06, DC-12 — not executed, not PASS, out of 0.6 scope);
+  2 environment-blocked where the required
+  hardware/environment does not exist on this host (RT-04,
   MT-07); 4 owner-gated governance findings (GH-01, GH-02, GH-03, GH-06);
   FE-05 is implementation- and verification-complete but is held open at
   finding level for the release decision on its stated completion criteria
@@ -498,8 +500,8 @@ the 2026-09-11 package.
 
 | rows | specific missing prerequisite |
 | --- | --- |
-| RT-06.V3 | a large multi-backend library installed on a representative host (this host has one verified CUDA backend) |
-| DC-12.V3 | a controlled OS-crash/power-loss harness (ordinary process-kill coverage exists: vitems_c D7, FE-16 v3) |
+| RT-06.V3 | CLOSED-DEFERRED-FAR-FUTURE 2026-09-21 (owner scope; not executed, not PASS): a large multi-backend library installed on a representative host (this host has one verified CUDA backend) |
+| DC-12.V3 | CLOSED-DEFERRED-FAR-FUTURE 2026-09-21 (owner scope; not executed, not PASS): a controlled OS-crash/power-loss harness (ordinary process-kill coverage exists: vitems_c D7, FE-16 v3) |
 | MT-07.V2 | CPU-only and changed-CPU machines for the portability matrix (fit-reduced rows need the same) |
 | S-25.I3 | independent held-out benchmark distributions/baseline drift data |
 | G-05.I3 | a human-operated keyboard/Narrator/high-DPI/reduced-motion session |

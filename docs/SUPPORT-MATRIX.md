@@ -9,6 +9,12 @@ Machine-readable evidence lives in `release-evidence/<version>/` and
 `docs/EVIDENCE-MATRIX.md`; per-finding records live in
 `docs/history/TODO-0.6.md`.
 
+Out of 0.6 scope (owner 2026-09-21, not an open 0.6 gate): multi-vendor GPU
+hosts, a second GPU adapter, HDD/SATA storage targets, and OS-crash /
+power-loss facilities. Those environments stay UNTESTED below; 0.6 will not
+obtain that hardware. A deferral is not substitute evidence that a missing
+configuration works.
+
 ## Platform and lifecycle
 
 | Claim | Status | Evidence |
@@ -37,7 +43,7 @@ Machine-readable evidence lives in `release-evidence/<version>/` and
 | Resumable downloads with partial-byte retention across cancel | MEASURED | Packaged cancel kept the preallocated `.part` file and sidecar stable; resume continued from the recorded ranges (sidecar delta +7 607 420 bytes). |
 | Redirect and proxy policy (HTTPS-only hosts, bounded hops) | EXERCISED | 12-case matrix plus refused-redirect fixtures in the automated suite. |
 | HTTP validator semantics (strong ETag gating, bounded `Retry-After`) | EXERCISED | Fixture tests plus a stalled-fetch abort case. |
-| HDD and SATA SSD storage targets | UNTESTED | NVMe only on this host; connection-scale throughput on other media remains open (S-25.I3). |
+| HDD and SATA SSD storage targets | UNTESTED | NVMe only on this host; other media are out of 0.6 scope (owner 2026-09-21), not an open 0.6 gate. |
 
 ## Catalog, credentials, and providers
 
