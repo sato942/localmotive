@@ -1,12 +1,12 @@
 {
   "schema_version": "1.0.0",
   "verifier": "scripts/verify_041.mjs",
-  "source_revision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8",
+  "source_revision": "c0ae53874b54fda90616f2c8afc291ae002d32d9",
   "source_dirty": false,
   "artifact": {
     "name": "Localmotive_0.6.0_x64-portable.exe",
-    "size_bytes": 20818432,
-    "sha256": "d6a6ef663c925f9605f06ea2957ef95409dace00d798ebc28e5666249fd59427"
+    "size_bytes": 20372480,
+    "sha256": "e3a7804269ef9396355af3fca9a5cd448951b65587e2377a825fb354e8bdb04d"
   },
   "host_class": {
     "platform": "win32",
@@ -23,8 +23,8 @@
       }
     ]
   },
-  "started_at": "2026-09-13T04:09:44.781Z",
-  "finished_at": "2026-09-13T04:10:01.964Z",
+  "started_at": "2026-09-21T13:39:49.849Z",
+  "finished_at": "2026-09-21T13:40:07.712Z",
   "checks": [
     {
       "id": "candidate.artifact",
@@ -32,8 +32,8 @@
       "status": "PASS",
       "evidence": {
         "name": "Localmotive_0.6.0_x64-portable.exe",
-        "size_bytes": 20818432,
-        "sha256": "d6a6ef663c925f9605f06ea2957ef95409dace00d798ebc28e5666249fd59427"
+        "size_bytes": 20372480,
+        "sha256": "e3a7804269ef9396355af3fca9a5cd448951b65587e2377a825fb354e8bdb04d"
       },
       "reason": ""
     },
@@ -42,7 +42,7 @@
       "criterion": "The source revision is a full Git commit and matches the requested revision.",
       "status": "PASS",
       "evidence": {
-        "source_revision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8"
+        "source_revision": "c0ae53874b54fda90616f2c8afc291ae002d32d9"
       },
       "reason": ""
     },
@@ -61,7 +61,7 @@
       "status": "PASS",
       "evidence": {
         "title": "Localmotive",
-        "port": 10149
+        "port": 10038
       },
       "reason": ""
     },
@@ -73,6 +73,29 @@
         "title": "Localmotive",
         "localmotive_visible": true,
         "obsolete_name_visible": false
+      },
+      "reason": ""
+    },
+    {
+      "id": "ui.benchmark-scope",
+      "criterion": "The packaged benchmark retains preflight and replay without retired optional controls.",
+      "status": "PASS",
+      "evidence": {
+        "controls": [
+          "Run benchmark",
+          "Test setup",
+          "Measured result",
+          "Fit and measure",
+          "Artifact and preflight evidence",
+          "Refresh hardware",
+          "Inspect artifact",
+          "Run preflight",
+          "Benchmark v2",
+          "Run v2 benchmark",
+          "Cancel",
+          "Replay manifest"
+        ],
+        "retired_controls": false
       },
       "reason": ""
     },
@@ -106,7 +129,7 @@
       "evidence": {
         "rejected": true,
         "error": {
-          "kind": "invalid_response",
+          "kind": "invalidResponse",
           "message": "Selected adapter is not in the current hardware snapshot",
           "retryAfterSeconds": null
         }
@@ -120,7 +143,7 @@
       "evidence": {
         "tag": "b10816",
         "option_count": 7,
-        "origin": "cache"
+        "origin": "network"
       },
       "reason": ""
     },

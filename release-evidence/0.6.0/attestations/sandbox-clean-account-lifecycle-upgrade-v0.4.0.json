@@ -1,14 +1,14 @@
 {
-  "msiPayloadDigest": "6cb345706fa7f91f3c35f3223e7fdc095c8ee1865ae28350df99d21401b54157",
-  "nsisPayloadDigest": "d9a68b37fd8a599f102025c72433dba2d5de4c907cbe40c77c0201517110bf34",
+  "msiPayloadDigest": "f230b378dd55716efeeda3ea0ee612a11e5feb400bbb7d5adac90780908cf85b",
+  "nsisPayloadDigest": "43aae8c0783a951cf09e297757f97566202010697341a861953bcc78dd29d9f3",
   "version": "0.6.0",
-  "finishedAtUtc": "2026-09-20T11:15:42.0839416Z",
+  "finishedAtUtc": "2026-09-21T13:09:19.4244696Z",
   "installedDigests": {
-    "Preservation upgrade": "d9a68b37fd8a599f102025c72433dba2d5de4c907cbe40c77c0201517110bf34",
-    "Post-update install": "d9a68b37fd8a599f102025c72433dba2d5de4c907cbe40c77c0201517110bf34",
+    "Preservation upgrade": "43aae8c0783a951cf09e297757f97566202010697341a861953bcc78dd29d9f3",
+    "Post-update install": "43aae8c0783a951cf09e297757f97566202010697341a861953bcc78dd29d9f3",
     "Pre-update install": "af9f01ac31730798b584efd1aee8f8854e97cc894573106c6935acb0461ebb93",
-    "MSI fresh install": "6cb345706fa7f91f3c35f3223e7fdc095c8ee1865ae28350df99d21401b54157",
-    "NSIS fresh install": "d9a68b37fd8a599f102025c72433dba2d5de4c907cbe40c77c0201517110bf34"
+    "MSI fresh install": "f230b378dd55716efeeda3ea0ee612a11e5feb400bbb7d5adac90780908cf85b",
+    "NSIS fresh install": "43aae8c0783a951cf09e297757f97566202010697341a861953bcc78dd29d9f3"
   },
   "steps": [
     {
@@ -47,11 +47,11 @@
     "file": "sandbox-clean-account-lifecycle-upgrade-v0.4.0-collected-settings.json",
     "sha256": "2b7ba23c5f06c8b7abef7d93a2c0114f50f838f3f725c97b9cb129d5ff8f8391"
   },
-  "sourceRevision": "fb0776b6b499fc4c26121664fe3b7162e0a15d75",
-  "harnessRevision": "fb0776b6b499fc4c26121664fe3b7162e0a15d75",
+  "sourceRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9",
+  "harnessRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9",
   "candidateDigests": {
-    "currentSetup": "fb21f7d17ab2d88d098fee596e3568b62bf9cf4bb68bc525610a8fb356383b25",
-    "currentMsi": "a9015b926506536c14b993cf89a4b0fe4e7f469cfc24f33db56077f2921de77c"
+    "currentMsi": "f411280b889c89177b097657ef55146ab811c65a06bec7c853b6f1b10c490a73",
+    "currentSetup": "900ac1074a526156a51ea5f315daa61f0c1ff99f814e62bf63ef2e721438e58c"
   },
-  "candidateInventorySha256": "58e82b4116ce9010aa9f58c8c876dc08b5975604776b8527fb1073646c8a7a84"
+  "candidateInventorySha256": "ac21f7ea5ea1e58b1549006647c8c5e86df3d406a555b2478ffd93a4eb4e1353"
 }

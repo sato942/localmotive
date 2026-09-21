@@ -1,18 +1,18 @@
-﻿{
-    "schema":  "localmotive.sandbox-lifecycle.v0",
-    "status":  "FAIL",
-    "stage":  "sandbox-run",
-    "error":  "Invalid object passed in, \u0027:\u0027 or \u0027}\u0027 expected. (8): { this is not json\r\n",
-    "tag":  "v0.6.0",
-    "version":  "0.6.0",
-    "previousTag":  "v0.4.1",
-    "sourceRevision":  "e9a36b3aa075d72713d88af4cc74d64d561f12f8",
-    "harnessRevision":  "e9a36b3aa075d72713d88af4cc74d64d561f12f8",
-    "startedAtUtc":  "2026-09-13T03:35:50.4412587Z",
-    "finishedAtUtc":  "2026-09-13T03:35:52.8292094Z",
-    "candidateDigests":  {
-                             "currentSetup":  "b935033d2ca2dbaf595c0a20e629053f0b4097ebe4b1059c351d140530ab8652",
-                             "currentMsi":  "bc5c6aae332487430c1d7a238b668e3919f1514f713dd0c9d1ab80e248313b9b"
-                         },
-    "candidateInventorySha256":  "dd0bd839775262603df21021b66410842ab07fdbac7437b3aa53bbfd0c6973e0"
+{
+  "schema": "localmotive.sandbox-lifecycle.v0",
+  "status": "FAIL",
+  "stage": "sandbox-run",
+  "error": "Conversion from JSON failed with error: Invalid character after parsing property name. Expected ':' but got: i. Path '', line 1, position 7.",
+  "tag": "v0.6.0",
+  "version": "0.6.0",
+  "previousTag": "v0.4.1",
+  "sourceRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9",
+  "harnessRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9",
+  "startedAtUtc": "2026-09-21T13:22:39.8154787Z",
+  "finishedAtUtc": "2026-09-21T13:22:42.2536209Z",
+  "candidateDigests": {
+    "currentSetup": "900ac1074a526156a51ea5f315daa61f0c1ff99f814e62bf63ef2e721438e58c",
+    "currentMsi": "f411280b889c89177b097657ef55146ab811c65a06bec7c853b6f1b10c490a73"
+  },
+  "candidateInventorySha256": "ac21f7ea5ea1e58b1549006647c8c5e86df3d406a555b2478ffd93a4eb4e1353"
 }

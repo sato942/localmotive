@@ -1,27 +1,27 @@
 {
   "schema": "localmotive.installer-payload-identity.v1",
-  "generatedAt": "2026-09-20T11:11:00.763Z",
-  "sourceRevision": "fb0776b6b499fc4c26121664fe3b7162e0a15d75",
-  "inventorySha256": "58e82b4116ce9010aa9f58c8c876dc08b5975604776b8527fb1073646c8a7a84",
+  "generatedAt": "2026-09-21T13:05:02.640Z",
+  "sourceRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9",
+  "inventorySha256": "ac21f7ea5ea1e58b1549006647c8c5e86df3d406a555b2478ffd93a4eb4e1353",
   "release": "0.6.0",
   "portable": {
     "name": "Localmotive_0.6.0_x64-portable.exe",
-    "sizeBytes": 20162048,
-    "sha256": "7566efd79f3e34225960cd19593250b1e3f4480728072d8a0e1456539c37d58f"
+    "sizeBytes": 20372480,
+    "sha256": "e3a7804269ef9396355af3fca9a5cd448951b65587e2377a825fb354e8bdb04d"
   },
   "nsisPayload": {
-    "sizeBytes": 20162048,
-    "sha256": "d9a68b37fd8a599f102025c72433dba2d5de4c907cbe40c77c0201517110bf34"
+    "sizeBytes": 20372480,
+    "sha256": "43aae8c0783a951cf09e297757f97566202010697341a861953bcc78dd29d9f3"
   },
   "msiPayload": {
-    "sizeBytes": 20162048,
-    "sha256": "6cb345706fa7f91f3c35f3223e7fdc095c8ee1865ae28350df99d21401b54157"
+    "sizeBytes": 20372480,
+    "sha256": "f230b378dd55716efeeda3ea0ee612a11e5feb400bbb7d5adac90780908cf85b"
   },
   "marker": {
     "portable": "UNK",
     "nsis": "NSS",
     "msi": "MSI",
-    "differingBytes": 16104330,
+    "differingBytes": 16262970,
     "note": "Tauri's NSIS/MSI bundlers patch one 3-byte bundle-type marker ('UNK' -> 'NSS' / 'MSI') into their embedded copy of the executable. Every other byte is identical to the portable executable, so the recorded digests differ while the installed programs are the same build."
   },
   "functional": [],

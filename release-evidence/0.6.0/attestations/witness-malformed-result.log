@@ -1,2 +1,1 @@
-﻿[host] FAIL during stage 'sandbox-run': Invalid object passed in, ':' or '}' expected. (8): { this is not json
-
+[host] FAIL during stage 'sandbox-run': Conversion from JSON failed with error: Invalid character after parsing property name. Expected ':' but got: i. Path '', line 1, position 7.

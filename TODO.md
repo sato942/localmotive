@@ -29,7 +29,7 @@ Rule: a box closes only on its stated evidence. A checkbox is not evidence.
 
 ## Open work packages
 
-- [ ] **U06-02 — OPEN.** Connect existing producers and artifact transfers before qualification; validate the entire manifest against the actual candidate.
+- [x] **U06-02 — CLOSED 2026-09-21.** One qualify campaign executed on branch tip `c0ae53874b54fda90616f2c8afc291ae002d32d9`; all 18 mandatory records exist as new parses bound to that SHA and the candidate digests; manifest verifier and the previously drifting gates PASS on those files.
 
 **Trace:** V06-GH-02.V3, V06-GH-03.V1/V3, V06-GH-06.V3, V06-G-04/V06-G-05/V06-G-06, V06-G-09.I2/V1; audit [GH-02](docs/history/localmotive-comprehensive-audit.md#gh-02), [GH-06](docs/history/localmotive-comprehensive-audit.md#gh-06), [release exit criteria](docs/history/localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release). **Evidence:** E08.
 
@@ -38,12 +38,25 @@ Build a producer/consumer map for all 18 mandatory manifest records, naming exec
 | Records | Existing producer / prerequisite | Required binding |
 |---|---|---|
 
-**Map refresh 2026-09-21 (map check only — U06-02 stays OPEN).**
-producer detail lives in `docs/QUALIFICATION-MAP-0.6.md` (refreshed same
-day). Branch HEAD: `1dc0793`. All 18 `ATTESTATION_RECORDS` files are
-present in `release-evidence/0.6.0/attestations/`; presence is not HEAD
-binding — no record binds `1dc0793` (committed manifest binds `e9a36b3`,
-working manifest binds `da091a4`).
+**Qualify campaign 2026-09-21 (U06-02 close).** Source freeze: `origin/fix/u06-stabilization` at `c0ae53874b54fda90616f2c8afc291ae002d32d9` (includes the `verify_041.mjs` Runtime-navigation fix committed as `c0ae538`; no doc commits after the freeze, so the manifest binds the producer). Clean worktree at that SHA; `npm run tauri build` exit 0. Candidate bytes: portable `e3a7804269ef9396355af3fca9a5cd448951b65587e2377a825fb354e8bdb04d` (`20372480` bytes), setup `900ac1074a526156a51ea5f315daa61f0c1ff99f814e62bf63ef2e721438e58c`, MSI `f411280b889c89177b097657ef55146ab811c65a06bec7c853b6f1b10c490a73`. Inventory SHA-256 `ac21f7ea5ea1e58b1549006647c8c5e86df3d406a555b2478ffd93a4eb4e1353` (`artifacts/candidate-inventory-0.6.0.json`, `sourceRevision` = freeze SHA). No `release.yml` dispatch (it would check out tag `v0.6.0`); all producers ran locally. No tag touched; no publish.
+
+| Record | Producer → result on these bytes |
+|---|---|
+| `packaged_verification` | `verify_packaged_matrix.ps1` → PASS 26/26, `source_dirty` false (run on a pristine worktree with `-Portable artifacts/Localmotive_0.6.0_x64-portable.exe`) |
+| `lifecycle_upgrade_v0.4.0` / `v0.5.0`, `lifecycle_preservation_v0.4.1` / `v0.5.0` | `host-run-lifecycle.ps1` (4 Sandbox legs, baselines `v0.4.0`/`v0.4.1`/`v0.5.0` via `gh`) → all PASS, bound to freeze SHA + inventory |
+| `witness_missing_assets` / `timeout` / `malformed_result` / `preservation_missing` / `stale_lock` / `live_lock` | `test-fault-evidence.ps1` → ALL WITNESS LEGS PASS |
+| `mt06_cancellation` | `g05_mt06_cycles.mjs` → 75/75 PASS, 6 cycles, bound to freeze SHA + portable digest |
+| `installer_payload_identity` | `verify_installer_payloads.mjs` → PASS, bound to freeze SHA + inventory |
+| `dc04_command_path` | `g05_dc04_override.mjs` + loopback → 13/13 PASS |
+| `rt04_delayed_download` | adapted `run-rt04v2.sh` (worktree paths) + packaged candidate → 17/17 PASS |
+| `a11y_packaged_verification` | `verify_a11y.mjs` → A11Y_PASS (17 controls, 0 wordless; tree 148 nodes) |
+| `rt06_all_backends` / `rt06_full_run_log` | `g05_rt06_all_backends.mjs` → 22/22 PASS, bound to freeze SHA + digest; console captured to the log |
+
+Manifest rebuilt with `build_qualification_manifest.mjs` (no carry-forward; workflow digest follows the checkout, so the drift is gone): `verify_qualification_manifest.mjs --expect-source c0ae538…` → MANIFEST VERIFY PASS, 18/18 records exact. `release-gates.test.mjs` → 164/164 PASS. `qualification_manifest.test.mjs` → 28/28 PASS. `verify_release_promotion.mjs --qualified . --tag v0.6.0 --expect-source c0ae538…` → local contract PASS (no publish performed).
+
+Repairs made during the run (no hashes rewritten, no attestations faked): (1) `verify_041.mjs` `ui.runtime-cards` could never pass after `6099c6f` added the Benchmark navigation (the Runtime screen unmounts); the check now navigates back to Runtime first — committed as `c0ae538` before the freeze. (2) Campaign harnesses must run with a native Windows `RUNNER_TEMP` (`C:/Users/Mubarak/AppData/Local/Temp`); an MSYS `/tmp` value makes the app reject the catalog-root override and the cache check fails. (3) One matrix attempt failed three runtime IPC checks on a cold-start Busy-guard race; the rerun on the idle host passed 26/26.
+
+**U06-02 CLOSED 2026-09-21** on the evidence above. The `release-evidence/0.6.0` slots now carry the `c0ae538` parses; older bytes remain in git history.
 
 | Record | Producer → consumer | Present? | Bound to HEAD? | Gap |
 |---|---|---|---|---|
@@ -59,13 +72,12 @@ working manifest binds `da091a4`).
 | `rt06_all_backends` / `rt06_full_run_log` | `g05_rt06_all_backends.mjs` → manifest | yes | no | regenerate per candidate |
 | release.yml digest | — | — | — | workflow file digest drifted (test 3169) |
 
-Eight source-bound historical inputs (must be regenerated/staged, not
+Eight source-bound historical inputs (regenerated/staged this campaign, not
 carried): `installer_payload_identity`, `mt06_cancellation`,
 `rt06_all_backends` (+ log), `witness_timeout`, `witness_malformed_result`,
 `witness_preservation_missing`, `witness_stale_lock`, `witness_live_lock`.
 
-**U06-02 remains OPEN.** No release/qualify/promote run executed; no hash
-rewritten; no attestation regenerated.
+**U06-02 CLOSED 2026-09-21** (campaign table above). The per-record gap rows below are superseded by that campaign; the gaps listed there (sha256 drift, unbound records, workflow digest drift) are resolved on the new files.
 
 ---
 
@@ -109,6 +121,8 @@ Finish U06-01/02/03 and their actual preflight before another final tag attempt.
 Current workflow facts: dispatching `release.yml` from main with the old tag still checks out that tag's source; re-running an old run does not load new committed workflow code; promotion requires a successful **push-event** Release verify at the tag's unchanged peeled SHA. Do not invent an RC-tag/version convention or weaken that contract to avoid reconciliation. An off-tag rehearsal is valid diagnostic work but not a substitute final producer run.
 
 Acceptance: applicable required CI, resolve, audit, quality, package, native lifecycle and qualification all succeed for the identified candidate; qualified bundle, inventory and every record agree. Record tag object, peeled SHA, run/attempt ID, workflow/harness identity and each artifact digest. New outputs get their own digests even when product source is unchanged.
+
+**U06-06 stays OPEN (2026-09-21 note).** The 2026-09-21 qualify campaign closed U06-02 off-tag: source `c0ae53874b54fda90616f2c8afc291ae002d32d9`, portable `e3a7804269ef9396355af3fca9a5cd448951b65587e2377a825fb354e8bdb04d`, setup `900ac1074a526156a51ea5f315daa61f0c1ff99f814e62bf63ef2e721438e58c`, MSI `f411280b889c89177b097657ef55146ab811c65a06bec7c853b6f1b10c490a73`, inventory `ac21f7ea5ea1e58b1549006647c8c5e86df3d406a555b2478ffd93a4eb4e1353`; producers were the local scripts (no CI run/attempt IDs; `release.yml` was not dispatched). Tag `v0.6.0` was not touched and still points at its old peeled SHA under `immutable-release-tags` (no bypass). A final publish of these bytes under `v0.6.0` would require retargeting a used immutable tag — a real conflict. The final tagged producer requires a new unused version name, which the owner has not authorized, and no tag push was performed. This off-tag qualify is not a substitute final U06-06.
 
 ---
 

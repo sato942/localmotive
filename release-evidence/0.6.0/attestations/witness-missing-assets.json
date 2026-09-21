@@ -1,17 +1,15 @@
-﻿{
-    "schema":  "localmotive.sandbox-lifecycle.v0",
-    "status":  "FAIL",
-    "stage":  "resolve-installers",
-    "error":  "installer assets are unavailable (fault simulation)",
-    "tag":  "v0.6.0",
-    "version":  "0.6.0",
-    "previousTag":  "v0.4.0",
-    "sourceRevision":  null,
-    "harnessRevision":  "e9a36b3aa075d72713d88af4cc74d64d561f12f8",
-    "startedAtUtc":  "2026-09-13T03:35:49.8301081Z",
-    "finishedAtUtc":  "2026-09-13T03:35:49.8817068Z",
-    "candidateDigests":  {
-
-                         },
-    "candidateInventorySha256":  null
+{
+  "schema": "localmotive.sandbox-lifecycle.v0",
+  "status": "FAIL",
+  "stage": "resolve-installers",
+  "error": "installer assets are unavailable (fault simulation)",
+  "tag": "v0.6.0",
+  "version": "0.6.0",
+  "previousTag": "v0.4.0",
+  "sourceRevision": null,
+  "harnessRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9",
+  "startedAtUtc": "2026-09-21T13:22:39.1976132Z",
+  "finishedAtUtc": "2026-09-21T13:22:39.2439140Z",
+  "candidateDigests": {},
+  "candidateInventorySha256": null
 }
