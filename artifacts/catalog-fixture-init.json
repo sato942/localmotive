@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0.0",
+  "verifier": "scripts/verify_060_catalog.mjs",
+  "phase": "init",
+  "status": "PASS",
+  "fixture_url": "http://127.0.0.1:55527/catalog.json",
+  "fixture_pubkey": "2769d254c86dcd81b1760de0b0156fe1742e9d55f316a58c15a89887691b57e8",
+  "fixture_models": [
+    "fixture/alpha-GGUF",
+    "fixture/beta-GGUF"
+  ]
+}

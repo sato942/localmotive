@@ -1,0 +1,31 @@
+   Compiling localmotive v0.6.0 (C:\Users\Mubarak\Documents\Projects\localmotive\src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.97s
+     Running unittests src\lib.rs (target\debug\deps\localmotive_lib-694be1a6828a4ecd.exe)
+
+running 2 tests
+test tune::tests::trial_std_dev_retains_sample_variance_across_scales ... FAILED
+test tune::tests::trial_std_dev_keeps_constant_extreme_samples_at_zero ... FAILED
+
+failures:
+
+---- tune::tests::trial_std_dev_retains_sample_variance_across_scales stdout ----
+
+thread 'tune::tests::trial_std_dev_retains_sample_variance_across_scales' (616004) panicked at src\tune.rs:1143:13:
+scale=100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000, normalized sample deviation=inf
+
+---- tune::tests::trial_std_dev_keeps_constant_extreme_samples_at_zero stdout ----
+
+thread 'tune::tests::trial_std_dev_keeps_constant_extreme_samples_at_zero' (640452) panicked at src\tune.rs:1131:13:
+assertion `left == right` failed
+  left: inf
+ right: 0.0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tune::tests::trial_std_dev_keeps_constant_extreme_samples_at_zero
+    tune::tests::trial_std_dev_retains_sample_variance_across_scales
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 605 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`

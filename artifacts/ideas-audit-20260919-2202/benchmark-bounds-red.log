@@ -1,0 +1,24 @@
+   Compiling localmotive v0.6.0 (C:\Users\Mubarak\Documents\Projects\localmotive\src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.86s
+     Running unittests src\lib.rs (target\debug\deps\localmotive_lib-694be1a6828a4ecd.exe)
+
+running 1 test
+test core::tests::benchmark_rejects_unbounded_tokens_before_any_http_request ... FAILED
+
+failures:
+
+---- core::tests::benchmark_rejects_unbounded_tokens_before_any_http_request stdout ----
+
+thread 'core::tests::benchmark_rejects_unbounded_tokens_before_any_http_request' (1278536) panicked at src\core.rs:2355:13:
+assertion `left == right` failed
+  left: "The local request failed: error sending request for url (http://127.0.0.1:62895/completion) (client error (SendRequest); connection error; An established connection was aborted by the software in your host machine. (os error 10053))"
+ right: "Tokens must be between 64 and 4096"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    core::tests::benchmark_rejects_unbounded_tokens_before_any_http_request
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 586 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `--lib`

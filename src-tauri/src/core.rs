@@ -1401,14 +1401,25 @@ fn validate_raw_extra_arguments(
         "--tools",
     ];
     const MANAGED_FLAG_ALIASES: &[&str] = &[
+        "-md",
+        "-mdl",
         "--batch-size",
         "--cache-type-k",
         "--cache-type-v",
+        "--chat-template-file",
         "--ctx-size",
+        "--draft-model",
         "--gpu-layers",
+        "--lora",
+        "--lora-scaled",
+        "--mmproj",
         "--model",
+        "--model-draft",
         "--n-gpu-layers",
         "--parallel",
+        "--spec-draft-model",
+        "--ssl-cert-file",
+        "--ssl-key-file",
         "--threads",
         "--threads-batch",
         "--ubatch-size",
@@ -1484,7 +1495,37 @@ pub fn parse_supported_flags(help: &str) -> Vec<String> {
 }
 
 pub fn manifest_safe_args(args: &[String]) -> Vec<String> {
+    redact_manifest_args(
+        args,
+        &[
+            "--model",
+            "-md",
+            "-mdl",
+            "--draft-model",
+            "--spec-draft-model",
+            "--lora",
+            "--lora-scaled",
+        ],
+    )
+}
+
+/// Match prior or current record encoding against raw current arguments only.
+pub(crate) fn manifest_args_match(recorded: &[String], current_raw: &[String]) -> bool {
+    let current = manifest_safe_args(current_raw);
+    if recorded == current {
+        return true;
+    }
+    let legacy = redact_manifest_args(current_raw, &[]);
+    recorded == legacy
+        && legacy.iter().zip(&current).all(|(old, new)| {
+            // A fingerprint-looking old path is ambiguous; require a fresh record.
+            old == new || !old.contains("sha256:")
+        })
+}
+
+fn redact_manifest_args(args: &[String], additional_path_flags: &[&str]) -> Vec<String> {
     const SECRET_VALUE_FLAGS: &[&str] = &["--api-key"];
+    // Preserve this prior writer format for read-only replay compatibility.
     const SENSITIVE_VALUE_FLAGS: &[&str] = &[
         "-m",
         "--model-draft",
@@ -1494,6 +1535,8 @@ pub fn manifest_safe_args(args: &[String]) -> Vec<String> {
         "--ssl-cert-file",
         "--chat-template-file",
     ];
+    let sensitive =
+        |flag: &str| SENSITIVE_VALUE_FLAGS.contains(&flag) || additional_path_flags.contains(&flag);
 
     let fingerprint = |value: &str| {
         let mut hasher = Sha256::new();
@@ -1519,14 +1562,14 @@ pub fn manifest_safe_args(args: &[String]) -> Vec<String> {
                 safe.push(format!("{flag}=[REDACTED]"));
                 continue;
             }
-            if SENSITIVE_VALUE_FLAGS.contains(&flag) {
+            if sensitive(flag) {
                 safe.push(format!("{flag}={}", fingerprint(value)));
                 continue;
             }
         }
         safe.push(argument.clone());
         redact_secret_next = SECRET_VALUE_FLAGS.contains(&argument.as_str());
-        redact_next = SENSITIVE_VALUE_FLAGS.contains(&argument.as_str());
+        redact_next = sensitive(argument);
     }
     safe
 }
@@ -1578,6 +1621,19 @@ pub fn validate_launch_arguments(
     capabilities: &RuntimeCapabilities,
 ) -> Result<LaunchArgumentValidation, String> {
     let raw_args = profile.build_args()?;
+    if profile.spec_type != "none" {
+        for method in profile.spec_type.split(',').map(str::trim) {
+            if !capabilities
+                .spec_types
+                .iter()
+                .any(|supported| supported == method)
+            {
+                return Err(format!(
+                    "Runtime help does not advertise speculative method: {method}"
+                ));
+            }
+        }
+    }
     let managed_end = raw_args
         .len()
         .checked_sub(profile.extra_args.len())
@@ -2202,10 +2258,12 @@ pub fn summarize_benchmark(
     if samples.iter().any(|v| !v.is_finite() || *v <= 0.0) {
         return Err("Benchmark samples must be positive finite values".into());
     }
-    let mean = samples.iter().sum::<f64>() / samples.len() as f64;
     samples.sort_by(|a, b| a.total_cmp(b));
+    let scale = samples[samples.len() - 1];
+    let mean =
+        samples.iter().map(|value| value / scale).sum::<f64>() / samples.len() as f64 * scale;
     let median = if samples.len().is_multiple_of(2) {
-        (samples[samples.len() / 2 - 1] + samples[samples.len() / 2]) / 2.0
+        samples[samples.len() / 2 - 1].midpoint(samples[samples.len() / 2])
     } else {
         samples[samples.len() / 2]
     };
@@ -2213,7 +2271,7 @@ pub fn summarize_benchmark(
         mean_tps: mean,
         median_tps: median,
         min_tps: samples[0],
-        max_tps: *samples.last().unwrap(),
+        max_tps: scale,
         samples,
         tokens,
         repeats,
@@ -2226,30 +2284,6 @@ pub fn parse_tps(body: &str) -> Result<f64, String> {
         .as_f64()
         .filter(|v| *v > 0.0)
         .ok_or_else(|| "llama-server response did not include generation throughput".into())
-}
-
-fn completion_request(
-    client: &crate::local_client::LocalHttpClient,
-    tokens: u32,
-) -> Result<f64, String> {
-    // The legacy benchmark path uses the centralized local client (audit
-    // MT-06): profile TLS/API-key configuration applies, responses are
-    // bounded, and the deadline covers the whole operation.
-    let body = serde_json::json!({
-        "prompt": "Write a detailed technical explanation of speculative decoding, including verification, acceptance, and performance tradeoffs.",
-        "n_predict": tokens,
-        "temperature": 0,
-        "seed": 42,
-        "ignore_eos": true,
-        "stream": false
-    });
-    let (status, bytes) = client.post_json("/completion", &body, LEGACY_BENCH_TIMEOUT)?;
-    if status != 200 {
-        return Err(format!("Benchmark request failed: HTTP {status}"));
-    }
-    let payload = String::from_utf8(bytes)
-        .map_err(|_| "Benchmark response was not valid UTF-8".to_string())?;
-    parse_tps(&payload)
 }
 
 fn completion_request_cancellable(
@@ -2274,24 +2308,19 @@ fn completion_request_cancellable(
         .map_err(|_| "Benchmark response was not valid UTF-8".to_string())?;
     parse_tps(&payload)
 }
-pub fn benchmark_server(
-    client: &crate::local_client::LocalHttpClient,
-    tokens: u32,
-    repeats: u16,
-) -> Result<BenchmarkSummary, String> {
-    if repeats == 0 || repeats > 10 {
+/// Reject invalid legacy workloads before client setup or generation.
+pub(crate) fn validate_benchmark_options(tokens: u32, repeats: u16) -> Result<(), String> {
+    if !(64..=4096).contains(&tokens) {
+        return Err("Tokens must be between 64 and 4096".into());
+    }
+    if !(1..=10).contains(&repeats) {
         return Err("Repeats must be between 1 and 10".into());
     }
-    completion_request(client, tokens.min(64))?;
-    let mut samples = Vec::new();
-    for _ in 0..repeats {
-        samples.push(completion_request(client, tokens)?);
-    }
-    summarize_benchmark(samples, tokens, repeats)
+    Ok(())
 }
 
 /// Whole-operation deadline for one legacy benchmark generation.
-const LEGACY_BENCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+pub(crate) const LEGACY_BENCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
 
 /// The cancellable benchmark the tuner uses: identical measurements, but
 /// every read waits in short slices and checks the cancellation flag, so a
@@ -2302,13 +2331,16 @@ pub fn benchmark_server_cancellable(
     repeats: u16,
     cancelled: &std::sync::atomic::AtomicBool,
 ) -> Result<BenchmarkSummary, String> {
-    if repeats == 0 || repeats > 10 {
-        return Err("Repeats must be between 1 and 10".into());
-    }
+    validate_benchmark_options(tokens, repeats)?;
     completion_request_cancellable(client, tokens.min(64), cancelled)?;
     let mut samples = Vec::new();
     for _ in 0..repeats {
         samples.push(completion_request_cancellable(client, tokens, cancelled)?);
+    }
+    // Final gate (review deleg_16c0e72a): a cancel that lands after the last
+    // response was accepted must not become a success record.
+    if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+        return Err("The local request was cancelled".into());
     }
     summarize_benchmark(samples, tokens, repeats)
 }
@@ -2317,6 +2349,95 @@ pub fn benchmark_server_cancellable(
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn benchmark_option_bounds_match_the_visible_workload_contract() {
+        for tokens in [64, 4096] {
+            for repeats in [1, 10] {
+                assert!(validate_benchmark_options(tokens, repeats).is_ok());
+            }
+        }
+        for tokens in [0, 63, 4097, u32::MAX] {
+            assert!(validate_benchmark_options(tokens, 1).is_err());
+        }
+        for repeats in [0, 11, u16::MAX] {
+            assert!(validate_benchmark_options(256, repeats).is_err());
+        }
+    }
+
+    #[test]
+    fn raw_file_arguments_cannot_bypass_empty_profile_fields() {
+        // Optional values must enter the same path and identity checks as
+        // configured values, rather than bypassing them through --flag=value.
+        for flag in [
+            "--lora",
+            "--lora-scaled",
+            "--mmproj",
+            "-md",
+            "-mdl",
+            "--draft-model",
+            "--model-draft",
+            "--spec-draft-model",
+            "--chat-template-file",
+            "--ssl-key-file",
+            "--ssl-cert-file",
+        ] {
+            let profile = LaunchProfile {
+                alias: "fixture".into(),
+                extra_args: vec![format!("{flag}=C:/not-selected/file.gguf")],
+                ..LaunchProfile::default()
+            };
+            let result = profile.build_args();
+            assert!(
+                result.is_err(),
+                "raw file flag bypassed the profile: {flag}"
+            );
+            let error = result.unwrap_err();
+            assert!(
+                error.contains("managed profile flag"),
+                "unexpected rejection for {flag}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn benchmark_rejects_unbounded_tokens_before_any_http_request() {
+        use std::io::{Read, Write};
+        use std::sync::Arc;
+        for tokens in [0, u32::MAX] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            listener.set_nonblocking(true).unwrap();
+            let stop = Arc::new(AtomicBool::new(false));
+            let stopped = stop.clone();
+            let server = std::thread::spawn(move || {
+                let mut requests = 0;
+                while !stopped.load(Ordering::Relaxed) {
+                    match listener.accept() {
+                        Ok((mut socket, _)) => {
+                            socket
+                                .set_read_timeout(Some(Duration::from_secs(2)))
+                                .unwrap();
+                            let _ = socket.read(&mut [0_u8; 4096]);
+                            requests += 1;
+                            let _ = socket.write_all(b"HTTP/1.1 503 Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(Duration::from_millis(1))
+                        }
+                        Err(error) => panic!("{error}"),
+                    }
+                }
+                requests
+            });
+            let client = crate::local_client::LocalHttpClient::plain("127.0.0.1", port).unwrap();
+            let result = benchmark_server_cancellable(&client, tokens, 1, &AtomicBool::new(false));
+            stop.store(true, Ordering::Relaxed);
+            let requests = server.join().unwrap();
+            assert_eq!(result.unwrap_err(), "Tokens must be between 64 and 4096");
+            assert_eq!(requests, 0, "Rejected input must not start even the warmup");
+        }
+    }
 
     #[test]
     fn launch_profile_input_bounds_reject_oversize_strings_and_splits() {
@@ -3581,6 +3702,26 @@ fn main() {
     }
 
     #[test]
+    fn launch_rejects_a_speculative_value_missing_from_the_inspected_help() {
+        let profile = LaunchProfile {
+            alias: "fixture".into(),
+            spec_type: "ngram-simple".into(),
+            ..LaunchProfile::default()
+        };
+        let mut capabilities = parse_capabilities("fixture", "--spec-type none");
+        capabilities.supported_flags = profile
+            .build_args()
+            .unwrap()
+            .into_iter()
+            .filter(|token| token.starts_with('-'))
+            .collect();
+        let error = validate_launch_arguments(&profile, &capabilities).unwrap_err();
+        assert!(error.contains("ngram-simple"), "{error}");
+        capabilities.spec_types.push("ngram-simple".into());
+        assert!(validate_launch_arguments(&profile, &capabilities).is_ok());
+    }
+
+    #[test]
     fn manifest_arguments_fingerprint_sensitive_path_values() {
         let first = vec![
             "--api-key-file".into(),
@@ -3602,6 +3743,122 @@ fn main() {
         assert!(!first_safe.join(" ").contains("keys.txt"));
         assert_ne!(first_safe, second_safe);
         assert_eq!(first_safe[2..], ["--ctx-size", "4096"]);
+    }
+
+    #[test]
+    fn manifest_arguments_fingerprint_all_managed_model_paths() {
+        for flag in [
+            "-m",
+            "--model",
+            "-md",
+            "-mdl",
+            "--draft-model",
+            "--model-draft",
+            "--spec-draft-model",
+            "--mmproj",
+            "--lora",
+            "--lora-scaled",
+        ] {
+            let path = r"C:\PrivateUser\adapter.gguf:0.5";
+            let expected = format!("sha256:{}", hex::encode(Sha256::digest(path.as_bytes())));
+            let separate = manifest_safe_args(&[flag.into(), path.into()]);
+            assert_eq!(separate, [flag.to_string(), expected.clone()], "{flag}");
+            let inline = manifest_safe_args(&[format!("{flag}={path}")]);
+            assert_eq!(inline, [format!("{flag}={expected}")], "{flag}");
+            assert!(!serde_json::to_string(&separate)
+                .unwrap()
+                .contains("PrivateUser"));
+        }
+    }
+
+    #[test]
+    fn manifest_arguments_do_not_expose_generated_draft_and_adapter_paths() {
+        let profile = LaunchProfile {
+            alias: "fixture".into(),
+            model: r"C:\PrivateUser\model.gguf".into(),
+            spec_type: "draft-simple".into(),
+            draft_model: Some(r"C:\PrivateUser\draft.gguf".into()),
+            lora: r"C:\PrivateUser\adapter.gguf".into(),
+            lora_scaled: r"C:\PrivateUser\scaled.gguf:0.5".into(),
+            ..LaunchProfile::default()
+        };
+        let raw = profile.build_args().unwrap();
+        assert!(raw.join(" ").contains("PrivateUser"));
+        let safe = manifest_safe_args(&raw);
+        assert!(!safe.join(" ").contains("PrivateUser"));
+        assert_eq!(safe.len(), raw.len());
+    }
+
+    #[test]
+    fn manifest_replay_matches_legacy_paths_but_not_changed_inputs() {
+        let raw: Vec<String> = vec![
+            "-m".into(),
+            "C:/private/model.gguf".into(),
+            "--lora-scaled".into(),
+            "C:/private/adapter.gguf:0.5".into(),
+            "--ctx-size".into(),
+            "4096".into(),
+        ];
+        let legacy = vec![
+            "-m".into(),
+            format!("sha256:{}", hex::encode(Sha256::digest(raw[1].as_bytes()))),
+            "--lora-scaled".into(),
+            raw[3].clone(),
+            "--ctx-size".into(),
+            "4096".into(),
+        ];
+        let current = manifest_safe_args(&raw);
+        assert!(manifest_args_match(&legacy, &raw));
+        assert!(manifest_args_match(&current, &raw));
+        for (index, value) in [
+            (1, "C:/other/model.gguf"),
+            (3, "C:/private/adapter.gguf:0.25"),
+            (3, "C:/other/adapter.gguf:0.5"),
+            (5, "8192"),
+        ] {
+            let mut changed = raw.clone();
+            changed[index] = value.into();
+            assert!(!manifest_args_match(&legacy, &changed));
+            assert!(!manifest_args_match(&current, &changed));
+        }
+        let mut reordered = raw.clone();
+        reordered.swap(0, 2);
+        assert!(!manifest_args_match(&legacy, &reordered));
+        assert!(!manifest_args_match(&current, &reordered));
+        assert!(!manifest_args_match(&current[..4], &raw));
+        let mut placeholder = current.clone();
+        placeholder[3] = "[REDACTED]".into();
+        assert!(!manifest_args_match(&placeholder, &raw));
+    }
+
+    #[test]
+    fn manifest_replay_handles_inline_paths_without_trusting_fingerprint_text() {
+        let raw = vec![
+            "--lora=C:/private/adapter.gguf".into(),
+            "--ctx-size=4096".into(),
+        ];
+        assert!(manifest_args_match(&raw, &raw));
+        assert!(manifest_args_match(&manifest_safe_args(&raw), &raw));
+        let other = vec![
+            "--lora=C:/other/adapter.gguf".into(),
+            "--ctx-size=4096".into(),
+        ];
+        assert!(!manifest_args_match(&raw, &other));
+        for inline in [false, true] {
+            let path = format!("sha256:{}", "a".repeat(64));
+            let raw = if inline {
+                vec![format!("--lora={path}")]
+            } else {
+                vec!["--lora".into(), path.clone()]
+            };
+            let safe = manifest_safe_args(&raw);
+            assert_ne!(safe, raw, "fingerprint-looking input is still a raw path");
+            assert!(manifest_args_match(&safe, &raw));
+            assert!(
+                !manifest_args_match(&raw, &raw),
+                "ambiguous legacy paths require a fresh record"
+            );
+        }
     }
 
     #[test]
@@ -3814,6 +4071,55 @@ MIIB
         let error = validate_launch_arguments(&profile, &capabilities).unwrap_err();
         assert!(error.contains("--ssl-cert-file"), "{error}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn benchmark_summary_keeps_extreme_finite_samples_numeric_in_json() {
+        // A runtime can return finite values whose sum overflows. Infinity
+        // serializes as null, which breaks the frontend's numeric contract.
+        for value in [f64::MAX, f64::from_bits(1)] {
+            for repeats in [2, 3, 10] {
+                let summary =
+                    summarize_benchmark(vec![value; repeats as usize], 256, repeats).unwrap();
+                let serialized = serde_json::to_value(&summary).unwrap();
+                for field in ["meanTps", "medianTps", "minTps", "maxTps"] {
+                    assert_eq!(serialized[field].as_f64(), Some(value), "{field}");
+                }
+                assert_eq!(summary.samples, vec![value; repeats as usize]);
+            }
+        }
+    }
+
+    #[test]
+    fn benchmark_summary_preserves_mixed_extreme_samples() {
+        let summary = summarize_benchmark(vec![1.6e308, 4e307, 1e308], 256, 3).unwrap();
+        assert!((summary.mean_tps / 1e308 - 1.0).abs() <= 4.0 * f64::EPSILON);
+        assert_eq!(summary.median_tps, 1e308);
+        assert_eq!(summary.samples, vec![4e307, 1e308, 1.6e308]);
+        assert_eq!(summary.min_tps, 4e307);
+        assert_eq!(summary.max_tps, 1.6e308);
+    }
+
+    #[test]
+    fn benchmark_summary_even_mixed_extremes_keep_the_expected_median() {
+        for (samples, expected) in [
+            (vec![f64::MAX, f64::MAX / 2.0], f64::MAX * 0.75),
+            (
+                vec![f64::from_bits(3), f64::from_bits(1)],
+                f64::from_bits(2),
+            ),
+        ] {
+            let summary = summarize_benchmark(samples, 256, 2).unwrap();
+            assert_eq!(summary.median_tps, expected);
+        }
+    }
+
+    #[test]
+    fn benchmark_summary_still_rejects_invalid_samples() {
+        assert!(summarize_benchmark(vec![], 256, 1).is_err());
+        for invalid in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(summarize_benchmark(vec![10.0, invalid], 256, 2).is_err());
+        }
     }
 
     #[test]

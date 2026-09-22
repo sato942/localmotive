@@ -1,29 +1,19 @@
 // @vitest-environment jsdom
-//
-// Component tests for the calibration anchor flow (audit MT-08): the panel
-// must create anchors from the persisted run identity via the backend
-// command, show the unique-run count, and keep the build gate closed until
-// three distinct runs exist. The IPC boundary is mocked; nothing else is.
+// Component regression for the reduced evidence panel. The panel keeps
+// benchmark, preflight, and replay controls while retired controls stay absent.
+// The IPC boundary is mocked; nothing else is.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { CalibrationAnchor, CalibrationRecords, LaunchProfile, LogicalModel } from "./model";
+import type { LaunchProfile, LogicalModel } from "./model";
 import { V03EvidencePanel } from "./V03EvidencePanel";
 
 type Handler = (args: unknown) => unknown | Promise<unknown>;
 
-const invokeCalls: Array<{ command: string; args: Record<string, unknown> }> = [];
 const handlers = new Map<string, Handler>();
-
-const saveBehavior = { save: () => Promise.resolve(null as unknown) };
-vi.mock("@tauri-apps/plugin-dialog", () => ({
-  save: () => saveBehavior.save(),
-}));
-vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: () => Promise.resolve() }));
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (command: string, args?: unknown) => {
-    invokeCalls.push({ command, args: (args ?? {}) as Record<string, unknown> });
     const handler = handlers.get(command);
     if (handler) {
       try {
@@ -79,19 +69,6 @@ const benchmarkResult = {
   failure: null,
 };
 
-function anchorFixture(sourceRunId: string, estimate: number): CalibrationAnchor {
-  return {
-    compatibilityKey: KEY,
-    estimatedValue: estimate,
-    measuredValue: 50,
-    observedAtMs: 1234,
-    sourceRunId,
-    estimator: "manual-estimate.v1",
-    snapshotSchemaVersion: "localmotive.execution-snapshot.v2",
-    unknownIdentities: [],
-  };
-}
-
 let container: HTMLDivElement;
 let root: Root;
 
@@ -118,13 +95,11 @@ async function flush() {
 }
 
 beforeEach(() => {
-  invokeCalls.length = 0;
   handlers.clear();
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
 
-  handlers.set("load_calibration_records", () => ({ anchors: [], models: [] }));
   handlers.set("benchmark_v2", () => benchmarkResult);
 });
 
@@ -161,94 +136,37 @@ async function runMeasuredBenchmark() {
   await flush();
 }
 
-function setEstimate(value: string) {
-  const label = Array.from(container.querySelectorAll("label")).find((candidate) =>
-    candidate.textContent?.includes("Uncalibrated estimate"),
-  );
-  const input = label?.querySelector<HTMLInputElement>('input[type="number"]')
-    ?? container.querySelector<HTMLInputElement>('input[type="number"]');
-  if (!input) throw new Error("estimate input not found");
-  const setter = Object.getOwnPropertyDescriptor(
-    window.HTMLInputElement.prototype,
-    "value",
-  )?.set;
-  setter?.call(input, value);
-  input.dispatchEvent(new Event("input", { bubbles: true }));
-}
-
-describe("calibration anchors (MT-08)", () => {
-  it("creates anchors from the persisted run and shows the unique-run count", async () => {
-    let stored: CalibrationAnchor[] = [];
-    handlers.set("add_benchmark_calibration_anchor", (args) => {
-      const request = args as { manifestPath: string; estimatedValue: number; estimator: string };
-      // Worst case: the record list contains three anchors that all share
-      // one source run. The panel must still count one unique run.
-      stored = [
-        anchorFixture("run-1", request.estimatedValue),
-        anchorFixture("run-1", request.estimatedValue + 1),
-        anchorFixture("run-1", request.estimatedValue + 2),
-      ];
-      return { anchors: stored, models: [] };
-    });
-
-    await runMeasuredBenchmark();
-    setEstimate("120");
+describe("reduced evidence panel", () => {
+  it("exposes benchmark, preflight, and replay without retired controls", async () => {
+    renderPanel();
     await flush();
 
-    for (let click = 0; click < 3; click += 1) {
-      act(() => clickByText("Add anchor"));
-      await flush();
+    for (const retained of ["Run v2 benchmark", "Run preflight", "Replay manifest"]) {
+      expect(buttonByText(retained), `${retained} must remain available`).toBeTruthy();
     }
 
-    const adds = invokeCalls.filter((call) => call.command === "add_benchmark_calibration_anchor");
-    expect(adds).toHaveLength(3);
-    for (const call of adds) {
-      expect(call.args.manifestPath).toBe(MANIFEST_PATH);
-      expect(call.args.estimator).toBe("manual-estimate.v1");
-      expect(call.args.estimatedValue).toBe(120);
+    const buttons = Array.from(container.querySelectorAll("button"), (button) => button.textContent?.trim() ?? "");
+    for (const retired of [
+      "Run quality suite",
+      "Rank session results",
+      "Add anchor",
+      "Build calibration",
+      "Apply",
+      "Clear local history",
+      "Validate import",
+      "Mark verified",
+      "Flag",
+      "Reject",
+      "Choose export file",
+    ]) {
+      expect(buttons, `${retired} must be removed`).not.toContain(retired);
     }
-    expect(container.textContent).toContain("1 unique run");
-    expect(buttonByText("Build calibration").disabled).toBe(true);
+    expect(container.querySelector("textarea.evidence-json-input")).toBeNull();
+    expect(container.textContent).not.toMatch(/Quality and Pareto ranking|Local calibration and external evidence|Privacy-reviewed local export/);
   });
+});
 
-  it("enables the build gate only for three distinct runs", async () => {
-    const threeRuns: CalibrationRecords = {
-      anchors: [
-        anchorFixture("run-1", 100),
-        anchorFixture("run-1", 101),
-        anchorFixture("run-2", 110),
-        anchorFixture("run-3", 120),
-      ],
-      models: [],
-    };
-    handlers.set("add_benchmark_calibration_anchor", () => threeRuns);
-    handlers.set("build_calibration_model", () => ({
-      compatibilityKey: KEY,
-      factor: 1.0,
-      residualStandardDeviation: 0.05,
-      anchorCount: 3,
-      createdAtMs: 10,
-      expiresAtMs: 100,
-    }));
-
-    await runMeasuredBenchmark();
-    setEstimate("100");
-    await flush();
-    act(() => clickByText("Add anchor"));
-    await flush();
-
-    expect(container.textContent).toContain("3 unique runs");
-    const build = buttonByText("Build calibration");
-    expect(build.disabled).toBe(false);
-    act(() => clickByText("Build calibration"));
-    await flush();
-
-    const buildCall = invokeCalls.find((call) => call.command === "build_calibration_model");
-    expect(buildCall).toBeTruthy();
-    const sent = (buildCall?.args.anchors ?? []) as CalibrationAnchor[];
-    expect(sent.map((anchor) => anchor.sourceRunId)).toEqual(["run-1", "run-1", "run-2", "run-3"]);
-  });
-
+describe("retained evidence metrics", () => {
   it("labels sample counts, derived TTFT and working-set scope honestly (S-12)", async () => {
     // A five-trial-style fixture: nearest-rank p95 with a small sample base
     // is the sample maximum, derived TTFT is not a streamed observation, and
@@ -280,113 +198,5 @@ describe("calibration anchors (MT-08)", () => {
     expect(rendered).toContain("2/2 sampled");
     expect(rendered).toContain("Controlled greedy microbenchmark: one fixed prompt.");
     expect(rendered).toContain("excludes dedicated GPU memory");
-  });
-
-  it("reports quarantined records and clears the history explicitly (S-16)", async () => {
-    const records = {
-      anchors: [anchorFixture("run-1", 50)],
-      models: [],
-      problems: ["C:/cal/anchors/corrupt.json: Could not parse calibration record; moved to quarantine"],
-    };
-    handlers.set("load_calibration_records", () => records);
-    handlers.set("clear_calibration_history", () => 3);
-
-    await runMeasuredBenchmark();
-    const rendered = container.textContent ?? "";
-    expect(rendered).toContain("could not be read");
-    expect(rendered).toContain("quarantined");
-    expect(rendered).toContain("the rest of the history loaded normally");
-
-    const button = [...container.querySelectorAll("button")].find((candidate) =>
-      (candidate.textContent ?? "").includes("Clear local history"),
-    );
-    expect(button, "the explicit cleanup action must exist").toBeTruthy();
-    await act(async () => {
-      button!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    await flush();
-    const call = invokeCalls.find((entry) => entry.command === "clear_calibration_history");
-    expect(call).toBeTruthy();
-    expect(container.textContent ?? "").toContain("Removed 3 stored calibration records");
-    const reloads = invokeCalls.filter((entry) => entry.command === "load_calibration_records");
-    expect(reloads.length).toBeGreaterThanOrEqual(2);
-  });
-
-  it("an imported bundle arrives pending and labelled as imported (S-17)", async () => {
-    // The backend forces state=pending and provenance=importedExternal; the
-    // mock mirrors that contract so the interface wording is exercised.
-    handlers.set("import_external_evidence", (args: unknown) => {
-      const bundle = (args as { bundle: Record<string, unknown> }).bundle;
-      return {
-        ...bundle,
-        state: "pending",
-        provenance: "importedExternal",
-      };
-    });
-
-    await runMeasuredBenchmark();
-    const textarea = container.querySelector<HTMLTextAreaElement>(".evidence-json-input");
-    expect(textarea, "the external evidence input must render").toBeTruthy();
-    await act(async () => {
-      const proto = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!;
-      proto.set!.call(
-        textarea,
-        JSON.stringify({
-          schema: 1,
-          source: "synthetic",
-          compatibilityKey: KEY,
-          state: "verified",
-          records: [
-            { metric: "decodeTps", value: 42, unit: "tokensPerSecond", observedAtMs: 42 },
-          ],
-        }),
-      );
-      textarea!.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    const validate = [...container.querySelectorAll("button")].find((candidate) =>
-      (candidate.textContent ?? "").includes("Validate import"),
-    );
-    expect(validate).toBeTruthy();
-    await act(async () => {
-      validate!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    await flush();
-
-    const rendered = container.textContent ?? "";
-    expect(rendered).toContain("Imported state: pending");
-    expect(rendered).toContain("Provenance: importedExternal");
-    expect(rendered).toContain("not a local rerun");
-    expect(rendered).toContain("stays out of ranking and calibration");
-  });
-
-  it("a failed export save keeps the measured result and offers recovery (S-22)", async () => {
-    saveBehavior.save = () =>
-      Promise.reject({ code: "dialog-failed", message: "no dialog service" });
-    await runMeasuredBenchmark();
-    // Confirm the omissions so the export path is enabled.
-    const confirm = container.querySelector<HTMLInputElement>(
-      'input[type="checkbox"]',
-    );
-    if (confirm && !confirm.checked) {
-      await act(async () => {
-        confirm.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      });
-      await flush();
-    }
-    const exportButton = [...container.querySelectorAll("button")].find((button) =>
-      (button.textContent ?? "").toLowerCase().includes("export"),
-    );
-    expect(exportButton, "the export action must exist once a result is measured").toBeTruthy();
-    await act(async () => {
-      exportButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    await flush();
-    const after = container.textContent ?? "";
-    // The rejection is presented as its actionable message, and the measured
-    // result is still on screen — only the export can be retried.
-    expect(after).toContain("no dialog service");
-    expect(after, "the measured result survives a failed secondary save").toContain(
-      "Decode throughput",
-    );
   });
 });

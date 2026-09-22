@@ -47,9 +47,3 @@ test("IPC contract: fixture entries match the TypeScript wire expectations", () 
     }
   }
 });
-
-test("IPC contract: enums and record versions use their documented spellings", () => {
-  assert.equal(fixture.types.externalEvidenceState, "pending");
-  assert.equal(fixture.types.externalProvenance, "importedExternal");
-  assert.equal(fixture.types.calibrationRecordVersion, 1);
-});

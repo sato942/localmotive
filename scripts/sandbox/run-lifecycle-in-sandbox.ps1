@@ -124,15 +124,30 @@ function Invoke-CdpProbe([int]$Port, [int]$TimeoutSeconds = 60) {
   return (Invoke-CdpEvaluate $Port $expression $TimeoutSeconds)
 }
 
+function Initialize-LifecycleBrowserDebugging([bool]$Elevated) {
+  if (-not $Elevated) { return }
+  # Elevated WebView2 hosts ignore environment/HKCU browser arguments.
+  # This documented override exists only inside the owned disposable guest.
+  $policy = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
+  if (Get-ItemProperty -LiteralPath $policy -Name 'Localmotive.exe' -ErrorAction SilentlyContinue) {
+    throw 'A Localmotive browser override already exists. Use a clean lifecycle guest; do not overwrite its policy.'
+  }
+  if (-not (Test-Path -LiteralPath $policy)) { New-Item -Path $policy -Force -ErrorAction Stop | Out-Null }
+  New-ItemProperty -Path $policy -Name 'Localmotive.exe' -PropertyType String -Value '--remote-debugging-port=10093' -ErrorAction Stop | Out-Null
+  Log 'Configured the application-scoped machine browser argument for the elevated guest; Sandbox destruction removes it'
+}
+
 function Use-SettingsSession($exe, [string]$label, [scriptblock]$Body) {
-  # F9-05: one bounded launch of an installed build with the WebView2 debugger,
-  # used to seed or read the application's own persisted settings.
+  # Both installed builds use the storage owned by the preservation scenario.
   Log "$label settings session: $exe"
   $port = 10093
-  $dataRoot = Join-Path $Shared 'settings-session-data'
+  $dataRoot = $script:SettingsDataRoot
   $profile = Join-Path $dataRoot 'webview-profile'
-  Remove-Item -LiteralPath $dataRoot -Recurse -Force -ErrorAction SilentlyContinue
-  New-Item -ItemType Directory -Force -Path $profile | Out-Null
+  if (-not (Test-Path -LiteralPath $profile -PathType Container)) { throw 'Settings scenario storage was not initialized' }
+  $savedFolder = $env:WEBVIEW2_USER_DATA_FOLDER
+  $savedArguments = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
+  $p = $null
+  $sessionError = $null
   $env:WEBVIEW2_USER_DATA_FOLDER = $dataRoot
   $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$port --user-data-dir=$profile"
   try {
@@ -151,11 +166,30 @@ function Use-SettingsSession($exe, [string]$label, [scriptblock]$Body) {
       Start-Sleep -Milliseconds 500
     }
     & $Body $port
-    Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 2
+  } catch {
+    $sessionError = $_
+    throw
   } finally {
-    Remove-Item Env:\WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS -ErrorAction SilentlyContinue
-    Remove-Item Env:\WEBVIEW2_USER_DATA_FOLDER -ErrorAction SilentlyContinue
+    try {
+      if ($p -and -not $p.HasExited) {
+        # Close the window normally so WebView2 commits its storage.
+        $closed = $false
+        $closeError = $null
+        try { $closed = $p.CloseMainWindow() -and $p.WaitForExit(15000) }
+        catch { $closeError = $_ }
+        if (-not $closed -and -not $p.HasExited) { $p.Kill() }
+        if (-not $p.WaitForExit(15000)) { throw "Owned settings process $($p.Id) did not exit" }
+        if ($closeError) { throw $closeError }
+      }
+    } catch {
+      if ($sessionError) { throw "$($sessionError.Exception.Message) Settings cleanup also failed: $($_.Exception.Message)" } else { throw }
+    } finally {
+      try { if ($p) { $p.Dispose() } }
+      finally {
+        $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $savedArguments
+        $env:WEBVIEW2_USER_DATA_FOLDER = $savedFolder
+      }
+    }
   }
 }
 
@@ -201,11 +235,12 @@ function Collect-SettingsReads([string]$exe) {
 }
 
 function Launch-Smoke($exe, [string]$label) {
-  # One bounded launch that checks BOTH survival and function: the process
-  # must live 8 seconds AND the rendered app must answer a CDP probe.
+  # Keep the survival smoke distinct from the best-effort rendered-shell probe.
   Log "$label launch probe: $exe"
   $port = 10093
   $script:lastProbe = $null
+  $savedArguments = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
+  $p = $null
   $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$port"
   try {
     $p = Start-Process -FilePath $exe -PassThru
@@ -225,10 +260,16 @@ function Launch-Smoke($exe, [string]$label) {
       Log "CDP functional probe unavailable in this sandbox: $($_.Exception.Message)"
       $script:lastProbe = [ordered]@{ available = $false; diagnostic = $_.Exception.Message }
     }
-    Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 2
   } finally {
-    Remove-Item Env:\WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS -ErrorAction SilentlyContinue
+    try {
+      if ($p -and -not $p.HasExited) {
+        $p.Kill()
+        if (-not $p.WaitForExit(15000)) { throw "Owned launch process $($p.Id) did not exit" }
+      }
+    } finally {
+      try { if ($p) { $p.Dispose() } }
+      finally { $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $savedArguments }
+    }
   }
   if ($script:lastProbe.available -ne $false) {
     if ($script:lastProbe.navButtons -lt 3 -or -not $script:lastProbe.hasLocalmotive -or $script:lastProbe.bodyChars -lt 40) {
@@ -318,11 +359,14 @@ function Uninstall-Msi($msi) {
   Start-Sleep -Seconds 2
 }
 
+$script:SettingsDataRoot = $null
 try {
   New-Item -ItemType Directory -Force -Path $Shared | Out-Null
   if (Test-Path $ResultPath) { Remove-Item $ResultPath -Force }
   "" | Set-Content $Log -Encoding UTF8
   Log "Sandbox lifecycle starting"
+  $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+  Initialize-LifecycleBrowserDebugging ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))
 
   $metaPath = Join-Path $Shared "meta.json"
   if (-not (Test-Path $metaPath)) { Fail "meta.json missing" }
@@ -399,6 +443,10 @@ try {
     # those values rather than a marker.
     $preservationFlavor = if ($meta.PSObject.Properties.Name -contains "preservation") { [string]$meta.preservation } else { "mirror" }
     if ($preservationFlavor -eq "cache") {
+      # Initialize once on guest-local storage, never in the mapped share.
+      $script:SettingsDataRoot = Join-Path $env:TEMP ('lm-settings-session-' + [guid]::NewGuid().ToString('N'))
+      New-Item -ItemType Directory -Path $script:SettingsDataRoot -ErrorAction Stop | Out-Null
+      New-Item -ItemType Directory -Path (Join-Path $script:SettingsDataRoot 'webview-profile') -ErrorAction Stop | Out-Null
       Seed-SettingsV041 $oldExe
     } else {
       Launch-Smoke $oldExe "Preservation baseline"
@@ -431,11 +479,13 @@ try {
     } elseif (-not (Test-Path $mirrorAfter)) {
       Fail "Catalog mirror missing after upgrade: preserved data was deleted"
     }
-    Copy-Item $mirrorAfter (Join-Path $Shared "collected-mirror.sqlite") -Force
-    Copy-Item $canaryAfter (Join-Path $Shared "collected-userdata.txt") -Force
+    if ($preservationFlavor -eq "mirror") {
+      Copy-Item $mirrorAfter (Join-Path $Shared "collected-mirror.sqlite") -Force -ErrorAction Stop
+    }
+    Copy-Item $canaryAfter (Join-Path $Shared "collected-userdata.txt") -Force -ErrorAction Stop
     $cacheCollect = Join-Path $userData "catalog-cache.json"
     if (Test-Path $cacheCollect) {
-      Copy-Item $cacheCollect (Join-Path $Shared "collected-catalog-cache.json") -Force
+      Copy-Item $cacheCollect (Join-Path $Shared "collected-catalog-cache.json") -Force -ErrorAction Stop
     }
     Uninstall-Nsis
     if (Find-AppExe) { Fail "App still present after preservation uninstall" }
@@ -491,9 +541,11 @@ try {
     coverageNote = "NSIS and MSI fresh install/launch/uninstall and the NSIS update path with executable version and cross-path digest evidence. Eight-second process survival is a startup smoke, not full functional verification. The preservation step (staged via preserve.json) plants, per flavor, the released baseline's REAL persistence after the previous install - the v0.5.0-schema catalog mirror with a user override row, or the v0.4.1-era catalog cache record - and requires it to survive the upgrade and a launch smoke. The collected files are verified on the host (R07): the user override rows must survive with their ownership flags and sentinel values (mirror flavor), or the cache record must remain present and parseable (cache flavor)."""
     steps = $steps
   }
-  ($doc | ConvertTo-Json -Depth 6) | Set-Content -Path $ResultPath -Encoding UTF8
-  Log "ALL PASS"
-  exit 0
 } catch {
   Fail $_.Exception.Message
 }
+# The host destroys this owned Sandbox after the result, including guest TEMP.
+# Do not recursively delete a guest-controlled path that can contain junctions.
+($doc | ConvertTo-Json -Depth 6) | Set-Content -Path $ResultPath -Encoding UTF8
+Log "ALL PASS"
+exit 0

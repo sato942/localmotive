@@ -1,0 +1,4 @@
+{
+  "body": "{\n  \"schemaVersion\": 1,\n  \"updated\": \"2024-12-01\",\n  \"source\": \"https://github.com/sato942/localmotive/blob/main/catalog/catalog.json\",\n  \"note\": \"Curated list of GGUF builds.\",\n  \"models\": [\n    {\n      \"id\": \"fixture/v041-node\",\n      \"repo\": \"fixture/v041-node\",\n      \"family\": \"fixture\",\n      \"parameters\": \"8B\",\n      \"publisher\": \"fixture\",\n      \"summary\": \"v0.4.1-era cache record staged for the upgrade\",\n      \"tags\": [\n        \"fixture\"\n      ],\n      \"gated\": false,\n      \"downloads\": 0,\n      \"likes\": 0,\n      \"files\": [\n        {\n          \"quant\": \"Q4_K_M\",\n          \"filename\": \"fixture-v041-Q4_K_M.gguf\",\n          \"sizeBytes\": 1024,\n          \"sha256\": \"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\n          \"revision\": \"main\"\n        }\n      ]\n    }\n  ]\n}",
+  "etag": null
+}

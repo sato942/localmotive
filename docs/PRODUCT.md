@@ -18,7 +18,7 @@ Windows users running local GGUF language models on CPU, NVIDIA, AMD, or Intel h
 
 ## Product Purpose
 
-Localmotive turns a heterogeneous GGUF collection into validated logical models and repeatable launch profiles. Success means specialized paths—baseline, n-gram, MTP, DFlash, DSpark, EAGLE-3 and multimodal companions—remain explicit, inspectable, and benchmarkable rather than hidden behind generic presets.
+Localmotive organizes a GGUF collection into logical models and repeatable launch profiles. Baseline, n-gram, MTP, DFlash, DSpark, EAGLE-3 and multimodal settings remain explicit. Availability depends on the inspected runtime. Filename recognition does not prove target/companion compatibility or successful inference.
 
 ## Positioning
 
@@ -54,7 +54,7 @@ The built-in llama-server WebUI remains the chat surface after the control plane
 - Supervise only processes started by the app; never kill unrelated processes.
 - Bind to loopback by default and support API-key configuration.
 - Benchmark deterministic workloads with warmup and repeated measurements; retain exact commands and distinguish near ties.
-- Never infer an unsupported runtime flag from a filename; runtime `--help` is authoritative and unsupported profile flags are omitted from the exact command.
+- Use the selected runtime's `--help` as the flag and speculative-method authority. Unsupported extra arguments are recorded and omitted. Missing managed profile flags or unsupported speculative values block launch.
 
 ## Evidence on Hand
 

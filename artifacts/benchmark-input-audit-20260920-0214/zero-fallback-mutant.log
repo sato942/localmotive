@@ -1,0 +1,51 @@
+
+ RUN  v4.1.11 C:/Users/Mubarak/Documents/Projects/localmotive
+
+ ❯ src/V03EvidencePanel.cancel.test.tsx (29 tests | 1 failed | 28 skipped) 127ms
+     × does not treat a blank warmup as permission to skip warmup 126ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/V03EvidencePanel.cancel.test.tsx > benchmark workload editing > does not treat a blank warmup as permission to skip warmup
+AssertionError: expected "vi.fn()" to not be called at all, but actually been called 1 times
+
+Received:
+
+  1st vi.fn() call:
+
+    Array [
+      Object {
+        "workload": Object {
+          "cacheMode": "warm",
+          "concurrency": 1,
+          "generationTokens": 256,
+          "id": "technical-explanation-v1",
+          "promptTokens": 512,
+          "seed": 42,
+          "stream": false,
+          "timeoutMs": 600000,
+          "trials": 5,
+          "warmups": 0,
+        },
+      },
+    ]
+
+
+Number of calls: 1
+
+ ❯ src/V03EvidencePanel.cancel.test.tsx:246:27
+    244|     act(() => clickByText("Run v2 benchmark"));
+    245|     await flush();
+    246|     expect(benchmark).not.toHaveBeenCalled();
+       |                           ^
+    247|     expect(runButton().disabled).toBe(true);
+    248|     expect(container.querySelector('[aria-label="Workload validation e…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 28 skipped (29)
+   Start at  02:26:46
+   Duration  1.30s (transform 108ms, setup 0ms, import 170ms, tests 127ms, environment 855ms)
+

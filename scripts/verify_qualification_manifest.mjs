@@ -126,7 +126,7 @@ function countChecks(doc) {
 /**
  * @returns {{failures: string[], lines: string[]}}
  */
-export function verifyQualificationManifest({ manifestPath, root = ".", expectedSourceRevision = null }) {
+export function verifyQualificationManifest({ manifestPath, root = ".", workflowRoot = root, expectedSourceRevision = null }) {
   const failures = [];
   const lines = [];
   const resolved = resolve(root, manifestPath);
@@ -260,7 +260,7 @@ export function verifyQualificationManifest({ manifestPath, root = ".", expected
     if (!workflowPath) {
       failures.push(`workflow path is not a repository-relative path: ${workflow.path}`);
     } else {
-      const live = readEntry(root, workflowPath);
+      const live = readEntry(workflowRoot, workflowPath);
       if (!live.exists) {
         failures.push(`workflow file missing: ${workflowPath}`);
       } else if (live.sha256 !== workflow.sha256 && live.sha256_lf !== workflow.sha256) {

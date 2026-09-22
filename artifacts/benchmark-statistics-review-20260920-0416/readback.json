@@ -1,0 +1,90 @@
+{
+  "scope": "Statistics review reconciliation and test-only follow-up; not release qualification",
+  "recordedAt": "2026-09-20T04:33:11.063987+04:00",
+  "source": "bdb3c14c9170f0342ba0384738e2ffd23062970d",
+  "sourceDirty": true,
+  "currentFileSha256": {
+    "src-tauri/src/core.rs": "001e4dad326866ca31a90a987a7bbfc57da98d707b5cbb0104f9ee44e96b2981",
+    "src-tauri/src/measurement.rs": "2fc52828743f45fffd8da4d0b27a85d23c759dfa3b3e0648dc8e8eae06adadd1",
+    "src-tauri/src/tune.rs": "ff6b7297f6137987de0f97c2a1f358c8ed985447f354634df436ac7818c40c91",
+    "TODO-0.6.md": "846f5d125dbab2f8b5ebf41e95dda2a50cfe9c8447ccc44cf01c893786b877e3",
+    "agents_feedback.md": "160464070a874b9fcaebf43ff38fe11432ceed1e26b311177c244d41e7666e62"
+  },
+  "reviewedProductionSha256": {
+    "src-tauri/src/core.rs": "a8d383d4bf7100d08d84be6be7a21a4448e35d097a9ae7bdefbcac84c730aa98",
+    "src-tauri/src/measurement.rs": "981acb680a220a55ea71bf6d43c8d0b23fbfbcc2c6e2c25dbe26571e6f4174af",
+    "src-tauri/src/tune.rs": "47bd72584773ccc68948deebd7a81fb46ce0c3118ac140e55d5fea9d824fa434"
+  },
+  "testOnlyDiffSha256": "108e021ebfed2bdfd41badebb260b33bc3de6637ab86d94aba2ac29da04d956a",
+  "checks": {
+    "sourceReviews": {
+      "deleg_5887e5e5": {
+        "status": "PASS",
+        "verdictSha256": "2c925f6f19eaef80b1969139ec608b04f431d9526107e17fa5721839337c601a",
+        "scope": "Original candidate source review; executable checks recorded separately"
+      },
+      "deleg_91977f18": {
+        "status": "PASS",
+        "verdictSha256": "4230604c730a32e908a90310010c1922340bd8f34273b2f56390778e85419073",
+        "scope": "Original candidate source review; executable checks recorded separately"
+      }
+    },
+    "reviewedProductionUnchanged": "PASS",
+    "mutationsDetectedAndRestored": "PASS",
+    "rust": {
+      "status": "PASS",
+      "passed": 607,
+      "failed": 0,
+      "ignored": 6
+    },
+    "releaseModeTests": {
+      "status": "PASS",
+      "passed": 13
+    },
+    "protectedFiles": {
+      "status": "PASS",
+      "count": 438
+    },
+    "agentsMdUnchanged": "PASS",
+    "retainedFrontendEvidence": {
+      "status": "PASS",
+      "scriptTests": 274,
+      "vitestTests": 276
+    },
+    "retainedNativeEvidence": {
+      "status": "PASS",
+      "checks": 23
+    },
+    "artifactBytesUnchanged": "PASS",
+    "installerLifecycle": "UNKNOWN: no new candidate lifecycle run",
+    "releaseQualification": "UNKNOWN: no clean-checkout qualification",
+    "legacyOperationOwnership": "UNKNOWN: source finding only"
+  },
+  "artifacts": [
+    {
+      "path": "C:\\Users\\Mubarak\\Documents\\Projects\\localmotive\\src-tauri\\target\\release\\localmotive.exe",
+      "bytes": 20165120,
+      "sha256": "14e741cbe0acf273cde9ff7020479a7a97f70fa71af3b1b0219092eb63ff8b48",
+      "signature": "NotSigned",
+      "version": "0.6.0"
+    },
+    {
+      "path": "C:\\Users\\Mubarak\\Documents\\Projects\\localmotive\\src-tauri\\target\\release\\bundle\\msi\\Localmotive_0.6.0_x64_en-US.msi",
+      "bytes": 8798208,
+      "sha256": "73573e780edce911995ee24538c9b8bb97aa7480925518479cae2740ed99de30",
+      "signature": "NotSigned",
+      "version": "0.6.0"
+    },
+    {
+      "path": "C:\\Users\\Mubarak\\Documents\\Projects\\localmotive\\src-tauri\\target\\release\\bundle\\nsis\\Localmotive_0.6.0_x64-setup.exe",
+      "bytes": 5130265,
+      "sha256": "bb37bfaf33ba58dee3d32b3ee9924c645b26ef4ff929e6ff8e1a9e678422eee2",
+      "signature": "NotSigned",
+      "version": "0.6.0"
+    }
+  ],
+  "outstandingDelegations": [],
+  "outstandingBoundedProcesses": [],
+  "verificationStatus": "PARTIALLY VERIFIED",
+  "publicationAttempted": false
+}

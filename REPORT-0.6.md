@@ -38,9 +38,11 @@ The statuses below distinguish implementation, verification and closure
 explicitly. An item is "fully closed" only when both its implementation and its
 verification boxes are checked with recorded evidence.
 
-- Findings (72): **63 fully closed**; 4 environment-blocked where the required
-  hardware/environment does not exist on this host (RT-04, RT-06, DC-12,
-  MT-07); 4 owner-gated governance findings (GH-01, GH-02, GH-03, GH-06);
+- Findings (72): **63 fully closed**; 3 closed-deferred-far-future 2026-09-21
+  (owner scope: RT-06, DC-12, MT-07.V2 live portability matrix — not executed,
+  not PASS, out of 0.6 scope);
+  1 environment-blocked where the required
+  hardware/environment does not exist on this host (RT-04); 4 owner-gated governance findings (GH-01, GH-02, GH-03, GH-06);
   FE-05 is implementation- and verification-complete but is held open at
   finding level for the release decision on its stated completion criteria
   (owner directive of 2026-09-12).
@@ -494,15 +496,15 @@ Live recheck 2026-09-12: `gh api repos/sato942/localmotive/rulesets` returns
 lists `v0.4.0`, `v0.4.1`, `v0.5.0` only. No owner gate has been granted since
 the 2026-09-11 package.
 
-### 6.2 Environment-blocked deferrals (six-field register rows in the review)
+### 6.2 Environment-blocked and far-future deferrals (six-field register rows in the review)
 
 | rows | specific missing prerequisite |
 | --- | --- |
-| RT-06.V3 | a large multi-backend library installed on a representative host (this host has one verified CUDA backend) |
-| DC-12.V3 | a controlled OS-crash/power-loss harness (ordinary process-kill coverage exists: vitems_c D7, FE-16 v3) |
-| MT-07.V2 | CPU-only and changed-CPU machines for the portability matrix (fit-reduced rows need the same) |
+| RT-06.V3 | CLOSED-DEFERRED-FAR-FUTURE 2026-09-21 (owner scope; not executed, not PASS): a large multi-backend library installed on a representative host (this host has one verified CUDA backend) |
+| DC-12.V3 | CLOSED-DEFERRED-FAR-FUTURE 2026-09-21 (owner scope; not executed, not PASS): a controlled OS-crash/power-loss harness (ordinary process-kill coverage exists: vitems_c D7, FE-16 v3) |
+| MT-07.V2 | CLOSED-DEFERRED-FAR-FUTURE 2026-09-21 (owner scope; not executed, not PASS): CPU-only and changed-CPU machines for the portability matrix (fit-reduced rows need the same). Unit-level snapshot identity stays accepted; no claim calibration works on CPU-only hosts. |
 | S-25.I3 | independent held-out benchmark distributions/baseline drift data |
-| G-05.I3 | a human-operated keyboard/Narrator/high-DPI/reduced-motion session |
+| G-05.I3 | CLOSED-DEFERRED-USER-REPORTS 2026-09-21 (owner scope; not executed, not PASS): manual Narrator/NVDA listening and live cloud/HF credential scenarios are out of the 0.6 campaign; automated a11y PASS stands as-is and further defects arrive via real-user issues. |
 
 ### 6.3 Not-yet-pushed state
 

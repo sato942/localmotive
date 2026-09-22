@@ -88,7 +88,7 @@ Column `Result` gives the result observed on 2026-09-06 unless stated otherwise.
 | H19 | Package smoke on CI | The portable executable exists and starts without an immediate exit | CI `package-smoke` | `npm run tauri build`, PowerShell artifact checks, 8-second launch check | UNKNOWN in this task, no local packaging occurred |
 | H20 | Packaged behavior verifier | The exact packaged app passes IPC, UI, tamper, health, cancellation, and restart checks over CDP | Release `package` | `scripts/verify_041.mjs`, output `artifacts/packaged-verification-0.4.1.json` | No PASS record. Local file shows 28 PASS and 1 FAIL for `candidate.clean-source`. |
 | H21 | Candidate inventory | SHA-256 values bind the three staged files to the checksum file | Release `package` | `scripts/verify_candidate_inventory.mjs`, `artifacts/SHA256SUMS-0.4.1.txt`, `artifacts/candidate-inventory-0.4.1.json` | PASS locally on 2026-09-06 for 3 artifacts. No Release record exists yet. |
-| H22 | Authenticode signature gate | Every staged file carries a valid timestamped signature | Release `publish` | `signtool.exe verify /pa /all` plus `Get-AuthenticodeSignature` with status `Valid` and a timestamp | BLOCKED. `release-evidence/0.4.1/approvals.json` records `USER_CONFIRMED_BLOCKED_PENDING_INSTALLATION`. |
+| H22 | Unsigned-release disclosure | Every staged file is disclosed as unsigned with SmartScreen and checksum guidance | Release `publish` | Release notes carry the unsigned statement and SHA-256 inventory | Standing policy: no signature is pursued or claimed. |
 | H23 | Public release read-back | The public download matches the verified candidate | Release `publish` | `gh release view`, `gh release download`, `cmp`, `sha256sum -c` | NOT RUN. Publication has no authority yet. |
 | H24 | Catalog signing guard | The signing workflow never exposes the private key. The signing workflow never pushes to `main` | Release-gate checks | `release-evidence/0.4.1/catalog-signing.json`, `scripts/tests/release-gates.test.mjs` catalog workflow checks | PASS for the recorded run `33983819073`. |
 | H25 | Hardware qualify on self-hosted runner | Zen 5 plus Blackwell host proof and Sandbox lifecycle run on version tags during the night window | `.github/workflows/hardware-qualify.yml`, jobs `hardware-qualify` and `clean-account-lifecycle` | Runner `DESKTOP-HPTF57N-zen5-blackwell`, `scripts/sandbox/host-run-lifecycle.ps1`, `scripts/sandbox/run-lifecycle-in-sandbox.ps1` | NOT RUN. Zero runs exist. Directory `release-evidence/0.4.1/attestations/` is absent. |
@@ -124,12 +124,12 @@ Column `Gate` names the check that stays red until the proof exists.
 | N11 | Both uninstallers lack evidence | No evidence shows the computer returns to a clean state | Phase 6 acceptance | Run both NSIS and MSI uninstallers in Sandbox through `hardware-qualify.yml` job `clean-account-lifecycle` |
 | N12 | Packaged `verify_041` has no PASS record | No evidence shows the current candidate passes all packaged checks | Release `package` | Build the candidate from a clean checkout, then run `node scripts/verify_041.mjs 10041` with an isolated profile |
 | N13 | Candidate inventory has no Release record | No Release evidence binds names, sizes, and digests for 0.4.1 | Release `package` | Build MSI, NSIS setup, and portable files, then run `node scripts/verify_candidate_inventory.mjs` |
-| N14 | Authenticode signing has no PASS record | The files ship unsigned and Windows shows an unknown publisher | Release `publish` | Wait for SignPath Foundation approval, then wire signing into Release and verify with `signtool.exe` and `Get-AuthenticodeSignature`. Do not buy a personal cert unless SignPath declines or stays quiet about 2 weeks. |
+| N14 | Release ships unsigned | The files ship unsigned and Windows shows an unknown publisher | Release `publish` | Disclose unsigned status with SmartScreen guidance and verify the published SHA-256 checksums. No signing step exists. |
 | N15 | Independent review remains `PENDING` | No second reviewer confirmed the frozen research tree | `scripts/verify_research_anchor.mjs` | Complete the independent review and track the report file |
 | N16 | Public read-back has no PASS record | No evidence shows the public download equals the verified candidate | Release `publish` | Publish only after explicit authority, then run the `gh release view` and `sha256sum -c` steps |
-| N17 | Human approval for publication is absent | Publication without approval violates release policy | Phase 6 gate map | Request explicit approval before signing or publication |
+| N17 | Human approval for publication is absent | Publication without approval violates release policy | Phase 6 gate map | Request explicit approval before publication |
 | N18 | Fresh Rust result is absent in this task | No fresh log shows whether Rust code still passes | `cargo test --locked` | Run formatting, Clippy, Rust checks, and doc checks from a clean checkout |
-| N19 | `L5 RELEASE` claim is forbidden today | A release claim requires signing plus complete P0 evidence | Qualification policy | Do not claim `L5 RELEASE` until N13, N14, N1, and N16 all pass |
+| N19 | `L5 RELEASE` claim is forbidden today | A release claim requires complete P0 evidence | Qualification policy | Do not claim `L5 RELEASE` until N13, N1, and N16 all pass |
 
 If hardware is unavailable, keep the row disclosed.
 
@@ -157,7 +157,7 @@ Each step unblocks the next step.
 
 To run the fast local gates, execute each command separately.
 
-Use `node scripts/verify_versions.mjs 0.6.0` (argument: the expected version) to check the three manifests (`package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`).
+Use `node scripts/verify_versions.mjs 0.6.1` (argument: the expected version) to check the three manifests (`package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`).
 
 Use `node scripts/verify_workflow_pins.mjs` for action pins.
 

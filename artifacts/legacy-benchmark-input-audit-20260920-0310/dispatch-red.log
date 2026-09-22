@@ -1,0 +1,73 @@
+
+ RUN  v4.1.11 C:/Users/Mubarak/Documents/Projects/localmotive
+
+ ❯ src/App.staleResponses.test.tsx (46 tests | 12 failed | 32 skipped) 629ms
+     × does not dispatch invalid Forced output tokens=63 89ms
+     × does not dispatch invalid Forced output tokens=4097 78ms
+     × does not dispatch invalid Forced output tokens=64.5 44ms
+     × does not dispatch invalid Forced output tokens= 29ms
+     × does not dispatch invalid Forced output tokens=1e309 28ms
+     × does not dispatch invalid Measured repeats=0 25ms
+     × does not dispatch invalid Measured repeats=11 28ms
+     × does not dispatch invalid Measured repeats=1.5 22ms
+     × does not dispatch invalid Measured repeats= 25ms
+     × does not dispatch invalid Measured repeats=1e309 26ms
+     × marks blank Forced output tokens invalid in the native control 29ms
+     × marks blank Measured repeats invalid in the native control 25ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 12 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/App.staleResponses.test.tsx > legacy benchmark numeric inputs > does not dispatch invalid Forced output tokens=63
+ FAIL  src/App.staleResponses.test.tsx > legacy benchmark numeric inputs > does not dispatch invalid Forced output tokens=4097
+ FAIL  src/App.staleResponses.test.tsx > legacy benchmark numeric inputs > does not dispatch invalid Forced output tokens=64.5
+ FAIL  src/App.staleResponses.test.tsx > legacy benchmark numeric inputs > does not dispatch invalid Forced output tokens=
+ FAIL  src/App.staleResponses.test.tsx > legacy benchmark numeric inputs > does not dispatch invalid Forced output tokens=1e309
+ FAIL  src/App.staleResponses.test.tsx > legacy benchmark numeric inputs > does not dispatch invalid Measured repeats=0
+ FAIL  src/App.staleResponses.test.tsx > legacy benchmark numeric inputs > does not dispatch invalid Measured repeats=11
+ FAIL  src/App.staleResponses.test.tsx > legacy benchmark numeric inputs > does not dispatch invalid Measured repeats=1.5
+ FAIL  src/App.staleResponses.test.tsx > legacy benchmark numeric inputs > does not dispatch invalid Measured repeats=
+ FAIL  src/App.staleResponses.test.tsx > legacy benchmark numeric inputs > does not dispatch invalid Measured repeats=1e309
+AssertionError: expected [ { …(2) } ] to have a length of +0 but got 1
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ src/App.staleResponses.test.tsx:394:79
+    392|     await setInputValue(profileInput(label), value);
+    393|     await click(navButton("Run benchmark"), "the benchmark action must…
+    394|     expect(invokeCalls.filter((call) => call.command === "benchmark_se…
+       |                                                                               ^
+    395|     expect(navButton("Run benchmark")?.disabled).toBe(true);
+    396|     expect(container.querySelector('.benchmark-setup [role="status"]')…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/12]⎯
+
+ FAIL  src/App.staleResponses.test.tsx > legacy benchmark numeric inputs > marks blank Forced output tokens invalid in the native control
+ FAIL  src/App.staleResponses.test.tsx > legacy benchmark numeric inputs > marks blank Measured repeats invalid in the native control
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ src/App.staleResponses.test.tsx:401:49
+    399|   it.each(["Forced output tokens", "Measured repeats"])("marks blank %…
+    400|     await setInputValue(profileInput(label), "");
+    401|     expect(profileInput(label).checkValidity()).toBe(false);
+       |                                                 ^
+    402|   });
+    403| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/12]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  12 failed | 2 passed | 32 skipped (46)
+   Start at  03:14:52
+   Duration  2.16s (transform 321ms, setup 0ms, import 472ms, tests 629ms, environment 904ms)
+

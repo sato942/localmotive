@@ -418,6 +418,7 @@ pub fn inspect_artifact(
     companion_paths: &[std::path::PathBuf],
     hash_files: bool,
 ) -> Result<ArtifactInspection, String> {
+    validate_regular_non_reparse_file("Artifact", selected_shard)?;
     let selected_name = selected_shard
         .file_name()
         .ok_or_else(|| format!("Artifact has no file name: {}", selected_shard.display()))?

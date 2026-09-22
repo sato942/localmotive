@@ -146,7 +146,7 @@ pub(crate) async fn fetch_model_catalog(
             ));
         }
     }
-    *state.catalog.lock().unwrap() = Some(snapshot.catalog.clone());
+    publish_loaded_catalog(&state.catalog, &snapshot);
     Ok(snapshot)
 }
 

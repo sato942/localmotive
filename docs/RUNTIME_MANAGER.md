@@ -105,17 +105,11 @@ Cancellation terminates and waits for the complete contained process tree.
 
 The ordinary `npm run tauri build` command produces unsigned test candidates.
 
-> Policy update (0.5 and later): public releases ship **unsigned with an explicit disclosure** while code signing is deferred; see the release policy in `README.md` and the release notes in `CHANGELOG.md`. The signing requirements below document the procedure to use **if and when** signing is resumed; they are no longer a precondition for a release candidate. Historical evidence in `docs/history/` is frozen and is not rewritten.
+> Policy update (0.5 and later): public releases ship **unsigned with an explicit disclosure** as standing policy; see the release policy in `README.md` and the release notes in `CHANGELOG.md`. No code-signing step exists in the pipeline. Historical evidence in `docs/history/` is frozen and is not rewritten.
 
-The release candidate must use `npm run tauri:build:signed`.
+The release candidate must use the ordinary `npm run tauri build` command, which produces unsigned artifacts.
 
-The signed build requires an approved `CurrentUser\My` certificate thumbprint.
-
-The signed build also requires an approved HTTPS timestamp endpoint.
-
-`scripts/sign-windows.ps1` checks code-signing usage, private-key access, expiry, signing success, and Authenticode verification.
-
-Do not record or export private-key material.
+Do not record or export private-key material. Catalog signing uses its own Ed25519 key and procedure and is unaffected by the unsigned-release policy.
 
 ## User-supplied runtimes
 

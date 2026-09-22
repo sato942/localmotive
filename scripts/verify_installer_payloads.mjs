@@ -208,11 +208,7 @@ export async function verifyInstallerPayloads({
     },
     functional,
     functionalNote:
-      "Each installed payload was launched from its extracted bytes with the WebView2 debugger and evaluated " +
-      "over CDP: the record names the observed navigation-button count, the managed-control text and the " +
-      "rendered body length. The in-sandbox lifecycle legs install the SAME payload bytes (their recorded " +
-      "installed digest equals nsisPayload.sha256 / msiPayload.sha256) and prove install, launch, version " +
-      "identity, uninstall and preservation; this probe proves the functional shell of those exact bytes.",
+      "The functional array records the executed shell probes. An empty array means no functional probe ran.",
     status:
       nsisComparison.ok &&
       msiComparison.ok &&

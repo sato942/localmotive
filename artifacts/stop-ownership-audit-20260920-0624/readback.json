@@ -1,0 +1,81 @@
+{
+  "checkedAt": "2026-09-20T07:43:08.088561+04:00",
+  "workState": "PAUSED_BY_USER",
+  "status": "PARTIALLY VERIFIED",
+  "branch": "fix/u06-04-settings-session-local-profile",
+  "revision": "bdb3c14c9170f0342ba0384738e2ffd23062970d",
+  "sourceAndArtifactReadback": "PASS",
+  "protectedFiles": 439,
+  "reviewedSource": {
+    "src-tauri/src/core.rs": "ed9d3dabe7d0d61afab10dc40b40df4eab7145a8f1d9c7f048b8d9b9f77f7c41",
+    "src-tauri/src/lib.rs": "f4fcf413177e6f881c699b05c7043a7727885f69ff8428518768f482e9579c48",
+    "src-tauri/src/measurement_service.rs": "ff262d866f93ef4f2d1748b547015f348cecf0716f4f3cbb67ba13b9f46d30b3",
+    "src/App.tsx": "0f48d1d65ebe0f4d15695f504dca93de0792398361d914e1c33cffd3605482ad",
+    "src/App.staleResponses.test.tsx": "696d540e3ae9c0825931de6909ef90f513bdb5045cee56d97847be3dbaf9b4a0",
+    "src-tauri/src/server_service.rs": "b3326d2b874f47bc9fdfa90587cf01be1b9358017c3ec5b1ed4d8c0e181290f9"
+  },
+  "artifacts": [
+    {
+      "path": "C:\\Users\\Mubarak\\Documents\\Projects\\localmotive\\src-tauri\\target\\release\\localmotive.exe",
+      "bytes": 20154368,
+      "sha256": "79702eb23b1a04de0d223b2ca00dc98e9b1ecf91b6696b63d01b760446b80e49",
+      "signature": "NotSigned",
+      "version": "0.6.0"
+    },
+    {
+      "path": "C:\\Users\\Mubarak\\Documents\\Projects\\localmotive\\src-tauri\\target\\release\\bundle\\msi\\Localmotive_0.6.0_x64_en-US.msi",
+      "bytes": 8798208,
+      "sha256": "4dea58a27dfb29e916a5296f7dc8473f5a77b52e81dd8e68b4dbce5f075e4dc9",
+      "signature": "NotSigned",
+      "version": "0.6.0"
+    },
+    {
+      "path": "C:\\Users\\Mubarak\\Documents\\Projects\\localmotive\\src-tauri\\target\\release\\bundle\\nsis\\Localmotive_0.6.0_x64-setup.exe",
+      "bytes": 5120846,
+      "sha256": "8e6d47ed3f59f309db6751f228fb68e8ea5a33a45576ebc4e35d0e5944d0fa54",
+      "signature": "NotSigned",
+      "version": "0.6.0"
+    }
+  ],
+  "rustTests": 619,
+  "ignoredRustEntries": 7,
+  "scriptTests": 274,
+  "frontendTests": 278,
+  "releaseStopTests": 9,
+  "stopSoakRepetitions": 8,
+  "nativeChecks": 26,
+  "cleanup": {
+    "checkedAt": "2026-09-20T07:30:20.4059987+04:00",
+    "appProcesses": [],
+    "testProcesses": [],
+    "debuggerListeners": [],
+    "standInCandidates": [],
+    "status": "PASS"
+  },
+  "legacySourceReview": {
+    "delegationId": "deleg_16c0e72a",
+    "status": "FAIL",
+    "reportedLogicFindings": [
+      "Cancellation is not checked after the final completion_request_cancellable call or before summarize_benchmark returns. If cancellation arrives after the final request completes, including during drain or slot cleanup, the command can still return Ok; App.tsx then stores and displays a success result for cancelled work.",
+      "There is an uncancellable construction window. The frontend publishes the Cancel control before local_client construction finishes, but the backend publishes state.benchmark only after construction succeeds. cancel_benchmark therefore returns \"No benchmark is running\" during construction, and the benchmark proceeds despite the user's cancellation request.",
+      "If the benchmark command future is aborted or dropped after its blocking worker is started, cleanup after the await is skipped. OperationReservation drops and releases the global operation owner while the detached request worker may still run; the stale benchmark slot remains set, so later server or tuning ownership can proceed concurrently with the abandoned request."
+    ],
+    "runtimeReproductions": "UNKNOWN; deferred while paused",
+    "implementationChangedAfterReview": false
+  },
+  "pendingReviews": [
+    {
+      "scope": "queued Stop",
+      "delegationId": "deleg_060e7c42",
+      "status": "full completion message not reconciled"
+    }
+  ],
+  "limitations": [
+    "Legacy source review failed; cancellation finalization, construction and aborted-future gaps require correction",
+    "Working tree remains intentionally dirty and uncommitted",
+    "No installer lifecycle or clean-checkout release qualification",
+    "No real-model performance or packaged active-model cancellation claim",
+    "Post-spawn startup client-construction cleanup still needs reproduction",
+    "No signing, tag change, push or publication"
+  ]
+}

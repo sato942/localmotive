@@ -16,9 +16,6 @@
       "id": "fixture/one",
       "repo": "fixture/one-GGUF",
       "reason": "missing model id"
-    },
-    "externalEvidenceState": "pending",
-    "externalProvenance": "importedExternal",
-    "calibrationRecordVersion": 1
+    }
   }
 }

@@ -1,0 +1,406 @@
+--- before/src-tauri/src/core.rs
++++ after/src-tauri/src/core.rs
+@@ -1495,7 +1495,37 @@
+ }
+ 
+ pub fn manifest_safe_args(args: &[String]) -> Vec<String> {
++    redact_manifest_args(
++        args,
++        &[
++            "--model",
++            "-md",
++            "-mdl",
++            "--draft-model",
++            "--spec-draft-model",
++            "--lora",
++            "--lora-scaled",
++        ],
++    )
++}
++
++/// Match prior or current record encoding against raw current arguments only.
++pub(crate) fn manifest_args_match(recorded: &[String], current_raw: &[String]) -> bool {
++    let current = manifest_safe_args(current_raw);
++    if recorded == current {
++        return true;
++    }
++    let legacy = redact_manifest_args(current_raw, &[]);
++    recorded == legacy
++        && legacy.iter().zip(&current).all(|(old, new)| {
++            // A fingerprint-looking old path is ambiguous; require a fresh record.
++            old == new || !old.contains("sha256:")
++        })
++}
++
++fn redact_manifest_args(args: &[String], additional_path_flags: &[&str]) -> Vec<String> {
+     const SECRET_VALUE_FLAGS: &[&str] = &["--api-key"];
++    // Preserve this prior writer format for read-only replay compatibility.
+     const SENSITIVE_VALUE_FLAGS: &[&str] = &[
+         "-m",
+         "--model-draft",
+@@ -1505,6 +1535,8 @@
+         "--ssl-cert-file",
+         "--chat-template-file",
+     ];
++    let sensitive =
++        |flag: &str| SENSITIVE_VALUE_FLAGS.contains(&flag) || additional_path_flags.contains(&flag);
+ 
+     let fingerprint = |value: &str| {
+         let mut hasher = Sha256::new();
+@@ -1530,14 +1562,14 @@
+                 safe.push(format!("{flag}=[REDACTED]"));
+                 continue;
+             }
+-            if SENSITIVE_VALUE_FLAGS.contains(&flag) {
++            if sensitive(flag) {
+                 safe.push(format!("{flag}={}", fingerprint(value)));
+                 continue;
+             }
+         }
+         safe.push(argument.clone());
+         redact_secret_next = SECRET_VALUE_FLAGS.contains(&argument.as_str());
+-        redact_next = SENSITIVE_VALUE_FLAGS.contains(&argument.as_str());
++        redact_next = sensitive(argument);
+     }
+     safe
+ }
+@@ -3746,6 +3778,122 @@
+         assert!(!first_safe.join(" ").contains("keys.txt"));
+         assert_ne!(first_safe, second_safe);
+         assert_eq!(first_safe[2..], ["--ctx-size", "4096"]);
++    }
++
++    #[test]
++    fn manifest_arguments_fingerprint_all_managed_model_paths() {
++        for flag in [
++            "-m",
++            "--model",
++            "-md",
++            "-mdl",
++            "--draft-model",
++            "--model-draft",
++            "--spec-draft-model",
++            "--mmproj",
++            "--lora",
++            "--lora-scaled",
++        ] {
++            let path = r"C:\PrivateUser\adapter.gguf:0.5";
++            let expected = format!("sha256:{}", hex::encode(Sha256::digest(path.as_bytes())));
++            let separate = manifest_safe_args(&[flag.into(), path.into()]);
++            assert_eq!(separate, [flag.to_string(), expected.clone()], "{flag}");
++            let inline = manifest_safe_args(&[format!("{flag}={path}")]);
++            assert_eq!(inline, [format!("{flag}={expected}")], "{flag}");
++            assert!(!serde_json::to_string(&separate)
++                .unwrap()
++                .contains("PrivateUser"));
++        }
++    }
++
++    #[test]
++    fn manifest_arguments_do_not_expose_generated_draft_and_adapter_paths() {
++        let profile = LaunchProfile {
++            alias: "fixture".into(),
++            model: r"C:\PrivateUser\model.gguf".into(),
++            spec_type: "draft-simple".into(),
++            draft_model: Some(r"C:\PrivateUser\draft.gguf".into()),
++            lora: r"C:\PrivateUser\adapter.gguf".into(),
++            lora_scaled: r"C:\PrivateUser\scaled.gguf:0.5".into(),
++            ..LaunchProfile::default()
++        };
++        let raw = profile.build_args().unwrap();
++        assert!(raw.join(" ").contains("PrivateUser"));
++        let safe = manifest_safe_args(&raw);
++        assert!(!safe.join(" ").contains("PrivateUser"));
++        assert_eq!(safe.len(), raw.len());
++    }
++
++    #[test]
++    fn manifest_replay_matches_legacy_paths_but_not_changed_inputs() {
++        let raw: Vec<String> = vec![
++            "-m".into(),
++            "C:/private/model.gguf".into(),
++            "--lora-scaled".into(),
++            "C:/private/adapter.gguf:0.5".into(),
++            "--ctx-size".into(),
++            "4096".into(),
++        ];
++        let legacy = vec![
++            "-m".into(),
++            format!("sha256:{}", hex::encode(Sha256::digest(raw[1].as_bytes()))),
++            "--lora-scaled".into(),
++            raw[3].clone(),
++            "--ctx-size".into(),
++            "4096".into(),
++        ];
++        let current = manifest_safe_args(&raw);
++        assert!(manifest_args_match(&legacy, &raw));
++        assert!(manifest_args_match(&current, &raw));
++        for (index, value) in [
++            (1, "C:/other/model.gguf"),
++            (3, "C:/private/adapter.gguf:0.25"),
++            (3, "C:/other/adapter.gguf:0.5"),
++            (5, "8192"),
++        ] {
++            let mut changed = raw.clone();
++            changed[index] = value.into();
++            assert!(!manifest_args_match(&legacy, &changed));
++            assert!(!manifest_args_match(&current, &changed));
++        }
++        let mut reordered = raw.clone();
++        reordered.swap(0, 2);
++        assert!(!manifest_args_match(&legacy, &reordered));
++        assert!(!manifest_args_match(&current, &reordered));
++        assert!(!manifest_args_match(&current[..4], &raw));
++        let mut placeholder = current.clone();
++        placeholder[3] = "[REDACTED]".into();
++        assert!(!manifest_args_match(&placeholder, &raw));
++    }
++
++    #[test]
++    fn manifest_replay_handles_inline_paths_without_trusting_fingerprint_text() {
++        let raw = vec![
++            "--lora=C:/private/adapter.gguf".into(),
++            "--ctx-size=4096".into(),
++        ];
++        assert!(manifest_args_match(&raw, &raw));
++        assert!(manifest_args_match(&manifest_safe_args(&raw), &raw));
++        let other = vec![
++            "--lora=C:/other/adapter.gguf".into(),
++            "--ctx-size=4096".into(),
++        ];
++        assert!(!manifest_args_match(&raw, &other));
++        for inline in [false, true] {
++            let path = format!("sha256:{}", "a".repeat(64));
++            let raw = if inline {
++                vec![format!("--lora={path}")]
++            } else {
++                vec!["--lora".into(), path.clone()]
++            };
++            let safe = manifest_safe_args(&raw);
++            assert_ne!(safe, raw, "fingerprint-looking input is still a raw path");
++            assert!(manifest_args_match(&safe, &raw));
++            assert!(
++                !manifest_args_match(&raw, &raw),
++                "ambiguous legacy paths require a fresh record"
++            );
++        }
+     }
+ 
+     #[test]
+--- before/src-tauri/src/measurement.rs
++++ after/src-tauri/src/measurement.rs
+@@ -699,10 +699,11 @@
+     Ok(target)
+ }
+ 
++/// Current arguments are raw; this gate owns the persisted-format comparison.
+ pub fn validate_replay_compatibility(
+     manifest: &BenchmarkManifest,
+     logical_model_id: &str,
+-    command_args: &[String],
++    current_raw_args: &[String],
+     current_compatibility_key: &str,
+ ) -> Result<(), String> {
+     let model = manifest
+@@ -716,7 +717,7 @@
+         .launch
+         .as_ref()
+         .ok_or("Replay manifest does not contain a launch snapshot")?;
+-    if launch.command_args != command_args {
++    if !crate::core::manifest_args_match(&launch.command_args, current_raw_args) {
+         return Err("Replay launch arguments do not match the running server".into());
+     }
+     let recorded_compatibility_key = manifest
+@@ -1481,10 +1482,12 @@
+     #[test]
+     fn manifest_persistence_is_atomic_and_round_trips_raw_observations() {
+         let directory = std::env::temp_dir().join(format!(
+-            "localmotive-manifest-persist-{}",
+-            std::process::id()
++            "localmotive-manifest-persist-{}-{}",
++            std::process::id(),
++            rand::random::<u64>()
+         ));
+-        let _ = fs::remove_dir_all(&directory);
++        fs::create_dir(&directory).unwrap();
++        let raw_args = vec!["--lora".into(), "C:/PrivateUser/adapter.gguf".into()];
+         let manifest = BenchmarkManifest {
+             compatibility_key: Some(format!("v2:{}", "c".repeat(64))),
+             runtime: Some(RuntimeFact {
+@@ -1507,6 +1510,7 @@
+                 gguf_header_sha256: "e".repeat(64),
+             }),
+             launch: Some(LaunchFact {
++                command_args: crate::core::manifest_safe_args(&raw_args),
+                 requested_context: 4_096,
+                 effective_context: observed_context(4_096),
+                 parallel: 1,
+@@ -1535,8 +1539,69 @@
+         let loaded: BenchmarkManifest = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+ 
+         assert_eq!(loaded, manifest);
++        let before = fs::read(&path).unwrap();
++        assert!(!String::from_utf8_lossy(&before).contains("PrivateUser"));
++        validate_replay_compatibility(
++            &loaded,
++            "fixture",
++            &raw_args,
++            loaded.compatibility_key.as_deref().unwrap(),
++        )
++        .unwrap();
++        assert_eq!(fs::read(&path).unwrap(), before);
+         assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
+         fs::remove_dir_all(directory).unwrap();
++    }
++
++    #[test]
++    fn replay_accepts_old_and_new_path_encodings_for_the_same_current_arguments() {
++        let raw = vec![
++            "--lora".into(),
++            r"C:\PrivateUser\adapter.gguf".into(),
++            "-md".into(),
++            r"C:\PrivateUser\draft.gguf".into(),
++            "--ctx-size".into(),
++            "4096".into(),
++        ];
++        let key = format!("v2:{}", "a".repeat(64));
++        // These flags were emitted literally by the old writer.
++        for recorded in [raw.clone(), crate::core::manifest_safe_args(&raw)] {
++            let manifest = BenchmarkManifest {
++                compatibility_key: Some(key.clone()),
++                model: Some(ModelFact {
++                    logical_id: "model-a".into(),
++                    ..ModelFact::default()
++                }),
++                launch: Some(LaunchFact {
++                    command_args: recorded,
++                    ..LaunchFact::default()
++                }),
++                ..BenchmarkManifest::default()
++            };
++            let before = serde_json::to_vec(&manifest).unwrap();
++            let result = validate_replay_compatibility(&manifest, "model-a", &raw, &key);
++            assert!(
++                result.is_ok(),
++                "same current arguments rejected: {result:?}"
++            );
++            assert_eq!(serde_json::to_vec(&manifest).unwrap(), before);
++            assert!(
++                validate_replay_compatibility(&manifest, "other-model", &raw, &key)
++                    .unwrap_err()
++                    .contains("model identity")
++            );
++            for invalid in ["legacy".to_string(), format!("v2:{}", "b".repeat(64))] {
++                assert!(
++                    validate_replay_compatibility(&manifest, "model-a", &raw, &invalid).is_err()
++                );
++                let mut changed = manifest.clone();
++                changed.compatibility_key = Some(invalid);
++                assert!(validate_replay_compatibility(&changed, "model-a", &raw, &key).is_err());
++            }
++            let mut missing_key = manifest.clone();
++            missing_key.compatibility_key = None;
++            assert!(validate_replay_compatibility(&missing_key, "model-a", &raw, &key).is_err());
++        }
+     }
+ 
+     #[test]
+@@ -1561,7 +1626,7 @@
+             &manifest,
+             "model-a",
+             &["--ctx-size".into(), "8192".into()],
+-            &"a".repeat(64),
++            &format!("v2:{}", "a".repeat(64)),
+         )
+         .unwrap_err();
+ 
+@@ -1590,11 +1655,14 @@
+             &manifest,
+             "model-a",
+             &["--ctx-size".into(), "4096".into()],
+-            &"b".repeat(64),
++            &format!("v2:{}", "b".repeat(64)),
+         )
+         .unwrap_err();
+ 
+-        assert!(error.contains("compatibility identity"));
++        assert_eq!(
++            error,
++            "Replay compatibility identity does not match the running server"
++        );
+     }
+ 
+     /// Serve `attempts` benchmark attempts: for each, one tokenize response
+--- before/src-tauri/src/measurement_service.rs
++++ after/src-tauri/src/measurement_service.rs
+@@ -723,7 +723,7 @@
+     measurement::validate_replay_compatibility(
+         &manifest,
+         logical_id,
+-        &core::manifest_safe_args(&server.validation.arguments.effective_args),
++        &server.validation.arguments.effective_args,
+         &current_compatibility_key,
+     )?;
+     Ok(manifest.workload)
+--- before/docs/ARTIFACT-IDENTITY.md
++++ after/docs/ARTIFACT-IDENTITY.md
+@@ -35,6 +35,18 @@
+ - The **catalog mirror** stores verified rows plus user rows; user rows never
+   authorize network files and are marked `USER ADDED · LOCAL ONLY`. The
+   mirror is a convenience index over verified content, not an authority.
++
++## Command arguments in local records
++
++Managed model, draft and LoRA command-path values use SHA-256 fingerprints.
++Replay accepts the current or prior argument encoding only when it matches
++the current raw arguments. Model identity and compatibility-key checks still
++apply. Replay does not rewrite old files. Ambiguous old values containing the
++reserved `sha256:` marker require a fresh record.
++
++This is not full anonymization. Other fields can contain local names or paths,
++and a path fingerprint permits comparison and dictionary guesses. Do not
++publish raw local records as redacted evidence.
+ 
+ ## Consumer review (S-02.I1)
+ 
+--- before/CHANGELOG.md
++++ after/CHANGELOG.md
+@@ -43,6 +43,9 @@
+ - Requires LoRA, projector, draft, template and TLS file options to use their
+   profile fields, even when those fields are empty. Raw arguments cannot bypass
+   the associated path validation and identity checks.
++- Fingerprints managed draft and LoRA paths in new benchmark command records.
++  Reads the prior argument format without rewriting saved records or bypassing
++  model and compatibility-key checks. Raw local records are not anonymized.
+ 
+ - Runs the whole window under a narrow Content Security Policy and scopes the
+   external-link opener to the origins the app actually uses.
+--- before/TODO-0.6.md
++++ after/TODO-0.6.md
+@@ -22,9 +22,11 @@
+ 
+ Implemented: shared bounds for 41 numeric profile fields; pre-save/preview/start/tune validation; blank-edit preservation; debounced, immediately invalidated command previews; inspected-only speculative choices with preserved unverified selections; manual release navigation; corrected release-file and credit-link documentation. Review follow-up adds Rust workload bounds, spec-value validation against inspected help, pre-read GGUF/artifact reparse checks, safe malformed-method rendering and shared evidence types. RED-before-GREEN logs and the failing 65536-port mutation are retained under `artifacts/ideas-audit-20260919-2202/`. Paper cuts are append-only in `agents_feedback.md`; research and complete review dispositions are in ignored `research/ideas-audit-20260919/`.
+ 
+-Final observed checks: `npm run check` PASS (274 script tests, 198 Vitest tests, TypeScript and production frontend build); Rust 592 passed/0 failed/6 ignored; fmt and Clippy PASS. Six LoRA identity regressions also passed in release mode. npm audit, version/workflow checks, cleanup matrix and designmd passed during the earlier audit phase. Tauri built version 0.6.0 executable, MSI and NSIS; all are unsigned. The current executable SHA-256 is `be4894a6a0f003ff4cecf6891fe2f7e13dd842f82f2c1f07a28b6364d6be2f5f`. Its isolated native UI diagnostic passed 14 checks plus cleanup; packaged accessibility returned `A11Y_PASS`. Records are under `artifacts/lora-audit-20260919-2345/`; earlier audit records retain their earlier hashes. All four read-only reviews were reconciled. Standalone Claude review remains unavailable because OAuth expired. No clean-checkout release matrix, native upgrade campaign, public release, or new inference benchmark is claimed. No release checkbox changes follow from these local results.
+-
+-LoRA follow-up: snapshots now parse scaled paths through the shared validator and fingerprint the ordered adapter contents plus f32 scales. No-adapter and single ordinary-adapter keys matched before/after the correction. A scale-removal mutation failed the regression. Optional file flags now remain reserved when their profile fields are empty; Rust and native IPC reproduced the raw-argument bypass before the correction. Existing records remain untouched; older multiple/scaled keys can require fresh measurement. The pinned upstream scaled parser has a separate apparent Windows drive-colon limitation, which these snapshot tests do not resolve. Local-manifest path privacy, companion-list/preflight bounds and other scoped findings remain in `agents_feedback.md` and the research dispositions.
++Final observed checks: `npm run check` PASS (274 script tests, 198 Vitest tests, TypeScript and production frontend build); Rust 597 passed/0 failed/6 ignored; fmt and Clippy PASS. Six LoRA identity regressions also passed in release mode during the preceding correction. npm audit, version/workflow checks, cleanup matrix and designmd passed during the initial audit phase. Tauri built version 0.6.0 executable, MSI and NSIS; all are unsigned. The current executable SHA-256 is `7363c2aeb2f6fd783e01b91ed5ddf01446c5b12910605e26a5529ff2fd487b56`. Its isolated native UI diagnostic passed 14 checks plus cleanup; packaged accessibility returned `A11Y_PASS`. Current records are under `artifacts/manifest-audit-20260920-0049/`; earlier audit records retain their earlier hashes. All four read-only reviews were reconciled. Standalone Claude review remains unavailable because OAuth expired. No clean-checkout release matrix, native upgrade campaign, public release, or new inference benchmark is claimed. No release checkbox changes follow from these local results.
++
++LoRA follow-up: snapshots now parse scaled paths through the shared validator and fingerprint the ordered adapter contents plus f32 scales. No-adapter and single ordinary-adapter keys matched before/after the correction. A scale-removal mutation failed the regression. Optional file flags now remain reserved when their profile fields are empty; Rust and native IPC reproduced the raw-argument bypass before the correction. Existing records remain untouched; older multiple/scaled keys can require fresh measurement. The pinned upstream scaled parser has a separate apparent Windows drive-colon limitation, which these snapshot tests do not resolve. Companion-list/preflight bounds and other scoped findings remain in `agents_feedback.md` and the research dispositions.
++
++Manifest follow-up: new command records fingerprint managed draft/LoRA paths and known aliases. Replay compares the current and prior encodings against raw current arguments without rewriting records, while retaining model and exact compatibility-key checks. Privacy and persistence regressions passed; bypassing key equality failed the strengthened test. Other local-record fields remain outside full anonymization.
+ 
+ ## Owner decisions and completion meaning
+ 
+--- before/agents_feedback.md
++++ after/agents_feedback.md
+@@ -70,3 +70,9 @@
+ 2026-09-20T00:40:52+04:00 | test fixture | FIXED | The first raw-argument fixture reached the empty-alias precondition instead of the intended boundary. Adding a valid fixture alias exposed --lora acceptance. Validation rules and assertions remained intact.
+ 2026-09-20T00:40:52+04:00 | tooling | OPEN | Short V4A context matched multiple closing blocks, and a remembered probe return shape did not match its source. Both edits failed without changing files. Read the current function and use a unique full anchor before retrying.
+ 2026-09-20T00:40:52+04:00 | packaging | VERIFIED LOCALLY | The final raw-file correction passed 592 Rust tests, 274 script tests, 198 Vitest tests, 14 native UI/IPC checks and packaged accessibility. Executable SHA-256 is be4894a6a0f003ff4cecf6891fe2f7e13dd842f82f2c1f07a28b6364d6be2f5f. Earlier records retain their earlier identities. Artifacts remain unsigned and not release-qualified.
++2026-09-20T01:12:00+04:00 | manifest privacy | FIXED | Reproduced plaintext draft/LoRA paths in generated command records. Added the missing managed-path aliases to the existing formatter, including separate and inline value forms. Direct API keys remain redacted. Other record fields are not fully anonymized.
++2026-09-20T01:12:00+04:00 | replay compatibility | FIXED | A privacy-only change would reject prior argument encodings. Replay now compares both writer formats against current raw arguments, then retains the model and exact compatibility-key checks. It never rewrites the saved record or treats placeholders as path wildcards.
++2026-09-20T01:12:00+04:00 | test strength | FIXED | The existing changed-key test supplied a key without v2:, so an earlier schema check could hide a broken equality check. Both keys now have valid syntax. Disabling equality made the test accept the mismatched key and fail as intended. Restored equality before the passing full suite.
++2026-09-20T01:12:00+04:00 | replay ambiguity | LIMITATION | A newly protected legacy raw path containing sha256: can be confused with the new fingerprint representation. Reject that fallback and require a fresh record. The writer always hashes raw input, including fingerprint-looking input.
++2026-09-20T01:12:00+04:00 | persistence fixture | FIXED | The touched persistence test reused a PID-only directory and pre-deleted it. It now creates a random, owned directory. The test checks saved command privacy and unchanged file bytes after replay validation.
++2026-09-20T01:26:38+04:00 | packaging | VERIFIED LOCALLY | Managed command-path privacy and replay compatibility passed 597 Rust tests, 274 script tests, 198 Vitest tests, 14 native smoke checks and packaged accessibility. Executable SHA-256 is 7363c2aeb2f6fd783e01b91ed5ddf01446c5b12910605e26a5529ff2fd487b56. Artifacts remain unsigned; installer lifecycle and release qualification were not performed. AGENTS.md and all 117 protected inputs retain their starting digests.

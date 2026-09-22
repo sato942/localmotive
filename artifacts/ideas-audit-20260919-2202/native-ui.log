@@ -1,0 +1,115 @@
+{
+  "scope": "Working-tree UI diagnostic; not release qualification",
+  "startedAt": "2026-09-19T19:26:18.405Z",
+  "source": "bdb3c14c9170f0342ba0384738e2ffd23062970d",
+  "sourceDirty": true,
+  "executable": "C:\\Users\\Mubarak\\Documents\\Projects\\localmotive\\src-tauri\\target\\release\\localmotive.exe",
+  "sha256": "c5a817df5eef8083f8e8ede3e44e30913ba08a0d02c4a08780926d95ea7eadaa",
+  "checks": [
+    {
+      "id": "uninspected-speculation",
+      "status": "PASS",
+      "evidence": {
+        "disabled": true,
+        "values": [
+          "none"
+        ],
+        "invalidChildren": 0
+      }
+    },
+    {
+      "id": "numeric-domains",
+      "status": "PASS",
+      "evidence": {
+        "count": 41,
+        "unbounded": 0
+      }
+    },
+    {
+      "id": "invalid-tuning-workload-refused-before-runtime",
+      "status": "PASS",
+      "evidence": {
+        "message": "Tuning tokens must be between 64 and 2048"
+      }
+    },
+    {
+      "id": "invalid-benchmark-workload-refused-before-server",
+      "status": "PASS",
+      "evidence": {
+        "message": "Tokens must be between 64 and 4096"
+      }
+    },
+    {
+      "id": "read_gguf_summary-rejects-junction",
+      "status": "PASS",
+      "evidence": {
+        "refusedBeforeReading": true
+      }
+    },
+    {
+      "id": "inspect_model_artifact-rejects-junction",
+      "status": "PASS",
+      "evidence": {
+        "refusedBeforeReading": true
+      }
+    },
+    {
+      "id": "invalid-save-refused",
+      "status": "PASS",
+      "evidence": {
+        "persistedProfiles": 0
+      }
+    },
+    {
+      "id": "invalid-control-start-refused",
+      "status": "PASS",
+      "evidence": {
+        "phase": "idle",
+        "pid": null
+      }
+    },
+    {
+      "id": "blank-number-not-zero",
+      "status": "PASS",
+      "evidence": {
+        "value": ""
+      }
+    },
+    {
+      "id": "corrected-profile-save",
+      "status": "PASS",
+      "evidence": {
+        "context": 4096,
+        "port": 8080
+      }
+    },
+    {
+      "id": "manual-update-disclosure",
+      "status": "PASS",
+      "evidence": {
+        "button": true,
+        "manual": true
+      }
+    },
+    {
+      "id": "about-mobile-layout",
+      "status": "PASS",
+      "evidence": {
+        "width": 360,
+        "scrollWidth": 350,
+        "undersized": 0,
+        "buttons": 6
+      }
+    },
+    {
+      "id": "uncaught-ui-errors",
+      "status": "PASS",
+      "evidence": {
+        "count": 0
+      }
+    }
+  ],
+  "cleanup": "PASS",
+  "finishedAt": "2026-09-19T19:26:20.102Z",
+  "status": "PASS"
+}

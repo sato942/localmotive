@@ -16,15 +16,13 @@
 //   node scripts/verify_release_promotion.mjs --qualified <dir> --tag v0.6.0 \
 //     --expect-source <40-hex sha> [--verify-run <id>] [--report <path>]
 //
-// The checkout (or bundle overlay) root defaults to the current directory.
+// The checkout root supplies only the reviewed workflow. All candidate evidence
+// comes from the qualified directory, without a checkout fallback.
 import { createHash } from "node:crypto";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { dirname } from "node:path";
 import { verifyQualificationManifest } from "./verify_qualification_manifest.mjs";
-
-const SHA256 = /^[0-9a-f]{64}$/u;
 
 function sha256Of(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
@@ -86,8 +84,9 @@ export async function verifyReleasePromotion(options) {
 
   // --- Manifest and evidence relationships ---------------------------------
   const manifest = verifyQualificationManifest({
-    manifestPath: join(root, "release-evidence", releaseVersion, `qualification-manifest-${releaseVersion}.json`),
-    root,
+    manifestPath: join("release-evidence", releaseVersion, `qualification-manifest-${releaseVersion}.json`),
+    root: qualifiedDirectory,
+    workflowRoot: root,
     expectedSourceRevision,
   });
   failures.push(...manifest.failures);
@@ -145,14 +144,20 @@ export async function verifyReleasePromotion(options) {
   }
 
   // --- Artifact truth against the delivered qualification manifest ---------
-  // The manifest may live in the bundle overlay or the checkout; when the
-  // checkout copy exists it was already checked above. Bind the artifact
-  // digests to whatever the promotion is about to publish.
+  // Bind delivered artifacts to the delivered manifest, never a checkout copy.
   try {
     const manifestBytes = await readFile(
-      join(root, "release-evidence", releaseVersion, `qualification-manifest-${releaseVersion}.json`),
+      join(qualifiedDirectory, "release-evidence", releaseVersion, `qualification-manifest-${releaseVersion}.json`),
     );
     const manifestDoc = JSON.parse(manifestBytes.toString("utf8"));
+    try {
+      const inventoryBytes = await readFile(join(artifactDirectory, `candidate-inventory-${releaseVersion}.json`));
+      if (![sha256Of(inventoryBytes), sha256LfOf(inventoryBytes)].includes(manifestDoc.inventory?.sha256)) {
+        failures.push("the candidate-inventory asset is not the producer inventory the qualification manifest references");
+      }
+    } catch {
+      failures.push("the candidate-inventory asset is unreadable");
+    }
     if (!Array.isArray(manifestDoc.artifacts) || manifestDoc.artifacts.length !== 3) {
       failures.push("the qualification manifest does not list exactly three artifacts");
     } else {

@@ -79,6 +79,26 @@ test("recovered v0.4.1 settings and profiles pass", () => {
   });
 });
 
+// Windows PowerShell 5.1 writes a BOM with Set-Content -Encoding UTF8.
+// The real baseline/upgrade readback preserved all keys but the verifier rejected that encoding.
+for (const [name, options, code, expected] of [
+  ["accepts preserved values", {}, 0, /profile: port recovered/],
+  ["still rejects a lost value", { dropKey: "localmotive:runtime" }, 1, /setting localmotive:runtime not recovered/],
+  ["still rejects a corrupt profile", { corruptKey: "localmotive:profile:fixture/v041-legacy-model" }, 1, /profile record .* unparseable/],
+]) {
+  test(`PowerShell UTF-8 settings output ${name}`, () => {
+    withStage(options, (staged) => {
+      writeFileSync(staged.settings, "\uFEFF" + readFileSync(staged.settings, "utf8"));
+      const result = runVerifier([
+        join(staged.root, "mirror.sqlite"), staged.userdata, staged.cache,
+        "--flavor", "cache", "--settings-fixture", FIXTURE, "--settings", staged.settings,
+      ]);
+      assert.equal(result.code, code, result.output);
+      assert.match(result.output, expected);
+    });
+  });
+}
+
 test("a null cache schemaVersion fails (the reviewed verifier accepted it)", () => {
   withStage({ cacheSchema: null }, (staged) => {
     const result = runVerifier([

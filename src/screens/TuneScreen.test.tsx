@@ -7,15 +7,16 @@
 // readiness gating on the Auto-tune action, and the blocker line.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { TuneScreen, type TuneScreenProps } from "./TuneScreen";
-import type { ServerStatus } from "../model";
+import { TuneScreen, trialChosenLabel, trialOutcomeLabel, type TuneScreenProps } from "./TuneScreen";
+import { suggestedProfile, type ServerStatus } from "../model";
 
 let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -24,6 +25,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
+  vi.unstubAllGlobals();
 });
 
 const idleStatus: ServerStatus = {
@@ -46,6 +48,7 @@ function props(overrides: Partial<TuneScreenProps> = {}): TuneScreenProps {
   const noop = () => {};
   return {
     adoptTunedProfile: noop,
+    applyTuningTrial: noop,
     bestLive: null,
     briefDisclosure: "full",
     busy: "",
@@ -79,12 +82,14 @@ function props(overrides: Partial<TuneScreenProps> = {}): TuneScreenProps {
     setTuneRepeats: noop,
     setTuneTokens: noop,
     setTuneTrials: noop,
+    setUseAdvisor: noop,
     startTuning: noop,
     status: idleStatus,
     switchProvider: noop,
     trialsForDisplay: [],
     tuneBlocker: "Add a provider key first.",
     tuneContext: 8192,
+    tuneInputError: null,
     tuneLogRef: { current: null },
     tuneProgress: null,
     tuneRepeats: 2,
@@ -94,11 +99,30 @@ function props(overrides: Partial<TuneScreenProps> = {}): TuneScreenProps {
     tuneTokens: 256,
     tuneTrials: 6,
     tuning: false,
+    useAdvisor: false,
     ...overrides,
   };
 }
 
 describe("TuneScreen presentation contract", () => {
+  it("keeps an input error visible while a prior report is displayed", () => {
+    const selected = {
+      id: "fixture", name: "fixture", directory: "C:/models", firstShard: "C:/models/fixture.gguf",
+      sizeBytes: 24, shardCount: 1, expectedShards: 1, complete: true, quant: "F16", shards: [], companions: [],
+    };
+    const trial = { index: 0, changes: {}, rationale: "Fixture report", meanTps: 1, medianTps: 1, error: null, command: "fixture" };
+    const error = "Search trials must be a whole number between 1 and 12.";
+    act(() => root.render(<TuneScreen {...props({
+      selected, canTune: false, tuneTrials: 13, tuneInputError: error, bestLive: trial, trialsForDisplay: [trial],
+      tuneReport: {
+        baselineTps: 1, bestTps: 1, bestIndex: 0, bestProfile: suggestedProfile(selected, "C:/runtime/llama-server.exe"),
+        trials: [trial], stoppedReason: "Fixture prior report.",
+      },
+    })} />));
+    expect(container.textContent).toContain("Fixture prior report.");
+    expect(container.querySelector('[role="status"]')?.textContent).toBe(error);
+  });
+
   it("reflects the persisted disclosure choice in the radio pair", () => {
     act(() => root.render(<TuneScreen {...props({ briefDisclosure: "minimal" })} />));
     const radios = Array.from(
@@ -122,5 +146,53 @@ describe("TuneScreen presentation contract", () => {
   it("shows the blocker line when not ready to tune", () => {
     act(() => root.render(<TuneScreen {...props()} />));
     expect(container.textContent ?? "").toContain("Add a provider key first.");
+  });
+
+  it("offers the advisor as an explicit opt-in that stays off by default", () => {
+    act(() => root.render(<TuneScreen {...props()} />));
+    const checkbox = container.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    expect(checkbox?.checked).toBe(false);
+    expect(container.textContent ?? "").toContain("one extra try");
+    expect(container.textContent ?? "").toContain("Best measured in this session");
+  });
+
+  it("shows history-table badges and one apply control per measured row", () => {
+    const onApply = vi.fn();
+    const grid = {
+      index: 1, changes: { flashAttention: "on" }, rationale: "Local grid", meanTps: 10,
+      medianTps: 10, error: null, command: "c", effectiveContext: 8192, stdDev: 0.1,
+      outcome: "ok", chosen: "grid", timestampMs: 1_700_000_000_000, configHash: "ab",
+    } as const;
+    const failed = {
+      index: 2, changes: { batch: 512 }, rationale: "Local grid", meanTps: null,
+      medianTps: null, error: "CUDA out of memory", command: "", effectiveContext: null,
+      stdDev: null, outcome: "oom", chosen: "grid", timestampMs: 0, configHash: "cd",
+    } as const;
+    act(() => root.render(<TuneScreen {...props({ trialsForDisplay: [grid, failed], applyTuningTrial: onApply })} />));
+    const text = container.textContent ?? "";
+    expect(text).toContain("GRID");
+    expect(text).toContain("OUT OF MEMORY");
+    const applyButtons = Array.from(container.querySelectorAll("button")).filter((b) =>
+      (b.textContent ?? "").includes("Apply this trial"),
+    );
+    expect(applyButtons.length).toBe(1);
+    act(() => applyButtons[0].click());
+    expect(onApply).toHaveBeenCalledTimes(1);
+    expect(onApply.mock.calls[0][0]).toMatchObject({ index: 1 });
+  });
+
+  it("labels every trial outcome and choice with words", () => {
+    expect(trialOutcomeLabel("ok")).toBe("OK");
+    expect(trialOutcomeLabel("oom")).toBe("OUT OF MEMORY");
+    expect(trialOutcomeLabel("launch-fail")).toBe("LAUNCH FAILED");
+    expect(trialOutcomeLabel("cancelled")).toBe("CANCELLED");
+    expect(trialOutcomeLabel("context-short")).toBe("CONTEXT SHORT");
+    expect(trialOutcomeLabel(undefined)).toBe("UNKNOWN");
+    expect(trialChosenLabel("baseline")).toBe("BASELINE");
+    expect(trialChosenLabel("grid")).toBe("GRID");
+    expect(trialChosenLabel("nudge")).toBe("NUDGE");
+    expect(trialChosenLabel("confirm")).toBe("CONFIRM");
+    expect(trialChosenLabel("advisor")).toBe("ADVISOR");
+    expect(trialChosenLabel(undefined)).toBe("UNRECORDED");
   });
 });

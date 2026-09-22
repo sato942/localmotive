@@ -1,0 +1,93 @@
+
+ RUN  v4.1.11 C:/Users/Mubarak/Documents/Projects/localmotive
+
+ ❯ src/screens/AboutScreen.test.tsx (1 test | 1 failed) 28ms
+   × opens manual releases and icon credits through existing allowed GitHub URLs 27ms
+stderr | src/screens/ProfileScreen.test.tsx > does not offer guessed speculative methods before runtime inspection
+In HTML, <small> cannot be a child of <select>.
+This will cause a hydration error.
+
+  <ProfileScreen busy="" command={null} evidenceRun={null} extraArgsDraft={null} inspect={function noop} ...>
+    <section className="screen pro...">
+      <div>
+      <div className="profile-la...">
+        <div className="settings-s...">
+          <div>
+          <fieldset>
+          <fieldset>
+          <fieldset>
+            <legend>
+            <label className="wide">
+>             <select value="none" onChange={function onChange}>
+                <option>
+                <option>
+                <option>
+                <option>
+                <option>
+                <option>
+                <option>
+>               <small className="field-help">
+            ...
+          ...
+        ...
+
+
+ ❯ src/screens/ProfileScreen.test.tsx (3 tests | 2 failed) 96ms
+   × does not offer guessed speculative methods before runtime inspection 47ms
+   × preserves a saved unsupported method without offering it as verified 23ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/screens/AboutScreen.test.tsx > opens manual releases and icon credits through existing allowed GitHub URLs
+AssertionError: expected undefined to be defined
+ ❯ src/screens/AboutScreen.test.tsx:15:38
+     13|     act(() => root.render(<AboutScreen about={null} models={[]} totalB…
+     14|     const button = (label: string) => [...container.querySelectorAll("…
+     15|     expect(button("Check releases")).toBeDefined();
+       |                                      ^
+     16|     act(() => button("Check releases")!.click());
+     17|     expect(open).toHaveBeenLastCalledWith("https://github.com/sato942/…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  src/screens/ProfileScreen.test.tsx > does not offer guessed speculative methods before runtime inspection
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ src/screens/ProfileScreen.test.tsx:48:27
+     46| it("does not offer guessed speculative methods before runtime inspecti…
+     47|   const select = render();
+     48|   expect(select.disabled).toBe(true);
+       |                           ^
+     49|   expect([...select.options].map((option) => option.value)).toEqual(["…
+     50|   expect(select.querySelector("small")).toBeNull();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  src/screens/ProfileScreen.test.tsx > preserves a saved unsupported method without offering it as verified
+AssertionError: expected 'none' to be 'draft-dspark' // Object.is equality
+
+Expected: "draft-dspark"
+Received: "none"
+
+ ❯ src/screens/ProfileScreen.test.tsx:57:24
+     55|   const profile = { ...suggestedProfile(model, runtime.path), specType…
+     56|   const select = render({ runtime, profile });
+     57|   expect(select.value).toBe("draft-dspark");
+       |                        ^
+     58|   expect([...select.options].filter((option) => !option.disabled).map(…
+     59|   expect(select.selectedOptions[0].textContent).toContain("not verifie…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  2 failed | 1 passed (3)
+      Tests  3 failed | 125 passed (128)
+   Start at  22:14:20
+   Duration  1.35s (transform 190ms, setup 0ms, import 430ms, tests 180ms, environment 1.81s)
+

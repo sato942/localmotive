@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFile, readdir } from "node:fs/promises";
-import { basename, resolve } from "node:path";
+import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parse } from "yaml";
 

@@ -1,0 +1,17 @@
+   Compiling localmotive v0.6.0 (C:\Users\Mubarak\Documents\Projects\localmotive\src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 16.44s
+     Running unittests src\lib.rs (target\debug\deps\localmotive_lib-694be1a6828a4ecd.exe)
+
+running 1 test
+legacy_empty=v2:adc5d7dec4eb250f21b7998a3eb79e5d2bc7046e900ae564dd24c4196d3113cd
+legacy_single=v2:66876a1bd274efc3b4c8205214c4d7844adf2960af94061ce79e4cc2ee507dd2
+test measurement_service::lora_identity_tests::scaled_lora_snapshot_reads_the_adapter_and_binds_its_scale ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 591 filtered out; finished in 0.01s
+
+     Running unittests src\main.rs (target\debug\deps\localmotive-7f4f61c092604b5b.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

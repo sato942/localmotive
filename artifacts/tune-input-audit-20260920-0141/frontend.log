@@ -1,0 +1,360 @@
+
+> localmotive@0.6.0 check
+> npm test && npm run catalog:validate && npm run branding:verify && npm run research:verify-anchor && npm run qualification:verify && npm run icon:verify && npm run build
+
+
+> localmotive@0.6.0 test
+> node --test scripts/tests/release-gates.test.mjs scripts/tests/catalog_schema.test.mjs scripts/tests/http_retry.test.mjs scripts/tests/ipc_contract.test.mjs scripts/tests/health_cancel.test.mjs scripts/tests/qualification_manifest.test.mjs scripts/tests/installer_payloads.test.mjs scripts/tests/release_promotion.test.mjs scripts/tests/mt06_verdicts.test.mjs scripts/tests/preservation_verifier.test.mjs scripts/tests/workflow_integration.test.mjs && vitest run
+
+✔ catalog schema: valid single row (1.4605ms)
+✔ catalog schema: missing id (0.138ms)
+✔ catalog schema: invalid repository (0.0798ms)
+✔ catalog schema: no files (0.0816ms)
+✔ catalog schema: unsafe filename traversal (0.0735ms)
+✔ catalog schema: unsafe filename ADS (0.064ms)
+✔ catalog schema: unsafe revision traversal (0.1196ms)
+✔ catalog schema: invalid sha256 (0.0785ms)
+✔ catalog schema: duplicate repository row is dropped not unreachable (0.1151ms)
+✔ catalog schema: duplicate model id is fatal (0.8456ms)
+✔ catalog schema: duplicate filename is fatal (0.1128ms)
+✔ catalog schema: all rows dropped is an empty catalog error (0.0513ms)
+✔ catalog schema: missing quant label (0.0796ms)
+✔ catalog schema: invalid date is dropped (0.1114ms)
+✔ catalog schema: oversize beyond safe integers is dropped (0.0371ms)
+✔ catalog schema: absent revision defaults to main (0.1029ms)
+✔ catalog schema: Windows reserved device name is refused (0.0408ms)
+✔ catalog schema: trailing dot filename is refused (0.0423ms)
+✔ catalog schema: too many files in one row is dropped (0.2296ms)
+✔ catalog schema: too many tags or an overlong tag is dropped (0.1131ms)
+✔ catalog schema: many bounded rows are accepted, Unicode names are legal (0.6156ms)
+✔ slow fixture progress: an accepted cancel records the cancelled contract (1.167ms)
+✔ slow fixture progress: a cancelled run without attribution fails (1.2062ms)
+✔ fast fixture progress: completion before the cancel is recorded, not failed (0.1445ms)
+✔ fast fixture progress: a completed run without the full PASS contract fails (0.2131ms)
+✔ a refused cancellation that did not pass surfaces its reason (0.1629ms)
+✔ a bounded wait with no observable phase is a bounded diagnostic failure (0.1899ms)
+✔ retry-after: numeric seconds parse and clamp (0.8442ms)
+✔ retry-after: a sane HTTP date is honored, stale or extreme dates are not (2.1681ms)
+✔ retry-after: malformed and hostile values fall back to bounded backoff (0.2834ms)
+✔ fetch retries a 429 with the header delay and stops at success (0.8339ms)
+✔ fetch gives up at the attempts limit and the total budget is bounded (0.267ms)
+✔ a stalled fetch is aborted by the request deadline (207.6711ms)
+✔ a payload that differs only by the bundle-type marker passes (1.0391ms)
+✔ a marker that does not belong to the bundle type fails (0.2735ms)
+✔ a payload that differs anywhere else fails instead of being excused (0.1196ms)
+✔ a size difference fails before any byte walk (0.0881ms)
+✔ a portable executable that is not the unbundled build fails (0.1121ms)
+✔ IPC contract: fixture entries match the TypeScript wire expectations (1.2794ms)
+✔ coverage is active only when the request is in flight immediately before the invocation (1.6706ms)
+✔ the immediate after-sample reaches the verdict: overlap at the invocation fails (0.2725ms)
+✔ a drained or unavailable after-sample is not exercised, never overlap and never active (0.2245ms)
+✔ genuine drain-loop overlap still fails with an incomplete immediate sample (0.0957ms)
+✔ an already-inactive attempt is not exercised, not a failure and not a pass (0.0755ms)
+✔ the API scenario is refused only by the API outcome, never by a disabled UI (0.0819ms)
+✔ the UI scenario credits a refusal from the click or the disabled control (0.1339ms)
+✔ prohibited backend overlap is rejected as a negative control (0.1043ms)
+✔ substitution of an unrelated saved record is rejected as a negative control (0.1537ms)
+PRESERVE_FAIL setting localmotive:runtime not recovered: None != 'C:/fixtures/v041/llama-server.exe'
+PRESERVE_FAIL profile record localmotive:profile:fixture/v041-legacy-model unparseable: Expecting value: line 1 column 1 (char 0)
+PRESERVE_FAIL cache record schemaVersion None != 1 (the v0.4.1 contract)
+PRESERVE_FAIL cache record models field is not an array (the v0.4.1 contract requires an array): 'invalid'
+PRESERVE_FAIL setting localmotive:runtime not recovered: None != 'C:/fixtures/v041/llama-server.exe'
+PRESERVE_FAIL profile record localmotive:profile:fixture/v041-legacy-model unparseable: Expecting value: line 1 column 1 (char 0)
+PRESERVE_FAIL collected settings do not carry a reads map
+PRESERVE_FAIL cache flavor requires --settings-fixture and --settings: the v0.4.1 profile/settings recovery must be asserted, not just cache survival
+✔ recovered v0.4.1 settings and profiles pass (116.2147ms)
+✔ PowerShell UTF-8 settings output accepts preserved values (103.2424ms)
+✔ PowerShell UTF-8 settings output still rejects a lost value (116.6571ms)
+✔ PowerShell UTF-8 settings output still rejects a corrupt profile (99.7826ms)
+✔ a null cache schemaVersion fails (the reviewed verifier accepted it) (107.022ms)
+✔ a models field that is not an array fails (the v0.4.1 contract requires an array) (109.881ms)
+✔ a lost setting key fails with the missing value named (95.0077ms)
+✔ a corrupted profile value fails (109.5701ms)
+✔ a malformed collected settings structure fails (89.5201ms)
+✔ the cache flavor refuses to run without the settings assertion (109.8137ms)
+✔ the committed fixture is derived from the v0.4.1 keys (1.103ms)
+✔ a coherent manifest fixture validates (41.4271ms)
+✔ the expected reviewed revision is enforced when requested (29.4485ms)
+✔ a source-only mismatch between inventory and manifest is refused (30.512ms)
+✔ a digest-only mismatch between inventory and manifest is refused (28.936ms)
+✔ a syntactically valid but foreign artifact digest in the manifest is refused (27.3678ms)
+✔ a missing required record is refused (29.1977ms)
+✔ an incorrect outcome inside a record is refused (29.3002ms)
+✔ a witness that lost its required outcome is refused (31.0272ms)
+✔ a lifecycle record whose staged digests contradict the inventory is refused (28.7479ms)
+✔ a lifecycle record bound to a different source is refused (29.2474ms)
+✔ a lifecycle record missing a required step is refused (40.0152ms)
+✔ installed payload digests that contradict the staged installers are refused (59.8276ms)
+✔ a record path that escapes the repository is refused (30.9721ms)
+✔ a text record without its newline-normalized digest is refused (28.9443ms)
+✔ a lifecycle record carried forward from a superseded candidate validates when its citation matches (36.4282ms)
+✔ a carried-forward record whose citation digest drifted is refused (31.2641ms)
+✔ a carried-forward record whose staged digests contradict its cited inventory is refused (32.14ms)
+✔ a carry-forward that cites a path outside the history tree is refused (31.6368ms)
+✔ F9-03 a genuine producer-shaped packaged record validates unchanged (25.9454ms)
+✔ F9-03 a producer record whose source_revision contradicts the manifest is refused (26.3409ms)
+✔ F9-03 a producer record whose artifact digest contradicts the inventory is refused (29.3482ms)
+✔ F9-03 a producer record whose artifact size contradicts the inventory is refused (26.358ms)
+✔ F9-03 a producer record whose artifact name contradicts the inventory is refused (30.3727ms)
+✔ F9-03 a producer record with no artifact identity is refused instead of skipping (28.5842ms)
+✔ F9-03 a producer record without a source revision is refused instead of skipping (32.7644ms)
+✔ F9-03 a failed required check under a passing aggregate is refused (30.4039ms)
+✔ F9-03 an aggregate failure with every recorded check passing is refused (23.6822ms)
+✔ two carry-forward groups cite their own superseded candidates (365.4298ms)
+✔ version gate checks every release version field (19.5314ms)
+✔ version gate rejects a mismatched Cargo.lock package entry (8.3949ms)
+✔ version gate accepts no fabricated browser About version (8.8209ms)
+✔ workflow pin gate rejects mutable action references (0.5707ms)
+✔ workflow pin gate rejects an annotated tag object as the executable pin (0.2982ms)
+✔ workflow pin gate accepts the peeled commit and records its tag object (0.1517ms)
+✔ workflow gate rejects package jobs without every material dependency (0.8673ms)
+✔ workflow gate rejects package jobs that omit packaged verification (0.214ms)
+✔ catalog v2 schema, builder, and signed publish wiring stay consistent (5.5751ms)
+✔ release evidence uses one resolved immutable revision (30.9008ms)
+✔ release promotion reads published assets back (1.1649ms)
+✔ a controlled nonzero native command remains nonzero (45.2308ms)
+✔ icon gate requires every Windows icon surface and ICO layer (1.3482ms)
+✔ Windows installers use the bootstrapper WebView2 mode until offline bundling is fixed (1.094ms)
+✔ README matches the shipped product and the unsigned Latest policy (0.8416ms)
+✔ launch profiles reject oversize input at the Rust boundary (0.8501ms)
+✔ catalog commands reject oversize input at the Rust boundary (1.1661ms)
+✔ catalog refresh honors cooldown, lock, and last-success display (8.7752ms)
+✔ model catalog exposes rich filters with hardware auto-fit defaults (5.5362ms)
+✔ runtime catalog exposes an accessible refresh action in every terminal state (3.7764ms)
+✔ production frontend never fabricates model or runtime inspection results (4.0511ms)
+✔ frontend renders backend-owned managed runtime trust (3.6161ms)
+✔ runtime inspection commits one latest atomic result (3.5674ms)
+✔ runtime setup refresh preserves the selected adapter recommendation (4.3796ms)
+✔ runtime catalog text actions meet the 44 pixel target minimum (3.144ms)
+✔ a rejected catalog invocation removes the spinner (3.4165ms)
+✔ error state never renders a spinner (4.024ms)
+✔ loading state has an accessible status label (3.2724ms)
+✔ blocked CUDA shows job server-cuda and its evidence URL (3.8728ms)
+✔ L2 rows render DIRECT RUNTIME · L2 (4.4141ms)
+✔ no row renders SUPPORTED without the required evidence (5.451ms)
+✔ public 0.4.1 documentation states the L2 evidence ceiling (1.0942ms)
+✔ public links resolve without a gitignored local path (3.5194ms)
+✔ MSI manufacturer equals the approved publisher value (52.5895ms)
+✔ honestly unsigned full release verifies checksums and inventory instead of Authenticode (1.2117ms)
+✔ honestly unsigned full release reads back Latest with the unsigned asset set (0.6901ms)
+✔ correct the three L2 claims in the new 0.4.1 changelog section (0.6356ms)
+✔ the 0.4.0 corrective note stays review-gated, not silently published (0.6276ms)
+✔ small icon layers remain readable at native resolution (1.9373ms)
+✔ the packaged NSIS installer and uninstaller use the LM icon (0.6915ms)
+✔ frontend renders backend catalog facts without owning support classification (3.3597ms)
+✔ hardware panel does not present heuristic hardware advice as the catalog recommendation (3.1971ms)
+✔ runtime setup ignores stale responses and owns a separate loading state (3.2685ms)
+✔ runtime setup invalidates pending responses during unmount (2.8566ms)
+✔ runtime install cancellation is available before progress and ignores stale events (3.2971ms)
+✔ managed health progress is correlated to the active install key (5.8491ms)
+✔ runtime and health cancellation expose a pending UI state (5.1321ms)
+✔ adapter catalog IPC preserves structured retry metadata (1.1028ms)
+✔ branding gate rejects legacy names outside documented history and migration code (0.9295ms)
+✔ qualification gate permits disclosed gaps but never promotes them to support (0.8196ms)
+✔ qualification gate preserves each frozen P0 hardware and backend scope (0.2448ms)
+✔ qualification gate rejects a failed attestation on an L4 row (0.3307ms)
+✔ hardware waiver does not waive clean-account lifecycle evidence (0.3064ms)
+✔ research anchor gate rejects changed tracked manifest bytes (1.512ms)
+✔ research anchor gate rejects a missing verification ledger (0.1158ms)
+✔ research anchor gate rejects fabricated verification counts and commands (0.1774ms)
+✔ research anchor gate rejects an unbound independent-review pass (0.1758ms)
+✔ research anchor gate rejects an untracked independent-review report (0.2264ms)
+✔ research anchor gate rejects an independent review for another research tree (0.2564ms)
+✔ packaged verifier checks the reduced benchmark surface (2.8384ms)
+✔ packaged verifier contains no private React-state injection (QD-03) (0.7177ms)
+✔ packaged cancellation check observes progress, records completion or a bounded diagnostic (QD-03) (5.2918ms)
+✔ release package job runs the catalog/SQLite packaged matrix (GH-05) (1.6965ms)
+✔ rich catalog facets keep the backend camelCase contract (GH-05) (4.487ms)
+✔ verifier-only catalog overrides stay gated to the isolated verifier profile (GH-05) (1.0909ms)
+✔ component test environment owns the catalog presentation scenarios (QD-02, QD-03) (0.6237ms)
+✔ packaged verifier requires successful health, cancellation, and restart (0.6001ms)
+✔ packaged verification schema rejects false-green overall status (32.8776ms)
+✔ packaged verification schema rejects false-red overall status (17.7789ms)
+✔ candidate inventory rejects a checksum that does not bind the staged bytes (7.3718ms)
+✔ R10: TLS transport validation parses real structures and matches the pair (0.9095ms)
+✔ R15: the loopback client never hops, and its bounds are structural (2.5921ms)
+✔ R07: preservation fixtures carry real released-version data, not markers (2.9784ms)
+✔ R11: the packaged cancellation driver measures owned identities end to end (1.0699ms)
+✔ R13: publication rechecks the tag and trusts exact bytes, with failure diagnostics (17.115ms)
+✔ R09: installed version identity is exact and payload expectations are stated (1.0147ms)
+✔ R12: the published-inventory consumer fails closed on schema, set, and identity drift (19.7854ms)
+✔ signed build configuration requires certificate-store identity and timestamp verification (1.2509ms)
+✔ hardware qualify workflow pins every remote action and owns the host proof (1.3539ms)
+✔ hardware qualify attestation block parses under pwsh (U06-03) (288.8162ms)
+✔ hardware qualify workflow cannot claim L4 support from host match alone (0.9971ms)
+✔ workflow gate policy covers the hardware qualify night path (0.6263ms)
+✔ release ship gates default to the self-hosted runner, never windows-latest (1.0797ms)
+✔ release checkout pins line endings so the packaged clean-source probe is honest (0.6527ms)
+fatal: path 'src/screens/AboutScreen.test.tsx' exists on disk, but not in 'HEAD'
+fatal: path 'src/screens/ProfileScreen.test.tsx' exists on disk, but not in 'HEAD'
+✔ no working-tree source file is a line-ending-only rewrite of its committed bytes (1409.7433ms)
+✔ packaged clean-source probe ignores the verifier-owned artifacts directory (0.7798ms)
+✔ packaged clean-source probe ignores the workflow-owned SBOM output (0.486ms)
+✔ packaged rejection detail preserves the backend error message (0.6723ms)
+✔ release verify step exposes the resolved revision to every verifier phase (10.8184ms)
+✔ release verify step waits for the candidate WebView before driving checks (1.683ms)
+✔ release workflow serializes runs so two packages never share one runner (1.0822ms)
+✔ release verify step isolates the candidate behind a per-run CDP port with owned-handle cleanup (0.7753ms)
+✔ release verify orchestration never lets cleanup set the step outcome (1.3992ms)
+✔ packaged-orchestration cleanup matrix runs in CI under pwsh (U06-01) (1.1275ms)
+✔ candidate still-alive fails the run and preserves the verifier error (U06-01) (0.5474ms)
+✔ fixture adoption refuses unverified identity (U06-01) (0.5541ms)
+✔ release publish verification avoids hosted-only shell dependencies (0.881ms)
+✔ a tag push verifies without publishing and publication needs explicit authorization (1.0644ms)
+✔ branding history set covers the archived docs layout (0.6311ms)
+✔ local catalog SQLite mirror stores verified models with migrations and controlled recovery (0.643ms)
+✔ catalog browse uses one merged collection and never the snapshot alone (2.9592ms)
+✔ override saves reject mixed-origin collisions inside an immediate transaction (0.7132ms)
+✔ FE-01 selection and runtime commit as coordinated transitions (3.6446ms)
+✔ FE-02 tuning adoption binds to the originating run (2.724ms)
+✔ FE-07 cancellation state is separate from the run lifecycle (0.7701ms)
+✔ GH-01 pull requests run only on the isolated hosted runner (0.672ms)
+✔ GH-03 the lifecycle consumes candidates instead of waiting for publication (13.4123ms)
+✔ GH-04 installer verdicts fail on leftovers and verify installed versions (1.4538ms)
+✔ GH-06 lifecycle evidence survives every terminal outcome (13.8197ms)
+✔ GH-10 host attestation statuses derive from detected hardware (2.3058ms)
+✔ GH-02 release jobs share one resolved immutable revision (12.1528ms)
+✔ FE-04 previews compose provisionally and launch trust stays authoritative (4.6257ms)
+✔ FE-16 status polling is single-flight with sequence guards (4.0594ms)
+✔ the cancellable local client never re-issues a slow-but-healthy response (MT-06) (0.8308ms)
+✔ FE-16 and FE-05.V3 packaged walks drive the real routes (1.2158ms)
+✔ FE-05 benchmark evidence and active runs survive navigation (4.1523ms)
+✔ FE-03 stale responses are guarded before they can commit (3.1948ms)
+✔ user catalog overrides stay local, marked, and outside network verification (4.5143ms)
+✔ IPC-02 production CSP and opener scope are narrow and audited (4.2145ms)
+✔ FE-12 path-bar inputs keep a visible keyboard-focus ring (0.6973ms)
+✔ FE-14 small-text colors keep at least 4.5:1 on their panels (0.9915ms)
+✔ DC-09 quant labels come from the file's own token and stay canonical (1.7996ms)
+✔ DC-10 the builder pins immutable revisions and signed freshness fields (0.4722ms)
+✔ QD-01 the catalog cutoff follows the build clock (1.7913ms)
+✔ QD-04 active docs agree with the shipped unsigned policy and current platform (0.9421ms)
+✔ QD-05 the toolchain minimum is declared (4.4515ms)
+✔ QD-06 vendored upstream docs carry provenance and links resolve elsewhere (1.2267ms)
+✔ QD-06 local doc links resolve (the vendored upstream README is excluded) (2.2907ms)
+✔ GH-07 the evidence matrix exists and the README reads it (1.2613ms)
+✔ GH-08 supply-chain posture and SBOM step are documented (11.1357ms)
+✔ GH-09 governance files exist and dependency updates are configured (1.6011ms)
+✔ adapter invokes wrap Rust commands whose only parameter is `request` (3.087ms)
+✔ release verification keeps checks, packaging, lifecycle, and qualification in one workspace (14.7721ms)
+✔ S-26: version gates stay dynamic and deterministic tests run once before packaging (18.5084ms)
+✔ promotion validates each downloaded bundle once without repeating manifest and checksum checks (13.8076ms)
+✔ publication consumes the retained candidate inventory and validates it (2026-09-12 review) (1.3752ms)
+✔ the RT-04.V2 health-model delay seam is loopback-only and verifier-gated (1.8134ms)
+✔ lifecycle evidence binds to the candidate inventory, never a substituted HEAD (0.6133ms)
+✔ MT-06 extension pins worker ownership and duplicate-free cancellation (0.6769ms)
+✔ R05/R06: lifecycle pass conditions are strict and candidate-bound (1.597ms)
+✔ lifecycle host stages the settings canary for cache legs (0.4983ms)
+✔ witness stall legs spawn the capable shell (0.4763ms)
+✔ settings session splits the WebView2 data root from the profile dir (0.4617ms)
+✔ settings session keeps the WebView2 profile outside the mapped share (0.6005ms)
+✔ settings session pins a WebView2 user-data dir (0.4147ms)
+✔ settings session polls for the debugger target before evaluating (0.4785ms)
+✔ settings sessions preserve storage and clean up on a verifier failure (692.1588ms)
+✔ lifecycle collection handles cache-only and mirror-only baselines (440.7813ms)
+✔ lifecycle cleanup targets only its Sandbox identity and reports stop failures (331.0878ms)
+✔ lifecycle retains the actual settings reads under lock ownership (454.4591ms)
+✔ lifecycle preflight checks the actual Sandbox CLI before using candidates (1115.7552ms)
+✔ elevated guest debugging uses a new application-scoped machine override (338.1398ms)
+✔ lifecycle preflight restricts stored authentication to an opted-in local run (352.2909ms)
+✔ lifecycle authentication failure retains a structured failure document (558.8659ms)
+✔ R04: the benchmark run owns its cancelled workers until they exit (1.4185ms)
+✔ the stalled-fetch deadline stays injectable and bounded in tests (CI cancellation fix) (0.4652ms)
+✔ publish promotes the verified bytes only after every material gate (G-06/G-09) (19.3172ms)
+✔ the gate policy refuses a verify workflow that can publish (0.3352ms)
+✔ DC-04.V2 the authority distinction stays visible end to end (1.496ms)
+✔ DC-04.V2 the download seam is loopback-only and verifier-gated (0.719ms)
+✔ S-26: the hardware probe runs only in its explicit qualification job (1.276ms)
+✔ no workflow mapping key is comment-only (GitHub rejects the whole file) (2.3345ms)
+✔ lifecycle harness refuses to race evidence for one scenario (0.7714ms)
+✔ the qualification manifest validates and references only committed records (6.466ms)
+✔ a coherent qualified set is safe to publish (57.5858ms)
+✔ a downloaded bundle cannot fall back to the checkout's manifest or lifecycle record (190.6787ms)
+✔ a wrong expected source revision is refused even when the set is intact (42.4811ms)
+✔ bytes that changed after qualification are refused (82.8499ms)
+✔ a missing promised asset is refused (38.1312ms)
+✔ missing lifecycle evidence is refused (42.383ms)
+✔ a moved or relabelled tag is refused (54.8597ms)
+✔ the inventory asset must match the manifest's producer record (43.5764ms)
+✔ a packaged-verification asset that is not the producer record is refused (39.4637ms)
+✔ a checksum file that lists the wrong file set is refused (38.8604ms)
+✔ the checksum parser refuses duplicates and unparseable lines (0.3024ms)
+✔ the single promotion CLI rejects manifest and artifact failures without companion commands (484.7784ms)
+✔ the run's own lifecycle records qualify a generated manifest and publish set (444.111ms)
+✔ missing current-run lifecycle output cannot qualify from committed records (559.7982ms)
+✔ the staged packaged record reaches the manifest without prepopulated identical copies (370.4666ms)
+✔ a missing staged packaged record fails instead of binding a stale copy (305.6284ms)
+✔ a missing lifecycle record fails qualification (340.74ms)
+✔ an unrelated run's lifecycle record fails without a permitted carry-forward (316.7515ms)
+✔ a legacy evidence filename fails instead of passing silently (338.0481ms)
+✔ an artifact contradiction fails even when every value is well formed (320.2497ms)
+✔ the fixture writes every mandatory record under the generator's name (228.821ms)
+✔ a controlled package-stage failure reports every missing output (604.6893ms)
+✔ the produced evidence name and the promotion contract agree (0.8182ms)
+ℹ tests 274
+ℹ suites 0
+ℹ pass 274
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 6908.1113
+
+ RUN  v4.1.11 C:/Users/Mubarak/Documents/Projects/localmotive
+
+Not implemented: navigation to another Document
+
+ Test Files  13 passed (13)
+      Tests  224 passed (224)
+   Start at  01:56:33
+   Duration  5.19s (transform 2.34s, setup 0ms, import 4.62s, tests 7.34s, environment 21.86s)
+
+
+> localmotive@0.6.0 catalog:validate
+> node scripts/validate_catalog.mjs catalog/catalog.json
+
+catalog: valid v2 (158 models, 1417 files) · shared contract 0 drops
+
+> localmotive@0.6.0 branding:verify
+> node scripts/verify_branding.mjs
+
+PASS branding: no unapproved legacy product names
+
+> localmotive@0.6.0 research:verify-anchor
+> node scripts/verify_research_anchor.mjs
+
+PASS research freeze: tracked manifest and independent anchor agree
+
+> localmotive@0.6.0 qualification:verify
+> node scripts/verify_qualification.mjs
+
+PASS qualification policy: 19 disclosed P0 rows, 1 L4 attestations
+
+> localmotive@0.6.0 icon:verify
+> node scripts/verify_icons.mjs
+
+{
+  "ok": true,
+  "icoSizes": [
+    16,
+    24,
+    32,
+    48,
+    64,
+    256
+  ],
+  "publisher": "Localmotive contributors",
+  "failures": []
+}
+
+> localmotive@0.6.0 build
+> tsc && vite build
+
+[36mvite v7.3.6 [32mbuilding client environment for production...[36m[39m
+transforming...
+[32m✓[39m 1850 modules transformed.
+rendering chunks...
+computing gzip size...
+[2mdist/[22m[32mindex.html                 [39m[1m[2m  1.16 kB[22m[1m[22m[2m │ gzip:   0.70 kB[22m
+[2mdist/[22m[35massets/index-C3xfUeT9.css  [39m[1m[2m 43.15 kB[22m[1m[22m[2m │ gzip:   8.83 kB[22m
+[2mdist/[22m[36massets/index-DCF8Gr5x.js   [39m[1m[2m346.91 kB[22m[1m[22m[2m │ gzip: 104.43 kB[22m
+[32m✓ built in 1.92s[39m

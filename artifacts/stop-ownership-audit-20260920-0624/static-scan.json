@@ -1,0 +1,6 @@
+{
+  "unsafe": false,
+  "hardcodedSecrets": false,
+  "processConstruction": 1,
+  "shellFixture": "One Windows-only test starts a contained powershell.exe with fixed Start-Sleep arguments. No caller text reaches the command."
+}

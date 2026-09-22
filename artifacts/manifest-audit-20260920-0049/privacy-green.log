@@ -1,0 +1,17 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.56s
+     Running unittests src\lib.rs (target\debug\deps\localmotive_lib-694be1a6828a4ecd.exe)
+
+running 4 tests
+test core::tests::manifest_arguments_redact_direct_api_keys ... ok
+test core::tests::manifest_arguments_fingerprint_sensitive_path_values ... ok
+test core::tests::manifest_arguments_fingerprint_all_managed_model_paths ... ok
+test core::tests::manifest_arguments_do_not_expose_generated_draft_and_adapter_paths ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 597 filtered out; finished in 0.00s
+
+     Running unittests src\main.rs (target\debug\deps\localmotive-7f4f61c092604b5b.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

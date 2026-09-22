@@ -1,0 +1,13 @@
+{
+  "status": "FAIL",
+  "error": "Preservation baseline exposed no CDP page target within 90 seconds",
+  "schema": "localmotive.sandbox-lifecycle.v0",
+  "log": "C:\\Users\\WDAGUtilityAccount\\Desktop\\shared\\lifecycle.log",
+  "finishedAtUtc": "2026-09-15T00:28:47.4670331Z",
+  "sourceRevision": "eb9ce5828aeb4b2b284860a45371e8de35ebf353",
+  "harnessRevision": "7b924f31cd83dee8051d7baec7f76a0d638ff5cf",
+  "candidateDigests": {
+    "currentSetup": "3808ff7d03b2916df0d66d5516ac9d1e21a2a9a745c2d00a55a0605441b12169",
+    "currentMsi": "55e85a16a468cf0194a1a46debf2600ad477adad4f62a77e8caef6421f7e4806"
+  }
+}

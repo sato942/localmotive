@@ -22,6 +22,7 @@ export interface BenchmarkScreenProps {
   busy: string;
   evidenceRun: EvidenceRun | null;
   hardware: HardwareInfo | null;
+  inputError: string | null;
   profile: LaunchProfile | null;
   repeats: number;
   runBenchmark: () => void;
@@ -44,7 +45,7 @@ export function BenchmarkScreen(props: BenchmarkScreenProps) {
         <h1>Generation benchmark</h1>
         <p>One warmup, fixed deterministic workload, repeated server-reported throughput.</p>
       </div>
-      <button className="button primary" onClick={props.runBenchmark} disabled={!props.status.running || props.busy === "benchmark" || props.evidenceRun !== null}>
+      <button className="button primary" onClick={props.runBenchmark} disabled={!props.status.running || props.busy === "benchmark" || props.evidenceRun !== null || Boolean(props.inputError)}>
         <Activity size={16} /> {props.busy === "benchmark" ? "Measuring…" : "Run benchmark"}
       </button>
     </div>
@@ -52,8 +53,9 @@ export function BenchmarkScreen(props: BenchmarkScreenProps) {
     <div className="benchmark-grid">
       <article className="machine-panel benchmark-setup">
         <div className="panel-title"><TestTube2 size={17} /><h2>Test setup</h2></div>
-        <label>Forced output tokens<input type="number" min="64" max="4096" value={props.tokens} onChange={(e) => props.setTokens(Number(e.target.value))} /></label>
-        <label>Measured repeats<input type="number" min="1" max="10" value={props.repeats} onChange={(e) => props.setRepeats(Number(e.target.value))} /></label>
+        <label>Forced output tokens<input type="number" min="64" max="4096" step="1" required value={Number.isFinite(props.tokens) ? props.tokens : ""} onChange={(e) => props.setTokens(e.target.valueAsNumber)} /></label>
+        <label>Measured repeats<input type="number" min="1" max="10" step="1" required value={Number.isFinite(props.repeats) ? props.repeats : ""} onChange={(e) => props.setRepeats(e.target.valueAsNumber)} /></label>
+        {props.inputError && <p className="group-note" role="status">{props.inputError}</p>}
         <dl className="spec-list">
           <div><dt>Sampling</dt><dd>GREEDY</dd></div>
           <div><dt>Seed</dt><dd>42</dd></div>

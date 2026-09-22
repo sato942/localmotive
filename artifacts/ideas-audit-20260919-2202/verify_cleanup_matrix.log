@@ -1,0 +1,129 @@
+verify-orchestrator [2026-09-19T22:35:29.6011598+04:00] verify_041 starting
+phase: mock verifier verify_041 exit=0
+verify-orchestrator [2026-09-19T22:35:29.6209707+04:00] catalog first-fill starting
+phase: mock verifier catalog first-fill exit=0
+verify-orchestrator [2026-09-19T22:35:29.6222078+04:00] candidate shutdown (launch 1)
+verify-orchestrator [2026-09-19T22:35:29.6307674+04:00] cleanup candidate pid=415988 stopping (deadline 15s)
+verify-orchestrator [2026-09-19T22:35:29.6378627+04:00] cleanup candidate pid=415988 stopped exit=-1
+verify-orchestrator [2026-09-19T22:35:29.6439018+04:00] catalog prep starting
+phase: mock verifier catalog prep exit=0
+verify-orchestrator [2026-09-19T22:35:31.6614530+04:00] catalog restart starting
+phase: mock verifier catalog restart exit=0
+verify-orchestrator [2026-09-19T22:35:31.6630877+04:00] candidate shutdown (launch 2)
+verify-orchestrator [2026-09-19T22:35:31.6640470+04:00] cleanup candidate pid=1348660 stopping (deadline 15s)
+verify-orchestrator [2026-09-19T22:35:31.6709302+04:00] cleanup candidate pid=1348660 stopped exit=-1
+verify-orchestrator [2026-09-19T22:35:31.6718690+04:00] catalog merge starting
+phase: mock verifier catalog merge exit=0
+verify-orchestrator [2026-09-19T22:35:31.6837615+04:00] merge bound revision=regression-regression-success-stopped-8fc55d15
+verify-orchestrator [2026-09-19T22:35:31.6844732+04:00] outer cleanup starting
+verify-orchestrator [2026-09-19T22:35:31.6884021+04:00] cleanup catalog-fixture pid=231620 already-stopped
+verify-orchestrator [2026-09-19T22:35:31.6892839+04:00] outer cleanup done
+verify-orchestrator [2026-09-19T22:35:31.6910328+04:00] cleanup notes: fixture outcome=already-stopped
+verify-orchestrator [2026-09-19T22:35:31.6915053+04:00] RESULT: PASS
+PASS: success with already-stopped fixture exits 0
+verify-orchestrator [2026-09-19T22:35:35.8247163+04:00] verify_041 starting
+phase: mock verifier verify_041 exit=0
+verify-orchestrator [2026-09-19T22:35:35.8277631+04:00] catalog first-fill starting
+phase: mock verifier catalog first-fill exit=0
+verify-orchestrator [2026-09-19T22:35:35.8286817+04:00] candidate shutdown (launch 1)
+verify-orchestrator [2026-09-19T22:35:35.8301118+04:00] cleanup candidate pid=1634508 stopping (deadline 15s)
+verify-orchestrator [2026-09-19T22:35:35.8362284+04:00] cleanup candidate pid=1634508 stopped exit=-1
+verify-orchestrator [2026-09-19T22:35:35.8366964+04:00] catalog prep starting
+phase: mock verifier catalog prep exit=0
+verify-orchestrator [2026-09-19T22:35:37.8487371+04:00] catalog restart starting
+phase: mock verifier catalog restart exit=0
+verify-orchestrator [2026-09-19T22:35:37.8497506+04:00] candidate shutdown (launch 2)
+verify-orchestrator [2026-09-19T22:35:37.8502985+04:00] cleanup candidate pid=233388 stopping (deadline 15s)
+verify-orchestrator [2026-09-19T22:35:37.8555694+04:00] cleanup candidate pid=233388 stopped exit=-1
+verify-orchestrator [2026-09-19T22:35:37.8561666+04:00] catalog merge starting
+phase: mock verifier catalog merge exit=0
+verify-orchestrator [2026-09-19T22:35:37.8636411+04:00] merge bound revision=regression-regression-success-live-81f3c504
+verify-orchestrator [2026-09-19T22:35:37.8643339+04:00] outer cleanup starting
+verify-orchestrator [2026-09-19T22:35:37.8658727+04:00] cleanup catalog-fixture pid=27924 stopping (deadline 15s)
+verify-orchestrator [2026-09-19T22:35:37.8714690+04:00] cleanup catalog-fixture pid=27924 stopped exit=-1
+verify-orchestrator [2026-09-19T22:35:37.8722046+04:00] outer cleanup done
+verify-orchestrator [2026-09-19T22:35:37.8726183+04:00] cleanup notes: fixture outcome=stopped
+verify-orchestrator [2026-09-19T22:35:37.8730210+04:00] RESULT: PASS
+PASS: success with live owned processes exits 0
+verify-orchestrator [2026-09-19T22:35:39.9933324+04:00] verify_041 starting
+phase: mock verifier verify_041 exit=1
+verify-orchestrator [2026-09-19T22:35:39.9968984+04:00] candidate shutdown (launch 1)
+verify-orchestrator [2026-09-19T22:35:39.9983406+04:00] cleanup candidate pid=1122456 stopping (deadline 15s)
+verify-orchestrator [2026-09-19T22:35:40.0033558+04:00] cleanup candidate pid=1122456 stopped exit=-1
+verify-orchestrator [2026-09-19T22:35:40.0050265+04:00] FUNCTIONAL FAILURE: verify_041 failed with code 1
+verify-orchestrator [2026-09-19T22:35:40.0053194+04:00] outer cleanup starting
+verify-orchestrator [2026-09-19T22:35:40.0062212+04:00] outer cleanup done
+verify-orchestrator [2026-09-19T22:35:40.0065409+04:00] RESULT: FAIL verify_041 failed with code 1
+PASS: verifier failure survives successful cleanup
+verify-orchestrator [2026-09-19T22:35:40.1117368+04:00] FUNCTIONAL FAILURE: Candidate WebView did not expose a page CDP target in 90s (port 14714)
+verify-orchestrator [2026-09-19T22:35:40.1124150+04:00] outer cleanup starting
+verify-orchestrator [2026-09-19T22:35:40.1148608+04:00] outer cleanup done
+verify-orchestrator [2026-09-19T22:35:40.1154379+04:00] RESULT: FAIL Candidate WebView did not expose a page CDP target in 90s (port 14714)
+PASS: early candidate-startup failure still cleans up
+verify-orchestrator [2026-09-19T22:35:42.1755449+04:00] cleanup candidate pid=127152 stopping (deadline 15s)
+verify-orchestrator [2026-09-19T22:35:42.1806184+04:00] cleanup candidate pid=127152 stopped exit=-1
+verify-orchestrator [2026-09-19T22:35:44.2553339+04:00] verify_041 starting
+phase: mock verifier verify_041 exit=0
+verify-orchestrator [2026-09-19T22:35:44.2581903+04:00] catalog first-fill starting
+phase: mock verifier catalog first-fill exit=0
+verify-orchestrator [2026-09-19T22:35:44.2587455+04:00] candidate shutdown (launch 1)
+verify-orchestrator [2026-09-19T22:35:44.2706244+04:00] catalog prep starting
+phase: mock verifier catalog prep exit=0
+verify-orchestrator [2026-09-19T22:35:46.2860688+04:00] catalog restart starting
+phase: mock verifier catalog restart exit=0
+verify-orchestrator [2026-09-19T22:35:46.2875207+04:00] candidate shutdown (launch 2)
+verify-orchestrator [2026-09-19T22:35:46.2957903+04:00] catalog merge starting
+phase: mock verifier catalog merge exit=0
+verify-orchestrator [2026-09-19T22:35:46.3032036+04:00] merge bound revision=regression-regression-candidate-alive-0df283f9
+verify-orchestrator [2026-09-19T22:35:46.3035692+04:00] outer cleanup starting
+verify-orchestrator [2026-09-19T22:35:46.3046774+04:00] outer cleanup done
+verify-orchestrator [2026-09-19T22:35:46.3049881+04:00] cleanup notes: candidate still-alive; candidate still-alive
+verify-orchestrator [2026-09-19T22:35:46.3052387+04:00] RESULT: FAIL Candidate process could not be stopped within the deadline
+PASS: unstoppable candidate fails the run
+verify-orchestrator [2026-09-19T22:35:48.4266327+04:00] verify_041 starting
+phase: mock verifier verify_041 exit=0
+verify-orchestrator [2026-09-19T22:35:48.4298295+04:00] catalog first-fill starting
+phase: mock verifier catalog first-fill exit=0
+verify-orchestrator [2026-09-19T22:35:48.4304566+04:00] candidate shutdown (launch 1)
+verify-orchestrator [2026-09-19T22:35:48.4316515+04:00] cleanup candidate pid=1154728 stopping (deadline 15s)
+verify-orchestrator [2026-09-19T22:35:48.4379921+04:00] cleanup candidate pid=1154728 stopped exit=-1
+verify-orchestrator [2026-09-19T22:35:48.4383949+04:00] catalog prep starting
+phase: mock verifier catalog prep exit=0
+verify-orchestrator [2026-09-19T22:35:50.4472841+04:00] catalog restart starting
+phase: mock verifier catalog restart exit=0
+verify-orchestrator [2026-09-19T22:35:50.4483025+04:00] candidate shutdown (launch 2)
+verify-orchestrator [2026-09-19T22:35:50.4488928+04:00] cleanup candidate pid=1384820 stopping (deadline 15s)
+verify-orchestrator [2026-09-19T22:35:50.4560669+04:00] cleanup candidate pid=1384820 stopped exit=-1
+verify-orchestrator [2026-09-19T22:35:50.4568023+04:00] catalog merge starting
+phase: mock verifier catalog merge exit=0
+verify-orchestrator [2026-09-19T22:35:50.4649264+04:00] merge bound revision=regression-regression-fixture-alive-e1a8057f
+verify-orchestrator [2026-09-19T22:35:50.4655159+04:00] outer cleanup starting
+verify-orchestrator [2026-09-19T22:35:50.4671016+04:00] outer cleanup done
+verify-orchestrator [2026-09-19T22:35:50.4675248+04:00] cleanup notes: fixture outcome=still-alive
+verify-orchestrator [2026-09-19T22:35:50.4678877+04:00] RESULT: FAIL Catalog fixture process could not be stopped within the deadline
+PASS: unstoppable fixture fails the run
+verify-orchestrator [2026-09-19T22:35:52.6056779+04:00] verify_041 starting
+phase: mock verifier verify_041 exit=1
+verify-orchestrator [2026-09-19T22:35:52.6068696+04:00] candidate shutdown (launch 1)
+verify-orchestrator [2026-09-19T22:35:52.6142183+04:00] FUNCTIONAL FAILURE: verify_041 failed with code 1
+verify-orchestrator [2026-09-19T22:35:52.6146132+04:00] outer cleanup starting
+verify-orchestrator [2026-09-19T22:35:52.6158519+04:00] outer cleanup done
+verify-orchestrator [2026-09-19T22:35:52.6161899+04:00] cleanup notes: candidate still-alive
+verify-orchestrator [2026-09-19T22:35:52.6164643+04:00] RESULT: FAIL verify_041 failed with code 1
+PASS: verifier failure plus stuck candidate preserves the original error
+verify-orchestrator [2026-09-19T22:35:54.6381306+04:00] cleanup regression-fixture pid=1605152 stopping (deadline 15s)
+verify-orchestrator [2026-09-19T22:35:54.6434006+04:00] cleanup regression-fixture pid=1605152 stopped exit=-1
+verify-orchestrator [2026-09-19T22:35:54.6438159+04:00] cleanup regression-fixture pid=1605152 already-stopped
+PASS: cleanup is safe to run twice
+phase: adoption refused: Recorded fixture pid 297608 does not belong to this attempt; refusing to adopt
+PASS: foreign pid is never adopted as the fixture
+phase: adoption refused: The catalog fixture server exited before adoption (pid 1122572)
+PASS: dead pid is never adopted as the fixture
+PASS: no kill path accepts a bare pid
+verify-orchestrator [2026-09-19T22:35:59.4198269+04:00] FUNCTIONAL FAILURE: The catalog fixture server did not initialize (exit 1): boom
+verify-orchestrator [2026-09-19T22:35:59.4205045+04:00] outer cleanup starting
+verify-orchestrator [2026-09-19T22:35:59.4218879+04:00] outer cleanup done
+verify-orchestrator [2026-09-19T22:35:59.4223562+04:00] RESULT: FAIL The catalog fixture server did not initialize (exit 1): boom
+PASS: fixture-init failure still runs outer cleanup
+
+cleanup-matrix: 12 passed, 0 failed

@@ -1,0 +1,24 @@
+   Compiling localmotive v0.6.0 (C:\Users\Mubarak\Documents\Projects\localmotive\src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.64s
+     Running unittests src\lib.rs (target\debug\deps\localmotive_lib-694be1a6828a4ecd.exe)
+
+running 1 test
+test core::tests::benchmark_summary_even_mixed_extremes_keep_the_expected_median ... FAILED
+
+failures:
+
+---- core::tests::benchmark_summary_even_mixed_extremes_keep_the_expected_median stdout ----
+
+thread 'core::tests::benchmark_summary_even_mixed_extremes_keep_the_expected_median' (1472100) panicked at src\core.rs:4150:13:
+assertion `left == right` failed
+  left: inf
+ right: 1.3482698511467367e308
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    core::tests::benchmark_summary_even_mixed_extremes_keep_the_expected_median
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 612 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`

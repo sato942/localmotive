@@ -13,7 +13,9 @@ The same executable provides the local API and optional WebUI.
 ## Download
 
 Download the current release from [GitHub Releases][releases].
-The current tip ships as **Latest** on the repository home page.
+Use the release marked **Latest**, not the repository's unreleased source tip.
+In this 0.6.0 source build, select **About → Check releases** to open that page.
+Updates require a manual download and installation; the application has no automatic updater.
 
 Each release provides these Windows x64 files:
 
@@ -21,12 +23,15 @@ Each release provides these Windows x64 files:
 - `Localmotive_<version>_x64.msi` is the MSI installer.
 - `Localmotive_<version>_x64-portable.exe` runs without installation.
 - `SHA256SUMS-<version>.txt` covers the three application files.
-- `packaged-verification-<version>.json` is the packaged behavior evidence.
+- `packaged-verification-*.json` is the packaged behavior evidence; inspect its version and source fields.
 - `candidate-inventory-<version>.json` is the candidate size and digest evidence.
 
 For example, release 0.5.0 ships `Localmotive_0.5.0_x64-setup.exe`,
 `Localmotive_0.5.0_x64.msi`, `Localmotive_0.5.0_x64-portable.exe`,
 and `SHA256SUMS-0.5.0.txt`.
+
+The 0.5.0 release retains the evidence filename `packaged-verification-0.4.1.json`.
+The filename alone does not establish which source or application bytes were verified.
 
 The application files do not have Authenticode signatures.
 Signing is deferred by owner order, so every ship is honestly unsigned:
@@ -276,12 +281,17 @@ Beyond local storage, Localmotive keeps this state on disk (audit QD-04):
 | Signed catalog cache and refresh stamp | Application cache directory; falls back to the temporary directory | Rebuilt from the signed catalog on refresh; safe to delete (rows reload from the bundled copy) |
 | Catalog SQLite mirror (`catalog-mirror.sqlite`) | Application cache directory | Holds the verified mirror plus your user-added rows; delete only to reset user additions, the app rebuilds the mirror |
 | Runtime downloads and installs | `%LOCALAPPDATA%\Localmotive` | Managed versioned installs; remove a version from the Runtime screen |
-| Benchmark, tuning, calibration and share evidence | Local storage (small records) plus exported files you choose | Export what you need before clearing application data |
+| Benchmark and tuning evidence | Local storage plus saved benchmark manifests | Preserve these records before clearing application data |
 | Server logs and failure records | Operating system temporary directory | Bounded rotation as described below |
 
 Settings can be reset per record by clearing the matching `localmotive:*`
 local-storage key; a corrupt record is moved to `localmotive:quarantine:*`
 instead of crashing the window.
+
+The reduced application removes quality/ranking, calibration fitting,
+external-evidence import, and share export. Existing calibration and exchange
+files remain untouched but are no longer supported by the application.
+Saved benchmark manifests and replay remain supported.
 
 Server logs use the operating system temporary directory.
 The server log subdirectory is `localmotive`.
@@ -339,7 +349,7 @@ Other Windows hardware may work but remains untested and unsupported until packa
 
 macOS remains out of scope for this matrix.
 
-Code signing status is DEFERRED_BY_OWNER: Authenticode is postponed until the project is more mature (owner order 2026-09-09). No paid cert. SignPath stays pending or ignored and blocks no gate.
+Code signing status is UNSIGNED-BY-POLICY: releases ship without Authenticode (owner order 2026-09-20). No certificate purchase and no signing service. Signing blocks no gate because no signing step exists.
 
 Windows installers remain honestly unsigned with disclosure. Windows SmartScreen can show a warning when you start an unsigned file. Unsigned artifacts ship as full releases, not GitHub Pre-releases, so the current tip stays visible as Latest.
 
@@ -429,8 +439,7 @@ Run the Rust checks:
 cd src-tauri
 cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings
-cargo test --locked
-RUSTDOCFLAGS='-D warnings' cargo test --locked --doc
+RUSTDOCFLAGS='-D warnings' cargo test --locked
 ```
 
 GitHub Actions builds the packaged application.
@@ -438,6 +447,17 @@ The workflow starts the portable executable for a startup smoke test.
 
 The smoke test does not prove model or GPU compatibility.
 The smoke test does not test installer behavior or all Windows versions.
+
+Release verification uses three jobs: resolve the tag on main, audit Rust
+dependencies, then check/build/qualify in one workspace. The native lifecycle
+matrix retains its 120-minute deadline. The qualified bundle includes the
+SBOM and evidence; failed or cancelled runs retain diagnostics.
+
+Publication uses `release-promote.yml`. It requires the repository owner,
+the exact `PUBLISH <tag>` confirmation, a successful verification run for the
+same source, and `dry_run=false`. Promotion validates downloaded bytes without
+rebuilding them, then reads back the published assets. The default dry run
+does not publish. Missing qualification records still block publication.
 
 ## Architecture
 

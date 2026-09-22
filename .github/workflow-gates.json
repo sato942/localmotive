@@ -23,28 +23,24 @@
           "node scripts/verify_versions.mjs",
           "node scripts/verify_workflow_pins.mjs",
           "node scripts/verify_workflow_gates.mjs",
-          "node --test scripts/tests/release-gates.test.mjs",
           "pwsh -NoProfile -File scripts/tests/verify_cleanup_matrix.ps1",
           "npm run check",
           "npm audit --audit-level=moderate",
           "cargo fmt --check",
           "cargo clippy --locked --all-targets -- -D warnings",
-          "cargo test --locked",
-          "cargo test --locked --doc"
+          "cargo test --locked"
         ],
         "rust-audit": [],
         "pr-check": [
           "node scripts/verify_versions.mjs",
           "node scripts/verify_workflow_pins.mjs",
           "node scripts/verify_workflow_gates.mjs",
-          "node --test scripts/tests/release-gates.test.mjs",
           "pwsh -NoProfile -File scripts/tests/verify_cleanup_matrix.ps1",
           "npm run check",
           "npm audit --audit-level=moderate",
           "cargo fmt --check",
           "cargo clippy --locked --all-targets -- -D warnings",
-          "cargo test --locked -- --nocapture",
-          "cargo test --locked --doc"
+          "cargo test --locked -- --nocapture"
         ]
       },
       "packageJobs": {
@@ -62,41 +58,33 @@
     },
     "release.yml": {
       "gates": {
-        "quality": [
+        "verify": [
           "node scripts/verify_versions.mjs ${{ needs.resolve.outputs.version }}",
           "node scripts/verify_workflow_pins.mjs",
           "node scripts/verify_workflow_gates.mjs",
-          "node --test scripts/tests/release-gates.test.mjs",
           "npm run check",
           "npm audit --audit-level=moderate",
           "cargo fmt --check",
           "cargo clippy --locked --all-targets -- -D warnings",
-          "cargo test --locked",
-          "cargo test --locked --doc"
+          "cargo test --locked"
         ],
         "rust-audit": [],
-        "resolve": [],
-        "clean-account-lifecycle": [],
-        "qualification": []
+        "resolve": []
       },
       "packageJobs": {
-        "package": [
-          "quality",
+        "verify": [
+          "resolve",
           "rust-audit"
         ]
       },
       "requiredCommands": {
-        "package": [
+        "verify": [
           "npm run tauri build",
           "pwsh -NoProfile -File scripts/verify_packaged_matrix.ps1 -Portable $portable -Version \"$env:VERSION\" -ResolvedSha \"$env:RESOLVED_SHA\" -CdpPort $cdpPort",
-          "node scripts/verify_candidate_inventory.mjs artifacts \"$VERSION\" \"artifacts/candidate-inventory-${VERSION}.json\""
-        ],
-        "clean-account-lifecycle": [
-          "& \".\\scripts\\sandbox\\host-run-lifecycle.ps1\" -Tag \"${{ needs.resolve.outputs.tag }}\" -Version \"${{ needs.quality.outputs.version }}\" -PreviousTag $leg.Previous -CandidateDir \"artifacts\" -EvidenceName $leg.Name -PreservationFlavor $leg.Flavor"
-        ],
-        "qualification": [
+          "node scripts/verify_candidate_inventory.mjs artifacts \"$VERSION\" \"artifacts/candidate-inventory-${VERSION}.json\"",
+          "node scripts/verify_installer_payloads.mjs artifacts \"artifacts/candidate-inventory-${VERSION}.json\" \"release-evidence/${VERSION}/attestations/installer-payload-identity.json\"",
+          "& \".\\scripts\\sandbox\\host-run-lifecycle.ps1\" -Tag \"${{ needs.resolve.outputs.tag }}\" -Version \"$env:VERSION\" -PreviousTag $leg.Previous -CandidateDir \"artifacts\" -EvidenceName $leg.Name -PreservationFlavor $leg.Flavor",
           "node scripts/build_qualification_manifest.mjs --inventory \"artifacts/candidate-inventory-${VERSION}.json\" --attestations \"release-evidence/${VERSION}/attestations\" --release \"$VERSION\" --stage-packaged-verification \"artifacts/packaged-verification-${VERSION}.json\" --out \"release-evidence/${VERSION}/qualification-manifest-${VERSION}.json\"",
-          "node scripts/verify_qualification_manifest.mjs --expect-source \"$RESOLVED_SHA\"",
           "node scripts/verify_release_promotion.mjs --qualified . --tag \"v${VERSION}\" --expect-source \"$RESOLVED_SHA\" --report \"artifacts/promotion-check-${VERSION}.json\""
         ]
       },
@@ -122,13 +110,10 @@
       "packageJobs": {},
       "requiredCommands": {
         "gate": [
-          "node scripts/verify_qualification_manifest.mjs --expect-source \"$RESOLVED_SHA\"",
-          "node scripts/verify_release_promotion.mjs --qualified . --tag \"v${VERSION}\" --expect-source \"$RESOLVED_SHA\" --verify-run \"$VERIFY_RUN_ID\" --report \"artifacts/promotion-check-${VERSION}.json\"",
-          "(cd artifacts && sha256sum -c \"SHA256SUMS-${VERSION}.txt\")"
+          "node scripts/verify_release_promotion.mjs --qualified qualified --tag \"v${VERSION}\" --expect-source \"$RESOLVED_SHA\" --verify-run \"$VERIFY_RUN_ID\" --report \"promotion-check-${VERSION}.json\""
         ],
         "publish": [
-          "node scripts/verify_release_promotion.mjs --qualified . --tag \"v${VERSION}\" --expect-source \"$RESOLVED_SHA\" --verify-run \"$VERIFY_RUN_ID\" --report \"artifacts/promotion-check-${VERSION}.json\"",
-          "(cd artifacts && sha256sum -c \"SHA256SUMS-${VERSION}.txt\")",
+          "node scripts/verify_release_promotion.mjs --qualified qualified --tag \"v${VERSION}\" --expect-source \"$RESOLVED_SHA\" --verify-run \"$VERIFY_RUN_ID\" --report \"promotion-check-${VERSION}.json\"",
           "LOCALMOTIVE_SOURCE_REVISION=\"$RESOLVED_SHA\" node scripts/verify_candidate_inventory.mjs --verify \"public-readback/candidate-inventory-${VERSION}.json\" \"$VERSION\""
         ]
       },

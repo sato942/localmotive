@@ -29,7 +29,6 @@ Usage (from the repository root):
 """
 
 import base64
-import io
 import json
 import pathlib
 import sqlite3

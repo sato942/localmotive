@@ -1,13 +1,13 @@
 {
   "name": "localmotive",
   "private": true,
-  "version": "0.6.0",
+  "version": "0.6.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "vitest run && node --test scripts/tests/release-gates.test.mjs scripts/tests/catalog_schema.test.mjs scripts/tests/http_retry.test.mjs scripts/tests/ipc_contract.test.mjs scripts/tests/health_cancel.test.mjs scripts/tests/qualification_manifest.test.mjs scripts/tests/installer_payloads.test.mjs scripts/tests/release_promotion.test.mjs scripts/tests/mt06_verdicts.test.mjs scripts/tests/preservation_verifier.test.mjs scripts/tests/workflow_integration.test.mjs",
+    "test": "node --test scripts/tests/release-gates.test.mjs scripts/tests/catalog_schema.test.mjs scripts/tests/http_retry.test.mjs scripts/tests/ipc_contract.test.mjs scripts/tests/health_cancel.test.mjs scripts/tests/qualification_manifest.test.mjs scripts/tests/installer_payloads.test.mjs scripts/tests/release_promotion.test.mjs scripts/tests/mt06_verdicts.test.mjs scripts/tests/preservation_verifier.test.mjs scripts/tests/workflow_integration.test.mjs && vitest run",
     "catalog:validate": "node scripts/validate_catalog.mjs catalog/catalog.json",
     "catalog:refresh": "node scripts/build_catalog.mjs --write",
     "icon:generate": "tauri icon assets/app-icon.svg",
@@ -15,9 +15,8 @@
     "branding:verify": "node scripts/verify_branding.mjs",
     "qualification:verify": "node scripts/verify_qualification.mjs",
     "research:verify-anchor": "node scripts/verify_research_anchor.mjs",
-    "check": "tsc --noEmit -p tsconfig.json && npm test && npm run catalog:validate && npm run branding:verify && npm run research:verify-anchor && npm run qualification:verify && npm run icon:verify && npm run build",
-    "tauri": "tauri",
-    "tauri:build:signed": "tauri build --config src-tauri/tauri.signing.conf.json"
+    "check": "npm test && npm run catalog:validate && npm run branding:verify && npm run research:verify-anchor && npm run qualification:verify && npm run icon:verify && npm run build",
+    "tauri": "tauri"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

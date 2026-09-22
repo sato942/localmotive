@@ -1,0 +1,12 @@
+   Compiling localmotive v0.6.0 (C:\Users\Mubarak\Documents\Projects\localmotive\src-tauri)
+    Finished `release` profile [optimized] target(s) in 21.33s
+     Running unittests src\lib.rs (target\release\deps\localmotive_lib-5096df5c9e61ce1e.exe)
+
+running 4 tests
+test measurement_service::legacy_ownership_tests::fixture_server ... ignored, contained HTTP fixture; invoked explicitly by legacy ownership tests
+test measurement_service::legacy_ownership_tests::legacy_client_failure_does_not_publish_a_slot_or_keep_ownership ... ok
+test measurement_service::legacy_ownership_tests::legacy_command_rejects_an_overlapping_request_before_http ... ok
+test measurement_service::legacy_ownership_tests::legacy_cancellation_holds_ownership_until_the_request_drains ... ok
+
+test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 613 filtered out; finished in 2.10s
+

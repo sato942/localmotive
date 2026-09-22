@@ -5,7 +5,8 @@
 // nothing is published or tagged.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { cpSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildFixture } from "./lib/manifest_fixture.mjs";
 import { parseChecksumFile, promisedAssetNames, verifyReleasePromotion } from "../verify_release_promotion.mjs";
@@ -42,6 +43,23 @@ test("a coherent qualified set is safe to publish", async () => {
     assert.equal(result.report.status, "PASS");
     assert.deepEqual([...result.report.promisedAssets].sort(), [...promisedAssetNames(RELEASE)].sort());
   });
+});
+
+test("a downloaded bundle cannot fall back to the checkout's manifest or lifecycle record", async () => {
+  for (const missing of [null, `qualification-manifest-${RELEASE}.json`,
+    "attestations/sandbox-clean-account-lifecycle-preservation-v0.5.0.json"]) {
+    await withFixture({ withQualifiedSet: true }, async (fixture) => {
+      const downloaded = join(fixture.root, "qualified");
+      for (const directory of ["artifacts", "release-evidence"]) {
+        cpSync(join(fixture.root, directory), join(downloaded, directory), { recursive: true });
+      }
+      if (missing) unlinkSync(join(downloaded, "release-evidence", RELEASE, missing));
+      const result = await run(fixture, { qualifiedDirectory: downloaded });
+      assert.equal(result.ok, missing === null,
+        `downloaded ${missing ?? "complete set"}: checkout copies must not fill missing evidence; ${result.failures.join("; ")}`);
+      if (missing) assert.match(result.failures.join("\n"), /manifest not found|record missing/);
+    });
+  }
 });
 
 test("a wrong expected source revision is refused even when the set is intact", async () => {
@@ -120,6 +138,18 @@ test("a moved or relabelled tag is refused", async () => {
   });
 });
 
+test("the inventory asset must match the manifest's producer record", async () => {
+  await withFixture({ withQualifiedSet: true }, async (fixture) => {
+    const path = join(fixture.root, "artifacts", `candidate-inventory-${RELEASE}.json`);
+    const inventory = JSON.parse(readFileSync(path, "utf8"));
+    inventory.sourceRevision = "d".repeat(40);
+    writeFileSync(path, JSON.stringify(inventory));
+    const result = await run(fixture);
+    assert.equal(result.ok, false, "a valid manifest must not authorize an unrelated published inventory");
+    assert.match(result.failures.join("\n"), /candidate-inventory asset is not the producer inventory/);
+  });
+});
+
 test("a packaged-verification asset that is not the producer record is refused", async () => {
   await withFixture({ withQualifiedSet: true }, async (fixture) => {
     writeFileSync(
@@ -158,4 +188,28 @@ test("the checksum parser refuses duplicates and unparseable lines", () => {
   const good = parseChecksumFile(`${line}\n`);
   assert.equal(good.ok, true);
   assert.equal(good.entries.size, 1);
+});
+
+test("the single promotion CLI rejects manifest and artifact failures without companion commands", async () => {
+  const cli = join(process.cwd(), "scripts", "verify_release_promotion.mjs");
+  for (const defect of [null, "manifest", "checksum", "artifact"]) {
+    await withFixture({ withQualifiedSet: true }, async (fixture) => {
+      if (defect === "manifest") {
+        unlinkSync(join(fixture.root, "release-evidence", RELEASE, `qualification-manifest-${RELEASE}.json`));
+      } else if (defect === "checksum") {
+        writeFileSync(join(fixture.root, "artifacts", `SHA256SUMS-${RELEASE}.txt`), "invalid checksum\n");
+      } else if (defect === "artifact") {
+        writeFileSync(join(fixture.root, "artifacts", `Localmotive_${RELEASE}_x64.msi`), "changed installer\n");
+      }
+      const result = spawnSync(process.execPath, [cli, "--qualified", ".", "--tag", TAG,
+        "--expect-source", SOURCE, "--verify-run", "123456789"], {
+        cwd: fixture.root, encoding: "utf8", windowsHide: true, timeout: 30_000,
+      });
+      assert.equal(result.error, undefined);
+      assert.equal(result.status, defect === null ? 0 : 1, `${defect}: ${result.stdout}\n${result.stderr}`);
+      const reason = { manifest: /manifest.*(?:missing|ENOENT|unreadable)/i, checksum: /checksum file/, artifact: /contradicts.*(?:checksum|manifest)/ }[defect];
+      if (reason) assert.match(result.stderr, reason);
+      else assert.match(result.stdout, /PASS release promotion set/);
+    });
+  }
 });

@@ -1,0 +1,111 @@
+ M .github/workflow-gates.json
+ M .github/workflows/ci.yml
+ M .github/workflows/release-promote.yml
+ M .github/workflows/release.yml
+ M AGENTS.md
+ M CHANGELOG.md
+ M README.md
+ M TODO-0.6.md
+ M docs/ARTIFACT-IDENTITY.md
+ M docs/DESIGN.md
+ M docs/EVIDENCE-MATRIX.md
+ M docs/PRODUCT.md
+ M docs/SUPPLY-CHAIN.md
+ M package.json
+ D scripts/capture_022.mjs
+ D scripts/fix_catalog_quants.mjs
+ D scripts/g05_bench_tls.mjs
+ D scripts/g05_download_cancel.mjs
+ M scripts/g05_fe05v3.mjs
+ D scripts/g05_inflight_dump.mjs
+ D scripts/g05_inflight_dump2.mjs
+ D scripts/g05_inflight_dump3.mjs
+ D scripts/g05_inflight_dump4.mjs
+ D scripts/g05_inflight_dump5.mjs
+ D scripts/g05_mt01_five_trials.mjs
+ D scripts/g05_mt01c.mjs
+ D scripts/g05_tls_profile.mjs
+ D scripts/g05_tls_retry.mjs
+ D scripts/g05_v2_cancel2.mjs
+ D scripts/g05_vitems_a.mjs
+ D scripts/g05_vitems_b.mjs
+ M scripts/g05_vitems_d.mjs
+ D scripts/g05_vitems_e.mjs
+ D scripts/g05_vitems_f.mjs
+ D scripts/g05_vitems_g.mjs
+ D scripts/live_verify_022.mjs
+ M scripts/sandbox/build_preservation_fixture.py
+ M scripts/tests/fixtures/ipc-contract.json
+ M scripts/tests/ipc_contract.test.mjs
+ M scripts/tests/qualification_manifest.test.mjs
+ M scripts/tests/release-gates.test.mjs
+ M scripts/tests/release_promotion.test.mjs
+ M scripts/tests/workflow_integration.test.mjs
+ D scripts/verify_024.mjs
+ D scripts/verify_025.mjs
+ D scripts/verify_030.mjs
+ D scripts/verify_040.mjs
+ M scripts/verify_041.mjs
+ D scripts/verify_g05_runtime_install.mjs
+ M scripts/verify_installer_payloads.mjs
+ M scripts/verify_qualification_manifest.mjs
+ M scripts/verify_release_promotion.mjs
+ M scripts/verify_workflow_pins.mjs
+ M src-tauri/src/artifact.rs
+ M src-tauri/src/calibration.rs
+ M src-tauri/src/catalog_service.rs
+ M src-tauri/src/core.rs
+ M src-tauri/src/evidence.rs
+ M src-tauri/src/gguf.rs
+ M src-tauri/src/lib.rs
+ M src-tauri/src/measurement.rs
+ M src-tauri/src/measurement_service.rs
+ D src-tauri/src/recommend.rs
+ M src-tauri/src/runtime.rs
+ M src-tauri/src/server_service.rs
+ D src-tauri/src/sharing.rs
+ M src-tauri/src/tune.rs
+ M src-tauri/src/tune_service.rs
+ M src/App.catalog.test.tsx
+ M src/App.css
+ M src/App.staleResponses.test.tsx
+ M src/App.storage.test.tsx
+ M src/App.tsx
+ M src/V03EvidencePanel.calibration.test.tsx
+ M src/V03EvidencePanel.cancel.test.tsx
+ M src/V03EvidencePanel.preflight.test.tsx
+ M src/V03EvidencePanel.tsx
+ M src/evidence-adapter.ts
+ M src/model.test.ts
+ M src/model.ts
+ M src/screens/AboutScreen.tsx
+ M src/screens/ProfileScreen.tsx
+ M src/screens/TuneScreen.tsx
+ M src/screens/evidence-run.ts
+?? agents_feedback.md
+?? artifacts/
+?? ideas.md
+?? release-evidence/0.6.0/attestations/sandbox-ownership-refusal.json
+?? release-evidence/0.6.0/attestations/sandbox-ownership-refusal.log
+?? release-evidence/0.6.0/attestations/sandbox-pres050-eb9ce58-collected-mirror.sqlite
+?? release-evidence/0.6.0/attestations/sandbox-pres050-eb9ce58-collected-userdata.txt
+?? release-evidence/0.6.0/attestations/sandbox-pres050-eb9ce58-verify.log
+?? release-evidence/0.6.0/attestations/sandbox-pres050-eb9ce58.json
+?? release-evidence/0.6.0/attestations/sandbox-pres050-eb9ce58.log
+?? release-evidence/0.6.0/attestations/sandbox-upg040-eb9ce58.json
+?? release-evidence/0.6.0/attestations/sandbox-upg040-eb9ce58.log
+?? release-evidence/0.6.0/attestations/sandbox-upg040-machine-override-collected-catalog-cache.json
+?? release-evidence/0.6.0/attestations/sandbox-upg040-machine-override-collected-settings.json
+?? release-evidence/0.6.0/attestations/sandbox-upg040-machine-override-collected-userdata.txt
+?? release-evidence/0.6.0/attestations/sandbox-upg040-machine-override-verify.log
+?? release-evidence/0.6.0/attestations/sandbox-upg040-machine-override.json
+?? release-evidence/0.6.0/attestations/sandbox-upg040-machine-override.log
+?? release-evidence/0.6.0/attestations/sandbox-upg040-session-lifetime.json
+?? release-evidence/0.6.0/attestations/sandbox-upg040-session-lifetime.log
+?? release-evidence/0.6.0/attestations/sandbox-upg050-eb9ce58-collected-mirror.sqlite
+?? release-evidence/0.6.0/attestations/sandbox-upg050-eb9ce58-collected-userdata.txt
+?? release-evidence/0.6.0/attestations/sandbox-upg050-eb9ce58-verify.log
+?? release-evidence/0.6.0/attestations/sandbox-upg050-eb9ce58.json
+?? release-evidence/0.6.0/attestations/sandbox-upg050-eb9ce58.log
+?? src/screens/AboutScreen.test.tsx
+?? src/screens/ProfileScreen.test.tsx

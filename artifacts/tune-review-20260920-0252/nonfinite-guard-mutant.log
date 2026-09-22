@@ -1,0 +1,35 @@
+
+ RUN  v4.1.11 C:/Users/Mubarak/Documents/Projects/localmotive
+
+ ❯ src/App.staleResponses.test.tsx (32 tests | 2 failed | 30 skipped) 420ms
+     × does not dispatch invalid AI trials= 284ms
+     × does not dispatch invalid AI trials=1e309 135ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/App.staleResponses.test.tsx > tuning numeric inputs > does not dispatch invalid AI trials=
+ FAIL  src/App.staleResponses.test.tsx > tuning numeric inputs > does not dispatch invalid AI trials=1e309
+AssertionError: expected [ { command: 'start_tuning', …(1) } ] to have a length of +0 but got 1
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ src/App.staleResponses.test.tsx:398:75
+    396|     await setInputValue(profileInput(label), value);
+    397|     await click(navButton("Auto-tune fixture"), "the Tune action must …
+    398|     expect(invokeCalls.filter((call) => call.command === "start_tuning…
+       |                                                                           ^
+    399|     expect(navButton("Auto-tune fixture")?.disabled).toBe(true);
+    400|     expect(container.querySelector('.tune-screen [role="status"]')?.te…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 30 skipped (32)
+   Start at  02:56:03
+   Duration  1.90s (transform 329ms, setup 0ms, import 484ms, tests 420ms, environment 842ms)
+

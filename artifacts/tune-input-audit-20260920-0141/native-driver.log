@@ -1,0 +1,109 @@
+{
+  "scope": "Working-tree UI diagnostic; not release qualification",
+  "startedAt": "2026-09-19T21:59:24.322Z",
+  "source": "bdb3c14c9170f0342ba0384738e2ffd23062970d",
+  "sourceDirty": true,
+  "executable": "C:\\Users\\Mubarak\\Documents\\Projects\\localmotive\\src-tauri\\target\\release\\localmotive.exe",
+  "sha256": "7363c2aeb2f6fd783e01b91ed5ddf01446c5b12910605e26a5529ff2fd487b56",
+  "checks": [
+    {
+      "id": "uninspected-speculation",
+      "status": "PASS",
+      "evidence": {
+        "disabled": true,
+        "values": [
+          "none"
+        ],
+        "invalidChildren": 0
+      }
+    },
+    {
+      "id": "numeric-domains",
+      "status": "PASS",
+      "evidence": {
+        "count": 41,
+        "unbounded": 0
+      }
+    },
+    {
+      "id": "invalid-tuning-workload-refused-before-runtime",
+      "status": "PASS",
+      "evidence": {
+        "message": "Tuning tokens must be between 64 and 2048"
+      }
+    },
+    {
+      "id": "raw-file-flags-require-profile-fields",
+      "status": "PASS",
+      "evidence": {
+        "rejectedFlags": [
+          "--lora",
+          "--lora-scaled",
+          "--mmproj"
+        ]
+      }
+    },
+    {
+      "id": "invalid-benchmark-workload-refused-before-server",
+      "status": "PASS",
+      "evidence": {
+        "message": "Tokens must be between 64 and 4096"
+      }
+    },
+    {
+      "id": "read_gguf_summary-rejects-junction",
+      "status": "PASS",
+      "evidence": {
+        "refusedBeforeReading": true
+      }
+    },
+    {
+      "id": "inspect_model_artifact-rejects-junction",
+      "status": "PASS",
+      "evidence": {
+        "refusedBeforeReading": true
+      }
+    },
+    {
+      "id": "invalid-save-refused",
+      "status": "PASS",
+      "evidence": {
+        "persistedProfiles": 0
+      }
+    },
+    {
+      "id": "invalid-control-start-refused",
+      "status": "PASS",
+      "evidence": {
+        "phase": "idle",
+        "pid": null
+      }
+    },
+    {
+      "id": "blank-number-not-zero",
+      "status": "PASS",
+      "evidence": {
+        "value": ""
+      }
+    },
+    {
+      "id": "corrected-profile-save",
+      "status": "PASS",
+      "evidence": {
+        "context": 4096,
+        "port": 8080
+      }
+    }
+  ],
+  "tuneBoundary": {
+    "patched": false,
+    "invokeWritable": false,
+    "invokeConfigurable": false,
+    "rootWritable": false,
+    "rootConfigurable": false
+  },
+  "error": "Tuning boundary was not replaced: {\"patched\":false,\"invokeWritable\":false,\"invokeConfigurable\":false,\"rootWritable\":false,\"rootConfigurable\":false}",
+  "cleanup": "PASS",
+  "finishedAt": "2026-09-19T21:59:25.670Z",
+  "status": "FAIL"
+}

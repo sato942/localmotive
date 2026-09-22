@@ -1,0 +1,12 @@
+   Compiling tauri v2.11.5
+   Compiling tauri-plugin-fs v2.5.2
+   Compiling tauri-plugin-opener v2.5.5
+   Compiling tauri-plugin-dialog v2.7.3
+   Compiling localmotive v0.6.0 (C:\Users\Mubarak\Documents\Projects\localmotive\src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 33.81s
+     Running unittests src\lib.rs (target\debug\deps\localmotive_lib-bd34b927a7ef033a.exe)
+error: test failed, to rerun pass `--lib`
+
+Caused by:
+  process didn't exit successfully: `C:\Users\Mubarak\Documents\Projects\localmotive\src-tauri\target\debug\deps\localmotive_lib-bd34b927a7ef033a.exe legacy_command_rejects_an_overlapping_request_before_http` (exit code: 0xc0000139, STATUS_ENTRYPOINT_NOT_FOUND)
+note: test exited abnormally; to see the full output pass --no-capture to the harness.

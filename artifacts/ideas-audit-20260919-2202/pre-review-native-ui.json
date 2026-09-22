@@ -1,0 +1,87 @@
+{
+  "scope": "Working-tree UI diagnostic; not release qualification",
+  "startedAt": "2026-09-19T18:51:24.662Z",
+  "source": "bdb3c14c9170f0342ba0384738e2ffd23062970d",
+  "sourceDirty": true,
+  "executable": "C:\\Users\\Mubarak\\Documents\\Projects\\localmotive\\src-tauri\\target\\release\\localmotive.exe",
+  "sha256": "05e860aab5692bef63e8bf85300ece01a87ea5161a56d6666e0a49022ac4fd21",
+  "checks": [
+    {
+      "id": "uninspected-speculation",
+      "status": "PASS",
+      "evidence": {
+        "disabled": true,
+        "values": [
+          "none"
+        ],
+        "invalidChildren": 0
+      }
+    },
+    {
+      "id": "numeric-domains",
+      "status": "PASS",
+      "evidence": {
+        "count": 41,
+        "unbounded": 0
+      }
+    },
+    {
+      "id": "invalid-save-refused",
+      "status": "PASS",
+      "evidence": {
+        "persistedProfiles": 0
+      }
+    },
+    {
+      "id": "invalid-control-start-refused",
+      "status": "PASS",
+      "evidence": {
+        "phase": "idle",
+        "pid": null
+      }
+    },
+    {
+      "id": "blank-number-not-zero",
+      "status": "PASS",
+      "evidence": {
+        "value": ""
+      }
+    },
+    {
+      "id": "corrected-profile-save",
+      "status": "PASS",
+      "evidence": {
+        "context": 4096,
+        "port": 8080
+      }
+    },
+    {
+      "id": "manual-update-disclosure",
+      "status": "PASS",
+      "evidence": {
+        "button": true,
+        "manual": true
+      }
+    },
+    {
+      "id": "about-mobile-layout",
+      "status": "PASS",
+      "evidence": {
+        "width": 360,
+        "scrollWidth": 350,
+        "undersized": 0,
+        "buttons": 6
+      }
+    },
+    {
+      "id": "uncaught-ui-errors",
+      "status": "PASS",
+      "evidence": {
+        "count": 0
+      }
+    }
+  ],
+  "cleanup": "PASS",
+  "finishedAt": "2026-09-19T18:51:26.391Z",
+  "status": "PASS"
+}

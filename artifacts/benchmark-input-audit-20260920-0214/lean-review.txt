@@ -1,0 +1,4 @@
+Scope: the v2 editor correction, not release approval.
+Applied. The production file has five fewer lines; regression coverage remains.
+L113: delete the zero-fallback numericInput helper. Use valueAsNumber and the existing workload validator.
+net: -5 lines possible.

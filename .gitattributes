@@ -11,6 +11,13 @@ release-evidence/**/*.json text eol=lf
 release-evidence/**/*.log text eol=lf
 release-evidence/**/*.md text eol=lf
 release-evidence/**/*.txt text eol=lf
+# The qualification manifest records byte digests of the producer inventory,
+# checksums and staged verification records: an autocrlf rewrite on checkout
+# breaks every inventoryDigest comparison. Pin them like the records.
+artifacts/candidate-inventory-*.json text eol=lf
+artifacts/SHA256SUMS-*.txt text eol=lf
+artifacts/packaged-verification-*.json text eol=lf
+artifacts/catalog-*.json text eol=lf
 .github/workflows/*.yml text eol=lf
 scripts/*.mjs text eol=lf
 scripts/tests/*.mjs text eol=lf

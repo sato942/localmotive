@@ -17,10 +17,35 @@ import {
   type RuntimeCapabilities,
   type RuntimeIdentity,
   type ServerStatus,
+  type TrialChoice,
+  type TrialOutcome,
   type TuningProgress,
   type TuningReport,
   type TuningTrial,
 } from "../model";
+
+/// Words on the history-table badges (design rule: status tags carry words).
+export function trialOutcomeLabel(outcome: TrialOutcome | undefined): string {
+  switch (outcome) {
+    case "ok": return "OK";
+    case "oom": return "OUT OF MEMORY";
+    case "launch-fail": return "LAUNCH FAILED";
+    case "cancelled": return "CANCELLED";
+    case "context-short": return "CONTEXT SHORT";
+    default: return "UNKNOWN";
+  }
+}
+
+export function trialChosenLabel(chosen: TrialChoice | undefined): string {
+  switch (chosen) {
+    case "baseline": return "BASELINE";
+    case "grid": return "GRID";
+    case "nudge": return "NUDGE";
+    case "confirm": return "CONFIRM";
+    case "advisor": return "ADVISOR";
+    default: return "UNRECORDED";
+  }
+}
 
 /// Identity of a tuning run or of the displayed report (FE-02).
 export type TuneRunIdentity = {
@@ -35,6 +60,7 @@ export type TuneRunIdentity = {
 /// and persistence stay in `App.tsx`; the component renders only.
 export interface TuneScreenProps {
   adoptTunedProfile: () => void;
+  applyTuningTrial: (trial: TuningTrial) => void;
   bestLive: TuningTrial | null;
   briefDisclosure: BriefDisclosure;
   busy: string;
@@ -68,12 +94,14 @@ export interface TuneScreenProps {
   setTuneRepeats: Dispatch<SetStateAction<number>>;
   setTuneTokens: Dispatch<SetStateAction<number>>;
   setTuneTrials: Dispatch<SetStateAction<number>>;
+  setUseAdvisor: Dispatch<SetStateAction<boolean>>;
   startTuning: () => void;
   status: ServerStatus;
   switchProvider: (next: string) => void;
   trialsForDisplay: TuningTrial[];
   tuneBlocker: string;
   tuneContext: number;
+  tuneInputError: string | null;
   tuneLogRef: RefObject<HTMLDivElement | null>;
   tuneProgress: TuningProgress | null;
   tuneRepeats: number;
@@ -83,11 +111,13 @@ export interface TuneScreenProps {
   tuneTokens: number;
   tuneTrials: number;
   tuning: boolean;
+  useAdvisor: boolean;
 }
 
 export function TuneScreen(props: TuneScreenProps) {
   const {
     adoptTunedProfile,
+    applyTuningTrial,
     bestLive,
     briefDisclosure,
     busy,
@@ -121,12 +151,14 @@ export function TuneScreen(props: TuneScreenProps) {
     setTuneRepeats,
     setTuneTokens,
     setTuneTrials,
+    setUseAdvisor,
     startTuning,
     status,
     switchProvider,
     trialsForDisplay,
     tuneBlocker,
     tuneContext,
+    tuneInputError,
     tuneLogRef,
     tuneProgress,
     tuneRepeats,
@@ -136,13 +168,14 @@ export function TuneScreen(props: TuneScreenProps) {
     tuneTokens,
     tuneTrials,
     tuning,
+    useAdvisor,
   } = props;
   return (
     <section className="screen tune-screen">
       <div className="section-heading">
         <div>
           <h1>AI tuning</h1>
-          <p>A cloud model proposes llama-server settings; this PC measures them. The best measured configuration wins.</p>
+          <p>Local search measures a few settings on this PC first: a short grid, then one-axis nudges from the best so far. Failures stay in the table. Best measured in this session — never optimal.</p>
         </div>
         <div className="actions">
           {tuning ? (
@@ -155,8 +188,8 @@ export function TuneScreen(props: TuneScreenProps) {
 
       <div className="panel" aria-label="Cloud data disclosure">
         <p className="muted">
-          Cloud tuning sends a brief to the selected provider. Local inference and local
-          share export never send data anywhere — this setting affects cloud tuning only.
+          Cloud tuning sends a brief to the selected provider. Local inference never sends data
+          anywhere — this setting affects cloud tuning only.
         </p>
         <fieldset className="disclosure-choice">
           <legend>What the brief carries</legend>
@@ -193,15 +226,19 @@ export function TuneScreen(props: TuneScreenProps) {
       </div>
 
       <div className="setup-steps" aria-label="Tuning readiness">
-        <div className={credential?.configured ? "setup-step done" : "setup-step active"}><span>1</span><strong>Cloud provider</strong><small>{credential?.configured ? `${provider?.label ?? providerId} connected` : "Add a key or sign in"}</small></div>
+        <div className={useAdvisor ? (credential?.configured ? "setup-step done" : "setup-step active") : "setup-step done"}><span>1</span><strong>{useAdvisor ? "Cloud provider" : "Local search"}</strong><small>{useAdvisor ? (credential?.configured ? `${provider?.label ?? providerId} connected` : "Add a key or sign in") : "No key needed"}</small></div>
         <div className={selected?.complete && runtimePath ? "setup-step done" : "setup-step"}><span>2</span><strong>Local model</strong><small>{selected ? selected.name : "Select in Inventory"}</small></div>
-        <div className={tuneReport ? "setup-step done" : canTune ? "setup-step active" : "setup-step"}><span>3</span><strong>Tune</strong><small>{tuning ? "Running…" : tuneReport ? "Report ready" : status.running ? "Stop the server first" : "Choose context, start"}</small></div>
+        <div className={tuneReport ? "setup-step done" : canTune ? "setup-step active" : "setup-step"}><span>3</span><strong>Tune</strong><small>{tuning ? "Running…" : tuneReport ? "Report ready" : status.running ? "Stop the server first" : tuneInputError ? "Correct tuning input" : "Choose context, start"}</small></div>
       </div>
 
       <div className="tune-layout">
         <div className="settings-stack">
           <article className="machine-panel">
-            <div className="panel-title"><KeyRound size={17} /><h2>Cloud provider</h2>{credential && <span className={credential.configured ? "state-tag good" : "state-tag warning"}>{credential.configured ? `CONNECTED ${credential.masked}` : "NO KEY"}</span>}</div>
+            <div className="panel-title"><KeyRound size={17} /><h2>Cloud provider{useAdvisor ? "" : " (optional)"}</h2>{credential && <span className={credential.configured ? "state-tag good" : "state-tag warning"}>{credential.configured ? `CONNECTED ${credential.masked}` : "NO KEY"}</span>}</div>
+            <label className="wide">
+              <input type="checkbox" checked={useAdvisor} disabled={tuning} onChange={(event) => setUseAdvisor(event.target.checked)} />
+              <span>Also ask the cloud advisor for one extra try<small className="field-help">Off by default. Local grid + nudge search runs either way; the advisor only adds one extra proposal after the table exists. Uses your key; costs one request.</small></span>
+            </label>
             <div className="provider-tabs" role="tablist" aria-label="Cloud providers">
               {providers.map((entry, index) => (
                 <button
@@ -247,7 +284,7 @@ export function TuneScreen(props: TuneScreenProps) {
                     ) : (
                       <input value={cloudModel} onChange={(e) => chooseCloudModel(e.target.value)} placeholder={provider?.defaultModel} />
                     )}
-                    <small className="field-help">Pick a strong reasoning model; each trial costs one short request with the full measurement history.</small>
+                    <small className="field-help">Pick a strong reasoning model; the one extra advisor try costs a single short request with the full measurement history.</small>
                   </label>
                   <div className="runtime-side-actions">
                     <button className="button secondary" onClick={probeCloud} disabled={busy === "probe" || !cloudModel}><Activity size={15} /> Test connection</button>
@@ -268,13 +305,14 @@ export function TuneScreen(props: TuneScreenProps) {
                 </select>
                 <small className="field-help">Every trial runs at exactly this context; the KV cache is sized for it.</small>
               </label>
-              <label>AI trials
-                <input type="number" min="1" max="12" value={tuneTrials} onChange={(e) => setTuneTrials(Number(e.target.value))} disabled={tuning} />
-                <small className="field-help">Proposals measured after the baseline (T0). Each is one server launch.</small>
+              <label>Search trials
+                <input type="number" min="1" max="12" step="1" required value={Number.isFinite(tuneTrials) ? tuneTrials : ""} onChange={(e) => setTuneTrials(e.target.valueAsNumber)} disabled={tuning} />
+                <small className="field-help">Measurements after the baseline (T0): local grid, then nudges{useAdvisor ? ", plus one advisor try" : ""}. Each is one server launch.</small>
               </label>
-              <label>Tokens per measurement<input type="number" min="64" max="2048" step="64" value={tuneTokens} onChange={(e) => setTuneTokens(Number(e.target.value))} disabled={tuning} /></label>
-              <label>Repeats per trial<input type="number" min="1" max="5" value={tuneRepeats} onChange={(e) => setTuneRepeats(Number(e.target.value))} disabled={tuning} /></label>
+              <label>Tokens per measurement<input type="number" min="64" max="2048" step="1" required value={Number.isFinite(tuneTokens) ? tuneTokens : ""} onChange={(e) => setTuneTokens(e.target.valueAsNumber)} disabled={tuning} /></label>
+              <label>Repeats per trial<input type="number" min="1" max="5" step="1" required value={Number.isFinite(tuneRepeats) ? tuneRepeats : ""} onChange={(e) => setTuneRepeats(e.target.valueAsNumber)} disabled={tuning} /></label>
             </div>
+            {tuneInputError && <p className="group-note" role="status">{tuneInputError}</p>}
             <dl className="spec-list">
               <div><dt>Model</dt><dd>{selected?.name ?? "—"}</dd></div>
               <div><dt>Architecture</dt><dd>{gguf ? `${gguf.architecture.toUpperCase()} · ${gguf.sizeLabel || "?"}${gguf.expertCount ? ` · ${gguf.expertCount} EXPERTS` : ""}` : "—"}</dd></div>
@@ -283,7 +321,7 @@ export function TuneScreen(props: TuneScreenProps) {
               <div><dt>Runtime</dt><dd>{runtime ? `B${runtime.build} · ${runtimeIdentity?.backend.toUpperCase() ?? "?"}` : "—"}</dd></div>
               <div><dt>Hardware</dt><dd>{hardware?.gpuNames[0]?.toUpperCase() ?? hardware?.vendor.toUpperCase() ?? "—"}</dd></div>
             </dl>
-            <p className="group-note tune-note">The advisor may change only throughput-relevant fields (offload, threads, batching, KV cache type, flash attention, speculative settings). Host, port, alias, paths, and security settings are never touched. Nothing runs on this PC except llama-server with the proposed flags.</p>
+            <p className="group-note tune-note">Local search changes only throughput-relevant fields (offload, threads, batching, KV cache type, flash attention, speculative settings). The optional advisor try follows the same whitelist. Host, port, alias, paths, and security settings are never touched. Nothing runs on this PC except llama-server with the proposed flags.</p>
           </article>
         </div>
 
@@ -304,9 +342,11 @@ export function TuneScreen(props: TuneScreenProps) {
                   ))}
                 </div>
                 {tuneReport && <div className="tune-actions"><button className="button primary" onClick={adoptTunedProfile} disabled={tuneReport.bestIndex === null}><Save size={15} /> Adopt best as profile</button><small>{tuneReport.stoppedReason}</small>
+                  <small>Best measured in this session — never optimal. Any measured row below can be adopted, not only the winner.</small>
+                  {(tuneReport.modelLabel || tuneReport.hardwareLabel || tuneReport.runtimeBuild) && <small>Measured on {[tuneReport.modelLabel, tuneReport.hardwareLabel, tuneReport.runtimeBuild ? `runtime B${tuneReport.runtimeBuild}` : ""].filter(Boolean).join(" · ")}</small>}
                   <small>{tuneReport.objective ?? "Measured objective: short-prompt decode throughput at the allocated context."}</small>
                   {tuneReport.finalVerification ? <small>Final verification: baseline {tuneReport.finalVerification.baselineTps.toFixed(2)} tok/s, winner {tuneReport.finalVerification.winnerTps.toFixed(2)} tok/s, required +{(tuneReport.finalVerification.requiredImprovement * 100).toFixed(1)}% — {tuneReport.finalVerification.confirmed ? "confirmed" : "not confirmed"}.</small> : null}
-                  {tuneReport.qualityAffectingChanges && tuneReport.qualityAffectingChanges.length > 0 ? <small>Quality not measured for: {tuneReport.qualityAffectingChanges.join(", ")}. Run the quality suite before adopting output-quality-sensitive changes.</small> : null}</div>}
+                  {tuneReport.qualityAffectingChanges && tuneReport.qualityAffectingChanges.length > 0 ? <small>Quality not measured for: {tuneReport.qualityAffectingChanges.join(", ")}. Review model output before adopting these changes.</small> : null}</div>}
               </>
             ) : (
               <div className="empty-result tune-empty"><Sparkles size={28} /><p>{tuning ? tuneProgress?.message ?? "Starting…" : tuneBlocker}</p></div>
@@ -321,6 +361,15 @@ export function TuneScreen(props: TuneScreenProps) {
                 <div key={trial.index} className={`trial-entry${trial.meanTps === null ? " failed" : ""}${bestLive?.index === trial.index ? " best" : ""}`}>
                   <div className="trial-head"><span className="trial-index">T{trial.index}</span><code>{describeChanges(trial.changes)}</code><strong>{trial.meanTps !== null ? `${trial.meanTps.toFixed(2)} tok/s` : "FAILED"}</strong></div>
                   <p>{trial.rationale}</p>
+                  <p className="trial-meta">
+                    <span className={trial.outcome === "ok" ? "state-tag good" : "state-tag warning"}>{trialOutcomeLabel(trial.outcome)}</span>
+                    <span className="state-tag">{trialChosenLabel(trial.chosen)}</span>
+                    {trial.medianTps !== null && trial.medianTps !== undefined && <span>median {trial.medianTps.toFixed(2)}</span>}
+                    {trial.stdDev !== null && trial.stdDev !== undefined && <span>±{trial.stdDev.toFixed(2)}</span>}
+                    {trial.effectiveContext !== null && trial.effectiveContext !== undefined && <span>{trial.effectiveContext.toLocaleString()} ctx</span>}
+                    {trial.timestampMs ? <span>{new Date(trial.timestampMs).toLocaleTimeString()}</span> : null}
+                    {trial.meanTps !== null && <button className="text-link" onClick={() => applyTuningTrial(trial)} disabled={tuning || busy === "tune-apply"}>Apply this trial</button>}
+                  </p>
                   {trial.error && <pre className="trial-error">{trial.error}</pre>}
                 </div>
               ))}

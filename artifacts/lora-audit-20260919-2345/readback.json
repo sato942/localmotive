@@ -1,0 +1,57 @@
+{
+  "recordedAt": "2026-09-19T20:46:31.214324+00:00",
+  "scope": "LoRA snapshot correction; not runtime/inference or release qualification",
+  "status": "PARTIALLY VERIFIED",
+  "protectedFilesUnchanged": 117,
+  "agentsSha256": "6a0c8eea9a3cf9ed680ea6ccb7814a59ed8d79365dd8f1a2229a1bf6dee27c4e",
+  "legacyKeyCompatibility": "PASS",
+  "legacyKeys": {
+    "legacy_empty": "v2:adc5d7dec4eb250f21b7998a3eb79e5d2bc7046e900ae564dd24c4196d3113cd",
+    "legacy_single": "v2:66876a1bd274efc3b4c8205214c4d7844adf2960af94061ce79e4cc2ee507dd2"
+  },
+  "nativeUiChecks": 14,
+  "nativeUi": "PASS",
+  "accessibility": "PASS",
+  "artifacts": [
+    {
+      "path": "C:\\Users\\Mubarak\\Documents\\Projects\\localmotive\\src-tauri\\target\\release\\localmotive.exe",
+      "bytes": 20146688,
+      "sha256": "be4894a6a0f003ff4cecf6891fe2f7e13dd842f82f2c1f07a28b6364d6be2f5f",
+      "signature": "NotSigned",
+      "version": "0.6.0"
+    },
+    {
+      "path": "C:\\Users\\Mubarak\\Documents\\Projects\\localmotive\\src-tauri\\target\\release\\bundle\\msi\\Localmotive_0.6.0_x64_en-US.msi",
+      "bytes": 8798208,
+      "sha256": "680f47a2f8e219c114ab4a2df96a720573e66b92b0845afd21669e0b0945919a",
+      "signature": "NotSigned",
+      "version": "0.6.0"
+    },
+    {
+      "path": "C:\\Users\\Mubarak\\Documents\\Projects\\localmotive\\src-tauri\\target\\release\\bundle\\nsis\\Localmotive_0.6.0_x64-setup.exe",
+      "bytes": 5116371,
+      "sha256": "4309e44581e23e332263093c5b3e47dd557fe7f5daa86ceef4883df3b3a9647d",
+      "signature": "NotSigned",
+      "version": "0.6.0"
+    }
+  ],
+  "rust": {
+    "passed": 592,
+    "failed": 0,
+    "ignored": 6
+  },
+  "frontend": {
+    "scriptsPassed": 274,
+    "vitestPassed": 198
+  },
+  "rawFileGuard": "PASS",
+  "changedFiles": {
+    "src-tauri/src/lib.rs": "5b5104f003318ae077f7f2ca15f36ec4d7ba9fd562ef98e20878b0624e388dd9",
+    "src-tauri/src/measurement_service.rs": "e629f7cbe3746bf08886797650d8710a0312ae51837de89dcdd4e7c9ec1ba658",
+    "src-tauri/src/core.rs": "79a6363afe6cdc9ee48bc7c103bb66403366b224aead49d7567e6161323ddbca",
+    "docs/ARTIFACT-IDENTITY.md": "9c38df5abf8a008344915c1e44bba8aa6c3a8f783b0e73354b0964eb8346c6d5",
+    "CHANGELOG.md": "acf6a7334ca9a6788bb11b2383b4b6c30ef0d2438d5a8104e6617b07c90c7adb",
+    "TODO-0.6.md": "263e65e8510ed5e9aff1ab0f72bfc271ba25bc0a1dae83598bf5ba3fc09a1950",
+    "agents_feedback.md": "1cc6fd3d92216f606b2789ec2096672d03daf47b173ece63d1afecb435641aea"
+  }
+}

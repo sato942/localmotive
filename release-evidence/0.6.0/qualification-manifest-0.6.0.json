@@ -1,212 +1,184 @@
 {
   "schema": "localmotive.qualification-manifest.v1",
   "release": "0.6.0",
-  "generatedAt": "2026-09-13T15:14:06.389Z",
-  "repositoryHeadAtGeneration": "362843cb7c1bb36b680729deeba4714e19103f6a",
-  "sourceRevision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8",
+  "generatedAt": "2026-09-21T13:49:47.108Z",
+  "repositoryHeadAtGeneration": "c0ae53874b54fda90616f2c8afc291ae002d32d9",
+  "sourceRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9",
   "workflowFile": {
     "path": ".github/workflows/release.yml",
-    "sha256": "091a0d160d2295cdd5d9a5661cc3821fe95a44eb93bd83a2590986d5509850c0"
+    "sha256": "51b2be8c47f167965f0a55f1826cf6e0967ca2cf5d28c83783b43d26877b4c57"
   },
   "inventory": {
-    "path": "release-evidence/0.6.0/candidate-inventory-0.6.0.json",
-    "sha256": "dd0bd839775262603df21021b66410842ab07fdbac7437b3aa53bbfd0c6973e0"
+    "path": "artifacts/candidate-inventory-0.6.0.json",
+    "sha256": "ac21f7ea5ea1e58b1549006647c8c5e86df3d406a555b2478ffd93a4eb4e1353"
   },
   "artifacts": [
     {
       "name": "Localmotive_0.6.0_x64-portable.exe",
-      "sizeBytes": 20818432,
-      "sha256": "d6a6ef663c925f9605f06ea2957ef95409dace00d798ebc28e5666249fd59427"
+      "sizeBytes": 20372480,
+      "sha256": "e3a7804269ef9396355af3fca9a5cd448951b65587e2377a825fb354e8bdb04d"
     },
     {
       "name": "Localmotive_0.6.0_x64-setup.exe",
-      "sizeBytes": 5290112,
-      "sha256": "b935033d2ca2dbaf595c0a20e629053f0b4097ebe4b1059c351d140530ab8652"
+      "sizeBytes": 5152835,
+      "sha256": "900ac1074a526156a51ea5f315daa61f0c1ff99f814e62bf63ef2e721438e58c"
     },
     {
       "name": "Localmotive_0.6.0_x64.msi",
-      "sizeBytes": 9035776,
-      "sha256": "bc5c6aae332487430c1d7a238b668e3919f1514f713dd0c9d1ab80e248313b9b"
+      "sizeBytes": 7229440,
+      "sha256": "f411280b889c89177b097657ef55146ab811c65a06bec7c853b6f1b10c490a73"
     }
   ],
   "records": {
     "packaged_verification": {
       "path": "release-evidence/0.6.0/attestations/packaged-verification-0.6.0.json",
       "exists": true,
-      "sha256": "1083242f0c43b1748a0cbe6cc3dc47748a8234de01c7ad7c247c1660bc72f3dd",
-      "sha256_lf": "1083242f0c43b1748a0cbe6cc3dc47748a8234de01c7ad7c247c1660bc72f3dd",
+      "sha256": "2a0806b840b3fd15882abe2232b90ab02d953603392d3e619910c303716f9f49",
+      "sha256_lf": "2a0806b840b3fd15882abe2232b90ab02d953603392d3e619910c303716f9f49",
       "overall_status": "PASS",
-      "checks": "25/25"
+      "checks": "26/26"
     },
     "lifecycle_upgrade_v0.4.0": {
       "path": "release-evidence/0.6.0/attestations/sandbox-clean-account-lifecycle-upgrade-v0.4.0.json",
       "exists": true,
-      "sha256": "2964c143048c3c109442672366311c8cdd9ec00f6034078ebba161accab6bd01",
-      "sha256_lf": "2964c143048c3c109442672366311c8cdd9ec00f6034078ebba161accab6bd01",
+      "sha256": "d93b3501e73c45bc638cd591d7ad4b5aa72edf8457af2696d203e5545da9113f",
+      "sha256_lf": "d93b3501e73c45bc638cd591d7ad4b5aa72edf8457af2696d203e5545da9113f",
       "status": "PASS",
       "stage": "preservation-verification",
-      "sourceRevision": "da091a47ca6595ec37690ab5ae63542671c5f7f6",
-      "harnessRevision": "da091a47ca6595ec37690ab5ae63542671c5f7f6",
-      "carriedForward": {
-        "evidenceFrom": "release-evidence/0.6.0/history/freeze8-da091a4/candidate-inventory-0.6.0.json",
-        "evidenceFromSha256": "c03f6074e6d8cf875e3e0212e06f8eb024ada65e63566e1c0d238a2a0aa90206",
-        "evidenceFromSha256Lf": "c03f6074e6d8cf875e3e0212e06f8eb024ada65e63566e1c0d238a2a0aa90206",
-        "evidenceFromSource": "da091a47ca6595ec37690ab5ae63542671c5f7f6",
-        "reason": "No installer, migration, catalog-persistence or launch-path product code changed between the cited candidate and this one: the product delta is the benchmark ownership handle in measurement_service.rs (the fallible client is now built before the active slot is published) plus its command-level regression; the F9-05 sandbox changes add the settings seed/collect and tighten the cache verifier, whose behaviour is separately evidenced by the preservation verifier controls and by the witnesses in this set. The sandbox legs stay an open environment prerequisite on this host, not a passed criterion."
-      }
+      "sourceRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9",
+      "harnessRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9"
     },
     "lifecycle_upgrade_v0.5.0": {
       "path": "release-evidence/0.6.0/attestations/sandbox-clean-account-lifecycle-upgrade-v0.5.0.json",
       "exists": true,
-      "sha256": "c69c4980f0c1473874d92f789666ecda44bdc2ff8dda4fd71dda21c60bae8ae9",
-      "sha256_lf": "b48562bd159ce32d0c778b5ce691f84199848745a463bb9d8cde9bb284db1d6c",
+      "sha256": "8291eb182823a03a947d6f2edbfa55c48adb79830a23e814618fb9a9fc914add",
+      "sha256_lf": "8291eb182823a03a947d6f2edbfa55c48adb79830a23e814618fb9a9fc914add",
       "status": "PASS",
       "stage": "preservation-verification",
-      "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
-      "harnessRevision": "8924c0436b895d906a06d2e32d2b788e2655a737",
-      "carriedForward": {
-        "evidenceFrom": "release-evidence/0.6.0/history/freeze9-eb01bc9/candidate-inventory-0.6.0.json",
-        "evidenceFromSha256": "73e758e3e0a6665719aa82eff0a0fd177e53807674a25e91aae6038dc51e3b00",
-        "evidenceFromSha256Lf": "73e758e3e0a6665719aa82eff0a0fd177e53807674a25e91aae6038dc51e3b00",
-        "evidenceFromSource": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
-        "reason": "No installer, migration, catalog-persistence or launch-path product code changed between the cited candidate and this one: the product delta is the benchmark ownership handle in measurement_service.rs (the fallible client is now built before the active slot is published) plus its command-level regression; the F9-05 sandbox changes add the settings seed/collect and tighten the cache verifier, whose behaviour is separately evidenced by the preservation verifier controls and by the witnesses in this set. The sandbox legs stay an open environment prerequisite on this host, not a passed criterion."
-      }
+      "sourceRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9",
+      "harnessRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9"
     },
     "lifecycle_preservation_v0.4.1": {
       "path": "release-evidence/0.6.0/attestations/sandbox-clean-account-lifecycle-preservation-v0.4.1.json",
       "exists": true,
-      "sha256": "941bb95c200e02cb1b2e1a8514ca96acca9b7eb05060b5c8415052ee3abd3cc8",
-      "sha256_lf": "0302d0dcd1544fa21c10706e004b18aa9f564fa881641934bbf6a68c68afa3ff",
+      "sha256": "24714325190e1af766bb3a0df329d04c7537878ecd1b3ee9256081fabb409fcb",
+      "sha256_lf": "24714325190e1af766bb3a0df329d04c7537878ecd1b3ee9256081fabb409fcb",
       "status": "PASS",
       "stage": "preservation-verification",
-      "sourceRevision": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
-      "harnessRevision": "e9c1fd3e042b8b162850fed79603f930bcffaa8c",
-      "carriedForward": {
-        "evidenceFrom": "release-evidence/0.6.0/history/freeze9-eb01bc9/candidate-inventory-0.6.0.json",
-        "evidenceFromSha256": "73e758e3e0a6665719aa82eff0a0fd177e53807674a25e91aae6038dc51e3b00",
-        "evidenceFromSha256Lf": "73e758e3e0a6665719aa82eff0a0fd177e53807674a25e91aae6038dc51e3b00",
-        "evidenceFromSource": "eb01bc9f97417e74ce7de7da85c86582f42ceb67",
-        "reason": "No installer, migration, catalog-persistence or launch-path product code changed between the cited candidate and this one: the product delta is the benchmark ownership handle in measurement_service.rs (the fallible client is now built before the active slot is published) plus its command-level regression; the F9-05 sandbox changes add the settings seed/collect and tighten the cache verifier, whose behaviour is separately evidenced by the preservation verifier controls and by the witnesses in this set. The sandbox legs stay an open environment prerequisite on this host, not a passed criterion."
-      }
+      "sourceRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9",
+      "harnessRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9"
     },
     "lifecycle_preservation_v0.5.0": {
       "path": "release-evidence/0.6.0/attestations/sandbox-clean-account-lifecycle-preservation-v0.5.0.json",
       "exists": true,
-      "sha256": "d6ac3c19eb0f2dcf7d1ebe5d6a1f10010bcc979514b88bbd37aa1c3f430d3ca6",
-      "sha256_lf": "d6ac3c19eb0f2dcf7d1ebe5d6a1f10010bcc979514b88bbd37aa1c3f430d3ca6",
+      "sha256": "cf34285c017ccec6a5b749fd9d0b63fdf45c0cffb0ba4561795c0601ff28a429",
+      "sha256_lf": "cf34285c017ccec6a5b749fd9d0b63fdf45c0cffb0ba4561795c0601ff28a429",
       "status": "PASS",
       "stage": "preservation-verification",
-      "sourceRevision": "da091a47ca6595ec37690ab5ae63542671c5f7f6",
-      "harnessRevision": "da091a47ca6595ec37690ab5ae63542671c5f7f6",
-      "carriedForward": {
-        "evidenceFrom": "release-evidence/0.6.0/history/freeze8-da091a4/candidate-inventory-0.6.0.json",
-        "evidenceFromSha256": "c03f6074e6d8cf875e3e0212e06f8eb024ada65e63566e1c0d238a2a0aa90206",
-        "evidenceFromSha256Lf": "c03f6074e6d8cf875e3e0212e06f8eb024ada65e63566e1c0d238a2a0aa90206",
-        "evidenceFromSource": "da091a47ca6595ec37690ab5ae63542671c5f7f6",
-        "reason": "No installer, migration, catalog-persistence or launch-path product code changed between the cited candidate and this one: the product delta is the benchmark ownership handle in measurement_service.rs (the fallible client is now built before the active slot is published) plus its command-level regression; the F9-05 sandbox changes add the settings seed/collect and tighten the cache verifier, whose behaviour is separately evidenced by the preservation verifier controls and by the witnesses in this set. The sandbox legs stay an open environment prerequisite on this host, not a passed criterion."
-      }
+      "sourceRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9",
+      "harnessRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9"
     },
     "witness_missing_assets": {
       "path": "release-evidence/0.6.0/attestations/witness-missing-assets.json",
       "exists": true,
-      "sha256": "978c861cf3f2c342d03cb1d46888e80a9309a70f2dbaeee54692c46092069088",
-      "sha256_lf": "04185bec708f3991e6829c6830fd722fd8a02c3d71e5538cf11c7b0a488bf202",
+      "sha256": "55bfb4621fa1a52d4bbc55a526b4b7e7797ad1e99e728ea659b86e8cca6ec809",
+      "sha256_lf": "55bfb4621fa1a52d4bbc55a526b4b7e7797ad1e99e728ea659b86e8cca6ec809",
       "status": "FAIL",
       "stage": "resolve-installers",
       "sourceRevision": null,
-      "harnessRevision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8"
+      "harnessRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9"
     },
     "witness_timeout": {
       "path": "release-evidence/0.6.0/attestations/witness-timeout.json",
       "exists": true,
-      "sha256": "0af03fcf441c4cc7aef562f2ce4722bb7efcf202d6aa7542a0557354efd2f40b",
-      "sha256_lf": "aff184fa8c8567c7c3dd277e98abebf90bddc505f014a895e922ce1661ae2c39",
+      "sha256": "eaa121fe5857ebae55a4c2801d1c8df4582c5aa688c5b9ecd8307d6d765a4703",
+      "sha256_lf": "eaa121fe5857ebae55a4c2801d1c8df4582c5aa688c5b9ecd8307d6d765a4703",
       "status": "TIMEOUT",
       "stage": "sandbox-timeout",
-      "sourceRevision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8",
-      "harnessRevision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8"
+      "sourceRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9",
+      "harnessRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9"
     },
     "witness_malformed_result": {
       "path": "release-evidence/0.6.0/attestations/witness-malformed-result.json",
       "exists": true,
-      "sha256": "a414a369c904f7b5bf91b6edd763fa4abfe47f6f74aca59141f7270926bba503",
-      "sha256_lf": "8e3cf9c14adfb72b59ffcd6d32c7bd86b1a3c9715c10f34879e52b4e1f2c7785",
+      "sha256": "d212155a55eb66d4a9095d07b9a095fd581ae468c1f1b4169a9d483fef83646f",
+      "sha256_lf": "d212155a55eb66d4a9095d07b9a095fd581ae468c1f1b4169a9d483fef83646f",
       "status": "FAIL",
       "stage": "sandbox-run",
-      "sourceRevision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8",
-      "harnessRevision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8"
+      "sourceRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9",
+      "harnessRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9"
     },
     "witness_preservation_missing": {
       "path": "release-evidence/0.6.0/attestations/witness-preservation-missing.json",
       "exists": true,
-      "sha256": "3d388349fedae39ceea35d1c4e2742d89fddd4beb3091c7564ea3601e1cd3958",
-      "sha256_lf": "b9fef951268a2bbf50515e9a92390e4e8383bf00efe24ffd5c7aa8083a7d384e",
+      "sha256": "4a015579049884e0a4a04f16e849e5239a39453bbe6f867800956f408e15c4eb",
+      "sha256_lf": "4a015579049884e0a4a04f16e849e5239a39453bbe6f867800956f408e15c4eb",
       "status": "FAIL",
       "stage": "preservation-verification",
-      "sourceRevision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8",
-      "harnessRevision": "fdc8b083d8a2ad6d3072d6462e5adbe987d03f61"
+      "sourceRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9",
+      "harnessRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9"
     },
     "witness_stale_lock": {
       "path": "release-evidence/0.6.0/attestations/witness-stale-lock.json",
       "exists": true,
-      "sha256": "7b934edaabd6c2e940009a6b000ae1aa118cccdb68109267de4a27b69f02111c",
-      "sha256_lf": "97c3d1dcc1bb5213c464004240825a4e51119d4f32f162c2036508de712a7f18",
+      "sha256": "1135cdb89ce83bffc25885527303d1c632df22c622e6e6bc07c119e0e4ec16cc",
+      "sha256_lf": "1135cdb89ce83bffc25885527303d1c632df22c622e6e6bc07c119e0e4ec16cc",
       "status": "FAIL",
       "stage": "resolve-installers",
-      "sourceRevision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8",
-      "harnessRevision": "fdc8b083d8a2ad6d3072d6462e5adbe987d03f61"
+      "sourceRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9",
+      "harnessRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9"
     },
     "witness_live_lock": {
       "path": "release-evidence/0.6.0/attestations/witness-live-lock.json",
       "exists": true,
-      "sha256": "84643632aded20ec30dc4dd78f6255659ce680ff30524e856df4f803e93c7f4f",
-      "sha256_lf": "edd8e6f21d52d6a89bbae67726043884e0a00678e4076715f8c84e1a0bd15ac4",
+      "sha256": "0f652a391931782a4f6d88c802cf0a8c4acad951002610696d96544945faa513",
+      "sha256_lf": "0f652a391931782a4f6d88c802cf0a8c4acad951002610696d96544945faa513",
       "status": "FAIL",
       "stage": "resolve-installers",
-      "sourceRevision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8",
-      "harnessRevision": "fdc8b083d8a2ad6d3072d6462e5adbe987d03f61"
+      "sourceRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9",
+      "harnessRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9"
     },
     "mt06_cancellation": {
       "path": "release-evidence/0.6.0/attestations/mt06-cycles-result.json",
       "exists": true,
-      "sha256": "aa4335706a380faa68003e1d0dbbbaf1411fc8f41d57a6c75889fa4c1863cf61",
-      "sha256_lf": "aa4335706a380faa68003e1d0dbbbaf1411fc8f41d57a6c75889fa4c1863cf61",
-      "sourceRevision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8",
+      "sha256": "304a7b54cfb0ec1bd70df8f772c2c7a96cb18eca239b7f1ea774e97e605372ea",
+      "sha256_lf": "304a7b54cfb0ec1bd70df8f772c2c7a96cb18eca239b7f1ea774e97e605372ea",
+      "sourceRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9",
       "summary": "75/75 checks PASS (0 not exercised)",
       "checks": "75/75"
     },
     "installer_payload_identity": {
       "path": "release-evidence/0.6.0/attestations/installer-payload-identity.json",
       "exists": true,
-      "sha256": "0611bf6b458486a9d85aa1fbfd0cd3a3036457aaaa48b371cef988a08981b513",
-      "sha256_lf": "0611bf6b458486a9d85aa1fbfd0cd3a3036457aaaa48b371cef988a08981b513",
+      "sha256": "dfa27f357349d45b7049aa6b33e4f919f1d5b39ee256aa46359b4b8da2343dab",
+      "sha256_lf": "dfa27f357349d45b7049aa6b33e4f919f1d5b39ee256aa46359b4b8da2343dab",
       "status": "PASS",
-      "sourceRevision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8"
+      "sourceRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9"
     },
     "dc04_command_path": {
       "path": "release-evidence/0.6.0/attestations/dc04-v2-command-path-verification.log",
       "exists": true,
-      "sha256": "6189ccb4e5d8260a1284915aa9c833567af709599f1b5fb06c148c4a84e00ae2",
-      "sha256_lf": "6189ccb4e5d8260a1284915aa9c833567af709599f1b5fb06c148c4a84e00ae2"
+      "sha256": "594648bdb30e0b9ca318848cf7e85f29b24fe0be139b2ed9ffbc7189ef40dd5e",
+      "sha256_lf": "594648bdb30e0b9ca318848cf7e85f29b24fe0be139b2ed9ffbc7189ef40dd5e"
     },
     "rt04_delayed_download": {
       "path": "release-evidence/0.6.0/attestations/rt04v2-delayed-download-verification.log",
       "exists": true,
-      "sha256": "140c005f89b75244c53f15609f4cc78272766bbd434e28f8223bb325173da254",
-      "sha256_lf": "140c005f89b75244c53f15609f4cc78272766bbd434e28f8223bb325173da254"
+      "sha256": "c2638a3652776322222d41e4706202ea9b9f841e40d0f41d31a2ef015d3559a0",
+      "sha256_lf": "c2638a3652776322222d41e4706202ea9b9f841e40d0f41d31a2ef015d3559a0"
     },
     "a11y_packaged_verification": {
       "path": "release-evidence/0.6.0/attestations/g05-a11y-packaged-verification.log",
       "exists": true,
-      "sha256": "f6dc99a439ff9d2bd6a3d295d28197dfe8eabbf71233a669eb6e68e24b3bd86a",
-      "sha256_lf": "f6dc99a439ff9d2bd6a3d295d28197dfe8eabbf71233a669eb6e68e24b3bd86a"
+      "sha256": "bd34deb67efc1ff4bdd87d918e7d671024c1a4606fc5ab861bd5829365b952d5",
+      "sha256_lf": "bd34deb67efc1ff4bdd87d918e7d671024c1a4606fc5ab861bd5829365b952d5"
     },
     "rt06_all_backends": {
       "path": "release-evidence/0.6.0/attestations/rt06-all-backends.json",
       "exists": true,
-      "sha256": "32b0f84d056675c54676e570a160bd57b1eeb0e215488f5463bcccf746d832a7",
-      "sha256_lf": "32b0f84d056675c54676e570a160bd57b1eeb0e215488f5463bcccf746d832a7",
-      "sourceRevision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8",
+      "sha256": "088cfe772f984019e4d7d3df08a383e591da07bbabd2e1522a1c7a360e3f556d",
+      "sha256_lf": "088cfe772f984019e4d7d3df08a383e591da07bbabd2e1522a1c7a360e3f556d",
+      "sourceRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9",
       "summary": {
         "total": 22,
         "pass": 22,
@@ -217,10 +189,9 @@
     "rt06_full_run_log": {
       "path": "release-evidence/0.6.0/attestations/rt06-full-run.log",
       "exists": true,
-      "sha256": "120a8845ed69116328acc3b2ca67862a7dddd52807a57d457c2681c6250fb573",
-      "sha256_lf": "120a8845ed69116328acc3b2ca67862a7dddd52807a57d457c2681c6250fb573"
+      "sha256": "bf2da5a854ec230fd3e9a2a9661932abaa43c45c67b5e05f6860953176446cd3",
+      "sha256_lf": "bf2da5a854ec230fd3e9a2a9661932abaa43c45c67b5e05f6860953176446cd3"
     }
   },
-  "supersededRecords": [],
-  "carryForwardNote": "These lifecycle records were produced against the candidate named by evidenceFrom, not this candidate: lifecycle_upgrade_v0.4.0, lifecycle_preservation_v0.5.0 -> release-evidence/0.6.0/history/freeze8-da091a4/candidate-inventory-0.6.0.json: No installer, migration, catalog-persistence or launch-path product code changed between the cited candidate and this one: the product delta is the benchmark ownership handle in measurement_service.rs (the fallible client is now built before the active slot is published) plus its command-level regression; the F9-05 sandbox changes add the settings seed/collect and tighten the cache verifier, whose behaviour is separately evidenced by the preservation verifier controls and by the witnesses in this set. The sandbox legs stay an open environment prerequisite on this host, not a passed criterion. | lifecycle_upgrade_v0.5.0, lifecycle_preservation_v0.4.1 -> release-evidence/0.6.0/history/freeze9-eb01bc9/candidate-inventory-0.6.0.json: No installer, migration, catalog-persistence or launch-path product code changed between the cited candidate and this one: the product delta is the benchmark ownership handle in measurement_service.rs (the fallible client is now built before the active slot is published) plus its command-level regression; the F9-05 sandbox changes add the settings seed/collect and tighten the cache verifier, whose behaviour is separately evidenced by the preservation verifier controls and by the witnesses in this set. The sandbox legs stay an open environment prerequisite on this host, not a passed criterion."
+  "supersededRecords": []
 }

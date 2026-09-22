@@ -1,0 +1,18 @@
+{
+  "schema": "localmotive.sandbox-lifecycle.v0",
+  "status": "FAIL",
+  "stage": "sandbox-run",
+  "error": "Windows Sandbox start failed: Application cannot be run more than once (0x800401F6 (CO_E_APPSINGLEUSE))",
+  "tag": "v0.6.0",
+  "version": "0.6.0",
+  "previousTag": "v0.4.0",
+  "sourceRevision": "eb9ce5828aeb4b2b284860a45371e8de35ebf353",
+  "harnessRevision": "e7feee726d887bfe50ed747019afb4ea3eb22770",
+  "startedAtUtc": "2026-09-15T03:01:41.8468704Z",
+  "finishedAtUtc": "2026-09-15T03:01:44.3891678Z",
+  "candidateDigests": {
+    "currentMsi": "55e85a16a468cf0194a1a46debf2600ad477adad4f62a77e8caef6421f7e4806",
+    "currentSetup": "3808ff7d03b2916df0d66d5516ac9d1e21a2a9a745c2d00a55a0605441b12169"
+  },
+  "candidateInventorySha256": "19d6ac07be48b7e682460f565db35889ac7579567cfc3f3c92ef742b536db0fb"
+}

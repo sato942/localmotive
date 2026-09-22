@@ -41,6 +41,7 @@ vi.mock("@tauri-apps/api/core", () => ({
       }
     }
     if (command === "server_status") return Promise.resolve(idleServerStatus);
+    if (command === "suggest_port") return Promise.resolve(8080);
     if (command === "list_managed_runtimes") return Promise.resolve([]);
     if (command === "load_runtime_setup" || command === "detect_hardware") {
       return Promise.resolve(runtimeSetup());

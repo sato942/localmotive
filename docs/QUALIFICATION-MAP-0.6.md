@@ -5,12 +5,12 @@ Single map for all 18 mandatory manifest records (`ATTESTATION_RECORDS` in
 executable, its prerequisites, output path, source/byte binding, artifact
 transfer, and consuming validation. Status is per-record at map date.
 
-Map date: 2026-09-14. Map source: `3a79a54`.
-Committed manifest source: `e9a36b3aa075d72713d88af4cc74d64d561f12f8`
+Map date: 2026-09-21. Map source: `c0ae53874b54fda90616f2c8afc291ae002d32d9`.
+Committed manifest source: `c0ae53874b54fda90616f2c8afc291ae002d32d9`
 (`release-evidence/0.6.0/qualification-manifest-0.6.0.json`).
-Current main: `3a79a54` — the eight source-bound records below still bind
-`e9a36b3` and MUST be regenerated against the final candidate before
-qualification. Nothing here re-labels them.
+Current branch: `fix/u06-stabilization` — all 18 records below are new
+parses from the 2026-09-21 qualify campaign on that SHA (U06-02 CLOSED).
+Nothing here re-labels older bytes.
 
 ## Records regenerated per candidate (8 source-bound)
 
@@ -30,18 +30,24 @@ qualification. Nothing here re-labels them.
 | Record | Producer / prerequisite | Current status |
 |---|---|---|
 | `packaged_verification` | `scripts/verify_packaged_matrix.ps1` in release.yml `package` job; staged via `--stage-packaged-verification` into the manifest (F9-04, never the stale committed copy) | Fresh per candidate by construction |
-| `lifecycle_upgrade_v0.4.0` | `scripts/sandbox/host-run-lifecycle.ps1 -PreviousTag v0.4.0 -PreservationFlavor cache` in release.yml `clean-account-lifecycle` job; needs Windows Sandbox + published baseline | Carried from freeze8-da091a4 with ledger justification; MUST be re-executed per U06-04 (carry-forward is not a waiver) |
-| `lifecycle_upgrade_v0.5.0` | Same harness, `-PreviousTag v0.5.0 -PreservationFlavor mirror` | Carried from freeze9-eb01bc9 with justification; MUST be re-executed per U06-04 |
-| `lifecycle_preservation_v0.4.1` | Same harness, `-PreviousTag v0.4.1 -PreservationFlavor cache` | Carried from freeze9-eb01bc9 with justification; MUST be re-executed per U06-04 |
-| `lifecycle_preservation_v0.5.0` | Same harness, `-PreviousTag v0.5.0 -PreservationFlavor mirror` | Carried from freeze8-da091a4 with justification; MUST be re-executed per U06-04 |
-| `witness_missing_assets` | `scripts/sandbox/test-fault-evidence.ps1` (leg 1, missing-assets fixture dir) | Current; re-run with the candidate |
-| `rt06_full_run_log` | Console log of the rt06 producer run | Current; re-captured with the rt06 run |
-| `a11y_packaged_verification` | `node scripts/verify_a11y.mjs [exePath]` against the packaged binary | A11Y_PASS re-executed 2026-09-14 on current binary, byte-identical |
-| `dc04_command_path` | `node scripts/g05_dc04_override.mjs <cdpPort> <fixturePort> <destinationRoot>` + loopback fixture | Committed log scope retained; re-run with the candidate |
-| `rt04_delayed_download` | `bash .hermes-0.6/run-rt04v2.sh` + packaged candidate | Committed log scope retained; re-run with the candidate |
+| `lifecycle_upgrade_v0.4.0` | `scripts/sandbox/host-run-lifecycle.ps1 -PreviousTag v0.4.0 -PreservationFlavor cache` in release.yml `clean-account-lifecycle` job; needs Windows Sandbox + published baseline | New parse 2026-09-21 on `c0ae538` (Sandbox PASS, bound to freeze SHA + inventory) |
+| `lifecycle_upgrade_v0.5.0` | Same harness, `-PreviousTag v0.5.0 -PreservationFlavor mirror` | New parse 2026-09-21 on `c0ae538` (Sandbox PASS) |
+| `lifecycle_preservation_v0.4.1` | Same harness, `-PreviousTag v0.4.1 -PreservationFlavor cache` | New parse 2026-09-21 on `c0ae538` (Sandbox PASS) |
+| `lifecycle_preservation_v0.5.0` | Same harness, `-PreviousTag v0.5.0 -PreservationFlavor mirror` | New parse 2026-09-21 on `c0ae538` (Sandbox PASS) |
+| `witness_missing_assets` | `scripts/sandbox/test-fault-evidence.ps1` (leg 1, missing-assets fixture dir) | New parse 2026-09-21 on `c0ae538` (ALL WITNESS LEGS PASS) |
+| `rt06_full_run_log` | Console log of the rt06 producer run | Re-captured 2026-09-21 on `c0ae538` (22/22) |
+| `a11y_packaged_verification` | `node scripts/verify_a11y.mjs [exePath]` against the packaged binary | A11Y_PASS re-executed 2026-09-21 on the `c0ae538` binary |
+| `dc04_command_path` | `node scripts/g05_dc04_override.mjs <cdpPort> <fixturePort> <destinationRoot>` + loopback fixture | Re-run 2026-09-21 on `c0ae538` (13/13 PASS) |
+| `rt04_delayed_download` | `bash .hermes-0.6/run-rt04v2.sh` + packaged candidate | Re-run 2026-09-21 on `c0ae538` (17/17 PASS) |
 
-## Validation rehearsal (2026-09-14, current checkout)
+## Validation (2026-09-21 qualify campaign, U06-02 CLOSED)
 
-- `node scripts/verify_qualification_manifest.mjs --expect-source e9a36b3…`: all 18 records PASS + 4 carry-forward notes; exactly 1 FAIL — `workflow file digest drifted: .github/workflows/release.yml` (manifest pins `091a0d16…`, checkout is `6cbf7f99…` after the U06-01 extraction). This is the expected staleness signal, not a waiver.
-- Negative controls (missing record, old-source/current-inventory, wrong bytes) are covered by `scripts/tests/qualification_manifest.test.mjs` (28/28 pass) — no historical bytes were edited for this map.
-- Full assembly validation (all 18 transferred + manifest + promotion validators green) is due with the final candidate's own records; this map does not claim it.
+- `node scripts/verify_qualification_manifest.mjs --expect-source c0ae538…`: MANIFEST VERIFY PASS — source, 3 artifacts, producer inventory, workflow file, all 18 records exact, no carry-forward.
+- `node --test scripts/tests/release-gates.test.mjs`: 164/164 PASS (the manifest test that drifted on stale 0.6.0 evidence is green on the new files).
+- `node --test scripts/tests/qualification_manifest.test.mjs`: 28/28 PASS.
+- `node scripts/verify_release_promotion.mjs --qualified . --tag v0.6.0 --expect-source c0ae538…`: local contract PASS (no publish performed; tag untouched).
+- Candidate: portable `e3a7804269ef9396355af3fca9a5cd448951b65587e2377a825fb354e8bdb04d`, setup `900ac1074a526156a51ea5f315daa61f0c1ff99f814e62bf63ef2e721438e58c`, MSI `f411280b889c89177b097657ef55146ab811c65a06bec7c853b6f1b10c490a73`; inventory `ac21f7ea5ea1e58b1549006647c8c5e86df3d406a555b2478ffd93a4eb4e1353`.
+
+## Earlier map refresh (2026-09-21, superseded — retained for history)
+
+Superseded by the qualify campaign above (U06-02 CLOSED 2026-09-21). Retained for history: map source was `1dc0793`; committed manifest bound `e9a36b3`; working manifest bound `da091a4`; gaps were workflow digest drift + sha256 mismatches + unparsed lifecycle rows. All resolved on the new files; no hash was rewritten to silence a gate.

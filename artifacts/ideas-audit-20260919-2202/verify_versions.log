@@ -1,0 +1,32 @@
+(no argument; expecting every manifest to agree with package.json 0.6.0)
+{
+  "ok": true,
+  "expected": "0.6.0",
+  "fields": [
+    {
+      "name": "package.json",
+      "value": "0.6.0"
+    },
+    {
+      "name": "package-lock.json",
+      "value": "0.6.0"
+    },
+    {
+      "name": "package-lock.json packages['']",
+      "value": "0.6.0"
+    },
+    {
+      "name": "src-tauri/Cargo.toml",
+      "value": "0.6.0"
+    },
+    {
+      "name": "src-tauri/Cargo.lock localmotive",
+      "value": "0.6.0"
+    },
+    {
+      "name": "src-tauri/tauri.conf.json",
+      "value": "0.6.0"
+    }
+  ],
+  "failures": []
+}

@@ -1,0 +1,242 @@
+--- before/src/model.ts
++++ after/src/model.ts
+@@ -1314,6 +1314,27 @@
+ };
+ 
+ export type CloudModel = { id: string; label: string };
++
++/** Report incomplete tuning input before IPC; Rust remains authoritative. */
++export function tuningWorkloadError(workload: {
++  targetContext: number;
++  maxTrials: number;
++  tokens: number;
++  repeats: number;
++}): string | null {
++  const bounds = [
++    ["AI trials", workload.maxTrials, 1, 12],
++    ["Context length", workload.targetContext, 512, 4_194_304],
++    ["Tokens per measurement", workload.tokens, 64, 2048],
++    ["Repeats per trial", workload.repeats, 1, 5],
++  ] as const;
++  for (const [label, value, minimum, maximum] of bounds) {
++    if (!Number.isInteger(value) || value < minimum || value > maximum) {
++      return `${label} must be a whole number between ${minimum} and ${maximum}.`;
++    }
++  }
++  return null;
++}
+ 
+ export type TuningTrial = {
+   index: number;
+--- before/src/model.test.ts
++++ after/src/model.test.ts
+@@ -32,6 +32,7 @@
+   applySuggestedPort,
+   profileIdentity,
+   profileNumberError,
++  tuningWorkloadError,
+   profileNumberLimits,
+   type ProfileNumberField,
+   responseIsCurrent,
+@@ -60,6 +61,28 @@
+   type StorageVolumeEvidence,
+   type Workload,
+ } from "./model";
++
++describe("tuning workload input", () => {
++  const valid = { targetContext: 8192, maxTrials: 6, tokens: 256, repeats: 2 };
++
++  it.each([
++    ["targetContext", 512, 4_194_304, "Context length"],
++    ["maxTrials", 1, 12, "AI trials"],
++    ["tokens", 64, 2048, "Tokens per measurement"],
++    ["repeats", 1, 5, "Repeats per trial"],
++  ] as const)("keeps %s within the Rust workload domain", (field, minimum, maximum, label) => {
++    for (const value of [minimum, maximum]) {
++      expect(tuningWorkloadError({ ...valid, [field]: value })).toBeNull();
++    }
++    for (const value of [minimum - 1, maximum + 1, minimum + 0.5, NaN, Infinity, -Infinity]) {
++      expect(tuningWorkloadError({ ...valid, [field]: value })).toContain(label);
++    }
++  });
++
++  it("accepts integer token counts that are not multiples of 64", () => {
++    expect(tuningWorkloadError({ ...valid, tokens: 257 })).toBeNull();
++  });
++});
+ 
+ describe("runtime catalog presentation", () => {
+   it("preserves typed rate-limit retry metadata from IPC", () => {
+--- before/src/App.tsx
++++ after/src/App.tsx
+@@ -21,6 +21,7 @@
+   displayedSelection,
+   profileIdentity,
+   profileNumberError,
++  tuningWorkloadError,
+   applySuggestedPort,
+   responseIsCurrent,
+   managedHealthRequest,
+@@ -312,6 +313,7 @@
+   const [tuneTrials, setTuneTrials] = useState(6);
+   const [tuneTokens, setTuneTokens] = useState(256);
+   const [tuneRepeats, setTuneRepeats] = useState(2);
++  const tuneInputError = tuningWorkloadError({ targetContext: tuneContext, maxTrials: tuneTrials, tokens: tuneTokens, repeats: tuneRepeats });
+   const [tuning, setTuning] = useState(false);
+   // Cloud disclosure (audit S-20): what the brief carries and how much of it
+   // leaves the machine. Local inference stays local.
+@@ -1062,7 +1064,7 @@
+ 
+   async function startTuning() {
+     if (!profile || !selected) return;
+-    const inputError = profileNumberError(profile);
++    const inputError = profileNumberError(profile) ?? tuneInputError;
+     if (inputError) { setNotice(inputError); return; }
+     // FE-02: capture the originating identity at dispatch; nothing later can
+     // change whose run this is.
+@@ -1454,7 +1456,7 @@
+ 
+   const trialsForDisplay: TuningTrial[] = tuneReport ? tuneReport.trials : tuneLive;
+   const bestLive = trialsForDisplay.reduce<TuningTrial | null>((best, trial) => (trial.meanTps !== null && (best === null || (best.meanTps ?? 0) < trial.meanTps) ? trial : best), null);
+-  const canTune = Boolean(profile && selected?.complete && runtimePath && credential?.configured && cloudModel && !status.running && !tuning);
++  const canTune = Boolean(profile && selected?.complete && runtimePath && credential?.configured && cloudModel && !status.running && !tuning && !tuneInputError);
+   const tuneBlocker = !credential?.configured
+     ? `Connect ${provider?.label ?? "a cloud provider"} to begin: sign in or store an API key.`
+     : !cloudModel
+@@ -1467,7 +1469,7 @@
+             ? "Install or choose a llama-server runtime first."
+             : status.running
+               ? "Stop the running server first; the tuner launches its own."
+-              : `No tuning run for ${selected.name} yet. Choose a context length and start.`;
++              : tuneInputError ?? `No tuning run for ${selected.name} yet. Choose a context length and start.`;
+ 
+   return (
+     <div className="app-shell">
+@@ -1739,6 +1741,7 @@
+             trialsForDisplay={trialsForDisplay}
+             tuneBlocker={tuneBlocker}
+             tuneContext={tuneContext}
++            tuneInputError={tuneInputError}
+             tuneLogRef={tuneLogRef}
+             tuneProgress={tuneProgress}
+             tuneRepeats={tuneRepeats}
+--- before/src/App.staleResponses.test.tsx
++++ after/src/App.staleResponses.test.tsx
+@@ -368,6 +368,63 @@
+   });
+ });
+ 
++describe("tuning numeric inputs", () => {
++  beforeEach(async () => {
++    handlers.set("suggest_port", () => 8080);
++    handlers.set("cloud_providers", () => providers);
++    handlers.set("cloud_credential_status", () => ({ provider: "openrouter", configured: true, masked: "fixture" }));
++    handlers.set("cloud_list_models", () => [{ id: "advisor-alpha", label: "Fixture advisor" }]);
++    handlers.set("start_tuning", () => { throw new Error("Fixture boundary: no cloud or inference runs."); });
++    await mount();
++    await scanFixtureModel();
++    await click(navButton("AI Tune"), "AI Tune navigation must exist");
++    expect(navButton("Auto-tune fixture")?.disabled, "the fixture must be ready before testing input errors").toBe(false);
++    invokeCalls.length = 0;
++  });
++
++  it.each(["AI trials", "Tokens per measurement", "Repeats per trial"])("keeps a cleared %s field blank", async (label) => {
++    await setInputValue(profileInput(label), "");
++    expect(profileInput(label).value).toBe("");
++  });
++
++  it.each([
++    ["AI trials", "0"], ["AI trials", "13"], ["AI trials", "1.5"], ["AI trials", ""],
++    ["Tokens per measurement", "63"], ["Tokens per measurement", "2049"], ["Tokens per measurement", "64.5"], ["Tokens per measurement", ""],
++    ["Repeats per trial", "0"], ["Repeats per trial", "6"], ["Repeats per trial", "1.5"], ["Repeats per trial", ""],
++  ])("does not dispatch invalid %s=%s", async (label, value) => {
++    await setInputValue(profileInput(label), value);
++    await click(navButton("Auto-tune fixture"), "the Tune action must remain visible");
++    expect(invokeCalls.filter((call) => call.command === "start_tuning")).toHaveLength(0);
++    expect(navButton("Auto-tune fixture")?.disabled).toBe(true);
++    expect(container.querySelector('.tune-screen [role="status"]')?.textContent).toContain(label);
++    expect(text()).not.toContain("Choose a context length and start.");
++    expect(text()).toContain("Correct tuning input");
++  });
++
++  it.each(["AI trials", "Tokens per measurement", "Repeats per trial"])("marks blank %s invalid in the native control", async (label) => {
++    await setInputValue(profileInput(label), "");
++    expect(profileInput(label).checkValidity()).toBe(false);
++  });
++
++  it.each([
++    ["AI trials", "12", "maxTrials"],
++    ["Tokens per measurement", "257", "tokens"],
++    ["Repeats per trial", "5", "repeats"],
++  ])("dispatches the corrected %s value without clamping", async (label, value, field) => {
++    await setInputValue(profileInput(label), "");
++    expect(navButton("Auto-tune fixture")?.disabled).toBe(true);
++    await setInputValue(profileInput(label), value);
++    expect(profileInput(label).value).toBe(value);
++    expect(profileInput(label).checkValidity()).toBe(true);
++    expect(container.querySelector('.tune-screen [role="status"]')).toBeNull();
++    expect(navButton("Auto-tune fixture")?.disabled).toBe(false);
++    await click(navButton("Auto-tune fixture"), "a corrected workload can be dispatched");
++    const calls = invokeCalls.filter((call) => call.command === "start_tuning");
++    expect(calls).toHaveLength(1);
++    expect(calls[0].args).toMatchObject({ request: { [field]: Number(value) } });
++  });
++});
++
+ describe("provider responses that resolve after a switch (audit FE-03 V1)", () => {
+   it("keeps the switched provider's credential and model when the previous provider resolves late", async () => {
+     const alphaStatus = deferred<unknown>();
+--- before/src/screens/TuneScreen.tsx
++++ after/src/screens/TuneScreen.tsx
+@@ -74,6 +74,7 @@
+   trialsForDisplay: TuningTrial[];
+   tuneBlocker: string;
+   tuneContext: number;
++  tuneInputError: string | null;
+   tuneLogRef: RefObject<HTMLDivElement | null>;
+   tuneProgress: TuningProgress | null;
+   tuneRepeats: number;
+@@ -127,6 +128,7 @@
+     trialsForDisplay,
+     tuneBlocker,
+     tuneContext,
++    tuneInputError,
+     tuneLogRef,
+     tuneProgress,
+     tuneRepeats,
+@@ -195,7 +197,7 @@
+       <div className="setup-steps" aria-label="Tuning readiness">
+         <div className={credential?.configured ? "setup-step done" : "setup-step active"}><span>1</span><strong>Cloud provider</strong><small>{credential?.configured ? `${provider?.label ?? providerId} connected` : "Add a key or sign in"}</small></div>
+         <div className={selected?.complete && runtimePath ? "setup-step done" : "setup-step"}><span>2</span><strong>Local model</strong><small>{selected ? selected.name : "Select in Inventory"}</small></div>
+-        <div className={tuneReport ? "setup-step done" : canTune ? "setup-step active" : "setup-step"}><span>3</span><strong>Tune</strong><small>{tuning ? "Running…" : tuneReport ? "Report ready" : status.running ? "Stop the server first" : "Choose context, start"}</small></div>
++        <div className={tuneReport ? "setup-step done" : canTune ? "setup-step active" : "setup-step"}><span>3</span><strong>Tune</strong><small>{tuning ? "Running…" : tuneReport ? "Report ready" : status.running ? "Stop the server first" : tuneInputError ? "Correct tuning input" : "Choose context, start"}</small></div>
+       </div>
+ 
+       <div className="tune-layout">
+@@ -269,12 +271,13 @@
+                 <small className="field-help">Every trial runs at exactly this context; the KV cache is sized for it.</small>
+               </label>
+               <label>AI trials
+-                <input type="number" min="1" max="12" value={tuneTrials} onChange={(e) => setTuneTrials(Number(e.target.value))} disabled={tuning} />
++                <input type="number" min="1" max="12" step="1" required value={Number.isFinite(tuneTrials) ? tuneTrials : ""} onChange={(e) => setTuneTrials(e.target.valueAsNumber)} disabled={tuning} />
+                 <small className="field-help">Proposals measured after the baseline (T0). Each is one server launch.</small>
+               </label>
+-              <label>Tokens per measurement<input type="number" min="64" max="2048" step="64" value={tuneTokens} onChange={(e) => setTuneTokens(Number(e.target.value))} disabled={tuning} /></label>
+-              <label>Repeats per trial<input type="number" min="1" max="5" value={tuneRepeats} onChange={(e) => setTuneRepeats(Number(e.target.value))} disabled={tuning} /></label>
++              <label>Tokens per measurement<input type="number" min="64" max="2048" step="1" required value={Number.isFinite(tuneTokens) ? tuneTokens : ""} onChange={(e) => setTuneTokens(e.target.valueAsNumber)} disabled={tuning} /></label>
++              <label>Repeats per trial<input type="number" min="1" max="5" step="1" required value={Number.isFinite(tuneRepeats) ? tuneRepeats : ""} onChange={(e) => setTuneRepeats(e.target.valueAsNumber)} disabled={tuning} /></label>
+             </div>
++            {tuneInputError && <p className="group-note" role="status">{tuneInputError}</p>}
+             <dl className="spec-list">
+               <div><dt>Model</dt><dd>{selected?.name ?? "—"}</dd></div>
+               <div><dt>Architecture</dt><dd>{gguf ? `${gguf.architecture.toUpperCase()} · ${gguf.sizeLabel || "?"}${gguf.expertCount ? ` · ${gguf.expertCount} EXPERTS` : ""}` : "—"}</dd></div>
+--- before/src/screens/TuneScreen.test.tsx
++++ after/src/screens/TuneScreen.test.tsx
+@@ -85,6 +85,7 @@
+     trialsForDisplay: [],
+     tuneBlocker: "Add a provider key first.",
+     tuneContext: 8192,
++    tuneInputError: null,
+     tuneLogRef: { current: null },
+     tuneProgress: null,
+     tuneRepeats: 2,

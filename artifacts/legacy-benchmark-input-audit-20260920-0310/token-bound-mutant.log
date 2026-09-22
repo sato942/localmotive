@@ -1,0 +1,33 @@
+
+ RUN  v4.1.11 C:/Users/Mubarak/Documents/Projects/localmotive
+
+ ❯ src/App.staleResponses.test.tsx (52 tests | 1 failed | 51 skipped) 140ms
+     × does not dispatch invalid Forced output tokens=4097 139ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/App.staleResponses.test.tsx > legacy benchmark numeric inputs > does not dispatch invalid Forced output tokens=4097
+AssertionError: expected [ { …(2) } ] to have a length of +0 but got 1
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ src/App.staleResponses.test.tsx:394:79
+    392|     await setInputValue(profileInput(label), value);
+    393|     await click(navButton("Run benchmark"), "the benchmark action must…
+    394|     expect(invokeCalls.filter((call) => call.command === "benchmark_se…
+       |                                                                               ^
+    395|     expect(navButton("Run benchmark")?.disabled).toBe(true);
+    396|     expect(container.querySelector('.benchmark-setup [role="status"]')…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 51 skipped (52)
+   Start at  03:18:50
+   Duration  1.58s (transform 322ms, setup 0ms, import 471ms, tests 140ms, environment 829ms)
+

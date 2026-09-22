@@ -37,6 +37,7 @@ export function AboutScreen({
       <p>What this build is, where it keeps things, and what it is made of.</p>
     </div>
     <div className="actions">
+      <button className="button secondary" onClick={() => onOpenExternal("https://github.com/sato942/localmotive/releases/latest")}><Link2 size={15} /> Check releases</button>
       <button className="button secondary" onClick={() => onOpenExternal(about?.repository ?? "https://github.com/sato942/localmotive")}><Link2 size={15} /> Project on GitHub</button>
     </div>
   </div>
@@ -48,6 +49,7 @@ export function AboutScreen({
         <strong>{about?.name ?? "Localmotive"}</strong>
         <span>Version {about?.version ?? "—"}</span>
         <p>A Windows control plane for local GGUF inference: it manages official llama.cpp runtimes, discovers models, builds exact launch profiles, supervises the server, measures throughput, and tunes settings with a cloud advisor.</p>
+        <p>Updates are manual. Check releases to compare versions and download an installer. This app does not install updates automatically.</p>
       </div>
     </article>
 
@@ -89,7 +91,7 @@ export function AboutScreen({
         <button className="credit" onClick={() => onOpenExternal("https://github.com/ggml-org/llama.cpp")}><strong>llama.cpp</strong><span>ggml-org · MIT — the inference engine and every managed runtime binary</span></button>
         <button className="credit" onClick={() => onOpenExternal("https://tauri.app")}><strong>Tauri {about?.tauriVersion ?? "2"}</strong><span>Apache-2.0 / MIT — desktop shell</span></button>
         <button className="credit" onClick={() => onOpenExternal("https://react.dev")}><strong>React + TypeScript + Vite</strong><span>MIT — interface</span></button>
-        <button className="credit" onClick={() => onOpenExternal("https://lucide.dev")}><strong>Lucide</strong><span>ISC — icons</span></button>
+        <button className="credit" onClick={() => onOpenExternal("https://github.com/lucide-icons/lucide")}><strong>Lucide</strong><span>ISC — icons</span></button>
       </div>
       <p className="group-note about-note">Localmotive is not affiliated with ggml-org. Runtime binaries are downloaded directly from official llama.cpp GitHub releases and verified against their published size and SHA-256 before use.</p>
     </article>

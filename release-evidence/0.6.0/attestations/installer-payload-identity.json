@@ -1,31 +1,31 @@
 {
   "schema": "localmotive.installer-payload-identity.v1",
-  "generatedAt": "2026-09-13T03:24:37.319Z",
-  "sourceRevision": "e9a36b3aa075d72713d88af4cc74d64d561f12f8",
-  "inventorySha256": "dd0bd839775262603df21021b66410842ab07fdbac7437b3aa53bbfd0c6973e0",
+  "generatedAt": "2026-09-21T13:05:02.640Z",
+  "sourceRevision": "c0ae53874b54fda90616f2c8afc291ae002d32d9",
+  "inventorySha256": "ac21f7ea5ea1e58b1549006647c8c5e86df3d406a555b2478ffd93a4eb4e1353",
   "release": "0.6.0",
   "portable": {
     "name": "Localmotive_0.6.0_x64-portable.exe",
-    "sizeBytes": 20818432,
-    "sha256": "d6a6ef663c925f9605f06ea2957ef95409dace00d798ebc28e5666249fd59427"
+    "sizeBytes": 20372480,
+    "sha256": "e3a7804269ef9396355af3fca9a5cd448951b65587e2377a825fb354e8bdb04d"
   },
   "nsisPayload": {
-    "sizeBytes": 20818432,
-    "sha256": "6f0ac63b71e94a666fdfc7ee4277f86114c2d82327ddc8af96885ec0e95bd8e8"
+    "sizeBytes": 20372480,
+    "sha256": "43aae8c0783a951cf09e297757f97566202010697341a861953bcc78dd29d9f3"
   },
   "msiPayload": {
-    "sizeBytes": 20818432,
-    "sha256": "3fcd629ba50dc35158b8faeaefd373c5bf597b2650fab63d722aa9d49ca88de4"
+    "sizeBytes": 20372480,
+    "sha256": "f230b378dd55716efeeda3ea0ee612a11e5feb400bbb7d5adac90780908cf85b"
   },
   "marker": {
     "portable": "UNK",
     "nsis": "NSS",
     "msi": "MSI",
-    "differingBytes": 16696906,
+    "differingBytes": 16262970,
     "note": "Tauri's NSIS/MSI bundlers patch one 3-byte bundle-type marker ('UNK' -> 'NSS' / 'MSI') into their embedded copy of the executable. Every other byte is identical to the portable executable, so the recorded digests differ while the installed programs are the same build."
   },
   "functional": [],
-  "functionalNote": "Each installed payload was launched from its extracted bytes with the WebView2 debugger and evaluated over CDP: the record names the observed navigation-button count, the managed-control text and the rendered body length. The in-sandbox lifecycle legs install the SAME payload bytes (their recorded installed digest equals nsisPayload.sha256 / msiPayload.sha256) and prove install, launch, version identity, uninstall and preservation; this probe proves the functional shell of those exact bytes.",
+  "functionalNote": "The functional array records the executed shell probes. An empty array means no functional probe ran.",
   "status": "PASS",
   "detail": "ok"
 }

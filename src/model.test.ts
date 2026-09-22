@@ -11,7 +11,6 @@ import {
   parseExtraArgs,
   safeJsonParse,
   artifactReadyForLaunch,
-  calibrationState,
   catalogBuildFit,
   describeSamples,
   reconcileDraftCompanion,
@@ -32,6 +31,11 @@ import {
   tuningRunSummary,
   applySuggestedPort,
   profileIdentity,
+  profileNumberError,
+  legacyBenchmarkInputError,
+  tuningWorkloadError,
+  profileNumberLimits,
+  type ProfileNumberField,
   responseIsCurrent,
   managedHealthRequest,
   manualGpuOverride,
@@ -39,7 +43,6 @@ import {
   retainOrDisposeListener,
   etaLabel,
   originLabel,
-  qualityPassRate,
   rateLabel,
   runtimeIdentityMismatch,
   runtimeInstallRequest,
@@ -48,7 +51,6 @@ import {
   suggestedProfile,
   validateWorkload,
   type ArtifactInspection,
-  type CalibrationModel,
   type DeviceAllocationPlan,
   type Evidence,
   type GpuAdapterInfo,
@@ -60,6 +62,48 @@ import {
   type StorageVolumeEvidence,
   type Workload,
 } from "./model";
+
+describe("legacy benchmark workload input", () => {
+  it("keeps every supported integer endpoint and a non-multiple of 64", () => {
+    for (const tokens of [64, 65, 4096]) {
+      for (const repeats of [1, 10]) expect(legacyBenchmarkInputError(tokens, repeats)).toBeNull();
+    }
+  });
+
+  it("rejects invalid token counts", () => {
+    for (const tokens of [63, 4097, 64.5, NaN, Infinity, -Infinity]) {
+      expect(legacyBenchmarkInputError(tokens, 1)).toContain("Forced output tokens");
+    }
+  });
+
+  it("rejects invalid repeat counts", () => {
+    for (const repeats of [0, 11, 1.5, NaN, Infinity, -Infinity]) {
+      expect(legacyBenchmarkInputError(64, repeats)).toContain("Measured repeats");
+    }
+  });
+});
+
+describe("tuning workload input", () => {
+  const valid = { targetContext: 8192, maxTrials: 6, tokens: 256, repeats: 2 };
+
+  it.each([
+    ["targetContext", 512, 4_194_304, "Context length"],
+    ["maxTrials", 1, 12, "Search trials"],
+    ["tokens", 64, 2048, "Tokens per measurement"],
+    ["repeats", 1, 5, "Repeats per trial"],
+  ] as const)("keeps %s within the Rust workload domain", (field, minimum, maximum, label) => {
+    for (const value of [minimum, maximum]) {
+      expect(tuningWorkloadError({ ...valid, [field]: value })).toBeNull();
+    }
+    for (const value of [minimum - 1, maximum + 1, minimum + 0.5, NaN, Infinity, -Infinity]) {
+      expect(tuningWorkloadError({ ...valid, [field]: value })).toContain(label);
+    }
+  });
+
+  it("accepts integer token counts that are not multiples of 64", () => {
+    expect(tuningWorkloadError({ ...valid, tokens: 257 })).toBeNull();
+  });
+});
 
 describe("runtime catalog presentation", () => {
   it("preserves typed rate-limit retry metadata from IPC", () => {
@@ -374,55 +418,6 @@ describe("v0.3 artifact contracts", () => {
   });
 });
 
-describe("v0.3 measurement decisions", () => {
-
-  it("leaves quality unknown when the suite did not produce scored cases", () => {
-    expect(qualityPassRate(null)).toBeNull();
-    const emptySuite = {
-      suiteId: "v1",
-      seed: 42,
-      observedAtMs: null,
-      modelLogicalId: null,
-      runtimeSha256: null,
-      cases: [],
-    };
-    expect(qualityPassRate({ ...emptySuite, status: "notRun" })).toBeNull();
-    expect(qualityPassRate({ ...emptySuite, status: "error" })).toBeNull();
-  });
-});
-
-describe("v0.3 calibration decisions", () => {
-  const model: CalibrationModel = {
-    compatibilityKey: "a".repeat(64),
-    factor: 1,
-    residualStandardDeviation: 0.1,
-    anchorCount: 3,
-    createdAtMs: 100,
-    expiresAtMs: 200,
-  };
-
-  it("distinguishes compatible, expired, incompatible, and unavailable calibration", () => {
-    expect(calibrationState(model, model.compatibilityKey, 150)).toBe("compatible");
-    expect(calibrationState(model, model.compatibilityKey, 201)).toBe("expired");
-    expect(calibrationState(model, "b".repeat(64), 150)).toBe("incompatible");
-    // Audit MT-14: a model created after the clock is not yet applicable,
-    // and freshness follows the source evidence, not the rebuild time.
-    expect(calibrationState(model, model.compatibilityKey, 50)).toBe("scheduled");
-    const dayMs = 24 * 60 * 60 * 1_000;
-    const staleModel: CalibrationModel = {
-      ...model,
-      sourceEvidenceAtMs: 1_000,
-      expiresAtMs: 1_000 + 200 * dayMs,
-    };
-    expect(
-      calibrationState(staleModel, staleModel.compatibilityKey, 1_000 + 91 * dayMs),
-    ).toBe("staleEvidence");
-    expect(
-      calibrationState(staleModel, staleModel.compatibilityKey, 1_000 + 89 * dayMs),
-    ).toBe("compatible");
-    expect(calibrationState(null, model.compatibilityKey, 150)).toBe("unavailable");
-  });
-});
 
 describe("manual GPU override decisions", () => {
   it("converts one explicit GiB value without combining shared memory", () => {
@@ -537,6 +532,45 @@ const model: LogicalModel = {
     },
   ],
 };
+
+describe("profile numeric input", () => {
+  const baseline = () => suggestedProfile(model, "C:/llama/llama-server.exe");
+
+  it("covers every numeric field and preserves the suggested profile", () => {
+    const profile = baseline();
+    const numericFields = Object.keys(profile).filter((key) => typeof profile[key as keyof LaunchProfile] === "number");
+    expect(Object.keys(profileNumberLimits).sort()).toEqual(numericFields.sort());
+    expect(profileNumberError(profile)).toBeNull();
+  });
+
+  it.each(Object.keys(profileNumberLimits) as ProfileNumberField[])("rejects non-finite and out-of-range %s", (field) => {
+    const [, min, max, step] = profileNumberLimits[field];
+    for (const invalid of [NaN, Infinity, -Infinity, min - 1, max + 1, ...(step === 1 ? [0.5] : [])]) {
+      expect(profileNumberError({ ...baseline(), [field]: invalid }), `${field}: ${invalid}`).not.toBeNull();
+    }
+  });
+
+  it("preserves sentinel and fractional values supported by the existing contract", () => {
+    expect(profileNumberError({ ...baseline(), threads: -1, cacheRam: -1, ssePingInterval: -1, seed: -1, topP: 0.975, temperature: 0.123 })).toBeNull();
+    for (const overrides of [{ port: 65536 }, { context: 4194305 }, { parallel: 1025 }, { threads: 1025 }, { topP: 1.01 }, { draftPMin: -0.01 }]) {
+      expect(profileNumberError({ ...baseline(), ...overrides })).not.toBeNull();
+    }
+  });
+
+  it("reports a malformed saved method instead of crashing related numeric checks", () => {
+    const restored = normalizeProfile(JSON.parse('{"specType":null}'), model, "C:/llama/llama-server.exe");
+    expect(profileNumberError(restored)).toBe("Speculative method must be text.");
+  });
+
+  it.each([
+    [{ batch: 512, ubatch: 513 }, "Physical uBatch"],
+    [{ specType: "draft-dspark", draftMin: 6, draftMax: 5 }, "Draft minimum"],
+    [{ specType: "ngram-mod", ngramMin: 65, ngramMax: 64 }, "N-gram minimum"],
+    [{ imageMinTokens: 10, imageMaxTokens: 9 }, "Minimum image tokens"],
+  ] as const)("rejects inconsistent related bounds %j", (overrides, label) => {
+    expect(profileNumberError({ ...baseline(), ...overrides })).toContain(label);
+  });
+});
 
 describe("normalizeProfile", () => {
   it("adopts the current runtime instead of the one saved with the profile", () => {
@@ -877,7 +911,6 @@ describe("FE-03 stale response guards", () => {
 
   it("labels the app-wide evidence run for every screen", () => {
     expect(evidenceRunLabel("benchmark")).toBe("Benchmark running");
-    expect(evidenceRunLabel("quality")).toBe("Quality suite running");
   });
 
   it("derives profile identity from the fields a stale response must match", () => {
@@ -971,6 +1004,16 @@ describe("persisted record validation (FE-09)", () => {
     expect(fromJunk.extraArgs).toEqual([]);
   });
 
+  it("retains unmeasured quality-change warnings in saved tuning reports", () => {
+    const report = normalizeTuningReport({
+      bestIndex: null,
+      bestProfile: { name: "saved profile" },
+      trials: [],
+      qualityAffectingChanges: ["cacheTypeK", null, 42],
+    });
+    expect(report?.qualityAffectingChanges).toEqual(["cacheTypeK"]);
+  });
+
   it("rejects tuning records that do not match the expected shape", () => {
     expect(normalizeTuningReport(null)).toBeUndefined();
     expect(normalizeTuningReport("text")).toBeUndefined();
@@ -993,6 +1036,33 @@ describe("persisted record validation (FE-09)", () => {
     expect(report?.bestTps).toBe(42.5);
     expect(report?.trials).toHaveLength(2);
     expect(report?.trials[1].error).toBe("boom");
+  });
+
+  it("fills search-first history defaults for reports stored by older builds", () => {
+    // Pre-table sessions were advisor-driven after a measured baseline, so a
+    // legacy row with a measurement normalizes to ok/advisor, and row zero to
+    // baseline. New rows always carry explicit values.
+    const report = normalizeTuningReport({
+      baselineTps: 10,
+      bestIndex: 1,
+      bestTps: 12,
+      bestProfile: { name: "p" },
+      trials: [
+        { index: 0, changes: {}, rationale: "b", meanTps: 10, medianTps: 10, error: null, command: "c" },
+        { index: 1, changes: { flashAttention: "on" }, rationale: "a", meanTps: null, medianTps: null, error: "boom", command: "" },
+        { index: 2, changes: {}, rationale: "n", meanTps: 12, medianTps: 12, error: null, command: "c", outcome: "ok", chosen: "nudge", timestampMs: 7, configHash: "ff" },
+      ],
+      stoppedReason: "done",
+    });
+    expect(report?.trials[0].outcome).toBe("ok");
+    expect(report?.trials[0].chosen).toBe("baseline");
+    expect(report?.trials[0].timestampMs).toBe(0);
+    expect(report?.trials[1].outcome).toBe("launch-fail");
+    expect(report?.trials[1].chosen).toBe("advisor");
+    expect(report?.trials[2].outcome).toBe("ok");
+    expect(report?.trials[2].chosen).toBe("nudge");
+    expect(report?.trials[2].timestampMs).toBe(7);
+    expect(report?.trials[2].configHash).toBe("ff");
   });
 
   it("parses JSON without throwing", () => {

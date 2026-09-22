@@ -132,7 +132,7 @@ fn metric_stats(values: impl Iterator<Item = f64>) -> Option<MetricStats> {
     let normalized_mean = values.iter().map(|value| value / scale).sum::<f64>() / count as f64;
     let mean = normalized_mean * scale;
     let median = if count % 2 == 0 {
-        values[count / 2 - 1] / 2.0 + values[count / 2] / 2.0
+        values[count / 2 - 1].midpoint(values[count / 2])
     } else {
         values[count / 2]
     };
@@ -315,15 +315,6 @@ pub fn parse_completion_timing(body: &str) -> Result<CompletionTiming, String> {
         derived_ttft_ms: prompt_ms + predicted_per_token_ms,
         peak_process_rss_bytes: unknown_process_peak_rss_bytes(),
     })
-}
-
-pub fn parse_completion_content(body: &str) -> Result<String, String> {
-    let value: serde_json::Value = serde_json::from_str(body).map_err(|error| error.to_string())?;
-    value
-        .get("content")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| "llama-server response did not include completion content".into())
 }
 
 pub fn run_workload_with<F>(
@@ -669,24 +660,6 @@ pub fn completion_request_cancellable(
     completion_request_inner(client, workload, Some(cancelled))
 }
 
-pub fn quality_completion_request(
-    client: &LocalHttpClient,
-    prompt: &str,
-) -> Result<String, String> {
-    let body = serde_json::json!({
-        "prompt": prompt,
-        "n_predict": 64,
-        "temperature": 0.0,
-        "seed": 42,
-        "ignore_eos": false,
-        "stream": false,
-        "cache_prompt": false
-    })
-    .to_string();
-    let payload = post_json(client, "/completion", &body, Duration::from_secs(120), None)?;
-    parse_completion_content(&payload)
-}
-
 pub fn persist_manifest(directory: &Path, manifest: &BenchmarkManifest) -> Result<PathBuf, String> {
     manifest
         .validate_complete()
@@ -726,10 +699,11 @@ pub fn persist_manifest(directory: &Path, manifest: &BenchmarkManifest) -> Resul
     Ok(target)
 }
 
+/// Current arguments are raw; this gate owns the persisted-format comparison.
 pub fn validate_replay_compatibility(
     manifest: &BenchmarkManifest,
     logical_model_id: &str,
-    command_args: &[String],
+    current_raw_args: &[String],
     current_compatibility_key: &str,
 ) -> Result<(), String> {
     let model = manifest
@@ -743,7 +717,7 @@ pub fn validate_replay_compatibility(
         .launch
         .as_ref()
         .ok_or("Replay manifest does not contain a launch snapshot")?;
-    if launch.command_args != command_args {
+    if !crate::core::manifest_args_match(&launch.command_args, current_raw_args) {
         return Err("Replay launch arguments do not match the running server".into());
     }
     let recorded_compatibility_key = manifest
@@ -867,12 +841,46 @@ mod tests {
     }
 
     #[test]
+    fn metric_summary_preserves_subnormal_medians() {
+        // Halving both smallest subnormals before adding rounds each to zero.
+        let tiny = f64::from_bits(1);
+        let stats = metric_stats([tiny, tiny].into_iter()).unwrap();
+        assert_eq!(stats.median, tiny);
+        assert_eq!(stats.mean, tiny);
+        assert_eq!(stats.standard_deviation, 0.0);
+    }
+
+    #[test]
     fn metric_summary_remains_finite_for_large_finite_observations() {
         let stats = metric_stats([f64::MAX / 2.0, f64::MAX].into_iter()).unwrap();
 
         assert!(stats.mean.is_finite());
         assert!(stats.median.is_finite());
         assert!(stats.standard_deviation.is_finite());
+    }
+
+    #[test]
+    fn metric_summary_extremes_serialize_as_numbers() {
+        for values in [
+            [f64::MAX / 2.0, f64::MAX],
+            [f64::from_bits(1), f64::from_bits(1)],
+        ] {
+            let stats = metric_stats(values.into_iter()).unwrap();
+            let json = serde_json::to_string(&stats).unwrap();
+            let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+            for field in ["mean", "median", "p50", "p95", "min", "max"] {
+                assert!(
+                    value[field]
+                        .as_f64()
+                        .is_some_and(|v| v.is_finite() && v > 0.0),
+                    "{field} must stay numeric: {json}"
+                );
+            }
+            assert!(value["standardDeviation"]
+                .as_f64()
+                .is_some_and(f64::is_finite));
+            assert_eq!(value["count"].as_u64(), Some(2));
+        }
     }
 
     #[test]
@@ -910,14 +918,6 @@ mod tests {
         assert_eq!(timing.decode_tps, 80.0);
         assert_eq!(timing.derived_ttft_ms, 92.5);
         assert!(timing.first_token_ms.is_none());
-    }
-
-    #[test]
-    fn completion_content_parser_reads_llama_server_text() {
-        assert_eq!(
-            parse_completion_content(r#"{"content":"READY","stop":true}"#).unwrap(),
-            "READY"
-        );
     }
 
     #[test]
@@ -1516,10 +1516,12 @@ mod tests {
     #[test]
     fn manifest_persistence_is_atomic_and_round_trips_raw_observations() {
         let directory = std::env::temp_dir().join(format!(
-            "localmotive-manifest-persist-{}",
-            std::process::id()
+            "localmotive-manifest-persist-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
         ));
-        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir(&directory).unwrap();
+        let raw_args = vec!["--lora".into(), "C:/PrivateUser/adapter.gguf".into()];
         let manifest = BenchmarkManifest {
             compatibility_key: Some(format!("v2:{}", "c".repeat(64))),
             runtime: Some(RuntimeFact {
@@ -1542,6 +1544,7 @@ mod tests {
                 gguf_header_sha256: "e".repeat(64),
             }),
             launch: Some(LaunchFact {
+                command_args: crate::core::manifest_safe_args(&raw_args),
                 requested_context: 4_096,
                 effective_context: observed_context(4_096),
                 parallel: 1,
@@ -1570,8 +1573,69 @@ mod tests {
         let loaded: BenchmarkManifest = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
 
         assert_eq!(loaded, manifest);
+        let before = fs::read(&path).unwrap();
+        assert!(!String::from_utf8_lossy(&before).contains("PrivateUser"));
+        validate_replay_compatibility(
+            &loaded,
+            "fixture",
+            &raw_args,
+            loaded.compatibility_key.as_deref().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(fs::read(&path).unwrap(), before);
         assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn replay_accepts_old_and_new_path_encodings_for_the_same_current_arguments() {
+        let raw = vec![
+            "--lora".into(),
+            r"C:\PrivateUser\adapter.gguf".into(),
+            "-md".into(),
+            r"C:\PrivateUser\draft.gguf".into(),
+            "--ctx-size".into(),
+            "4096".into(),
+        ];
+        let key = format!("v2:{}", "a".repeat(64));
+        // These flags were emitted literally by the old writer.
+        for recorded in [raw.clone(), crate::core::manifest_safe_args(&raw)] {
+            let manifest = BenchmarkManifest {
+                compatibility_key: Some(key.clone()),
+                model: Some(ModelFact {
+                    logical_id: "model-a".into(),
+                    ..ModelFact::default()
+                }),
+                launch: Some(LaunchFact {
+                    command_args: recorded,
+                    ..LaunchFact::default()
+                }),
+                ..BenchmarkManifest::default()
+            };
+            let before = serde_json::to_vec(&manifest).unwrap();
+            let result = validate_replay_compatibility(&manifest, "model-a", &raw, &key);
+            assert!(
+                result.is_ok(),
+                "same current arguments rejected: {result:?}"
+            );
+            assert_eq!(serde_json::to_vec(&manifest).unwrap(), before);
+            assert!(
+                validate_replay_compatibility(&manifest, "other-model", &raw, &key)
+                    .unwrap_err()
+                    .contains("model identity")
+            );
+            for invalid in ["legacy".to_string(), format!("v2:{}", "b".repeat(64))] {
+                assert!(
+                    validate_replay_compatibility(&manifest, "model-a", &raw, &invalid).is_err()
+                );
+                let mut changed = manifest.clone();
+                changed.compatibility_key = Some(invalid);
+                assert!(validate_replay_compatibility(&changed, "model-a", &raw, &key).is_err());
+            }
+            let mut missing_key = manifest.clone();
+            missing_key.compatibility_key = None;
+            assert!(validate_replay_compatibility(&missing_key, "model-a", &raw, &key).is_err());
+        }
     }
 
     #[test]
@@ -1596,7 +1660,7 @@ mod tests {
             &manifest,
             "model-a",
             &["--ctx-size".into(), "8192".into()],
-            &"a".repeat(64),
+            &format!("v2:{}", "a".repeat(64)),
         )
         .unwrap_err();
 
@@ -1625,11 +1689,14 @@ mod tests {
             &manifest,
             "model-a",
             &["--ctx-size".into(), "4096".into()],
-            &"b".repeat(64),
+            &format!("v2:{}", "b".repeat(64)),
         )
         .unwrap_err();
 
-        assert!(error.contains("compatibility identity"));
+        assert_eq!(
+            error,
+            "Replay compatibility identity does not match the running server"
+        );
     }
 
     /// Serve `attempts` benchmark attempts: for each, one tokenize response

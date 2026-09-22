@@ -1,0 +1,57 @@
+{
+  "msiPayloadDigest": "3d391e79de7883229555ef8d364df3287c2d5d62246db68ef66d0e9234760bb4",
+  "nsisPayloadDigest": "05f7ff8ea21aad5c1964c6de3f231fe0d302d6e24941f5cf4b3ea9a43a969d22",
+  "version": "0.6.1",
+  "finishedAtUtc": "2026-09-22T12:58:18.1899668Z",
+  "installedDigests": {
+    "Preservation upgrade": "05f7ff8ea21aad5c1964c6de3f231fe0d302d6e24941f5cf4b3ea9a43a969d22",
+    "Post-update install": "05f7ff8ea21aad5c1964c6de3f231fe0d302d6e24941f5cf4b3ea9a43a969d22",
+    "Pre-update install": "71e821fd995d53af1f73483b7d4d10c16f5ea7afb7825051bee7b65357ee7a63",
+    "MSI fresh install": "3d391e79de7883229555ef8d364df3287c2d5d62246db68ef66d0e9234760bb4",
+    "NSIS fresh install": "05f7ff8ea21aad5c1964c6de3f231fe0d302d6e24941f5cf4b3ea9a43a969d22"
+  },
+  "steps": [
+    {
+      "detail": "installed version 0.6.1; uninstall removed the executable",
+      "status": "PASS",
+      "name": "nsis-fresh-install-launch-uninstall"
+    },
+    {
+      "detail": "installed version 0.6.1; uninstall removed the executable and the product registration",
+      "status": "PASS",
+      "name": "msi-fresh-install-launch-uninstall"
+    },
+    {
+      "detail": "executable version 0.4.1 -> 0.6.1",
+      "status": "PASS",
+      "name": "nsis-update-from-previous-launch-uninstall"
+    },
+    {
+      "detail": "user-data canary survived and the seeded v0.4.1 settings/profile keys were re-read from the upgraded build (collected for host value verification); catalog cache record staged and collected; executable 0.6.1",
+      "status": "PASS",
+      "name": "nsis-preservation-from-v0.4.1"
+    }
+  ],
+  "previousTag": "v0.4.1",
+  "tag": "v0.6.1",
+  "schema": "localmotive.sandbox-lifecycle.v0",
+  "status": "PASS",
+  "installedPayloadNote": "Established payload expectations (R09): every NSIS path (fresh, update, preservation) must install one byte-identical executable, and the update must differ from the previous version - both enforced above. The MSI-installed executable is measured and version-verified on its own path; cross-bundler byte identity between the MSI image and the NSIS image is NOT claimed. No claim is made about sidecar files beyond the executable. Functional scope: the installed executable digest recorded here equals the payload digest that scripts/verify_installer_payloads.mjs --functional launches from the extracted installer payloads and evaluates over CDP (navigation-button count, managed-control text, body length); this leg's own in-sandbox CDP probe is best-effort and may report unavailable, which never upgrades survival into functional qualification.",
+  "coverageNote": "NSIS and MSI fresh install/launch/uninstall and the NSIS update path with executable version and cross-path digest evidence. Eight-second process survival is a startup smoke, not full functional verification. The preservation step (staged via preserve.json) plants, per flavor, the released baseline's REAL persistence after the previous install - the v0.5.0-schema catalog mirror with a user override row, or the v0.4.1-era catalog cache record - and requires it to survive the upgrade and a launch smoke. The collected files are verified on the host (R07): the user override rows must survive with their ownership flags and sentinel values (mirror flavor), or the cache record must remain present and parseable (cache flavor).\"",
+  "stage": "preservation-verification",
+  "preservation": {
+    "status": "PASS",
+    "output": "PRESERVE_PASS cache: record present and parseable (schemaVersion 1)\r\nPRESERVE_PASS settings: localmotive:model-root recovered\r\nPRESERVE_PASS settings: localmotive:runtime recovered\r\nPRESERVE_PASS settings: localmotive:cloud-provider recovered\r\nPRESERVE_PASS settings: localmotive:cloud-model recovered\r\nPRESERVE_PASS profile: name recovered\r\nPRESERVE_PASS profile: model recovered\r\nPRESERVE_PASS profile: port recovered\r\nPRESERVE_PASS profile: context recovered\r\nPRESERVE_PASS profile: seed recovered\r\nPRESERVE_PASS profile: temperature recovered\r\nPRESERVE_PASS profile: threads recovered\r\nPRESERVE_PASS profile: batch recovered\r\nPRESERVE_PASS userdata: canary content intact"
+  },
+  "collectedSettings": {
+    "file": "sandbox-clean-account-lifecycle-preservation-v0.4.1-collected-settings.json",
+    "sha256": "2b7ba23c5f06c8b7abef7d93a2c0114f50f838f3f725c97b9cb129d5ff8f8391"
+  },
+  "sourceRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082",
+  "harnessRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082",
+  "candidateDigests": {
+    "currentMsi": "e9bef60f935bb69146d92f2cf2c91b71162f10bc7e8873133aca0ba180b66c5b",
+    "currentSetup": "33be58faa6d940abb7f1bf05dd5b912b94598913c88f088a63abab01c9bbf139"
+  },
+  "candidateInventorySha256": "2f6b50fb5b439c4db02ad3ecc1a64e16dfa541714012771be3898ebd3e00ed41"
+}

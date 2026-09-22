@@ -1,0 +1,53 @@
+{
+  "msiPayloadDigest": "3d391e79de7883229555ef8d364df3287c2d5d62246db68ef66d0e9234760bb4",
+  "nsisPayloadDigest": "05f7ff8ea21aad5c1964c6de3f231fe0d302d6e24941f5cf4b3ea9a43a969d22",
+  "version": "0.6.1",
+  "finishedAtUtc": "2026-09-22T12:54:01.4714433Z",
+  "installedDigests": {
+    "Preservation upgrade": "05f7ff8ea21aad5c1964c6de3f231fe0d302d6e24941f5cf4b3ea9a43a969d22",
+    "Post-update install": "05f7ff8ea21aad5c1964c6de3f231fe0d302d6e24941f5cf4b3ea9a43a969d22",
+    "Pre-update install": "67f70fc399d1c31bcd573390042a49c97e8699beeb21759591b93a678a11ee76",
+    "MSI fresh install": "3d391e79de7883229555ef8d364df3287c2d5d62246db68ef66d0e9234760bb4",
+    "NSIS fresh install": "05f7ff8ea21aad5c1964c6de3f231fe0d302d6e24941f5cf4b3ea9a43a969d22"
+  },
+  "steps": [
+    {
+      "detail": "installed version 0.6.1; uninstall removed the executable",
+      "status": "PASS",
+      "name": "nsis-fresh-install-launch-uninstall"
+    },
+    {
+      "detail": "installed version 0.6.1; uninstall removed the executable and the product registration",
+      "status": "PASS",
+      "name": "msi-fresh-install-launch-uninstall"
+    },
+    {
+      "detail": "executable version 0.5.0 -> 0.6.1",
+      "status": "PASS",
+      "name": "nsis-update-from-previous-launch-uninstall"
+    },
+    {
+      "detail": "user-data canary and catalog mirror survived the upgrade; files collected for host verification; executable 0.6.1",
+      "status": "PASS",
+      "name": "nsis-preservation-from-v0.5.0"
+    }
+  ],
+  "previousTag": "v0.5.0",
+  "tag": "v0.6.1",
+  "schema": "localmotive.sandbox-lifecycle.v0",
+  "status": "PASS",
+  "installedPayloadNote": "Established payload expectations (R09): every NSIS path (fresh, update, preservation) must install one byte-identical executable, and the update must differ from the previous version - both enforced above. The MSI-installed executable is measured and version-verified on its own path; cross-bundler byte identity between the MSI image and the NSIS image is NOT claimed. No claim is made about sidecar files beyond the executable. Functional scope: the installed executable digest recorded here equals the payload digest that scripts/verify_installer_payloads.mjs --functional launches from the extracted installer payloads and evaluates over CDP (navigation-button count, managed-control text, body length); this leg's own in-sandbox CDP probe is best-effort and may report unavailable, which never upgrades survival into functional qualification.",
+  "coverageNote": "NSIS and MSI fresh install/launch/uninstall and the NSIS update path with executable version and cross-path digest evidence. Eight-second process survival is a startup smoke, not full functional verification. The preservation step (staged via preserve.json) plants, per flavor, the released baseline's REAL persistence after the previous install - the v0.5.0-schema catalog mirror with a user override row, or the v0.4.1-era catalog cache record - and requires it to survive the upgrade and a launch smoke. The collected files are verified on the host (R07): the user override rows must survive with their ownership flags and sentinel values (mirror flavor), or the cache record must remain present and parseable (cache flavor).\"",
+  "stage": "preservation-verification",
+  "preservation": {
+    "status": "PASS",
+    "output": "PRESERVE_PASS mirror: schema version 1 intact\r\nPRESERVE_PASS mirror: user override model row recovered with user_sourced=1\r\nPRESERVE_PASS mirror: user override file row recovered with user_sourced=1\r\nPRESERVE_PASS userdata: canary content intact"
+  },
+  "sourceRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082",
+  "harnessRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082",
+  "candidateDigests": {
+    "currentSetup": "33be58faa6d940abb7f1bf05dd5b912b94598913c88f088a63abab01c9bbf139",
+    "currentMsi": "e9bef60f935bb69146d92f2cf2c91b71162f10bc7e8873133aca0ba180b66c5b"
+  },
+  "candidateInventorySha256": "2f6b50fb5b439c4db02ad3ecc1a64e16dfa541714012771be3898ebd3e00ed41"
+}

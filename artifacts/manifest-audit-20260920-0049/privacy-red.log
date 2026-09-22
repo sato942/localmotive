@@ -1,0 +1,33 @@
+   Compiling localmotive v0.6.0 (C:\Users\Mubarak\Documents\Projects\localmotive\src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.77s
+     Running unittests src\lib.rs (target\debug\deps\localmotive_lib-694be1a6828a4ecd.exe)
+
+running 4 tests
+test core::tests::manifest_arguments_redact_direct_api_keys ... ok
+test core::tests::manifest_arguments_fingerprint_sensitive_path_values ... ok
+test core::tests::manifest_arguments_fingerprint_all_managed_model_paths ... FAILED
+test core::tests::manifest_arguments_do_not_expose_generated_draft_and_adapter_paths ... FAILED
+
+failures:
+
+---- core::tests::manifest_arguments_fingerprint_all_managed_model_paths stdout ----
+
+thread 'core::tests::manifest_arguments_fingerprint_all_managed_model_paths' (1327792) panicked at src\core.rs:3758:13:
+assertion `left == right` failed: --model
+  left: ["--model", "C:\\PrivateUser\\adapter.gguf:0.5"]
+ right: ["--model", "sha256:b7b7e50646bc9b8f6461e25cb38c7c3ec6549ac9a96316a582e84599eec5900c"]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- core::tests::manifest_arguments_do_not_expose_generated_draft_and_adapter_paths stdout ----
+
+thread 'core::tests::manifest_arguments_do_not_expose_generated_draft_and_adapter_paths' (651300) panicked at src\core.rs:3779:9:
+assertion failed: !safe.join(" ").contains("PrivateUser")
+
+
+failures:
+    core::tests::manifest_arguments_do_not_expose_generated_draft_and_adapter_paths
+    core::tests::manifest_arguments_fingerprint_all_managed_model_paths
+
+test result: FAILED. 2 passed; 2 failed; 0 ignored; 0 measured; 596 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`

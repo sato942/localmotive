@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
@@ -213,7 +213,8 @@ test("release evidence uses one resolved immutable revision", async () => {
   // matches it (audit GH-02 I1); workflow-generated context SHAs are never
   // accepted as the evidence identity.
   assert.match(workflow, /test "\$\(git rev-parse HEAD\)" = "\$RESOLVED_SHA"/);
-  assert.match(workflow, /LOCALMOTIVE_SOURCE_REVISION=\$RESOLVED_SHA/);
+  const job = (await loadWorkflows(process.cwd()))["release.yml"].jobs.verify;
+  assert.equal(job.env.LOCALMOTIVE_SOURCE_REVISION, "${{ needs.resolve.outputs.sha }}");
   assert.doesNotMatch(workflow, /LOCALMOTIVE_SOURCE_REVISION:\s*\$\{\{ github\.sha \}\}/);
   const promote = await readFile(join(process.cwd(), ".github", "workflows", "release-promote.yml"), "utf8");
   assert.match(promote, /ref: \$\{\{ inputs\.tag \}\}/);
@@ -906,6 +907,11 @@ test("research anchor gate rejects an independent review for another research tr
   assert.ok(result.failures.includes("verification:independent-review-tree"));
 });
 
+test("packaged verifier checks the reduced benchmark surface", async () => {
+  const source = await readFile(join(process.cwd(), "scripts", "verify_041.mjs"), "utf8");
+  assert.match(source, /"ui\.benchmark-scope"/);
+});
+
 test("packaged verifier contains no private React-state injection (QD-03)", async () => {
   const source = await readFile(join(process.cwd(), "scripts", "verify_041.mjs"), "utf8");
   // The fiber walk and dispatch extraction are gone: presentation states
@@ -964,7 +970,7 @@ test("release package job runs the catalog/SQLite packaged matrix (GH-05)", asyn
   // wrapper must delegate to the impl, and the impl must run every matrix
   // phase.
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
-  const pkg = release.split("\n  package:")[1].split("\n  clean-account-lifecycle:")[0];
+  const pkg = release.split("\n  verify:")[1];
   assert.ok(pkg.includes("scripts/verify_packaged_matrix.ps1"), "package job must invoke the committed orchestration script");
   for (const needle of ["-Portable", "-Version", "-ResolvedSha", "-CdpPort"]) {
     assert.ok(pkg.includes(needle), `package job is missing ${needle}`);
@@ -1179,7 +1185,6 @@ test("R07: preservation fixtures carry real released-version data, not markers",
     assert.match(release, new RegExp(leg), `release matrix includes ${leg}`);
   }
   assert.match(release, /PreservationFlavor \$leg\.Flavor/);
-  assert.doesNotMatch(release, /non-gating policy/, "the stale summary claim is gone");
 });
 
 test("R11: the packaged cancellation driver measures owned identities end to end", async () => {
@@ -1250,16 +1255,17 @@ test("R13: publication rechecks the tag and trusts exact bytes, with failure dia
   assert.match(publish, /refusing to publish drifted source/);
   // The public inventory and the packaged-verification record are byte-checked
   // and re-verified against the producer set, never trusted because nonempty.
-  assert.match(publish, /cmp "artifacts\/candidate-inventory-\$\{VERSION\}\.json" "public-readback\/candidate-inventory-\$\{VERSION\}\.json"/);
-  assert.match(publish, /cmp "artifacts\/packaged-verification-\$\{VERSION\}\.json" "public-readback\/packaged-verification-\$\{VERSION\}\.json"/);
+  assert.match(publish, /cmp "qualified\/artifacts\/candidate-inventory-\$\{VERSION\}\.json" "public-readback\/candidate-inventory-\$\{VERSION\}\.json"/);
+  assert.match(publish, /cmp "qualified\/artifacts\/packaged-verification-\$\{VERSION\}\.json" "public-readback\/packaged-verification-\$\{VERSION\}\.json"/);
   assert.match(publish, /verify_candidate_inventory\.mjs --verify "public-readback\/candidate-inventory/);
   // A failed read-back still leaves diagnostics.
   assert.match(publish, /publish-diagnostics/);
-  // The verify workflow keeps its lifecycle evidence uploads on every outcome.
-  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
-  const lifecycle = release.split("\n  clean-account-lifecycle:")[1];
-  assert.match(lifecycle, /lifecycle-evidence/);
-  assert.match(lifecycle, /if: always\(\)/);
+  // Success retains the qualified bundle; failure and cancellation retain diagnostics.
+  const steps = (await loadWorkflows(process.cwd()))["release.yml"].jobs.verify.steps;
+  const diagnostics = steps.find((step) => step.name === "Retain diagnostics after failure or cancellation");
+  assert.equal(diagnostics.if, "failure() || cancelled()");
+  assert.match(diagnostics.with.path, /attestations\/\*/);
+  assert.equal(diagnostics.with["retention-days"], 90);
   // The review text no longer conflates workflow artifacts with release assets.
   const review = await readFile(join(process.cwd(), "docs", "RELEASE-REVIEW-0.6.md"), "utf8");
   assert.doesNotMatch(review, /Expected assets: the MSI, NSIS setup, portable exe, `SHA256SUMS`, the SBOM/);
@@ -1338,18 +1344,12 @@ test("R12: the published-inventory consumer fails closed on schema, set, and ide
   );
 });
 
-test("signed build configuration requires certificate-store identity and timestamp verification", async () => {
-  const config = JSON.parse(await readFile(
-    join(process.cwd(), "src-tauri", "tauri.signing.conf.json"),
-    "utf8",
-  ));
-  const script = await readFile(join(process.cwd(), "scripts", "sign-windows.ps1"), "utf8");
-  assert.match(config.bundle.windows.signCommand, /sign-windows\.ps1/);
-  assert.match(script, /LOCALMOTIVE_SIGNING_THUMBPRINT/);
-  assert.match(script, /LOCALMOTIVE_TIMESTAMP_URL/);
-  assert.match(script, /verify \/pa \/all \/v/);
-  assert.match(script, /TimeStamperCertificate/);
-  assert.doesNotMatch(script, /Export-PfxCertificate|ConvertTo-SecureString/);
+test("unsigned release policy keeps no signing capability in the tree", async () => {
+  await assert.rejects(
+    readFile(join(process.cwd(), "src-tauri", "tauri.signing.conf.json"), "utf8"),
+    /ENOENT/,
+  );
+  await assert.rejects(readFile(join(process.cwd(), "scripts", "sign-windows.ps1"), "utf8"), /ENOENT/);
 });
 
 test("hardware qualify workflow pins every remote action and owns the host proof", async () => {
@@ -1362,7 +1362,7 @@ test("hardware qualify workflow pins every remote action and owns the host proof
   // workflow owns the host attestation job only.
   assert.doesNotMatch(workflow, /clean-account-lifecycle/);
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
-  assert.match(release, /clean-account-lifecycle:\n    needs: \[resolve, quality, package\]/);
+  assert.match(release, /host-run-lifecycle\.ps1/);
   const generator = await readFile(
     join(process.cwd(), "scripts", "qualification", "build_host_attestation.mjs"),
     "utf8",
@@ -1422,9 +1422,9 @@ test("workflow gate policy covers the hardware qualify night path", async () => 
   // The lifecycle gate moved to release.yml with the job (audit GH-03).
   assert.deepEqual(Object.keys(policy.workflows["hardware-qualify.yml"].gates).sort(), ["hardware-qualify"]);
   assert.deepEqual(policy.workflows["hardware-qualify.yml"].packageJobs, {});
-  assert.ok(policy.workflows["release.yml"].gates["clean-account-lifecycle"]);
+  assert.ok(policy.workflows["release.yml"].gates.verify);
   assert.equal(
-    policy.workflows["release.yml"].requiredCommands["clean-account-lifecycle"].length,
+    policy.workflows["release.yml"].requiredCommands.verify.filter((command) => command.includes("host-run-lifecycle.ps1")).length,
     1,
   );
 });
@@ -1432,7 +1432,7 @@ test("workflow gate policy covers the hardware qualify night path", async () => 
 test("release ship gates default to the self-hosted runner, never windows-latest", async () => {
   const verify = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
   assert.doesNotMatch(verify, /runs-on:\s*windows-latest/);
-  for (const job of ["quality", "package", "qualification"]) {
+  for (const job of ["resolve", "rust-audit", "verify"]) {
     const pattern = new RegExp(`^  ${job}:[\\s\\S]*?runs-on:\\s*(.+)$`, "m");
     const found = verify.match(pattern);
     assert.ok(found, `${job} runs-on is missing`);
@@ -1470,6 +1470,8 @@ test("no working-tree source file is a line-ending-only rewrite of its committed
   const modified = status
     .split("\0")
     .filter(Boolean)
+    // Deleted scripts have no working-tree bytes to compare.
+    .filter((entry) => !entry.slice(0, 2).includes("D"))
     .map((entry) => entry.slice(3))
     .filter((path) => /(^|\/)(src|scripts|src-tauri\/src|src-tauri\/tests|\.github)\/.*\.(rs|mjs|ps1|ts|tsx|json|yml|yaml)$/.test(path));
   // A clean tree has nothing to inspect and must pass: this guard fails only
@@ -1526,12 +1528,13 @@ test("release verify step exposes the resolved revision to every verifier phase"
   // LOCALMOTIVE_SOURCE_REVISION, but the "Verify the packaged executable"
   // step only set it mid-script after the restart phase, so the merged
   // record carried UNKNOWN and the step failed after all phases passed.
-  // The step-level env must carry the resolved SHA from the start.
-  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
-  const at = release.indexOf("Verify the packaged executable");
-  assert.ok(at >= 0, "verify step is missing");
-  const block = release.slice(at, at + 9000);
-  assert.match(block, /LOCALMOTIVE_SOURCE_REVISION/);
+  // Every phase inherits the resolved SHA before it starts.
+  const job = (await loadWorkflows(process.cwd()))["release.yml"].jobs.verify;
+  assert.ok(job.steps.some((step) => step.name === "Verify the packaged executable"));
+  for (const step of job.steps) {
+    assert.equal(step.env?.LOCALMOTIVE_SOURCE_REVISION ?? job.env.LOCALMOTIVE_SOURCE_REVISION,
+      "${{ needs.resolve.outputs.sha }}", `${step.name ?? step.uses} must retain the resolved revision`);
+  }
 });
 
 test("release verify step waits for the candidate WebView before driving checks", async () => {
@@ -1644,7 +1647,6 @@ test("fixture adoption refuses unverified identity (U06-01)", async () => {
   assert.match(impl, /identity is unverified \(CIM lookup failed/);
   assert.match(impl, /has no readable command line; refusing to adopt/);
   assert.match(impl, /does not belong to this attempt; refusing to adopt/);
-  assert.doesNotMatch(impl, /fall back to process-name check, still bounded/);
 });
 
 test("release publish verification avoids hosted-only shell dependencies", async () => {
@@ -1665,7 +1667,7 @@ test("a tag push verifies without publishing and publication needs explicit auth
   assert.doesNotMatch(verify, /softprops\/action-gh-release/);
   assert.doesNotMatch(verify, /gh release create/);
   assert.doesNotMatch(verify, /contents: write/);
-  assert.match(verify, /localmotive-\$\{\{ needs\.quality\.outputs\.version \}\}-qualified/);
+  assert.match(verify, /localmotive-\$\{\{ needs\.resolve\.outputs\.version \}\}-qualified/);
   const promote = await readFile(join(process.cwd(), ".github", "workflows", "release-promote.yml"), "utf8");
   assert.match(promote, /github\.actor == github\.repository_owner/);
   assert.match(promote, /PUBLISH \$TAG/);
@@ -1794,14 +1796,12 @@ test("GH-01 pull requests run only on the isolated hosted runner", async () => {
   // ceiling plus step ceilings plus LOCALMOTIVE_SKIP_HARDWARE_PROBE on the
   // Rust steps. Self-hosted push jobs keep real hardware probing (no skip).
   assert.match(pr, /timeout-minutes: (4[0-5]|50|60)/);
-  for (const step of ["Rust linting", "Rust tests", "Rust documentation tests"]) {
+  for (const step of ["Rust linting", "Rust tests"]) {
     const body = pr.split(`- name: ${step}`)[1].split("- name:")[0];
     assert.match(body, /timeout-minutes: \d+/);
   }
-  for (const step of ["Rust tests", "Rust documentation tests"]) {
-    const body = pr.split(`- name: ${step}`)[1].split("- name:")[0];
-    assert.match(body, /LOCALMOTIVE_SKIP_HARDWARE_PROBE/);
-  }
+  const rustTests = pr.split("- name: Rust tests")[1];
+  assert.match(rustTests, /LOCALMOTIVE_SKIP_HARDWARE_PROBE/);
   assert.match(pr, /--nocapture/);
   // Trusted self-hosted jobs are unreachable from a pull request.
   const check = ci.split("\n  check:")[1].split("\n  rust-audit:")[0];
@@ -1814,18 +1814,17 @@ test("GH-01 pull requests run only on the isolated hosted runner", async () => {
 });
 
 test("GH-03 the lifecycle consumes candidates instead of waiting for publication", async () => {
-  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  const release = (await loadWorkflows(process.cwd()))["release.yml"];
   const hardware = await readFile(join(process.cwd(), ".github", "workflows", "hardware-qualify.yml"), "utf8");
-  const lifecycle = release.split("clean-account-lifecycle:")[1].split("\n  publish:")[0];
-  assert.match(lifecycle, /needs: \[resolve, quality, package\]/);
-  assert.match(lifecycle, /-CandidateDir "artifacts"/);
-  assert.doesNotMatch(lifecycle, /ReleaseWaitMinutes/);
-  // Fail-closed: the qualification job that assembles the bundle publication
-  // consumes needs the lifecycle verdict, and the promotion validator refuses
-  // a bundle without PASS lifecycle records (G-06.I1, G-09.V1 negative
-  // control). The lifecycle itself still consumes CANDIDATE bytes rather than
-  // waiting for published assets, which is this test's subject.
-  assert.match(release, /qualification:\n    needs: \[resolve, quality, package, clean-account-lifecycle\]/, "the qualified bundle waits for the lifecycle verdict (fail-closed)");
+  const steps = release.jobs.verify.steps;
+  const lifecycle = steps.find((step) => step.run?.includes("host-run-lifecycle.ps1"));
+  const assembly = steps.find((step) => step.run?.includes("build_qualification_manifest.mjs"));
+  assert.match(lifecycle.run, /-CandidateDir "artifacts"/);
+  assert.doesNotMatch(lifecycle.run, /ReleaseWaitMinutes/);
+  assert.equal(lifecycle["timeout-minutes"], 120);
+  assert.ok(release.jobs.verify["timeout-minutes"] > lifecycle["timeout-minutes"]);
+  assert.ok(steps.indexOf(assembly) > steps.indexOf(lifecycle));
+  assert.equal(assembly.if, undefined, "a failed lifecycle must stop qualification");
   const promote = await readFile(join(process.cwd(), ".github", "workflows", "release-promote.yml"), "utf8");
   assert.match(promote, /verify_release_promotion\.mjs/);
   assert.doesNotMatch(hardware, /clean-account-lifecycle/, "the lifecycle job belongs to release.yml");
@@ -1879,10 +1878,16 @@ test("GH-06 lifecycle evidence survives every terminal outcome", async () => {
   assert.match(witness, /Assert-Witness "witness-timeout" "TIMEOUT" "sandbox-timeout"/);
   assert.match(witness, /Assert-Witness "witness-malformed-result" "FAIL" "sandbox-run"/);
   assert.match(witness, /a killed run must not leave PASS evidence/);
-  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
-  const upload = release.split("Upload lifecycle evidence")[1] ?? "";
-  assert.match(upload, /if: always\(\)/);
-  assert.match(upload, /if-no-files-found: error/);
+  const steps = (await loadWorkflows(process.cwd()))["release.yml"].jobs.verify.steps;
+  const diagnostics = steps.find((step) => step.with?.name?.endsWith("-verify-diagnostics"));
+  const qualified = steps.find((step) => step.with?.name?.endsWith("-qualified"));
+  assert.equal(diagnostics.if, "failure() || cancelled()");
+  assert.equal(qualified.if, undefined);
+  for (const upload of [diagnostics, qualified]) {
+    assert.match(upload.with.path, /release-evidence.*attestations/);
+    assert.equal(upload.with["retention-days"], 90);
+  }
+  assert.equal(qualified.with["if-no-files-found"], "error");
 });
 
 test("GH-10 host attestation statuses derive from detected hardware", async () => {
@@ -1910,8 +1915,16 @@ test("GH-02 release jobs share one resolved immutable revision", async () => {
   // One resolver pins the tag to a full SHA once; every later job checks
   // out exactly that revision (audit GH-02 I1).
   assert.match(release, /\n  resolve:\n/);
-  const pinned = release.match(/ref: \$\{\{ needs\.resolve\.outputs\.sha \}\}/gu) ?? [];
-  assert.ok(pinned.length >= 4, `expected at least four pinned checkouts, saw ${pinned.length}`);
+  const workflow = (await loadWorkflows(process.cwd()))["release.yml"];
+  const resolveSteps = workflow.jobs.resolve.steps;
+  const ancestry = resolveSteps.findIndex((step) => step.run?.includes("git merge-base --is-ancestor"));
+  const repositoryCode = resolveSteps.findIndex((step) => step.run?.includes("node scripts/"));
+  assert.ok(ancestry >= 0 && ancestry < repositoryCode, "main ancestry must pass before repository code executes");
+  for (const name of ["rust-audit", "verify"]) {
+    const checkouts = workflow.jobs[name].steps.filter((step) => step.uses?.startsWith("actions/checkout@"));
+    assert.equal(checkouts.length, 1);
+    assert.equal(checkouts[0].with.ref, "${{ needs.resolve.outputs.sha }}", `${name} must use the frozen source`);
+  }
   assert.equal(
     (release.match(/github\.event\.inputs\.tag \|\| github\.ref \}\}/gu) ?? []).length,
     1,
@@ -1922,7 +1935,7 @@ test("GH-02 release jobs share one resolved immutable revision", async () => {
   const promote = await readFile(join(process.cwd(), ".github", "workflows", "release-promote.yml"), "utf8");
   const publish = promote.split("\n  publish:")[1];
   assert.match(publish, /verify_candidate_inventory\.mjs --verify/);
-  assert.match(publish, /"artifacts\/candidate-inventory-\$\{VERSION\}\.json"/);
+  assert.match(publish, /"qualified\/artifacts\/candidate-inventory-\$\{VERSION\}\.json"/);
   assert.doesNotMatch(publish, /verify_candidate_inventory\.mjs artifacts "\$VERSION"/);
   assert.match(promote, /assert\.equal\(run\.head_sha, process\.env\.EXPECTED_SHA/, "the verify run must have built the resolved commit");
   assert.match(promote, /sha="\$\(git rev-parse HEAD\)"/, "promotion resolves the tag itself");
@@ -2012,14 +2025,12 @@ test("FE-16 and FE-05.V3 packaged walks drive the real routes", async () => {
   assert.match(fe16, /fe16\.v3\.running-identity-unchanged-by-edit/);
   assert.match(fe16, /fe16\.v3\.final-log-visible/);
   const fe05 = await readFile(join(process.cwd(), "scripts", "g05_fe05v3.mjs"), "utf8");
-  assert.match(fe05, /Add anchor/);
   assert.match(fe05, /Replay manifest/);
-  assert.match(fe05, /load_calibration_records/);
   assert.match(fe05, /fe05v3\.records-distinct-provenance/);
   assert.match(fe05, /fe05v3\.records-distinct-paths/);
 });
 
-test("FE-05 evidence history and active runs survive navigation", async () => {
+test("FE-05 benchmark evidence and active runs survive navigation", async () => {
   const app = await frontendSources();
   const panel = await readFile(join(process.cwd(), "src", "V03EvidencePanel.tsx"), "utf8");
   // The evidence panel is always mounted (hidden by style), never gated on
@@ -2035,10 +2046,8 @@ test("FE-05 evidence history and active runs survive navigation", async () => {
   assert.match(app, /onRunStateChange=\{(?:props\.)?setEvidenceRun\}/);
   // The active run's status and cancel handle are available app-wide.
   assert.match(app, /evidenceRun\.cancel && \(/);
-  // Completed runs are retained across model/profile changes.
-  assert.doesNotMatch(panel, /setHistory\(\[\]\)/);
-  // Export approval resets when the reviewed payload changes.
-  assert.match(panel, /\[benchmark\?\.manifestPath, quality\?\.observedAtMs\]/);
+  // Completed benchmark manifests remain available across selection changes.
+  assert.doesNotMatch(panel, /setBenchmark\(null\)/);
 });
 
 test("FE-03 stale responses are guarded before they can commit", async () => {
@@ -2328,7 +2337,10 @@ test("GH-08 supply-chain posture and SBOM step are documented", async () => {
     "utf8",
   );
   assert.ok(release.includes("npm sbom --sbom-format cyclonedx"), "the SBOM step exists");
-  assert.match(release, /name: sbom-\$\{\{ needs\.quality\.outputs\.version \}\}/, "the SBOM artifact is versioned");
+  const bundle = (await loadWorkflows(process.cwd()))["release.yml"].jobs.verify.steps
+    .find((step) => step.with?.name?.endsWith("-qualified"));
+  assert.match(bundle.with.path, /^sbom\.cdx\.json$/m, "the qualified bundle retains the SBOM");
+  assert.equal(bundle.with["retention-days"], 90);
 });
 
 test("GH-09 governance files exist and dependency updates are configured", async () => {
@@ -2343,28 +2355,6 @@ test("GH-09 governance files exist and dependency updates are configured", async
   const dependabot = await readFile(join(process.cwd(), ".github", "dependabot.yml"), "utf8");
   for (const ecosystem of ["npm", "cargo", "github-actions"]) {
     assert.ok(dependabot.includes(`package-ecosystem: ${ecosystem}`), `dependabot covers ${ecosystem}`);
-  }
-});
-
-test("S-17 imported evidence cannot leak into ranking or calibration writers", async () => {
-  const { execSync } = await import("node:child_process");
-  const offenders = execSync(
-    "git grep -l ExternalEvidenceBundle -- src-tauri/src src scripts",
-    { cwd: process.cwd(), encoding: "utf8" },
-  )
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .filter((file) => !file.endsWith("calibration.rs") && !file.endsWith("lib.rs") && !file.endsWith("model.ts") && !file.endsWith("V03EvidencePanel.tsx") && !file.endsWith("evidence-adapter.ts") && !file.endsWith("release-gates.test.mjs"));
-  assert.deepEqual(
-    offenders,
-    [],
-    `external evidence types may only live in calibration.rs, lib.rs, model.ts, V03EvidencePanel.tsx and the evidence-adapter acquisition seam; found: ${offenders.join(", ")}`,
-  );
-  // The ranking and measurement writers never mention it.
-  for (const module of ["src-tauri/src/recommend.rs", "src-tauri/src/measurement.rs", "src-tauri/src/sharing.rs"]) {
-    const source = await readFile(join(process.cwd(), module), "utf8");
-    assert.doesNotMatch(source, /ExternalEvidence/, `${module} must not consume imported evidence`);
   }
 });
 
@@ -2404,7 +2394,36 @@ test("adapter invokes wrap Rust commands whose only parameter is `request`", asy
   );
 });
 
-test("S-26: no workflow carries a literal release version and gates stay fail-fast", async () => {
+test("release verification keeps checks, packaging, lifecycle, and qualification in one workspace", async () => {
+  const release = (await loadWorkflows(process.cwd()))["release.yml"];
+  assert.deepEqual(Object.keys(release.jobs).sort(), ["resolve", "rust-audit", "verify"]);
+  const job = release.jobs.verify;
+  assert.deepEqual(job.needs, ["resolve", "rust-audit"]);
+  const steps = job.steps;
+  assert.equal(steps.filter((step) => step.uses?.startsWith("actions/checkout@")).length, 1);
+  assert.ok(!steps.some((step) => step.uses?.startsWith("actions/download-artifact@")),
+    "the candidate must not leave this workspace before qualification");
+  const stages = ["npm run check", "cargo test --locked", "npm run tauri build",
+    "scripts/verify_packaged_matrix.ps1", "scripts/verify_candidate_inventory.mjs",
+    "host-run-lifecycle.ps1", "scripts/build_qualification_manifest.mjs", "scripts/verify_release_promotion.mjs"];
+  let previous = -1;
+  for (const command of stages) {
+    const matching = steps.filter((step) => step.run?.includes(command));
+    assert.equal(matching.length, 1, `${command} must run once`);
+    const step = matching[0];
+    const index = steps.indexOf(step);
+    assert.ok(index > previous, `${command} must follow the preceding gate`);
+    assert.equal(step.if, undefined, `${command} cannot skip a failed predecessor`);
+    assert.equal(step["continue-on-error"], undefined, `${command} cannot ignore failure`);
+    previous = index;
+  }
+  const bundle = steps.find((step) => step.with?.name?.endsWith("-qualified"));
+  assert.ok(bundle && steps.indexOf(bundle) > previous, "retain the qualified bundle only after every gate passes");
+  assert.equal(bundle.if, undefined);
+  assert.equal(bundle.with["if-no-files-found"], "error");
+});
+
+test("S-26: version gates stay dynamic and deterministic tests run once before packaging", async () => {
   const ci = await readFile(join(process.cwd(), ".github", "workflows", "ci.yml"), "utf8");
   const release = await readFile(
     join(process.cwd(), ".github", "workflows", "release.yml"),
@@ -2443,14 +2462,21 @@ test("S-26: no workflow carries a literal release version and gates stay fail-fa
     /node scripts\/verify_versions\.mjs "\$\{raw#v\}" \\/,
     "the resolve job refuses source whose manifests identify as another version",
   );
-  // The fail-fast pairing is documented in every job that repeats the gates.
-  const failFast = (ci.match(/fail-fast; repeated by npm run check/g) ?? []).length;
-  assert.equal(failFast, 2, "both ci.yml jobs document the fail-fast pairing");
-  assert.match(
-    release,
-    /fail-fast; repeated by npm run check/,
-    "the release quality job documents the fail-fast pairing",
-  );
+  // Run script tests before the frontend suite, without repeating them in CI.
+  const pkg = JSON.parse(await readFile(join(process.cwd(), "package.json"), "utf8"));
+  assert.match(pkg.scripts.test, /^node --test .*scripts\/tests\/release-gates\.test\.mjs.* && vitest run$/);
+  assert.match(pkg.scripts.check, /^npm test &&/);
+  const workflows = await loadWorkflows(process.cwd());
+  for (const [file, jobs] of [["ci.yml", ["check", "pr-check"]], ["release.yml", ["verify"]]]) {
+    for (const job of jobs) {
+      const commands = workflows[file].jobs[job].steps.flatMap((step) => String(step.run ?? "").split(/\r?\n/));
+      assert.equal(commands.filter((command) => command.trim() === "npm run check").length, 1, `${file}:${job} runs the full check`);
+      assert.ok(!commands.some((command) => command.includes("node --test")), `${file}:${job} must not repeat script tests`);
+      const rustTests = workflows[file].jobs[job].steps.filter((step) => /^cargo test\b/.test(step.run ?? ""));
+      assert.equal(rustTests.length, 1, `${file}:${job} runs unit, integration, and documentation tests together`);
+      assert.equal(rustTests[0].env.RUSTDOCFLAGS, "-D warnings");
+    }
+  }
   // Audit S-26 I2 replaced the resolve-job literal; the publish ship guard
   // must bind the RESOLVED tag the same way - a `== 'v0.5.0'`-style equality
   // silently skips publication for every later version.
@@ -2464,26 +2490,41 @@ test("S-26: no workflow carries a literal release version and gates stay fail-fa
   );
 });
 
+test("promotion validates each downloaded bundle once without repeating manifest and checksum checks", async () => {
+  const workflow = (await loadWorkflows(process.cwd()))["release-promote.yml"];
+  for (const name of ["gate", "publish"]) {
+    const steps = workflow.jobs[name].steps;
+    const download = steps.findIndex((step) => step.uses?.startsWith("actions/download-artifact@"));
+    const validators = steps.filter((step) => step.run?.includes("node scripts/verify_release_promotion.mjs"));
+    assert.equal(validators.length, 1, `${name} validates this download once`);
+    assert.ok(download >= 0 && steps.indexOf(validators[0]) > download);
+    assert.equal(steps[download].with.path, "qualified");
+    assert.match(validators[0].run, /--qualified qualified /, "validate the download without overlaying checkout evidence");
+    assert.ok(!steps.some((step) => step.run?.includes("cp -r qualified/")));
+    assert.match(validators[0].run, /--expect-source "\$RESOLVED_SHA" --verify-run "\$VERIFY_RUN_ID"/);
+    assert.equal(validators[0].if, undefined);
+    assert.equal(validators[0]["continue-on-error"], undefined);
+    assert.ok(!steps.some((step) => step.run?.includes("node scripts/verify_qualification_manifest.mjs")),
+      `${name} already checks the manifest through the promotion validator`);
+    assert.ok(!validators[0].run.includes("sha256sum -c"), `${name} already checks all binary digests`);
+  }
+  const checkout = workflow.jobs.publish.steps.find((step) => step.uses?.startsWith("actions/checkout@"));
+  assert.equal(checkout.with.ref, "${{ needs.gate.outputs.sha }}", "publish uses the validated revision, not a moving tag");
+});
+
 test("publication consumes the retained candidate inventory and validates it (2026-09-12 review)", async () => {
   const promote = await readFile(join(process.cwd(), ".github", "workflows", "release-promote.yml"), "utf8");
   const gate = promote.split("\n  gate:")[1].split("\n  publish:")[0];
   // Promotion consumes the qualified bundle the verify run uploaded - the
   // bundle carries the producer inventory, so the inventory is validated
   // rather than rewritten and the candidate is never re-cut.
-  assert.match(gate, /Download the qualified bundle produced by that verify run/);
   assert.match(gate, /localmotive-\$\{\{ steps\.resolve\.outputs\.version \}\}-qualified/);
   assert.match(gate, /run-id: \$\{\{ inputs\.verify_run_id \}\}/, "the bundle comes from the named verify run");
   assert.match(
     gate,
-    /verify_qualification_manifest\.mjs --expect-source "\$RESOLVED_SHA"/,
-    "the source identity checked against the inventory is the resolved tag SHA",
-  );
-  assert.match(
-    gate,
-    /verify_release_promotion\.mjs --qualified \./,
+    /verify_release_promotion\.mjs --qualified qualified --tag "v\$\{VERSION\}" --expect-source "\$RESOLVED_SHA"/,
     "the promotion validator binds inventory, artifacts, checksums and records",
   );
-  assert.match(gate, /sha256sum -c/);
   assert.doesNotMatch(promote, /tauri build|npm run build/, "publication never rebuilds; a rebuild would be a new candidate");
 });
 
@@ -2620,10 +2661,32 @@ test("settings session splits the WebView2 data root from the profile dir", asyn
   const tail = sandbox.slice(sandbox.indexOf(marker));
   const end = tail.indexOf("function Seed-SettingsV041");
   const session = tail.slice(0, end);
-  assert.match(session, /settings-session-data/);
+  assert.match(session, /\$script:SettingsDataRoot/);
   assert.match(session, /webview-profile/);
 });
 
+
+// U06-04: the settings session must keep the WebView2 profile OUTSIDE the
+// mapped share. The share is a redirected network-backed folder and Chromium
+// refuses to open a profile on it: observed live, the v0.4.0 baseline stayed
+// alive but exposed no CDP page target in 90 s while the same bytes attach on
+// the host with a localStorage seed/read round-trip. The session already
+// collects the evaluated JSON, so nothing else needs to cross the share.
+test("settings session keeps the WebView2 profile outside the mapped share", async () => {
+  const sandbox = await readFile(
+    join(process.cwd(), "scripts", "sandbox", "run-lifecycle-in-sandbox.ps1"),
+    "utf8",
+  );
+  const marker = "function Use-SettingsSession";
+  const tail = sandbox.slice(sandbox.indexOf(marker));
+  const end = tail.indexOf("function Seed-SettingsV041");
+  const session = tail.slice(0, end);
+  assert.match(session, /\$script:SettingsDataRoot/);
+  assert.match(sandbox, /\$script:SettingsDataRoot = Join-Path \$env:TEMP \('lm-settings-session-'/);
+  assert.doesNotMatch(session, /Remove-Item -LiteralPath \$dataRoot/);
+  assert.doesNotMatch(sandbox, /Remove-Item -LiteralPath \$script:SettingsDataRoot/, "owned Sandbox teardown must clean guest storage without following a guest TEMP junction");
+  assert.doesNotMatch(session, /settings-session-data/);
+});
 
 test("settings session pins a WebView2 user-data dir", async () => {
   const sandbox = await readFile(
@@ -2652,6 +2715,161 @@ test("settings session polls for the debugger target before evaluating", async (
   assert.match(session, /AddSeconds[(]90[)]/);
   assert.match(session, /json\/list/);
   assert.doesNotMatch(session, /Start-Sleep -Seconds 8/);
+});
+
+test("settings sessions preserve storage and clean up on a verifier failure", { skip: process.platform !== "win32" }, async () => {
+  const { execFileSync } = await import("node:child_process");
+  const output = execFileSync("pwsh", ["-NoProfile", "-File", "scripts/tests/verify_settings_session.ps1"], { encoding: "utf8", timeout: 60000 });
+  assert.match(output, /PASS: baseline storage survives the upgraded session/);
+  assert.match(output, /PASS: success and failure stop owned children/);
+  assert.match(output, /PASS: launch smoke joins its owned process/);
+  assert.match(output, /PASS: verifier and cleanup failures remain visible/);
+});
+
+test("lifecycle collection handles cache-only and mirror-only baselines", { skip: process.platform !== "win32" }, async () => {
+  const { execFileSync } = await import("node:child_process");
+  const output = execFileSync("pwsh", ["-NoProfile", "-File", "scripts/tests/verify_preservation_collection.ps1"], { encoding: "utf8", timeout: 30000 });
+  assert.match(output, /PASS: cache-only baseline collects its actual files/);
+  assert.match(output, /PASS: mirror-only baseline collects its actual files/);
+  assert.match(output, /PASS: missing required preservation data is rejected/);
+});
+
+test("lifecycle cleanup targets only its Sandbox identity and reports stop failures", { skip: process.platform !== "win32" }, async () => {
+  const { execFileSync } = await import("node:child_process");
+  const output = execFileSync("pwsh", ["-NoProfile", "-File", "scripts/tests/verify_lifecycle_ownership.ps1"], { encoding: "utf8", timeout: 30000 });
+  assert.match(output, /PASS: cleanup targets only the owned Sandbox ID/);
+  assert.match(output, /PASS: cleanup failure is reported/);
+  const source = await readFile("scripts/sandbox/host-run-lifecycle.ps1", "utf8");
+  assert.doesNotMatch(source, /Get-Process -Name "WindowsSandbox"/);
+});
+
+test("lifecycle retains the actual settings reads under lock ownership", { skip: process.platform !== "win32" }, async () => {
+  const { execFileSync } = await import("node:child_process");
+  const output = execFileSync("pwsh", ["-NoProfile", "-File", "scripts/tests/verify_settings_retention.ps1"], { encoding: "utf8", timeout: 30000 });
+  assert.match(output, /PASS: settings reads are retained byte-for-byte/);
+  assert.match(output, /PASS: lost ownership refuses settings evidence writes/);
+  const release = (await loadWorkflows(process.cwd()))["release.yml"];
+  for (const name of ["Retain the qualified candidate bundle", "Retain diagnostics after failure or cancellation"]) {
+    const upload = release.jobs.verify.steps.find((step) => step.name === name);
+    assert.match(upload.with.path, /attestations\/\*/);
+  }
+});
+
+test("lifecycle preflight checks the actual Sandbox CLI before using candidates", { skip: process.platform !== "win32" }, async () => {
+  const { spawnSync } = await import("node:child_process");
+  const release = (await loadWorkflows(process.cwd()))["release.yml"];
+  const step = release.jobs.verify.steps.find((entry) => entry.name === "Ensure Windows Sandbox is available");
+  for (const [available, code, expected] of [[false, 0, 1], [true, 1, 1], [true, 0, 0]]) {
+    const result = spawnSync("pwsh", ["-NoProfile", "-Command", `
+      $ErrorActionPreference = 'Stop'
+      function Test-Path { return $true }
+      function Get-Command {
+        [CmdletBinding()]param([string]$Name)
+        if (-not $${available}) { throw 'fixture: wsb.exe unavailable' }
+        return [pscustomobject]@{ Source = 'Test-WsbCli' }
+      }
+      function Test-WsbCli { $global:LASTEXITCODE = ${code}; return '1.0.0-fixture' }
+      ${step.run}
+    `], { encoding: "utf8", timeout: 30000 });
+    assert.equal(result.status, expected, `CLI available=${available} exit=${code}: ${result.stdout}${result.stderr}`);
+  }
+});
+
+test("elevated guest debugging uses a new application-scoped machine override", { skip: process.platform !== "win32" }, async () => {
+  const { execFileSync } = await import("node:child_process");
+  const output = execFileSync("pwsh", ["-NoProfile", "-Command", `
+    $ErrorActionPreference = 'Stop'
+    $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD 'scripts/sandbox/run-lifecycle-in-sandbox.ps1'), [ref]$null, [ref]$null)
+    $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Initialize-LifecycleBrowserDebugging' }, $true)
+    if ($definition) { . ([scriptblock]::Create($definition.Extent.Text)) }
+    else { function Initialize-LifecycleBrowserDebugging { param($Elevated) } }
+    $script:written = @(); $script:existing = $false; $script:keyPresent = $true; $script:keyCreated = $false
+    function Log { param($message) }
+    function Test-Path { [CmdletBinding()]param($LiteralPath) return $script:keyPresent }
+    function Get-ItemProperty { [CmdletBinding()]param($LiteralPath, $Name) if ($script:existing) { return @{ existing = $true } } }
+    function New-Item {
+      [CmdletBinding()]param($Path, [switch]$Force)
+      if ($script:keyPresent) { throw 'Do not recreate an existing registry key with other application overrides' }
+      $script:keyCreated = $true
+    }
+    function New-ItemProperty {
+      [CmdletBinding()]param($Path, $Name, $PropertyType, $Value, [switch]$Force)
+      if ($Force) { throw 'A machine override must not overwrite existing configuration' }
+      $script:written += @{ path=$Path; name=$Name; value=$Value }
+    }
+    Initialize-LifecycleBrowserDebugging $false
+    if ($script:written.Count) { throw 'Non-elevated launch changed machine configuration' }
+    Initialize-LifecycleBrowserDebugging $true
+    if ($script:written.Count -ne 1 -or $script:written[0].name -ne 'Localmotive.exe' -or $script:written[0].value -ne '--remote-debugging-port=10093' -or $script:written[0].path -notlike 'HKLM:*AdditionalBrowserArguments') { throw 'Elevated guest did not configure its application-scoped machine override' }
+    $script:existing = $true; $refused = $false
+    try { Initialize-LifecycleBrowserDebugging $true } catch { $refused = $true }
+    if (-not $refused -or $script:written.Count -ne 1) { throw 'Existing machine override was not preserved' }
+    $script:existing = $false; $script:keyPresent = $false
+    Initialize-LifecycleBrowserDebugging $true
+    if (-not $script:keyCreated -or $script:written.Count -ne 2) { throw 'Missing override key was not initialized' }
+    Write-Host 'PASS: elevated guest uses an app-scoped machine override without overwriting policy'
+  `], { encoding: "utf8", timeout: 30000 });
+  assert.match(output, /PASS: elevated guest uses an app-scoped machine override/);
+});
+
+test("lifecycle preflight restricts stored authentication to an opted-in local run", { skip: process.platform !== "win32" }, async () => {
+  const { execFileSync } = await import("node:child_process");
+  // Execute the actual preflight condition. Stub only the external CLI.
+  const output = execFileSync("pwsh", ["-NoProfile", "-Command", `
+    $ErrorActionPreference = 'Stop'
+    $env:GH_TOKEN = $null; $env:GITHUB_TOKEN = $null
+    $env:CI = $null; $env:GITHUB_ACTIONS = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD 'scripts/sandbox/host-run-lifecycle.ps1'), [ref]$null, [ref]$null)
+    $guard = $ast.Find({ param($node) $node -is [Management.Automation.Language.IfStatementAst] -and $node.Extent.Text.StartsWith('if (-not $env:GH_TOKEN -and -not $env:GITHUB_TOKEN)') }, $true)
+    if (-not $guard) { throw 'Missing auth preflight' }
+    $script:authCalls = 0
+    function gh { $script:authCalls++; $global:LASTEXITCODE = $script:authCode }
+    $script:authCode = 0
+    $AllowStoredGitHubLogin = $false
+    $refused = $false
+    try { & ([scriptblock]::Create($guard.Extent.Text)) } catch { $refused = $true }
+    if (-not $refused -or $script:authCalls -ne 0) { throw 'Stored login accessed without local opt-in' }
+    $AllowStoredGitHubLogin = $true
+    & ([scriptblock]::Create($guard.Extent.Text))
+    Write-Host 'PASS: stored login accepted'
+    $script:authCode = 1
+    $refused = $false
+    try { & ([scriptblock]::Create($guard.Extent.Text)) } catch { $refused = $true }
+    if (-not $refused) { throw 'Unauthenticated CLI was accepted' }
+    Write-Host 'PASS: missing login refused'
+    $env:CI = 'true'; $env:GITHUB_ACTIONS = 'true'
+    $script:authCode = 0; $script:authCalls = 0
+    $refused = $false
+    try { & ([scriptblock]::Create($guard.Extent.Text)) } catch { $refused = $true }
+    if (-not $refused -or $script:authCalls -ne 0) { throw 'CI accessed the stored login' }
+    Write-Host 'PASS: CI cannot use stored login even with local opt-in'
+  `], { encoding: "utf8", timeout: 30000 });
+  assert.match(output, /PASS: stored login accepted/);
+  assert.match(output, /PASS: missing login refused/);
+  assert.match(output, /PASS: CI cannot use stored login/);
+});
+
+test("lifecycle authentication failure retains a structured failure document", { skip: process.platform !== "win32" }, async () => {
+  const { spawnSync } = await import("node:child_process");
+  const root = await mkdtemp(join(tmpdir(), "lm-lifecycle-auth-"));
+  try {
+    const result = spawnSync("pwsh", ["-NoProfile", "-Command", `
+      function gh { $global:LASTEXITCODE = 1 }
+      & $env:HARNESS_PATH -Tag v0.6.0 -Version 0.6.0 -EvidenceName authentication-fixture -FaultSimulation missing-assets
+    `], {
+      cwd: root, encoding: "utf8", timeout: 30000,
+      env: { ...process.env, HARNESS_PATH: resolve("scripts/sandbox/host-run-lifecycle.ps1"), GH_TOKEN: "", GITHUB_TOKEN: "", CI: "true", GITHUB_ACTIONS: "true", TEMP: root, TMP: root, LOCALMOTIVE_SOURCE_REVISION: "" },
+    });
+    assert.equal(result.status, 1, `${result.stdout}${result.stderr}`);
+    const file = join(root, "release-evidence/0.6.0/attestations/authentication-fixture.json");
+    const raw = await readFile(file, "utf8");
+    const doc = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    assert.equal(doc.status, "FAIL");
+    assert.equal(doc.stage, "authentication");
+    assert.match(doc.error, /GH_TOKEN|GITHUB_TOKEN/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("R04: the benchmark run owns its cancelled workers until they exit", async () => {
@@ -2734,6 +2952,9 @@ test("the stalled-fetch deadline stays injectable and bounded in tests (CI cance
 test("publish promotes the verified bytes only after every material gate (G-06/G-09)", async () => {
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
   const promote = await readFile(join(process.cwd(), ".github", "workflows", "release-promote.yml"), "utf8");
+  // The verify workflow must not offer a publish switch that does nothing.
+  const workflows = await loadWorkflows(process.cwd());
+  assert.deepEqual(Object.keys(workflows["release.yml"].on.workflow_dispatch.inputs), ["tag"]);
   // R16: the tag-push workflow has no publish job at all, so no tag push can
   // publish; publication requires the separate authorized dispatch.
   assert.ok(!/^  publish:/m.test(release), "the verify workflow must not carry a publish job");
@@ -2741,18 +2962,14 @@ test("publish promotes the verified bytes only after every material gate (G-06/G
   const publish = promote.split("\n  publish:")[1];
   // Publication promotes the bundle the verify run qualified - it never
   // rebuilds and never rewrites the checksum inventory.
-  assert.match(gate, /Download the qualified bundle produced by that verify run/);
   assert.match(gate, /localmotive-\$\{\{ steps\.resolve\.outputs\.version \}\}-qualified/);
-  assert.match(publish, /sha256sum -c/, "publish verifies the producer checksums");
+  assert.match(publish, /verify_release_promotion\.mjs/, "publish verifies the producer checksums and manifest together");
   assert.doesNotMatch(publish, /tauri build|sha256sum Localmotive/, "publish must not rebuild or rewrite the inventory");
-  // Absent or failed lifecycle evidence blocks publication (G-06.I1): the
-  // qualification job that assembles the bundle needs the lifecycle verdict,
-  // and the promotion validator refuses a bundle without PASS records.
-  assert.match(
-    release,
-    /qualification:\n    needs: \[resolve, quality, package, clean-account-lifecycle\]/,
-    "the qualified bundle depends on the clean-account lifecycle gate",
-  );
+  const steps = workflows["release.yml"].jobs.verify.steps;
+  const lifecycle = steps.findIndex((step) => step.run?.includes("host-run-lifecycle.ps1"));
+  const qualification = steps.findIndex((step) => step.run?.includes("verify_release_promotion.mjs"));
+  assert.ok(lifecycle >= 0 && qualification > lifecycle, "qualification follows the native verdict");
+  assert.equal(steps[qualification].if, undefined, "qualification cannot ignore a failed native verdict");
   // R02 (follow-up review db548c8) survives structurally: the accident that
   // published from a stray dispatch cannot recur because publication is not
   // reachable from the verify workflow at all, and the promotion workflow

@@ -24,14 +24,10 @@ param(
   # catalog mirror with a user override row; `cache` = the v0.4.1-era catalog
   # cache record (that version predates the mirror).
   [ValidateSet("mirror", "cache")]
-  [string]$PreservationFlavor = "mirror"
+  [string]$PreservationFlavor = "mirror",
+  [switch]$AllowStoredGitHubLogin
 )
 $ErrorActionPreference = "Stop"
-
-if (-not $env:GH_TOKEN -and -not $env:GITHUB_TOKEN) {
-  throw "GH_TOKEN (or GITHUB_TOKEN) is required so gh can download release assets in Actions. Set env.GH_TOKEN: `${{ github.token }} on the workflow step."
-}
-if (-not $env:GH_TOKEN -and $env:GITHUB_TOKEN) { $env:GH_TOKEN = $env:GITHUB_TOKEN }
 
 $Root = Join-Path $env:TEMP ("localmotive-sandbox-" + $Version + "-" + (Get-Date -Format "yyyyMMddHHmmss"))
 $Shared = Join-Path $Root "shared"
@@ -52,6 +48,16 @@ $startedAt = (Get-Date).ToUniversalTime()
 $stage = "initialization"
 $candidateDigests = @{}
 $candidateInventorySha256 = $null
+$script:SandboxId = $null
+$runError = $null
+
+function Stop-LifecycleSandbox {
+  if ($script:SandboxId) {
+    $stopped = & wsb.exe stop --id $script:SandboxId --raw 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Could not stop owned Sandbox $script:SandboxId`: $stopped. Inspect that Sandbox before another lifecycle run." }
+    $script:SandboxId = $null
+  }
+}
 
 function Get-FileSha256([string]$Path) {
   if (-not (Test-Path $Path)) { return $null }
@@ -163,10 +169,19 @@ try {
   # GH-06.V2 witness: an early installer-asset failure must leave a bounded
   # structured outcome at this stage, before any sandbox work.
   $runStarted = Get-Date
+  $stage = "authentication"
+  if (-not $env:GH_TOKEN -and -not $env:GITHUB_TOKEN) {
+    if ($env:CI -or $env:GITHUB_ACTIONS -or -not $AllowStoredGitHubLogin) {
+      throw "Provide GH_TOKEN or GITHUB_TOKEN. Only an opted-in local run may use -AllowStoredGitHubLogin; CI must use its explicit job credential."
+    }
+    gh auth status --hostname github.com *> $null
+    if ($LASTEXITCODE -ne 0) { throw "Authenticate with gh auth login, or provide GH_TOKEN (GITHUB_TOKEN) in Actions." }
+  }
+  if (-not $env:GH_TOKEN -and $env:GITHUB_TOKEN) { $env:GH_TOKEN = $env:GITHUB_TOKEN }
+  $stage = "initialization"
 
   # --- Candidate-inventory binding (2026-09-12 review; R13: inside the try
   # so a preflight refusal still produces structured failure evidence) ------
-  # --- Candidate-inventory binding (2026-09-12 review) ------------------------
   # Lifecycle evidence binds to the ORIGINAL candidate inventory's full source
   # SHA. The environment may not substitute the current HEAD: a mismatch is a
   # hard refusal. The harness revision is recorded separately so the evidence
@@ -364,7 +379,13 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
     Start-Sleep -Seconds $StallSeconds
   } else {
     Write-Host "Launching Windows Sandbox..."
-    $sandbox = Start-Process -FilePath "$env:WINDIR\System32\WindowsSandbox.exe" -ArgumentList "`"$wsbPath`"" -PassThru
+    $sandboxTool = Get-Command wsb.exe -ErrorAction Stop
+    $started = & $sandboxTool.Source start --config $wsb --raw 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Windows Sandbox start failed: $started" }
+    $started = $started | ConvertFrom-Json
+    if (-not $started.Id) { throw 'Windows Sandbox start returned no owned identity' }
+    $script:SandboxId = ([guid]$started.Id).ToString()
+    Start-Process -FilePath $sandboxTool.Source -ArgumentList @('connect', '--id', $script:SandboxId, '--raw') -WindowStyle Minimized
   }
 
   $waitUntil = (Get-Date).AddMinutes($TimeoutMinutes)
@@ -373,7 +394,7 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
       Start-Sleep -Seconds 2
       $result = Get-Content $resultPath -Raw | ConvertFrom-Json
       Write-Host "Sandbox result: $($result.status)"
-      Get-Process -Name "WindowsSandbox","WindowsSandboxClient","WindowsSandboxRemoteSession" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+      Stop-LifecycleSandbox
       if ($result.status -ne "PASS") {
         if (Test-Path (Join-Path $Shared "lifecycle.log")) { Get-Content (Join-Path $Shared "lifecycle.log") | Write-Host }
         # Retain host-side identity binding on failure too (audit GH-06 I1):
@@ -397,6 +418,7 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
       $collectedUserdata = Join-Path $Shared "collected-userdata.txt"
       $collectedCache = Join-Path $Shared "collected-catalog-cache.json"
       $collectedSettings = Join-Path $Shared "collected-settings.json"
+      $settingsEvidence = $null
       $preservationStatus = "missing-files"
       $preservationOutput = "collected files absent; the preservation step did not run"
       $preservationPresent = if ($PreservationFlavor -eq "mirror") {
@@ -437,6 +459,13 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
         if (Test-Path $collectedUserdata) {
           Copy-Item $collectedUserdata (Join-Path $OutDir "$EvidenceName-collected-userdata.txt") -Force
         }
+        if (Test-Path $collectedSettings) {
+          Assert-LockOwnership
+          $settingsName = "$EvidenceName-collected-settings.json"
+          $settingsPath = Join-Path $OutDir $settingsName
+          Copy-Item -LiteralPath $collectedSettings -Destination $settingsPath -Force
+          $settingsEvidence = [ordered]@{ file = $settingsName; sha256 = (Get-FileSha256 $settingsPath) }
+        }
         Assert-LockOwnership
         $preservationOutput | Set-Content (Join-Path $OutDir "$EvidenceName-verify.log") -Encoding UTF8
       }
@@ -446,6 +475,7 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
       }
       $preservation = [ordered]@{ status = $preservationStatus; output = $preservationOutput }
       $doc | Add-Member -NotePropertyName preservation -NotePropertyValue $preservation -Force
+      if ($settingsEvidence) { $doc | Add-Member -NotePropertyName collectedSettings -NotePropertyValue $settingsEvidence -Force }
       # Bind the pass verdict to the immutable source revision, candidate
       # digests, and candidate inventory (GH-03/GH-06/R06): the in-sandbox
       # document alone cannot carry them.
@@ -477,7 +507,7 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
     Start-Sleep -Seconds 5
   }
 
-  Get-Process -Name "WindowsSandbox","WindowsSandboxClient","WindowsSandboxRemoteSession" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+  Stop-LifecycleSandbox
   if (Test-Path (Join-Path $Shared "lifecycle.log")) { Get-Content (Join-Path $Shared "lifecycle.log") | Write-Host }
   $stage = "sandbox-timeout"
   Write-FailureEvidence "TIMEOUT" "Sandbox produced no result.json within $TimeoutMinutes minutes"
@@ -488,6 +518,7 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
   # the try began) is authoritative; anything older is stale identity and is
   # rewritten, so a previous candidate's FAIL can never masquerade as this
   # run's outcome.
+  $runError = $_.Exception.Message
   $existingEvidence = Test-Path $EvidencePath
   $staleEvidence = -not $existingEvidence -or (Get-Item $EvidencePath).LastWriteTime -lt $runStarted
   $passEvidence = $existingEvidence -and -not $staleEvidence -and (Get-Content $EvidencePath -Raw | ConvertFrom-Json).status -eq "PASS"
@@ -499,12 +530,20 @@ The preferred path passes -CandidateDir with freshly built installers; this wait
   # Release ownership: close the OS handle and remove the file only when this
   # run is still the recorded owner. A run that never acquired the lock (a
   # refusal) must not touch another owner's file.
-  $owns = $false
-  if (Test-Path $script:LockPath) {
-    $holder = $null
-    try { $holder = Get-Content $script:LockPath -Raw | ConvertFrom-Json } catch { $holder = $null }
-    $owns = [bool]($holder -and [int]$holder.pid -eq $PID)
+  try {
+    Stop-LifecycleSandbox
+  } catch {
+    $stage = 'sandbox-cleanup'
+    Write-FailureEvidence 'FAIL' "$runError Cleanup failed: $($_.Exception.Message)"
+    throw
+  } finally {
+    $owns = $false
+    if (Test-Path $script:LockPath) {
+      $holder = $null
+      try { $holder = Get-Content $script:LockPath -Raw | ConvertFrom-Json } catch { $holder = $null }
+      $owns = [bool]($holder -and [int]$holder.pid -eq $PID)
+    }
+    if ($script:LockStream) { try { $script:LockStream.Dispose() } catch { } }
+    if ($owns) { Remove-Item $script:LockPath -Force -ErrorAction SilentlyContinue }
   }
-  if ($script:LockStream) { try { $script:LockStream.Dispose() } catch { } }
-  if ($owns) { Remove-Item $script:LockPath -Force -ErrorAction SilentlyContinue }
 }

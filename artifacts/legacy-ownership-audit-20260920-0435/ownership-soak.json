@@ -1,0 +1,42 @@
+[
+  {
+    "rep": 1,
+    "exit": 0,
+    "summary": "test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 613 filtered out; finished in 2.16s"
+  },
+  {
+    "rep": 2,
+    "exit": 0,
+    "summary": "test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 613 filtered out; finished in 2.15s"
+  },
+  {
+    "rep": 3,
+    "exit": 0,
+    "summary": "test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 613 filtered out; finished in 2.16s"
+  },
+  {
+    "rep": 4,
+    "exit": 0,
+    "summary": "test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 613 filtered out; finished in 2.15s"
+  },
+  {
+    "rep": 5,
+    "exit": 0,
+    "summary": "test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 613 filtered out; finished in 2.15s"
+  },
+  {
+    "rep": 6,
+    "exit": 0,
+    "summary": "test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 613 filtered out; finished in 2.15s"
+  },
+  {
+    "rep": 7,
+    "exit": 0,
+    "summary": "test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 613 filtered out; finished in 2.15s"
+  },
+  {
+    "rep": 8,
+    "exit": 0,
+    "summary": "test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 613 filtered out; finished in 2.14s"
+  }
+]

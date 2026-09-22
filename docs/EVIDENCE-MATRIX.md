@@ -4,7 +4,8 @@ Version → what was actually exercised. A cell says PASS only where release
 evidence for that exact version exists; everything else stays UNKNOWN or NOT
 RUN. This file is the index for the README support statement and is updated
 with each release. The authoritative per-item evidence lives in
-`docs/history/TODO-0.6.md` and the release assets named below.
+`TODO-0.6.md` and the release assets named below. Historical evidence stays in
+`docs/history/`.
 
 Legend: **PASS** evidence present · **FAIL** evidence present and failing ·
 **UNKNOWN** not established for that version · **NOT RUN** deliberately not
@@ -54,15 +55,16 @@ executed.
   array accompanies both and is lossless for any wrapper. The application
   itself always launches llama-server through an argument array, never a
   shell string.
-- Raw local run manifests are working files for this machine and still
-  include explicit local paths (model, projector, draft, LoRA, template and
-  key/certificate files). They are **not** publication artifacts: share and
-  export bundles run the separate redaction path, and the effective-argument
-  identity used for calibration is sanitized (`[model]`, `[draft-model]`,
-  `[lora]`, `[configured]`) for every path-bearing flag, including the short
-  `-md` draft form.
+- Raw local run manifests are working files for this machine, not publication
+  artifacts. Some command fields are fingerprinted, but draft and LoRA paths
+  can remain. Do not publish these files without a separate privacy review.
+  The 0.6 source build has no share/export redaction feature.
 
-## Local calibration history lifecycle (audit S-16)
+## Historical calibration lifecycle before 0.6 (audit S-16)
+
+The following records the retired implementation. The 0.6 source build does
+not load, prune, export or clear calibration history. Existing files remain
+untouched; no current UI control provides this lifecycle.
 
 - **Storage**: one JSON record per file under `<app data>/calibration/anchors`
   and `.../models`; each record is size-bounded (64 KiB) and the directory
@@ -91,16 +93,11 @@ executed.
   `model.ts` consumer expectations (exact key sets, JS types, camelCase only,
   documented enum spellings). Errors cross the IPC boundary as plain strings
   by contract — never as objects.
-- **Persisted formats**: catalog documents carry `schemaVersion` (verified by
-  the shared catalog contract), benchmark manifests carry `schema` and the
-  execution-snapshot schema inside their keys, calibration anchors and models
-  carry `schemaVersion` (current `RECORD_SCHEMA_VERSION = 1`), and profile
-  records are normalized on read (`normalizeProfile`) with quarantine for
-  unreadable shapes. Records missing the field load as version 1; a NEWER
-  version is rejected with "rebuild it from current measurements with a newer
-  Localmotive" instead of being misread. Unknown fields are ignored on
-  purpose for forward compatibility, and serialization validation lives in
-  the model/loader layer, never in rendering.
+- **Persisted formats**: catalog documents carry `schemaVersion`, and benchmark
+  manifests carry `schema` plus an execution-snapshot schema in their keys.
+  Profiles use `normalizeProfile` on read; frontend checks do not replace Rust
+  launch validation. The retired calibration record schema and its migration
+  policy are historical, not an active 0.6 storage service.
 
 ## Bounded property campaigns (audit S-19)
 

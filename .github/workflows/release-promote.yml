@@ -1,21 +1,7 @@
 name: Release promote
 
-# Publication is a separate, explicitly authorized act (R16 release behavior).
-# Tag pushes run `.github/workflows/release.yml`, which verifies and qualifies
-# but never publishes. This workflow consumes the exact qualified bundle that
-# verify run uploaded - it never rebuilds, never rewrites checksums - and it
-# refuses to run unless every gate below passes:
-#
-#   1. the dispatcher is the repository owner,
-#   2. the confirm phrase matches `PUBLISH <tag>` exactly,
-#   3. the named verify run completed successfully for the same commit the tag
-#      still points at today,
-#   4. that commit is on main and its required checks concluded successfully,
-#   5. the qualified bundle's manifest, inventory, artifacts, checksums and
-#      mandatory records all agree (scripts/verify_release_promotion.mjs),
-#   6. dry_run is false.
-#
-# A dry run (the default) executes every validation step and publishes nothing.
+# Promote qualified bytes only after explicit owner authorization.
+# The default dry run validates without publishing. Never rebuild here.
 on:
   workflow_dispatch:
     inputs:
@@ -133,16 +119,6 @@ jobs:
           run-id: ${{ inputs.verify_run_id }}
           github-token: ${{ github.token }}
 
-      - name: Overlay the qualified bundle onto the checked-out revision
-        shell: bash
-        run: |
-          test -d qualified/artifacts || { echo "::error::the qualified bundle carries no artifacts directory"; exit 1; }
-          mkdir -p artifacts "release-evidence/${{ steps.resolve.outputs.version }}/attestations"
-          cp -r qualified/artifacts/. artifacts/
-          cp -r "qualified/release-evidence/${{ steps.resolve.outputs.version }}/." "release-evidence/${{ steps.resolve.outputs.version }}/"
-          test -f "release-evidence/${{ steps.resolve.outputs.version }}/qualification-manifest-${{ steps.resolve.outputs.version }}.json" \
-            || { echo "::error::the qualified bundle carries no qualification manifest"; exit 1; }
-
       - name: Validate the qualified set against every identity relationship
         shell: bash
         env:
@@ -150,10 +126,8 @@ jobs:
           RESOLVED_SHA: ${{ steps.resolve.outputs.sha }}
           VERIFY_RUN_ID: ${{ inputs.verify_run_id }}
         run: |
-          node scripts/verify_qualification_manifest.mjs --expect-source "$RESOLVED_SHA"
-          node scripts/verify_release_promotion.mjs --qualified . --tag "v${VERSION}" --expect-source "$RESOLVED_SHA" --verify-run "$VERIFY_RUN_ID" --report "artifacts/promotion-check-${VERSION}.json"
-          (cd artifacts && sha256sum -c "SHA256SUMS-${VERSION}.txt")
-          echo "Honestly unsigned full release: Authenticode is DEFERRED_BY_OWNER; no signature is claimed. SmartScreen may warn."
+          node scripts/verify_release_promotion.mjs --qualified qualified --tag "v${VERSION}" --expect-source "$RESOLVED_SHA" --verify-run "$VERIFY_RUN_ID" --report "promotion-check-${VERSION}.json"
+          echo "Honestly unsigned full release: Authenticode is not pursued; no signature is claimed. SmartScreen may warn."
 
       - name: Retain the promotion decision record
         if: always()
@@ -161,7 +135,7 @@ jobs:
         with:
           name: promotion-decision-${{ inputs.tag }}-${{ inputs.verify_run_id }}
           path: |
-            artifacts/promotion-check-${{ steps.resolve.outputs.version }}.json
+            promotion-check-${{ steps.resolve.outputs.version }}.json
             verify-run.json
             check-runs.json
           if-no-files-found: ignore
@@ -181,7 +155,7 @@ jobs:
         run: git config --global core.autocrlf false
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ needs.gate.outputs.sha }}
 
       - name: Re-resolve the remote tag immediately before publication (drift gate)
         shell: bash
@@ -206,23 +180,13 @@ jobs:
           run-id: ${{ inputs.verify_run_id }}
           github-token: ${{ github.token }}
 
-      - name: Overlay the qualified bundle onto the checked-out revision
-        shell: bash
-        run: |
-          mkdir -p artifacts "release-evidence/${{ needs.gate.outputs.version }}/attestations"
-          cp -r qualified/artifacts/. artifacts/
-          cp -r "qualified/release-evidence/${{ needs.gate.outputs.version }}/." "release-evidence/${{ needs.gate.outputs.version }}/"
-
       - name: Re-validate the exact bytes that are about to be published
         shell: bash
         env:
           VERSION: ${{ needs.gate.outputs.version }}
           RESOLVED_SHA: ${{ needs.gate.outputs.sha }}
           VERIFY_RUN_ID: ${{ inputs.verify_run_id }}
-        run: |
-          node scripts/verify_qualification_manifest.mjs --expect-source "$RESOLVED_SHA"
-          node scripts/verify_release_promotion.mjs --qualified . --tag "v${VERSION}" --expect-source "$RESOLVED_SHA" --verify-run "$VERIFY_RUN_ID" --report "artifacts/promotion-check-${VERSION}.json"
-          (cd artifacts && sha256sum -c "SHA256SUMS-${VERSION}.txt")
+        run: node scripts/verify_release_promotion.mjs --qualified qualified --tag "v${VERSION}" --expect-source "$RESOLVED_SHA" --verify-run "$VERIFY_RUN_ID" --report "promotion-check-${VERSION}.json"
 
       - name: Extract this version's changelog section
         shell: bash
@@ -249,7 +213,7 @@ jobs:
             echo
             echo "Target scope: Windows 10 and Windows 11 x64. See the qualification limitations above."
             echo ""
-            echo "This full release is honestly unsigned: Authenticode is DEFERRED_BY_OWNER, no signature is claimed, and Windows SmartScreen may warn. Verify the published SHA-256 checksums before use."
+            echo "This full release is honestly unsigned: no signature is pursued or claimed, and Windows SmartScreen may warn. Verify the published SHA-256 checksums before use."
           } > release-notes.md
 
       - name: Publish the explicitly authorized honestly unsigned full release
@@ -260,12 +224,12 @@ jobs:
           prerelease: false
           body_path: release-notes.md
           files: |
-            artifacts/Localmotive_${{ needs.gate.outputs.version }}_x64-setup.exe
-            artifacts/Localmotive_${{ needs.gate.outputs.version }}_x64-portable.exe
-            artifacts/Localmotive_${{ needs.gate.outputs.version }}_x64.msi
-            artifacts/SHA256SUMS-${{ needs.gate.outputs.version }}.txt
-            artifacts/packaged-verification-${{ needs.gate.outputs.version }}.json
-            artifacts/candidate-inventory-${{ needs.gate.outputs.version }}.json
+            qualified/artifacts/Localmotive_${{ needs.gate.outputs.version }}_x64-setup.exe
+            qualified/artifacts/Localmotive_${{ needs.gate.outputs.version }}_x64-portable.exe
+            qualified/artifacts/Localmotive_${{ needs.gate.outputs.version }}_x64.msi
+            qualified/artifacts/SHA256SUMS-${{ needs.gate.outputs.version }}.txt
+            qualified/artifacts/packaged-verification-${{ needs.gate.outputs.version }}.json
+            qualified/artifacts/candidate-inventory-${{ needs.gate.outputs.version }}.json
           fail_on_unmatched_files: true
 
       - name: Read back and verify the public release against the producer record
@@ -293,9 +257,9 @@ jobs:
             "candidate-inventory-${VERSION}.json"; do
             test -s "public-readback/$name"
           done
-          cmp "artifacts/SHA256SUMS-${VERSION}.txt" "public-readback/SHA256SUMS-${VERSION}.txt"
-          cmp "artifacts/candidate-inventory-${VERSION}.json" "public-readback/candidate-inventory-${VERSION}.json"
-          cmp "artifacts/packaged-verification-${VERSION}.json" "public-readback/packaged-verification-${VERSION}.json"
+          cmp "qualified/artifacts/SHA256SUMS-${VERSION}.txt" "public-readback/SHA256SUMS-${VERSION}.txt"
+          cmp "qualified/artifacts/candidate-inventory-${VERSION}.json" "public-readback/candidate-inventory-${VERSION}.json"
+          cmp "qualified/artifacts/packaged-verification-${VERSION}.json" "public-readback/packaged-verification-${VERSION}.json"
           # The published inventory must verify against the published artifact
           # set, and the published packaged-verification record must be the
           # producer record the qualification manifest references.
@@ -318,6 +282,6 @@ jobs:
           path: |
             public-readback/
             release-notes.md
-            artifacts/promotion-check-${{ needs.gate.outputs.version }}.json
+            promotion-check-${{ needs.gate.outputs.version }}.json
           if-no-files-found: ignore
           retention-days: 30

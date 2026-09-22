@@ -483,6 +483,8 @@ Disclosure uses typographic markers, not chevrons: `+` when closed, `−` when o
 - **Focus:** the border turns signal green; the global `:focus-visible` ring is a 2 px amber outline at 2 px offset. Focus is always visible — it is never removed for aesthetics.
 - **Disabled:** value text drops to `#8d9491`; the field keeps its recess so the layout does not shift.
 - **Help text:** 9 px/400 in `#7f8885` directly under the control, never in a tooltip. A setting that needs explanation gets it inline.
+- **Numeric profile, Tune and benchmark fields:** use Rust-compatible bounds for native validity and pre-action checks. Keep incomplete input visible. Show input problems as text. Keep an explicit zero distinct from a blank field.
+- **Speculative method:** disable selection before runtime inspection. Keep unsupported saved values visible as unverified. Put help text outside the select element.
 - **Toggle line:** a bordered 37 px row (44 px mobile) in `#1d2122` with a 15 px green-accented checkbox and its label — a switch on a panel, not a floating checkbox.
 - **Path bar:** a 45 px bordered strip in `#252a2b` holding an icon, a borderless mono path input, a count, and a picker action. The path is always editable text *and* pickable.
 
@@ -491,6 +493,7 @@ Disclosure uses typographic markers, not chevrons: `+` when closed, `−` when o
 - **Corner style:** square (0 px).
 - **Background:** `#222627` face on a `#424849` border; log and command wells drop to `#111514`.
 - **Header band:** 42 px, `#292e2f`, bottom-bordered, holding a 15 px uppercase title and an optional right-aligned state tag.
+- **Run status band:** legacy and controlled measurement runs keep status and Cancel visible across navigation. Keep each run's cancellation handle until the backend settles. Do not let unrelated panel updates remove the active run.
 - **Rows:** 38 px `spec-list` rows with `line-soft` dividers, label left in muted body, value right in 12 px condensed with `0.05em` tracking.
 - **Shadow strategy:** none. See Elevation & Depth.
 
@@ -526,7 +529,7 @@ Advanced settings live in one `details` zone with a `#53605a` border and a 58 px
 
 ### Setup Steps
 
-A three-cell bordered strip of 60 px steps, each a 22 px square number badge beside a 11 px title and 9 px caption. Active fills `#292d25` and inverts the badge to green-on-dark; complete keeps a green outlined badge. First-run progress is structure, not a modal. The AI Tune screen reuses the strip as a readiness gauge (provider → model → tune).
+A three-cell bordered strip of 60 px steps, each a 22 px square number badge beside a 11 px title and 9 px caption. Active fills `#292d25` and inverts the badge to green-on-dark; complete keeps a green outlined badge. First-run progress is structure, not a modal. The AI Tune screen reuses the strip as a readiness gauge (provider → model → tune); while the advisor opt-in is off, the first cell reads Local search and needs no key.
 
 ### Runtime Option States
 
@@ -545,7 +548,7 @@ A bordered strip of equal-width 40 px tabs (`#1d2122`, 10 px condensed uppercase
 
 ### Trial Ledger
 
-The tuning log is a terminal well (`#111514`) of 12 px-padded entries divided by `#1f2526` rules. Each entry heads with a 26 × 20 px bordered index chip (`T0`, `T1`…), the changed fields as `key=value` mono, and the measured tok/s as a 15 px condensed figure in signal green. The best entry lifts to `#14201a` with a green index chip; a failed entry prints `FAILED` in stop red and its error in a red-plated mono block capped at 120 px. Trial bars reuse the benchmark bars: best in green, others in `#5d6a61`, failures as a red-deep stub. The ledger is evidence — nothing in it is summarized away.
+The tuning log is a terminal well (`#111514`) of 12 px-padded entries divided by `#1f2526` rules. Each entry heads with a 26 × 20 px bordered index chip (`T0`, `T1`…), the changed fields as `key=value` mono, and the measured tok/s as a 15 px condensed figure in signal green. The best entry lifts to `#14201a` with a green index chip; a failed entry prints `FAILED` in stop red and its error in a red-plated mono block capped at 120 px. Below the rationale, a meta row carries the outcome tag (green when measured, amber otherwise — amber means the operator looks, per the One Meaning Rule), the untoned choice tag (`BASELINE`, `GRID`, `NUDGE`, `CONFIRM`, `ADVISOR`), spread and effective context, and an `Apply this trial` text-link on measured rows. Trial bars reuse the benchmark bars: best in green, others in `#5d6a61`, failures as a red-deep stub. The ledger is evidence — nothing in it is summarized away.
 
 ## Do's and Don'ts
 

@@ -1,0 +1,677 @@
+{
+  "schema": "localmotive.mt06-cancellation.v1",
+  "startedAtUtc": "2026-09-22T11:49:42.811Z",
+  "sourceRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082",
+  "portableDigest": "1f355dea038867971b5a15bab05145359a4c1d80eedfba135b605137abc63ae0",
+  "appPid": 1308916,
+  "cycles": [
+    {
+      "cycle": 1,
+      "started": true,
+      "inFlight": true,
+      "accepted": true,
+      "cancelled": true,
+      "settled": true,
+      "runEndedMs": 512,
+      "drained": true,
+      "drainMs": 0,
+      "processing": "0",
+      "ownedChildren": [
+        966552
+      ],
+      "childError": null,
+      "terminalOutcome": "cancelled",
+      "recordPath": "C:\\Users\\Mubarak\\AppData\\Roaming\\io.github.localmotive.app\\benchmarks\\benchmark-1790077798807-technical-explanation-v1-0.json",
+      "notice": "SYSStarted smollm2-135m-q4-k-m on port 8080"
+    },
+    {
+      "cycle": 2,
+      "started": true,
+      "inFlight": true,
+      "accepted": true,
+      "cancelled": true,
+      "settled": true,
+      "runEndedMs": 511,
+      "drained": true,
+      "drainMs": 0,
+      "processing": "0",
+      "ownedChildren": [
+        966552
+      ],
+      "childError": null,
+      "terminalOutcome": "cancelled",
+      "recordPath": "C:\\Users\\Mubarak\\AppData\\Roaming\\io.github.localmotive.app\\benchmarks\\benchmark-1790077803427-technical-explanation-v1-1.json",
+      "notice": "SYSStarted smollm2-135m-q4-k-m on port 8080"
+    },
+    {
+      "cycle": 3,
+      "started": true,
+      "inFlight": true,
+      "accepted": true,
+      "cancelled": true,
+      "settled": true,
+      "runEndedMs": 513,
+      "drained": true,
+      "drainMs": 0,
+      "processing": "0",
+      "ownedChildren": [
+        1857892
+      ],
+      "childError": null,
+      "terminalOutcome": "cancelled",
+      "recordPath": "C:\\Users\\Mubarak\\AppData\\Roaming\\io.github.localmotive.app\\benchmarks\\benchmark-1790077816546-technical-explanation-v1-2.json",
+      "notice": "SYSStarted smollm2-135m-q4-k-m on port 8080"
+    },
+    {
+      "cycle": 4,
+      "started": true,
+      "inFlight": true,
+      "accepted": true,
+      "cancelled": true,
+      "settled": true,
+      "runEndedMs": 517,
+      "drained": true,
+      "drainMs": 0,
+      "processing": "0",
+      "ownedChildren": [
+        1857892
+      ],
+      "childError": null,
+      "terminalOutcome": "cancelled",
+      "recordPath": "C:\\Users\\Mubarak\\AppData\\Roaming\\io.github.localmotive.app\\benchmarks\\benchmark-1790077821214-technical-explanation-v1-3.json",
+      "notice": "SYSStarted smollm2-135m-q4-k-m on port 8080"
+    },
+    {
+      "cycle": 5,
+      "started": true,
+      "inFlight": true,
+      "accepted": true,
+      "cancelled": true,
+      "settled": true,
+      "runEndedMs": 517,
+      "drained": true,
+      "drainMs": 0,
+      "processing": "0",
+      "ownedChildren": [
+        387840
+      ],
+      "childError": null,
+      "terminalOutcome": "cancelled",
+      "recordPath": "C:\\Users\\Mubarak\\AppData\\Roaming\\io.github.localmotive.app\\benchmarks\\benchmark-1790077834316-technical-explanation-v1-4.json",
+      "notice": "SYSStarted smollm2-135m-q4-k-m on port 8080"
+    },
+    {
+      "cycle": 6,
+      "started": true,
+      "inFlight": true,
+      "accepted": true,
+      "cancelled": true,
+      "settled": true,
+      "runEndedMs": 514,
+      "drained": true,
+      "drainMs": 0,
+      "processing": "0",
+      "ownedChildren": [
+        387840
+      ],
+      "childError": null,
+      "terminalOutcome": "cancelled",
+      "recordPath": "C:\\Users\\Mubarak\\AppData\\Roaming\\io.github.localmotive.app\\benchmarks\\benchmark-1790077839048-technical-explanation-v1-5.json",
+      "notice": "SYSStarted smollm2-135m-q4-k-m on port 8080"
+    }
+  ],
+  "boundaries": [
+    {
+      "scenario": "ui",
+      "started": true,
+      "inFlight": true,
+      "cancelled": true,
+      "cancelAt": 1790077851907,
+      "runEndedMs": 532,
+      "settled": true,
+      "drained": true,
+      "overlap": false,
+      "maxProcessing": 1,
+      "maxChildren": 0,
+      "attempt": {
+        "scenario": "ui",
+        "at": 1790077851924,
+        "cancelAt": 1790077851907,
+        "sinceCancelMs": 17,
+        "processingAtCancelRequest": "1",
+        "processingBeforeInvocation": "1",
+        "processingAfterInvocation": "1",
+        "buttonStateBefore": "absent",
+        "uiAccepted": false,
+        "apiAttempt": null,
+        "notice": "SYSStarted smollm2-135m-q4-k-m on port 8080"
+      },
+      "coverage": {
+        "coverage": "active",
+        "detail": "requests_processing=1 immediately before the invocation (cancel sample 1)"
+      },
+      "verdict": {
+        "status": "PASS",
+        "detail": "ui=refused while the previous request was active"
+      },
+      "original": {
+        "path": "C:\\Users\\Mubarak\\AppData\\Roaming\\io.github.localmotive.app\\benchmarks\\benchmark-1790077852222-technical-explanation-v1-6.json",
+        "terminalOutcome": "cancelled"
+      },
+      "replacement": {
+        "path": "C:\\Users\\Mubarak\\AppData\\Roaming\\io.github.localmotive.app\\benchmarks\\benchmark-1790077859628-technical-explanation-v1-7.json",
+        "terminalOutcome": null
+      },
+      "newRecords": [
+        "C:\\Users\\Mubarak\\AppData\\Roaming\\io.github.localmotive.app\\benchmarks\\benchmark-1790077852222-technical-explanation-v1-6.json"
+      ],
+      "replacementStart": 1790077852958
+    },
+    {
+      "scenario": "api",
+      "started": true,
+      "inFlight": true,
+      "cancelled": true,
+      "cancelAt": 1790077863872,
+      "runEndedMs": 532,
+      "settled": true,
+      "drained": true,
+      "overlap": false,
+      "maxProcessing": 1,
+      "maxChildren": 0,
+      "attempt": {
+        "scenario": "api",
+        "at": 1790077863888,
+        "cancelAt": 1790077863872,
+        "sinceCancelMs": 16,
+        "processingAtCancelRequest": "1",
+        "processingBeforeInvocation": "1",
+        "processingAfterInvocation": "1",
+        "buttonStateBefore": "absent",
+        "uiAccepted": null,
+        "apiAttempt": {
+          "status": "refused",
+          "error": "a warm-cache benchmark is already active; finish or cancel it first.",
+          "elapsedMs": 2
+        },
+        "notice": "SYSStarted smollm2-135m-q4-k-m on port 8080"
+      },
+      "coverage": {
+        "coverage": "active",
+        "detail": "requests_processing=1 immediately before the invocation (cancel sample 1)"
+      },
+      "verdict": {
+        "status": "PASS",
+        "detail": "api=refused while the previous request was active"
+      },
+      "original": {
+        "path": "C:\\Users\\Mubarak\\AppData\\Roaming\\io.github.localmotive.app\\benchmarks\\benchmark-1790077864268-technical-explanation-v1-8.json",
+        "terminalOutcome": "cancelled"
+      },
+      "replacement": {
+        "path": "C:\\Users\\Mubarak\\AppData\\Roaming\\io.github.localmotive.app\\benchmarks\\benchmark-1790077871689-technical-explanation-v1-9.json",
+        "terminalOutcome": null
+      },
+      "newRecords": [
+        "C:\\Users\\Mubarak\\AppData\\Roaming\\io.github.localmotive.app\\benchmarks\\benchmark-1790077864268-technical-explanation-v1-8.json"
+      ],
+      "replacementStart": 1790077864924
+    }
+  ],
+  "replacementRecordPath": "C:\\Users\\Mubarak\\AppData\\Roaming\\io.github.localmotive.app\\benchmarks\\benchmark-1790077871689-technical-explanation-v1-9.json",
+  "checks": [
+    {
+      "name": "mt06.precondition-server-live",
+      "ok": true,
+      "detail": "",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.owned-pid-enumeration",
+      "ok": true,
+      "detail": "pids=966552",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-1-window-workload-set",
+      "ok": true,
+      "detail": "input=1024",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-1-one-record-identity",
+      "ok": true,
+      "detail": "newRecords=1",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-1-cancel-in-flight",
+      "ok": true,
+      "detail": "",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-1-run-ended-bounded",
+      "ok": true,
+      "detail": "runEndedMs=512",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-1-requests-drained",
+      "ok": true,
+      "detail": "requests_processing=0 drainMs=0",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-1-cleanup-bounded",
+      "ok": true,
+      "detail": "drainMs=0",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-1-persisted-terminal-outcome",
+      "ok": true,
+      "detail": "record=C:\\Users\\Mubarak\\AppData\\Roaming\\io.github.localmotive.app\\benchmarks\\benchmark-1790077798807-technical-explanation-v1-0.json outcome=cancelled",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-1-owned-children-exactly-one",
+      "ok": true,
+      "detail": "children=966552",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-2-window-workload-set",
+      "ok": true,
+      "detail": "input=1024",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-2-one-record-identity",
+      "ok": true,
+      "detail": "newRecords=1",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-2-cancel-in-flight",
+      "ok": true,
+      "detail": "",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-2-run-ended-bounded",
+      "ok": true,
+      "detail": "runEndedMs=511",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-2-requests-drained",
+      "ok": true,
+      "detail": "requests_processing=0 drainMs=0",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-2-cleanup-bounded",
+      "ok": true,
+      "detail": "drainMs=0",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-2-persisted-terminal-outcome",
+      "ok": true,
+      "detail": "record=C:\\Users\\Mubarak\\AppData\\Roaming\\io.github.localmotive.app\\benchmarks\\benchmark-1790077803427-technical-explanation-v1-1.json outcome=cancelled",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-2-owned-children-exactly-one",
+      "ok": true,
+      "detail": "children=966552",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-2-stop-clears-owned-children",
+      "ok": true,
+      "detail": "children=",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-2-listener-released",
+      "ok": true,
+      "detail": "",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-2-restart-reaches-live",
+      "ok": true,
+      "detail": "",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-3-window-workload-set",
+      "ok": true,
+      "detail": "input=1024",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-3-one-record-identity",
+      "ok": true,
+      "detail": "newRecords=1",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-3-cancel-in-flight",
+      "ok": true,
+      "detail": "",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-3-run-ended-bounded",
+      "ok": true,
+      "detail": "runEndedMs=513",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-3-requests-drained",
+      "ok": true,
+      "detail": "requests_processing=0 drainMs=0",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-3-cleanup-bounded",
+      "ok": true,
+      "detail": "drainMs=0",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-3-persisted-terminal-outcome",
+      "ok": true,
+      "detail": "record=C:\\Users\\Mubarak\\AppData\\Roaming\\io.github.localmotive.app\\benchmarks\\benchmark-1790077816546-technical-explanation-v1-2.json outcome=cancelled",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-3-owned-children-exactly-one",
+      "ok": true,
+      "detail": "children=1857892",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-4-window-workload-set",
+      "ok": true,
+      "detail": "input=1024",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-4-one-record-identity",
+      "ok": true,
+      "detail": "newRecords=1",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-4-cancel-in-flight",
+      "ok": true,
+      "detail": "",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-4-run-ended-bounded",
+      "ok": true,
+      "detail": "runEndedMs=517",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-4-requests-drained",
+      "ok": true,
+      "detail": "requests_processing=0 drainMs=0",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-4-cleanup-bounded",
+      "ok": true,
+      "detail": "drainMs=0",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-4-persisted-terminal-outcome",
+      "ok": true,
+      "detail": "record=C:\\Users\\Mubarak\\AppData\\Roaming\\io.github.localmotive.app\\benchmarks\\benchmark-1790077821214-technical-explanation-v1-3.json outcome=cancelled",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-4-owned-children-exactly-one",
+      "ok": true,
+      "detail": "children=1857892",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-4-stop-clears-owned-children",
+      "ok": true,
+      "detail": "children=",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-4-listener-released",
+      "ok": true,
+      "detail": "",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-4-restart-reaches-live",
+      "ok": true,
+      "detail": "",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-5-window-workload-set",
+      "ok": true,
+      "detail": "input=1024",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-5-one-record-identity",
+      "ok": true,
+      "detail": "newRecords=1",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-5-cancel-in-flight",
+      "ok": true,
+      "detail": "",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-5-run-ended-bounded",
+      "ok": true,
+      "detail": "runEndedMs=517",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-5-requests-drained",
+      "ok": true,
+      "detail": "requests_processing=0 drainMs=0",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-5-cleanup-bounded",
+      "ok": true,
+      "detail": "drainMs=0",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-5-persisted-terminal-outcome",
+      "ok": true,
+      "detail": "record=C:\\Users\\Mubarak\\AppData\\Roaming\\io.github.localmotive.app\\benchmarks\\benchmark-1790077834316-technical-explanation-v1-4.json outcome=cancelled",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-5-owned-children-exactly-one",
+      "ok": true,
+      "detail": "children=387840",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-6-window-workload-set",
+      "ok": true,
+      "detail": "input=1024",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-6-one-record-identity",
+      "ok": true,
+      "detail": "newRecords=1",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-6-cancel-in-flight",
+      "ok": true,
+      "detail": "",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-6-run-ended-bounded",
+      "ok": true,
+      "detail": "runEndedMs=514",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-6-requests-drained",
+      "ok": true,
+      "detail": "requests_processing=0 drainMs=0",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-6-cleanup-bounded",
+      "ok": true,
+      "detail": "drainMs=0",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-6-persisted-terminal-outcome",
+      "ok": true,
+      "detail": "record=C:\\Users\\Mubarak\\AppData\\Roaming\\io.github.localmotive.app\\benchmarks\\benchmark-1790077839048-technical-explanation-v1-5.json outcome=cancelled",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-6-owned-children-exactly-one",
+      "ok": true,
+      "detail": "children=387840",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-6-stop-clears-owned-children",
+      "ok": true,
+      "detail": "children=",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-6-listener-released",
+      "ok": true,
+      "detail": "",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.cycle-6-restart-reaches-live",
+      "ok": true,
+      "detail": "",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.boundary-ui-window-workload-set",
+      "ok": true,
+      "detail": "input=1024",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.boundary-ui-active-request-coverage",
+      "ok": true,
+      "detail": "classification=active requests_processing=1 immediately before the invocation (cancel sample 1)",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.boundary-ui-replacement-refused-or-serialized",
+      "ok": true,
+      "detail": "PASS: ui=refused while the previous request was active",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.boundary-ui-original-record-identity",
+      "ok": true,
+      "detail": "record=C:\\Users\\Mubarak\\AppData\\Roaming\\io.github.localmotive.app\\benchmarks\\benchmark-1790077852222-technical-explanation-v1-6.json outcome=cancelled",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.boundary-ui-original-run-terminated",
+      "ok": true,
+      "detail": "drained=true drainMs=518 outcome=cancelled",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.boundary-ui-no-prohibited-configuration",
+      "ok": true,
+      "detail": "overlap=false maxProcessing=1 maxChildren=0",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.boundary-ui-replacement-ran-after-cleanup",
+      "ok": true,
+      "detail": "started=true inFlight=true newRecords=1 record=C:\\Users\\Mubarak\\AppData\\Roaming\\io.github.localmotive.app\\benchmarks\\benchmark-1790077859628-technical-explanation-v1-7.json outcome=none",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.boundary-api-window-workload-set",
+      "ok": true,
+      "detail": "input=1024",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.boundary-api-active-request-coverage",
+      "ok": true,
+      "detail": "classification=active requests_processing=1 immediately before the invocation (cancel sample 1)",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.boundary-api-replacement-refused-or-serialized",
+      "ok": true,
+      "detail": "PASS: api=refused while the previous request was active",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.boundary-api-original-record-identity",
+      "ok": true,
+      "detail": "record=C:\\Users\\Mubarak\\AppData\\Roaming\\io.github.localmotive.app\\benchmarks\\benchmark-1790077864268-technical-explanation-v1-8.json outcome=cancelled",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.boundary-api-original-run-terminated",
+      "ok": true,
+      "detail": "drained=true drainMs=519 outcome=cancelled",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.boundary-api-no-prohibited-configuration",
+      "ok": true,
+      "detail": "overlap=false maxProcessing=1 maxChildren=0",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.boundary-api-replacement-ran-after-cleanup",
+      "ok": true,
+      "detail": "started=true inFlight=true newRecords=1 record=C:\\Users\\Mubarak\\AppData\\Roaming\\io.github.localmotive.app\\benchmarks\\benchmark-1790077871689-technical-explanation-v1-9.json outcome=none",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.final-stop-clears-owned-children",
+      "ok": true,
+      "detail": "children=",
+      "status": "PASS"
+    },
+    {
+      "name": "mt06.final-listener-released",
+      "ok": true,
+      "detail": "",
+      "status": "PASS"
+    }
+  ],
+  "finishedAtUtc": "2026-09-22T11:51:15.512Z",
+  "totalMs": 92701,
+  "summary": "75/75 checks PASS (0 not exercised)"
+}

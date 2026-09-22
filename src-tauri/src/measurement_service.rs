@@ -1,5 +1,4 @@
-//! Measurement, quality and calibration command family (audit S-27 I1,
-//! slice 3b). Extracted from `lib.rs`: the same Tauri commands; the shared
+//! Measurement command family (audit S-27 I1, slice 3b).
 //! operation coordinator and the measurement/evidence authorities stay in
 //! their modules and are consumed here.
 use crate::core::{BenchmarkSummary, LaunchProfile};
@@ -7,8 +6,8 @@ use crate::local_client::LocalHttpClient;
 use crate::server_service::{validated_server_snapshot, ValidatedServerSnapshot};
 use crate::LaunchValidation;
 use crate::{
-    artifact, calibration, core, evidence, local_client, measurement, recommend, reserve_operation,
-    runtime, AppState, OperationOwner,
+    artifact, calibration, core, evidence, local_client, measurement, reserve_operation, runtime,
+    AppState, OperationOwner,
 };
 use crate::{spawn_server, wait_until_healthy_cancellable};
 
@@ -43,10 +42,11 @@ pub(crate) fn drain_owned_workers(client: &LocalHttpClient, ceiling: Duration) {
 }
 
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 use tauri::Manager;
 
 #[tauri::command]
@@ -55,6 +55,37 @@ pub(crate) async fn benchmark_server(
     repeats: u16,
     state: tauri::State<'_, AppState>,
 ) -> Result<BenchmarkSummary, String> {
+    run_legacy_benchmark(tokens, repeats, &state).await
+}
+
+/// Final gate (review deleg_16c0e72a): a cancel that arrives after the final
+/// response was accepted but before the command returns must not produce Ok.
+/// The frontend stores Ok as success, so finalization turns it into a
+/// cancellation error instead. A replaced server still discards the record.
+fn finalize_legacy_benchmark(
+    result: Result<BenchmarkSummary, String>,
+    cancelled: &AtomicBool,
+    reservation_current: bool,
+) -> Result<BenchmarkSummary, String> {
+    let summary = result?;
+    if cancelled.load(Ordering::Relaxed) {
+        return Err("The local request was cancelled".into());
+    }
+    if !reservation_current {
+        return Err(
+            "The managed server changed during the benchmark; the result was discarded.".into(),
+        );
+    }
+    Ok(summary)
+}
+
+async fn run_legacy_benchmark(
+    tokens: u32,
+    repeats: u16,
+    state: &AppState,
+) -> Result<BenchmarkSummary, String> {
+    core::validate_benchmark_options(tokens, repeats)?;
+    let reservation = reserve_operation(&state.operations, OperationOwner::Benchmark)?;
     let server = {
         let mut slot = state
             .server
@@ -62,15 +93,40 @@ pub(crate) async fn benchmark_server(
             .map_err(|_| "Server state is unavailable".to_string())?;
         validated_server_snapshot(&mut slot, "benchmarking")?
     };
-    // The legacy warm measurement blocks on loopback requests: it runs on a
-    // blocking worker instead of the main thread or async executor
-    // (audit IPC-01 I4).
-    tauri::async_runtime::spawn_blocking(move || {
-        let client = local_client(&server.profile)?;
-        core::benchmark_server(&client, tokens, repeats)
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let final_cancel = cancelled.clone();
+    let slot = state.benchmark.clone();
+    let signal = cancelled.clone();
+    // Client construction, requests, drain and final client drop must stay
+    // off the async executor. The slot is published before construction so a
+    // Cancel during construction lands on this run's flag.
+    let client = tauri::async_runtime::spawn_blocking(move || {
+        publish_benchmark_slot(&slot, signal, || local_client(&server.profile))
     })
     .await
-    .map_err(|error| format!("Benchmark task failed: {error}"))?
+    .map_err(|error| format!("Benchmark client task failed: {error}"))??;
+    let run_client = client.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        core::benchmark_server_cancellable(&run_client, tokens, repeats, &cancelled)
+    })
+    .await
+    .map_err(|error| format!("Benchmark task failed: {error}"));
+    // Keep both ownership slots until every request exits, including when
+    // the measurement task fails. Cancellation alone does not end its worker.
+    tauri::async_runtime::spawn_blocking(move || {
+        drain_owned_workers(
+            &client,
+            core::LEGACY_BENCH_TIMEOUT.saturating_add(WORKER_TEARDOWN_SLACK),
+        );
+    })
+    .await
+    .map_err(|error| format!("Benchmark drain task failed: {error}"))?;
+    *state
+        .benchmark
+        .lock()
+        .map_err(|_| "Benchmark state is unavailable")? = None;
+    let inner = result?;
+    finalize_legacy_benchmark(inner, &final_cancel, reservation.is_current())
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -96,6 +152,28 @@ pub(crate) struct ExecutionSnapshotOutcome {
     compatibility_key: String,
     schema_version: String,
     unknown_identities: Vec<String>,
+}
+
+fn lora_identity_sha256(profile: &LaunchProfile) -> Result<String, String> {
+    let references = crate::lora_references(profile)?;
+    if references.is_empty() {
+        return Ok(String::new());
+    }
+    let legacy_single = references.len() == 1 && profile.lora_scaled.trim().is_empty();
+    let mut hasher = Sha256::new();
+    hasher.update(b"localmotive.lora-set.v1\0");
+    hasher.update((references.len() as u64).to_le_bytes());
+    for (label, path, scale) in references {
+        artifact::validate_regular_non_reparse_file(&label, &path)?;
+        let digest = artifact::sha256_path(&path)?;
+        if legacy_single {
+            // Preserve the identity of existing single ordinary-adapter records.
+            return Ok(digest);
+        }
+        hasher.update(digest.as_bytes());
+        hasher.update(scale.to_bits().to_le_bytes());
+    }
+    Ok(hex::encode(hasher.finalize()))
 }
 
 pub(crate) fn benchmark_execution_snapshot_from_profile(
@@ -151,15 +229,7 @@ pub(crate) fn benchmark_execution_snapshot_from_profile(
         }
         artifact::sha256_path(Path::new(trimmed))
     };
-    let lora_path = profile.lora.split(',').next().unwrap_or("").trim();
-    let lora_scaled_path = profile.lora_scaled.split(',').next().unwrap_or("").trim();
-    let lora_sha256 = if !lora_path.is_empty() {
-        file_sha(lora_path)?
-    } else if !lora_scaled_path.is_empty() {
-        file_sha(lora_scaled_path)?
-    } else {
-        String::new()
-    };
+    let lora_sha256 = lora_identity_sha256(profile)?;
     let draft_model_sha256 = match profile.draft_model.as_deref() {
         Some(path) => file_sha(path)?,
         None => String::new(),
@@ -204,7 +274,7 @@ pub(crate) fn benchmark_execution_snapshot_from_profile(
     unknown_identities.dedup();
 
     // The scope is part of the identity: `launch` snapshots carry no
-    // workload digest and identify a configuration for quality attachment,
+    // workload digest and identify a launch configuration, while
     // `launch+workload` snapshots identify a measured run (audit MT-09).
     let (scope, workload_sha256) = match workload {
         Some(workload) => (
@@ -332,8 +402,8 @@ pub(crate) fn run_benchmark_snapshot(
         Some(&workload),
     )?;
     let compatibility_key = snapshot_outcome.compatibility_key.clone();
-    // The launch-scope identity of the same configuration lets quality
-    // evidence attach to measured runs without a workload (audit MT-09).
+    // The launch-scope identity records the same configuration without a
+    // workload (audit MT-09).
     let launch_compatibility_key = benchmark_execution_snapshot_from_profile(
         &profile,
         &validation,
@@ -488,25 +558,45 @@ pub(crate) fn run_benchmark_snapshot(
     })
 }
 
-/// F9-02: publish the active benchmark slot only after the fallible client has
-/// been constructed. The previous order published the slot first and then
-/// called `local_client(&server.profile)?`, so a certificate or API-key file
-/// that became invalid after the server was launched returned an error while
-/// the slot stayed occupied - no benchmark had started, yet every later
-/// attempt was refused with "A benchmark is already running". The constructor
-/// runs before the slot is touched, and an occupied slot is never overwritten,
-/// so an older owner's state can never be cleared by a newer caller.
+/// F9-02 with construction-window cancel (review deleg_16c0e72a): the slot is
+/// published before the fallible client is constructed, so a Cancel during
+/// construction lands on this run's flag instead of reporting "No benchmark
+/// is running". A construction failure clears only our own flag, so the slot
+/// stays free without clearing a replacement; an occupied slot is never
+/// overwritten, so an older owner's state can never be cleared by a newer
+/// caller.
 fn publish_benchmark_slot<T>(
     slot: &std::sync::Mutex<Option<Arc<AtomicBool>>>,
     cancelled: Arc<AtomicBool>,
     construct: impl FnOnce() -> Result<T, String>,
 ) -> Result<T, String> {
-    let product = construct()?;
-    let mut active = slot.lock().map_err(|_| "Benchmark state is unavailable")?;
-    if active.is_some() {
-        return Err("A benchmark is already running".into());
+    // Early publication: the frontend shows Cancel as soon as
+    // benchmark_server is dispatched, so the slot must exist during
+    // construction for the cancel to land on this run's own flag (review
+    // deleg_16c0e72a). Occupancy is checked first so a refused caller never
+    // overwrites the occupant; a construction failure clears only our own
+    // flag, so the slot stays free (F9-02) without clearing a replacement.
+    {
+        let mut active = slot.lock().map_err(|_| "Benchmark state is unavailable")?;
+        if active.is_some() {
+            return Err("A benchmark is already running".into());
+        }
+        *active = Some(cancelled.clone());
     }
-    *active = Some(cancelled);
+    let product = match construct() {
+        Ok(product) => product,
+        Err(error) => {
+            let mut active = slot.lock().map_err(|_| "Benchmark state is unavailable")?;
+            if active
+                .as_ref()
+                .map(|held| Arc::ptr_eq(held, &cancelled))
+                .unwrap_or(false)
+            {
+                *active = None;
+            }
+            return Err(error);
+        }
+    };
     Ok(product)
 }
 
@@ -517,9 +607,9 @@ pub(crate) async fn benchmark_v2(
     app: tauri::AppHandle,
 ) -> Result<BenchmarkRunResult, String> {
     workload.validate().map_err(|error| error.to_string())?;
-    // One machine owner: a benchmark cannot start while a server, tuning
-    // session, or quality suite owns the operations slot, and a cold attempt
-    // is its own owner kind (audit MT-05).
+    // One machine owner: a benchmark cannot start while a server or tuning
+    // session owns the operations slot, and a cold attempt is its own owner
+    // kind (audit MT-05).
     let owner = if workload.cache_mode == evidence::CacheMode::Cold {
         OperationOwner::ColdBenchmark
     } else {
@@ -645,6 +735,10 @@ pub(crate) async fn benchmark_v2(
 
 #[tauri::command]
 pub(crate) fn cancel_benchmark(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    request_benchmark_cancellation(&state)
+}
+
+fn request_benchmark_cancellation(state: &AppState) -> Result<(), String> {
     let active = state
         .benchmark
         .lock()
@@ -708,174 +802,244 @@ pub(crate) fn replay_benchmark_manifest_worker(
     measurement::validate_replay_compatibility(
         &manifest,
         logical_id,
-        &core::manifest_safe_args(&server.validation.arguments.effective_args),
+        &server.validation.arguments.effective_args,
         &current_compatibility_key,
     )?;
     Ok(manifest.workload)
 }
 
-#[tauri::command]
-pub(crate) async fn run_quality_suite(
-    state: tauri::State<'_, AppState>,
-) -> Result<recommend::QualitySuiteResult, String> {
-    // Quality checks drive the running server: they take the single
-    // operations reservation and must not finalize against a replacement
-    // (audit MT-05).
-    let reservation = reserve_operation(&state.operations, OperationOwner::Quality)?;
-    let (profile, runtime_path, model_logical_id, validation) = {
-        let mut slot = state
-            .server
-            .lock()
-            .map_err(|_| "Server state is unavailable")?;
-        let server = validated_server_snapshot(&mut slot, "quality checks")?;
-        let model_logical_id = server
-            .validation
-            .artifacts
-            .first()
-            .map(|artifact| artifact.logical_id.clone())
-            .ok_or("Validated model identity is unavailable")?;
-        (
-            server.profile.clone(),
-            server.profile.runtime.clone(),
-            model_logical_id,
-            server.validation.clone(),
+#[cfg(test)]
+mod lora_identity_tests {
+    use super::*;
+    use std::{fs, path::PathBuf};
+
+    struct Fixture {
+        root: PathBuf,
+        profile: LaunchProfile,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "localmotive-lora-identity-{}-{}",
+                std::process::id(),
+                rand::random::<u64>()
+            ));
+            fs::create_dir(&root).unwrap();
+            let model = root.join("model.gguf");
+            crate::release_security_tests::write_test_gguf_with_identity(&model, "llama", &[]);
+            fs::write(root.join("adapter a.gguf"), b"adapter-a fixture").unwrap();
+            fs::write(root.join("adapter b.gguf"), b"adapter-b fixture").unwrap();
+            Self {
+                root,
+                profile: LaunchProfile {
+                    alias: "fixture".into(),
+                    runtime: "fixture-runtime".into(),
+                    model: model.to_string_lossy().into_owned(),
+                    ..LaunchProfile::default()
+                },
+            }
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.root).unwrap();
+        }
+    }
+
+    fn snapshot_key(profile: &LaunchProfile) -> Result<String, String> {
+        // Isolate snapshot assembly from runtime execution and hardware probes.
+        // Model headers and adapter bytes are real temporary files.
+        let artifacts = vec![artifact::inspect_artifact(
+            Path::new(&profile.model),
+            &[],
+            true,
+        )?];
+        let source = evidence::EvidenceSource {
+            kind: evidence::EvidenceSourceKind::Unknown,
+            detail: "isolated identity fixture".into(),
+        };
+        let validation = LaunchValidation {
+            runtime: core::parse_capabilities("fixture", "--lora FNAME\n--lora-scaled FNAME:SCALE"),
+            artifacts: artifacts.clone(),
+            arguments: core::LaunchArgumentValidation {
+                effective_args: profile.build_args()?,
+                rejected: vec![],
+                command: String::new(),
+            },
+            effective_context: evidence::Evidence::unknown(source.clone(), 1, "not measured"),
+            unverified_requirements: vec![],
+        };
+        let runtime = runtime::RuntimeIdentity {
+            path: profile.runtime.clone(),
+            backend: "cpu".into(),
+            cuda_major: None,
+            tag: None,
+            install_key: None,
+            source: "none".into(),
+            managed_verified: false,
+        };
+        let hardware = runtime::HardwareInfo {
+            architecture: "fixture".into(),
+            gpu_names: vec![],
+            vendor: "unknown".into(),
+            cuda_major: None,
+            driver_version: String::new(),
+            detection_status: "fixture".into(),
+            recommendation: String::new(),
+            system_memory: runtime::SystemMemoryInfo {
+                total_physical_bytes: evidence::Evidence::unknown(
+                    source.clone(),
+                    1,
+                    "not measured",
+                ),
+                available_physical_bytes: evidence::Evidence::unknown(
+                    source.clone(),
+                    1,
+                    "not measured",
+                ),
+                memory_load_percent: evidence::Evidence::unknown(source, 1, "not measured"),
+            },
+            adapters: vec![],
+            manual_overrides: vec![],
+            unassigned_nvidia: vec![],
+        };
+        benchmark_execution_snapshot_from_profile(
+            profile,
+            &validation,
+            &artifacts,
+            &runtime,
+            &"a".repeat(64),
+            &hardware,
+            None,
         )
-    };
-    let joined = tauri::async_runtime::spawn_blocking(
-        move || -> Result<recommend::QualitySuiteResult, String> {
-            // Full identity is captured BEFORE the quality requests
-            // (audit MT-09 I1): model content, runtime executable, and the
-            // launch-scope execution snapshot of the serving configuration.
-            let (model_content_sha256, launch_compatibility_key) = {
-                let inspection = artifact::inspect_artifact(
-                    Path::new(
-                        validation
-                            .artifacts
-                            .first()
-                            .map(|artifact| artifact.first_shard.as_str())
-                            .ok_or("Validated model identity is unavailable")?,
-                    ),
-                    &[],
-                    true,
-                )?;
-                let content = inspection
-                    .shards
-                    .first()
-                    .and_then(|shard| shard.sha256.clone())
-                    .ok_or("Model content identity is unavailable")?;
-                let runtime_identity = runtime::describe_runtime(Path::new(&runtime_path));
-                let executable_sha256 = artifact::sha256_path(Path::new(&runtime_path))?;
-                let hardware = runtime::detect_hardware();
-                let key = benchmark_execution_snapshot_from_profile(
-                    &profile,
-                    &validation,
-                    &[inspection],
-                    &runtime_identity,
-                    &executable_sha256,
-                    &hardware,
-                    None,
-                )?
-                .compatibility_key;
-                (content, key)
-            };
-            let client = crate::local_client::LocalHttpClient::from_profile(&profile)?;
-            let mut result = recommend::run_quality_suite_with(|_, prompt| {
-                measurement::quality_completion_request(&client, prompt)
-            });
-            result.observed_at_ms = Some(
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map_err(|error| error.to_string())?
-                    .as_millis()
-                    .try_into()
-                    .map_err(|_| "System time is outside the supported range")?,
-            );
-            result.model_logical_id = Some(model_logical_id);
-            result.runtime_sha256 = Some(artifact::sha256_path(Path::new(&runtime_path))?);
-            result.model_content_sha256 = Some(model_content_sha256);
-            result.compatibility_key = Some(launch_compatibility_key);
-            Ok(result)
-        },
-    )
-    .await
-    .map_err(|error| format!("Quality task failed: {error}"))?;
-    let result = joined?;
-    if !reservation.is_current() {
-        return Err(
-            "The managed server was stopped or replaced during the quality suite; the results were discarded."
-                .into(),
+        .map(|outcome| outcome.compatibility_key)
+    }
+
+    #[test]
+    fn scaled_lora_snapshot_reads_the_adapter_and_binds_its_scale() {
+        let mut fixture = Fixture::new();
+        fixture.profile.lora_scaled =
+            format!("{}:0.5", fixture.root.join("adapter a.gguf").display());
+        // Independent hashlib/struct vectors pin the byte format across hosts.
+        assert_eq!(
+            lora_identity_sha256(&fixture.profile).unwrap(),
+            "a300e08a80f79c2fb59214716c7c218cefbf1495f647dbb24c2e83539229fc26"
+        );
+        let first = snapshot_key(&fixture.profile)
+            .unwrap_or_else(|error| panic!("valid scaled adapter rejected: {error}"));
+        fixture.profile.lora_scaled =
+            format!("{}:0.25", fixture.root.join("adapter a.gguf").display());
+        assert_ne!(first, snapshot_key(&fixture.profile).unwrap());
+    }
+
+    #[test]
+    fn lora_identity_preserves_empty_and_single_ordinary_digests() {
+        let mut fixture = Fixture::new();
+        assert_eq!(lora_identity_sha256(&fixture.profile).unwrap(), "");
+        let adapter = fixture.root.join("adapter a.gguf");
+        fixture.profile.lora = adapter.to_string_lossy().into_owned();
+        assert_eq!(
+            lora_identity_sha256(&fixture.profile).unwrap(),
+            artifact::sha256_path(&adapter).unwrap()
         );
     }
-    Ok(result)
-}
 
-/// Join quality evidence to a measured run in Rust: the compatibility and
-/// content checks happen at this boundary, never in the frontend
-/// (audit MT-09 I3).
-#[tauri::command]
-pub(crate) fn join_quality_candidate(
-    id: String,
-    manifest: evidence::BenchmarkManifest,
-    result_class: evidence::FitClass,
-    quality: Option<recommend::QualitySuiteResult>,
-) -> Result<recommend::CandidateEvidence, String> {
-    recommend::candidate_from_manifest(&id, &manifest, result_class, quality.as_ref())
-}
+    #[test]
+    fn lora_identity_binds_order_duplicates_and_later_file_bytes() {
+        let mut fixture = Fixture::new();
+        let a = fixture.root.join("adapter a.gguf");
+        let b = fixture.root.join("adapter b.gguf");
+        fixture.profile.lora = format!("{},{}", a.display(), b.display());
+        let baseline = lora_identity_sha256(&fixture.profile).unwrap();
+        assert_eq!(
+            baseline,
+            "522a47b9345706c82bef43cbe962f7d6d4c9d00f7329ee6d41291a1b3f32167d"
+        );
+        fixture.profile.lora = format!("{},{}", b.display(), a.display());
+        assert_ne!(baseline, lora_identity_sha256(&fixture.profile).unwrap());
+        fixture.profile.lora = format!("{},{}", a.display(), a.display());
+        let duplicates = lora_identity_sha256(&fixture.profile).unwrap();
+        assert_ne!(baseline, duplicates);
+        fixture.profile.lora = a.to_string_lossy().into_owned();
+        assert_ne!(duplicates, lora_identity_sha256(&fixture.profile).unwrap());
+        fixture.profile.lora = format!("{},{}", a.display(), b.display());
+        fs::write(b, b"changed adapter-b fixture").unwrap();
+        assert_ne!(baseline, lora_identity_sha256(&fixture.profile).unwrap());
+    }
 
-#[tauri::command]
-pub(crate) fn rank_candidates(
-    candidates: Vec<recommend::CandidateEvidence>,
-    constraints: recommend::RecommendationConstraints,
-    weights: recommend::ObjectiveWeights,
-) -> Result<Vec<recommend::RankedCandidate>, String> {
-    recommend::rank_candidates(&candidates, &constraints, &weights)
-}
+    #[test]
+    fn lora_identity_includes_scaled_entries_beside_ordinary_entries() {
+        let mut fixture = Fixture::new();
+        let a = fixture.root.join("adapter a.gguf");
+        let b = fixture.root.join("adapter b.gguf");
+        fixture.profile.lora = a.to_string_lossy().into_owned();
+        fixture.profile.lora_scaled = format!("{}:0.5", b.display());
+        assert_eq!(
+            lora_identity_sha256(&fixture.profile).unwrap(),
+            "2f973e052881609cd61f2b885105749312d6f36b3d54e3f1314fbdf5f1c4c64d"
+        );
+        let baseline = snapshot_key(&fixture.profile).unwrap();
+        fixture.profile.lora_scaled = format!("{}:0.25", b.display());
+        assert_ne!(baseline, snapshot_key(&fixture.profile).unwrap());
+        fixture.profile.lora_scaled = format!("{}:0.50", b.display());
+        assert_eq!(baseline, snapshot_key(&fixture.profile).unwrap());
+        fs::write(b, b"changed scaled adapter").unwrap();
+        assert_ne!(baseline, snapshot_key(&fixture.profile).unwrap());
+    }
 
-#[tauri::command]
-pub(crate) fn build_compatibility_key(
-    identity: calibration::CompatibilityIdentity,
-) -> Result<String, String> {
-    calibration::compatibility_key(&identity)
-}
+    #[test]
+    fn lora_identity_rejects_malformed_lists_and_unreadable_files() {
+        let mut fixture = Fixture::new();
+        let a = fixture.root.join("adapter a.gguf");
+        for scale in ["", "NaN", "inf", "-inf", "1e100", "not-a-number"] {
+            fixture.profile.lora_scaled = format!("{}:{scale}", a.display());
+            assert!(
+                lora_identity_sha256(&fixture.profile).is_err(),
+                "scale {scale}"
+            );
+        }
+        fixture.profile.lora_scaled = ":0.5".into();
+        assert!(lora_identity_sha256(&fixture.profile)
+            .unwrap_err()
+            .contains("empty path"));
+        fixture.profile.lora_scaled.clear();
+        fixture.profile.lora = format!("{},", a.display());
+        assert!(lora_identity_sha256(&fixture.profile)
+            .unwrap_err()
+            .contains("empty path"));
+        fixture.profile.lora = fixture.root.to_string_lossy().into_owned();
+        assert!(lora_identity_sha256(&fixture.profile).is_err());
+        let missing = fixture.root.join("missing.gguf");
+        fixture.profile.lora = missing.to_string_lossy().into_owned();
+        assert!(lora_identity_sha256(&fixture.profile).is_err());
+        assert!(!missing.exists());
+    }
 
-#[tauri::command]
-pub(crate) fn build_calibration_model(
-    anchors: Vec<calibration::CalibrationAnchor>,
-    created_at_ms: u64,
-    ttl_ms: u64,
-) -> Result<calibration::CalibrationModel, String> {
-    calibration::build_calibration(&anchors, created_at_ms, ttl_ms)
-}
-
-#[tauri::command]
-pub(crate) fn apply_calibration_model(
-    model: calibration::CalibrationModel,
-    compatibility_key: String,
-    estimated_value: f64,
-    now_ms: u64,
-) -> Result<calibration::CalibratedEstimate, String> {
-    calibration::apply_calibration(&model, &compatibility_key, estimated_value, now_ms)
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct CalibrationRecords {
-    pub(crate) anchors: Vec<calibration::CalibrationAnchor>,
-    pub(crate) models: Vec<calibration::CalibrationModel>,
-    /// Bounded diagnostics from the load (audit S-16): quarantined corrupt or
-    /// invalid records are reported here while valid history keeps loading.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) problems: Vec<String>,
-}
-
-pub(crate) fn calibration_storage_root(
-    app: &tauri::AppHandle,
-) -> Result<std::path::PathBuf, String> {
-    Ok(app
-        .path()
-        .app_data_dir()
-        .map_err(|error| error.to_string())?
-        .join("calibration"))
+    #[cfg(windows)]
+    #[test]
+    fn lora_identity_refuses_a_junction_ancestor() {
+        let mut fixture = Fixture::new();
+        let target = fixture.root.join("target");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("adapter.gguf"), b"fixture").unwrap();
+        let junction = fixture.root.join("junction");
+        let output = crate::proc::hidden_command("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&target)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "could not create the junction fixture"
+        );
+        fixture.profile.lora = junction.join("adapter.gguf").to_string_lossy().into_owned();
+        let result = lora_identity_sha256(&fixture.profile);
+        fs::remove_dir(junction).unwrap();
+        assert!(result.unwrap_err().contains("reparse"));
+    }
 }
 
 #[cfg(test)]
@@ -963,6 +1127,113 @@ mod r16_ownership_tests {
     }
 
     #[test]
+    fn legacy_cancel_is_observable_while_the_client_is_constructed() {
+        // Review deleg_16c0e72a: the frontend shows Cancel as soon as
+        // benchmark_server is dispatched, but the backend published the slot
+        // only after local_client construction succeeded. A cancel in that
+        // window received "No benchmark is running" while construction
+        // continued and the benchmark ran anyway. The slot must exist during
+        // construction so the cancel lands on the run's own flag.
+        let slot = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let probe = cancelled.clone();
+        let worker_slot = slot.clone();
+        let worker = std::thread::spawn(move || {
+            publish_benchmark_slot(&worker_slot, cancelled, || {
+                std::thread::sleep(Duration::from_millis(400));
+                Ok::<u32, String>(42)
+            })
+        });
+        // The constructor is still running here (it sleeps 400 ms). The slot
+        // must already hold this run's flag so request_benchmark_cancellation
+        // can observe it. Check once at 100 ms: late publication still has
+        // an empty slot at that point, early publication already holds it.
+        std::thread::sleep(Duration::from_millis(100));
+        let observed = slot.lock().unwrap().is_some();
+        let flag_matches = slot
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|held| Arc::ptr_eq(held, &probe))
+            .unwrap_or(false);
+        // Cancel now: with early publication this succeeds and the run must
+        // observe it. With late publication the slot is still empty here.
+        if observed {
+            slot.lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .store(true, Ordering::Relaxed);
+        }
+        let product = worker.join().unwrap();
+        assert!(
+            observed,
+            "the slot must be published before construction finishes"
+        );
+        assert!(
+            flag_matches,
+            "the published flag must be this run's own cancellation flag"
+        );
+        assert_eq!(product.unwrap(), 42);
+        assert!(
+            probe.load(Ordering::Relaxed),
+            "a cancel during construction must survive construction"
+        );
+    }
+
+    #[test]
+    fn legacy_success_is_discarded_when_cancel_arrives_before_finalization() {
+        // Review deleg_16c0e72a: a cancel after the final response was
+        // accepted but before the command returned still produced Ok, and the
+        // frontend stored it as success. A set flag at finalization must turn
+        // an Ok result into a cancellation error, while an unset flag and a
+        // current reservation keep the success.
+        let summary = crate::core::BenchmarkSummary {
+            samples: vec![100.0],
+            mean_tps: 100.0,
+            median_tps: 100.0,
+            min_tps: 100.0,
+            max_tps: 100.0,
+            tokens: 64,
+            repeats: 1,
+        };
+        let cancelled = AtomicBool::new(true);
+        let discarded = finalize_legacy_benchmark(Ok(summary), &cancelled, true);
+        assert_eq!(discarded.unwrap_err(), "The local request was cancelled");
+        let summary = crate::core::BenchmarkSummary {
+            samples: vec![100.0],
+            mean_tps: 100.0,
+            median_tps: 100.0,
+            min_tps: 100.0,
+            max_tps: 100.0,
+            tokens: 64,
+            repeats: 1,
+        };
+        let quiet = AtomicBool::new(false);
+        let kept = finalize_legacy_benchmark(Ok(summary), &quiet, true);
+        assert!(
+            kept.is_ok(),
+            "an uncancelled current run keeps its success: {kept:?}"
+        );
+        let summary = crate::core::BenchmarkSummary {
+            samples: vec![100.0],
+            mean_tps: 100.0,
+            median_tps: 100.0,
+            min_tps: 100.0,
+            max_tps: 100.0,
+            tokens: 64,
+            repeats: 1,
+        };
+        let replaced = finalize_legacy_benchmark(Ok(summary), &quiet, false);
+        assert!(
+            replaced
+                .unwrap_err()
+                .contains("changed during the benchmark"),
+            "a replaced server still discards the record"
+        );
+    }
+
+    #[test]
     fn r16_the_drain_bound_follows_the_workload_request_deadline() {
         // R16: the previous fixed 300 s ceiling sat BELOW the default 600 s
         // request deadline, so a cancelled slow request could outlive the
@@ -1039,5 +1310,332 @@ mod r16_ownership_tests {
             waited >= Duration::from_millis(500),
             "the drain kept waiting past the exceeded ceiling ({waited:?})"
         );
+    }
+}
+
+#[cfg(test)]
+mod legacy_ownership_tests {
+    use super::*;
+    use crate::{proc, ManagedServer};
+    use std::fs;
+    use std::io::{BufReader, Read, Write};
+    use std::net::TcpListener;
+    use std::path::PathBuf;
+    use std::process::Stdio;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::mpsc::{self, Receiver};
+    use std::time::Instant;
+
+    const FIXTURE_ROOT: &str = "LOCALMOTIVE_BENCH_FIXTURE_ROOT";
+    const WAIT: Duration = Duration::from_secs(30);
+
+    fn wait_until(mut ready: impl FnMut() -> bool) {
+        let start = Instant::now();
+        while !ready() {
+            assert!(start.elapsed() < WAIT, "fixture transition timed out");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    // Parent tests invoke this entry point as their contained child. It owns
+    // the listener, so the process and HTTP lifetime are the same resource.
+    #[test]
+    #[ignore = "contained HTTP fixture; invoked explicitly by legacy ownership tests"]
+    fn fixture_server() {
+        let root = PathBuf::from(std::env::var_os(FIXTURE_ROOT).expect("fixture root"));
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        fs::write(
+            root.join("port.tmp"),
+            listener.local_addr().unwrap().port().to_string(),
+        )
+        .unwrap();
+        fs::rename(root.join("port.tmp"), root.join("port")).unwrap();
+        let count = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            let mut connections = Vec::new();
+            while !root.join("shutdown").exists() {
+                let (mut stream, _) = match listener.accept() {
+                    Ok(connection) => connection,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
+                    Err(error) => panic!("fixture accept: {error}"),
+                };
+                assert!(connections.len() < 64, "fixture request budget exceeded");
+                let root = &root;
+                let count = &count;
+                connections.push(scope.spawn(move || {
+                    stream.set_nonblocking(false).unwrap();
+                    stream.set_read_timeout(Some(WAIT)).unwrap();
+                    stream.set_write_timeout(Some(WAIT)).unwrap();
+                    let mut reader = BufReader::new(stream.try_clone().unwrap());
+                    let mut header = Vec::new();
+                    while header.len() < 16 * 1024 && !header.ends_with(b"\r\n\r\n") {
+                        let mut byte = [0];
+                        if reader.read_exact(&mut byte).is_err() {
+                            return;
+                        }
+                        header.push(byte[0]);
+                    }
+                    assert!(header.ends_with(b"\r\n\r\n"));
+                    let header = String::from_utf8(header).unwrap();
+                    assert!(header.starts_with("POST /completion HTTP/1.1\r\n"));
+                    let length = header.lines().find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().unwrap())
+                    }).unwrap();
+                    assert!(length <= 16 * 1024);
+                    let mut body = vec![0; length];
+                    reader.read_exact(&mut body).unwrap();
+                    let _: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                    let index = count.fetch_add(1, Ordering::SeqCst) + 1;
+                    fs::write(root.join(format!("request-{index}")), b"read").unwrap();
+                    while !root.join("release").exists() && !root.join("shutdown").exists() {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    if root.join("shutdown").exists() {
+                        return;
+                    }
+                    let body = r#"{"timings":{"predicted_per_second":100.0}}"#;
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    // Cancellation can close the receiving socket first.
+                    let _ = stream.write_all(response.as_bytes());
+                }));
+            }
+            for connection in connections {
+                connection.join().unwrap();
+            }
+        });
+    }
+
+    struct Fixture {
+        state: Arc<AppState>,
+        root: PathBuf,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let root = (0..16)
+                .find_map(|_| {
+                    let path = std::env::temp_dir().join(format!(
+                        "localmotive-benchmark-owner-{}-{}",
+                        std::process::id(),
+                        rand::random::<u64>()
+                    ));
+                    match fs::create_dir(&path) {
+                        Ok(()) => Some(path),
+                        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
+                        Err(error) => panic!("fixture directory: {error}"),
+                    }
+                })
+                .expect("unique fixture directory");
+            let fixture = Self {
+                state: Arc::new(AppState::default()),
+                root,
+            };
+            let log = fs::File::create(fixture.root.join("child.log")).unwrap();
+            let mut command = proc::hidden_command(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "measurement_service::legacy_ownership_tests::fixture_server",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env(FIXTURE_ROOT, &fixture.root)
+                .stdout(Stdio::from(log.try_clone().unwrap()))
+                .stderr(Stdio::from(log));
+            let mut child = proc::spawn_contained_process(&mut command).unwrap();
+            wait_until(|| {
+                if fixture.root.join("port").exists() {
+                    return true;
+                }
+                assert!(
+                    child.try_wait().unwrap().is_none(),
+                    "fixture child exited before readiness"
+                );
+                false
+            });
+            let port = fs::read_to_string(fixture.root.join("port"))
+                .unwrap()
+                .parse()
+                .unwrap();
+            *fixture.state.server.lock().unwrap() = Some(ManagedServer {
+                child,
+                profile: LaunchProfile {
+                    port,
+                    alias: "ownership-fixture".into(),
+                    ..LaunchProfile::default()
+                },
+                command: "contained test fixture".into(),
+                validation: crate::release_security_tests::launch_validation_fixture(),
+                log_path: fixture
+                    .root
+                    .join("child.log")
+                    .to_string_lossy()
+                    .into_owned(),
+                started_at: 0,
+                runtime_lease: None,
+                log_drains: Vec::new(),
+            });
+            fixture
+        }
+
+        fn run(
+            &self,
+        ) -> (
+            tauri::async_runtime::JoinHandle<()>,
+            Receiver<Result<BenchmarkSummary, String>>,
+        ) {
+            let state = self.state.clone();
+            let (sender, receiver) = mpsc::channel();
+            let task = tauri::async_runtime::spawn(async move {
+                let result = run_legacy_benchmark(64, 1, &state).await;
+                let _ = sender.send(result);
+            });
+            (task, receiver)
+        }
+
+        fn release(&self) {
+            fs::write(self.root.join("release"), b"release").unwrap();
+        }
+
+        fn shutdown(&self) {
+            fs::write(self.root.join("shutdown"), b"shutdown").unwrap();
+            if let Some(mut server) = self.state.server.lock().unwrap().take() {
+                wait_until(|| server.child.try_wait().unwrap().is_some());
+                assert!(server.child.terminate_and_wait());
+            }
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::write(self.root.join("shutdown"), b"shutdown");
+            if let Ok(mut slot) = self.state.server.lock() {
+                // ContainedProcess drop terminates only this fixture tree,
+                // including when a failing assertion unwinds the parent test.
+                slot.take();
+            }
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    #[test]
+    fn legacy_cancellation_holds_ownership_until_the_request_drains() {
+        let fixture = Fixture::new();
+        let (task, result) = fixture.run();
+        wait_until(|| fixture.root.join("request-1").exists());
+        let cancelled = request_benchmark_cancellation(&fixture.state);
+        // The fixture holds the response beyond the caller's cancellation
+        // slice. Returning now would release ownership of a live request.
+        let early = result.recv_timeout(Duration::from_secs(2));
+        let held = crate::active_operation_owner(&fixture.state.operations);
+        let stop_conflict = crate::stop_owner_conflict(held);
+        let replacement_refused =
+            reserve_operation(&fixture.state.operations, OperationOwner::Tuning).is_err();
+        fixture.release();
+        let finished_early = early.is_ok();
+        let outcome = early.unwrap_or_else(|_| result.recv_timeout(WAIT).unwrap());
+        tauri::async_runtime::block_on(task).unwrap();
+        let extra_request = fixture.root.join("request-2").exists();
+        let slot_cleared = fixture.state.benchmark.lock().unwrap().is_none();
+        let owner_cleared = crate::active_operation_owner(&fixture.state.operations).is_none();
+        let (retry, retry_result) = fixture.run();
+        let recovered = retry_result.recv_timeout(WAIT).unwrap();
+        tauri::async_runtime::block_on(retry).unwrap();
+        fixture.shutdown();
+        assert!(
+            cancelled.is_ok(),
+            "legacy cancellation failed: {cancelled:?}"
+        );
+        assert!(
+            !finished_early,
+            "cancellation released a request before drain"
+        );
+        assert_eq!(held, Some(OperationOwner::Benchmark));
+        assert!(stop_conflict.is_some() && replacement_refused);
+        assert!(outcome.unwrap_err().contains("cancelled"));
+        assert!(
+            !extra_request,
+            "cancellation dispatched another measurement"
+        );
+        assert!(slot_cleared && owner_cleared);
+        assert!(
+            recovered.is_ok(),
+            "a cancelled run must permit a later run: {recovered:?}"
+        );
+    }
+
+    #[test]
+    fn legacy_client_failure_does_not_publish_a_slot_or_keep_ownership() {
+        let fixture = Fixture::new();
+        let key_path = fixture.root.join("removed-key");
+        fs::write(&key_path, b"fixture-only").unwrap();
+        fixture
+            .state
+            .server
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .profile
+            .api_key_file = key_path.to_string_lossy().into_owned();
+        fs::remove_file(key_path).unwrap();
+        let (task, result) = fixture.run();
+        let failure = result.recv_timeout(WAIT).unwrap().unwrap_err();
+        tauri::async_runtime::block_on(task).unwrap();
+        assert!(failure.contains("API key"), "{failure}");
+        assert!(fixture.state.benchmark.lock().unwrap().is_none());
+        assert!(crate::active_operation_owner(&fixture.state.operations).is_none());
+        assert!(!fixture.root.join("request-1").exists());
+        fixture
+            .state
+            .server
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .profile
+            .api_key_file
+            .clear();
+        fixture.release();
+        let (retry, result) = fixture.run();
+        let recovered = result.recv_timeout(WAIT).unwrap();
+        tauri::async_runtime::block_on(retry).unwrap();
+        fixture.shutdown();
+        assert!(recovered.is_ok(), "{recovered:?}");
+    }
+
+    #[test]
+    fn legacy_command_rejects_an_overlapping_request_before_http() {
+        let fixture = Fixture::new();
+        let (first, first_result) = fixture.run();
+        wait_until(|| fixture.root.join("request-1").exists());
+        let (second, second_result) = fixture.run();
+        let mut refused = None;
+        wait_until(|| {
+            refused = second_result.try_recv().ok();
+            refused.is_some() || fixture.root.join("request-2").exists()
+        });
+        let overlapped = fixture.root.join("request-2").exists();
+        fixture.release();
+        let first_result = first_result.recv_timeout(WAIT).unwrap();
+        let second_result = refused.unwrap_or_else(|| second_result.recv_timeout(WAIT).unwrap());
+        tauri::async_runtime::block_on(first).unwrap();
+        tauri::async_runtime::block_on(second).unwrap();
+        fixture.shutdown();
+        assert!(first_result.is_ok(), "{first_result:?}");
+        assert!(
+            !overlapped,
+            "a second legacy command reached HTTP while the first response was held"
+        );
+        assert!(second_result.unwrap_err().contains("already active"));
     }
 }

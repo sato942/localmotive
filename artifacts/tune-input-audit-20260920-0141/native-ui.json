@@ -1,0 +1,199 @@
+{
+  "scope": "Working-tree UI diagnostic; not release qualification",
+  "startedAt": "2026-09-19T22:04:22.677Z",
+  "source": "bdb3c14c9170f0342ba0384738e2ffd23062970d",
+  "sourceDirty": true,
+  "executable": "C:\\Users\\Mubarak\\Documents\\Projects\\localmotive\\src-tauri\\target\\release\\localmotive.exe",
+  "sha256": "f024dd94398f24c228b60f1b998b775bad419d345d9932bfbe4e26d6aa24ac55",
+  "checks": [
+    {
+      "id": "uninspected-speculation",
+      "status": "PASS",
+      "evidence": {
+        "disabled": true,
+        "values": [
+          "none"
+        ],
+        "invalidChildren": 0
+      }
+    },
+    {
+      "id": "numeric-domains",
+      "status": "PASS",
+      "evidence": {
+        "count": 41,
+        "unbounded": 0
+      }
+    },
+    {
+      "id": "invalid-tuning-workload-refused-before-runtime",
+      "status": "PASS",
+      "evidence": {
+        "message": "Tuning tokens must be between 64 and 2048"
+      }
+    },
+    {
+      "id": "raw-file-flags-require-profile-fields",
+      "status": "PASS",
+      "evidence": {
+        "rejectedFlags": [
+          "--lora",
+          "--lora-scaled",
+          "--mmproj"
+        ]
+      }
+    },
+    {
+      "id": "invalid-benchmark-workload-refused-before-server",
+      "status": "PASS",
+      "evidence": {
+        "message": "Tokens must be between 64 and 4096"
+      }
+    },
+    {
+      "id": "read_gguf_summary-rejects-junction",
+      "status": "PASS",
+      "evidence": {
+        "refusedBeforeReading": true
+      }
+    },
+    {
+      "id": "inspect_model_artifact-rejects-junction",
+      "status": "PASS",
+      "evidence": {
+        "refusedBeforeReading": true
+      }
+    },
+    {
+      "id": "invalid-save-refused",
+      "status": "PASS",
+      "evidence": {
+        "persistedProfiles": 0
+      }
+    },
+    {
+      "id": "invalid-control-start-refused",
+      "status": "PASS",
+      "evidence": {
+        "phase": "idle",
+        "pid": null
+      }
+    },
+    {
+      "id": "blank-number-not-zero",
+      "status": "PASS",
+      "evidence": {
+        "value": ""
+      }
+    },
+    {
+      "id": "corrected-profile-save",
+      "status": "PASS",
+      "evidence": {
+        "context": 4096,
+        "port": 8080
+      }
+    },
+    {
+      "id": "tune-input-maxTrials",
+      "status": "PASS",
+      "evidence": {
+        "label": "AI trials",
+        "blank": {
+          "value": "",
+          "valid": false,
+          "disabled": true,
+          "error": "AI trials must be a whole number between 1 and 12."
+        },
+        "rejected": {
+          "disabled": true
+        },
+        "recovery": {
+          "value": "12",
+          "valid": true,
+          "enabled": true,
+          "error": null
+        },
+        "boundary": "real packaged controls; metadata-only readiness fixture; valid Tune action not clicked"
+      }
+    },
+    {
+      "id": "tune-input-tokens",
+      "status": "PASS",
+      "evidence": {
+        "label": "Tokens per measurement",
+        "blank": {
+          "value": "",
+          "valid": false,
+          "disabled": true,
+          "error": "Tokens per measurement must be a whole number between 64 and 2048."
+        },
+        "rejected": {
+          "disabled": true
+        },
+        "recovery": {
+          "value": "257",
+          "valid": true,
+          "enabled": true,
+          "error": null
+        },
+        "boundary": "real packaged controls; metadata-only readiness fixture; valid Tune action not clicked"
+      }
+    },
+    {
+      "id": "tune-input-repeats",
+      "status": "PASS",
+      "evidence": {
+        "label": "Repeats per trial",
+        "blank": {
+          "value": "",
+          "valid": false,
+          "disabled": true,
+          "error": "Repeats per trial must be a whole number between 1 and 5."
+        },
+        "rejected": {
+          "disabled": true
+        },
+        "recovery": {
+          "value": "5",
+          "valid": true,
+          "enabled": true,
+          "error": null
+        },
+        "boundary": "real packaged controls; metadata-only readiness fixture; valid Tune action not clicked"
+      }
+    },
+    {
+      "id": "manual-update-disclosure",
+      "status": "PASS",
+      "evidence": {
+        "button": true,
+        "manual": true
+      }
+    },
+    {
+      "id": "about-mobile-layout",
+      "status": "PASS",
+      "evidence": {
+        "width": 360,
+        "scrollWidth": 350,
+        "undersized": 0,
+        "buttons": 6
+      }
+    },
+    {
+      "id": "uncaught-ui-errors",
+      "status": "PASS",
+      "evidence": {
+        "count": 0
+      }
+    }
+  ],
+  "tuneBoundary": {
+    "credentialMetadataHooks": 1,
+    "boundary": "UI readiness metadata only; no stored credential or IPC replacement"
+  },
+  "cleanup": "PASS",
+  "finishedAt": "2026-09-19T22:04:24.475Z",
+  "status": "PASS"
+}

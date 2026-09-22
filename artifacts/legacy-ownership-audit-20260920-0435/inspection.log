@@ -1,0 +1,24 @@
+[
+  {
+    "path": "C:\\Users\\Mubarak\\Documents\\Projects\\localmotive\\src-tauri\\target\\release\\localmotive.exe",
+    "bytes": 20178944,
+    "sha256": "e8413a616090c32907b204044d50f1833660f6fdba48b3e93037e06124441820",
+    "signature": "NotSigned",
+    "version": "0.6.0"
+  },
+  {
+    "path": "C:\\Users\\Mubarak\\Documents\\Projects\\localmotive\\src-tauri\\target\\release\\bundle\\msi\\Localmotive_0.6.0_x64_en-US.msi",
+    "bytes": 8806400,
+    "sha256": "7bdaece7b1f7d8b4b9e3695622fceae628ab02df80675adcd6a3dcab7aa49155",
+    "signature": "NotSigned",
+    "version": "0.6.0"
+  },
+  {
+    "path": "C:\\Users\\Mubarak\\Documents\\Projects\\localmotive\\src-tauri\\target\\release\\bundle\\nsis\\Localmotive_0.6.0_x64-setup.exe",
+    "bytes": 5130511,
+    "sha256": "5fdb103f1208b17a6c6ae847a342401191463634da689235bca7a08e5eb53ce7",
+    "signature": "NotSigned",
+    "version": "0.6.0"
+  }
+]
+2026-09-20T05:41:32.0226802+04:00

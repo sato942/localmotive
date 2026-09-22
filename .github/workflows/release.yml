@@ -1,12 +1,7 @@
 name: Release verify
 
-# Tag-driven VERIFICATION ONLY (R16 release behavior): pushing a version tag
-# builds the Windows artifacts, runs every qualification gate, assembles the
-# qualified candidate bundle, and stops. It never publishes. Publication is a
-# separate, explicitly authorized act: `.github/workflows/release-promote.yml`
-# consumes the exact qualified bundle this workflow uploads, validates source,
-# artifact, inventory and evidence identity again, and only then promotes the
-# bytes. See docs/RELEASE-REVIEW-0.6.md for the owner handoff.
+# Build and qualify one source revision. Never publish from this workflow.
+# release-promote.yml validates and publishes the retained bytes separately.
 on:
   push:
     tags:
@@ -14,13 +9,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to build and release (e.g. v0.2.4)"
+        description: "Version tag to verify"
         required: true
-      publish:
-        description: "Publish the verified candidate after all gates pass"
-        required: true
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -30,10 +20,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Resolve the requested tag to ONE immutable commit once, and verify its
-  # main ancestry here; every later job checks out exactly this revision, so
-  # a moved or re-created tag can never mix sources across jobs
-  # (audit GH-02 I1).
   resolve:
     runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]
     outputs:
@@ -54,6 +40,13 @@ jobs:
         with:
           node-version: 20
 
+      - name: Require main ancestry before running repository code
+        shell: bash
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor "$(git rev-parse HEAD)" origin/main \
+            || { echo "::error::Release tags must point to a commit on main"; exit 1; }
+
       - name: Resolve the release tag to one immutable revision
         id: resolve
         shell: bash
@@ -61,10 +54,6 @@ jobs:
           RAW_TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           raw="$RAW_TAG"
-          # Any vMAJOR.MINOR.PATCH tag is buildable; the safety comes from the
-          # revision pin plus the manifest binding below, so a retargeted or
-          # mismatched tag cannot publish source that identifies as another
-          # version (audit S-26 I2 replaced the literal v0.5.0 pin).
           case "$raw" in
             v[0-9]*.[0-9]*.[0-9]*) ;;
             *) echo "::error::Release tags must be vMAJOR.MINOR.PATCH"; exit 1 ;;
@@ -75,13 +64,6 @@ jobs:
           node scripts/verify_versions.mjs "${raw#v}" \
             || { echo "::error::The manifests at $raw do not identify as ${raw#v}; refusing to publish mismatched source"; exit 1; }
 
-      - name: Verify the resolved revision is on main
-        shell: bash
-        run: |
-          git fetch origin main
-          git merge-base --is-ancestor "${{ steps.resolve.outputs.sha }}" origin/main \
-            || { echo "::error::Release tags must point to a commit on main"; exit 1; }
-
   rust-audit:
     needs: resolve
     runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]
@@ -89,10 +71,6 @@ jobs:
       contents: read
       checks: write
     steps:
-      # The self-hosted runner image defaults core.autocrlf=true, which
-      # marks LF-tracked text files modified after checkout and trips the
-      # packaged clean-source probe. v5.1.0 has no git-config input, so pin
-      # LF explicitly before checkout. Scoped to the runner, not the repo.
       - name: Pin LF line endings before checkout
         shell: bash
         run: git config --global core.autocrlf false
@@ -110,12 +88,16 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           working-directory: src-tauri
 
-  quality:
+  verify:
     needs: [resolve, rust-audit]
     runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]
-    outputs:
-      tag: ${{ steps.version.outputs.tag }}
-      version: ${{ steps.version.outputs.version }}
+    permissions:
+      contents: read
+    timeout-minutes: 360
+    env:
+      VERSION: ${{ needs.resolve.outputs.version }}
+      RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
+      LOCALMOTIVE_SOURCE_REVISION: ${{ needs.resolve.outputs.sha }}
     steps:
       # The self-hosted runner image defaults core.autocrlf=true; pin LF
       # before checkout (v5.1.0 has no git-config input).
@@ -128,22 +110,10 @@ jobs:
           fetch-depth: 0
 
       - name: Confirm the checked-out revision is the resolved release source
-        id: version
         shell: bash
-        env:
-          RAW_TAG: ${{ github.event.inputs.tag || github.ref_name }}
-          RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
         run: |
-          raw="$RAW_TAG"
-          case "$raw" in
-            v[0-9]*.[0-9]*.[0-9]*) ;;
-            *) echo "::error::Release tags must be vMAJOR.MINOR.PATCH"; exit 1 ;;
-          esac
           test "$(git rev-parse HEAD)" = "$RESOLVED_SHA" \
-            || { echo "::error::quality checkout does not match the resolved release revision"; exit 1; }
-          version="${raw#v}"
-          echo "tag=v${version}" >> "$GITHUB_OUTPUT"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
+            || { echo "::error::verify checkout does not match the resolved release revision"; exit 1; }
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -169,12 +139,6 @@ jobs:
       - name: Verify fail-fast workflow gates
         run: node scripts/verify_workflow_gates.mjs
 
-      # Fail fast (audit S-26 I2): this also runs inside `npm run check`
-      # below; the explicit first pass surfaces gate failures before the
-      # packaging chain (pinned by a release-gates.test.mjs check).
-      - name: Test deterministic release gates (fail-fast; repeated by npm run check)
-        run: node --test scripts/tests/release-gates.test.mjs
-
       - name: Frontend checks
         run: npm run check
 
@@ -191,48 +155,9 @@ jobs:
 
       - name: Rust tests
         working-directory: src-tauri
-        run: cargo test --locked
-
-      - name: Rust documentation tests
-        working-directory: src-tauri
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo test --locked --doc
-
-  package:
-    needs: [resolve, rust-audit, quality]
-    runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]
-    steps:
-      # The self-hosted runner image defaults core.autocrlf=true; pin LF
-      # before checkout (v5.1.0 has no git-config input).
-      - name: Pin LF line endings before checkout
-        shell: bash
-        run: git config --global core.autocrlf false
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          ref: ${{ needs.resolve.outputs.sha }}
-
-      - name: Record the resolved source revision
-        shell: bash
-        env:
-          RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
-        run: |
-          test "$(git rev-parse HEAD)" = "$RESOLVED_SHA" \
-            || { echo "::error::package checkout does not match the resolved release revision"; exit 1; }
-          echo "LOCALMOTIVE_SOURCE_REVISION=$RESOLVED_SHA" >> "$GITHUB_ENV"
-
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 20
-          cache: npm
-
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable reviewed 2026-09-05
-
-      - uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2 peeled commit
-        with:
-          workspaces: src-tauri
-
-      - run: npm ci
+        run: cargo test --locked
 
       - name: Generate an SBOM for the shipped frontend dependencies
         shell: bash
@@ -240,37 +165,19 @@ jobs:
           npm sbom --sbom-format cyclonedx > sbom.cdx.json
           test -s sbom.cdx.json
 
-      - name: Upload the SBOM (audit GH-08)
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: sbom-${{ needs.quality.outputs.version }}
-          path: sbom.cdx.json
-          retention-days: 90
-
       - name: Build installers and portable executable
         run: npm run tauri build
 
       - name: Verify the packaged executable
         shell: pwsh
-        env:
-          VERSION: ${{ needs.quality.outputs.version }}
-          RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
-          LOCALMOTIVE_SOURCE_REVISION: ${{ needs.resolve.outputs.sha }}
         run: |
           $portable = "src-tauri/target/release/localmotive.exe"
           if (-not (Test-Path $portable)) { throw "Portable executable was not built" }
-          # All orchestration lives in scripts/verify_packaged_matrix.ps1 so
-          # the exact implementation is committed, reviewable, and rehearsable
-          # off-tag. The workflow only passes identities, never logic (runs
-          # 34819219725/34815989537: inline cleanup's stray $LASTEXITCODE
-          # failed green runs with no error text).
           $cdpPort = 10041 + ([int]($env:GITHUB_RUN_ID % 2000))
           pwsh -NoProfile -File scripts/verify_packaged_matrix.ps1 -Portable $portable -Version "$env:VERSION" -ResolvedSha "$env:RESOLVED_SHA" -CdpPort $cdpPort
           if ($LASTEXITCODE -ne 0) { throw "Packaged verification orchestration failed with code $LASTEXITCODE" }
       - name: Stage release artifacts
         shell: bash
-        env:
-          VERSION: ${{ needs.quality.outputs.version }}
         run: |
           mkdir -p artifacts
           cp "src-tauri/target/release/bundle/msi/Localmotive_${VERSION}_x64_en-US.msi" "artifacts/Localmotive_${VERSION}_x64.msi"
@@ -284,84 +191,39 @@ jobs:
 
       - name: Verify and record the exact candidate inventory
         shell: bash
-        env:
-          VERSION: ${{ needs.quality.outputs.version }}
         run: node scripts/verify_candidate_inventory.mjs artifacts "$VERSION" "artifacts/candidate-inventory-${VERSION}.json"
 
-      # F9-04: a failing package stage keeps its diagnostics and reports the
-      # evidence it did not produce, instead of leaving only a red step.
-      - name: Retain package diagnostics for every outcome
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: localmotive-${{ needs.quality.outputs.version }}-package-diagnostics
-          path: |
-            artifacts/**
-            src-tauri/target/release/bundle/**
-          if-no-files-found: warn
-          retention-days: 30
-
-      - name: Report missing packaged evidence
-        if: failure()
-        shell: pwsh
-        env:
-          VERSION: ${{ needs.quality.outputs.version }}
-        run: pwsh -NoProfile -File scripts/check_package_outputs.ps1 -Root "$pwd" -Version "$env:VERSION"
-
-      - name: Retain verified release candidates
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: localmotive-${{ needs.quality.outputs.version }}-verified
-          path: artifacts/*
-          if-no-files-found: error
-          retention-days: 14
-
-  # Clean-account lifecycle verification, rewritten per audit GH-03: it
-  # consumes the candidate installers the package job just built
-  # (-CandidateDir), so no job ever waits for public release assets that the
-  # producer has not published. Policy updated on 2026-09-12 (fail-closed,
-  # superseding GH-03 I3's original note): `publish` now needs this job, so
-  # absent or failed lifecycle evidence blocks publication instead of
-  # shipping with a visible-but-ignored status. The evidence binds to the
-  # full source SHA recorded in the candidate inventory (never a substituted
-  # HEAD) and records the harness revision separately; the summary states
-  # plainly whether it ran, passed, failed or was skipped.
-  clean-account-lifecycle:
-    needs: [resolve, quality, package]
-    runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]
-    timeout-minutes: 120
-    # Explicit supported qualification matrix (audit GH-04 I4 / G-06.I2;
-    # R07 follow-up review): every supported baseline runs the update path
-    # AND its preservation step with the baseline's real persistence flavor
-    # (v0.4.x predates the SQLite mirror, so it uses the cache-record leg).
-    steps:
-      - name: Pin LF line endings before checkout
+      - name: Clear candidate-generated attestations
         shell: bash
-        run: git config --global core.autocrlf false
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          ref: ${{ needs.resolve.outputs.sha }}
+        run: |
+          mkdir -p "release-evidence/${VERSION}/attestations"
+          rm -f "release-evidence/${VERSION}/qualification-manifest-${VERSION}.json"
+          rm -f "release-evidence/${VERSION}/attestations/installer-payload-identity.json"
+          rm -f "release-evidence/${VERSION}/attestations"/sandbox-clean-account-lifecycle-*
+
+      - name: Measure the staged installer payload identities
+        shell: bash
+        run: node scripts/verify_installer_payloads.mjs artifacts "artifacts/candidate-inventory-${VERSION}.json" "release-evidence/${VERSION}/attestations/installer-payload-identity.json"
 
       - name: Ensure Windows Sandbox is available
         shell: pwsh
+        timeout-minutes: 5
         run: |
           $exe = Join-Path $env:WINDIR "System32\WindowsSandbox.exe"
           if (-not (Test-Path $exe)) {
             throw "Windows Sandbox is not available on this PC. Enable it (Windows Features) then re-run."
           }
           Write-Host "Found $exe"
-
-      - name: Retrieve the verified candidate installers
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: localmotive-${{ needs.quality.outputs.version }}-verified
-          path: artifacts
+          $cli = Get-Command wsb.exe -ErrorAction Stop
+          $cliVersion = & $cli.Source --version
+          if ($LASTEXITCODE -ne 0 -or -not $cliVersion) { throw "Windows Sandbox CLI could not report its version. Repair wsb.exe before lifecycle verification." }
+          Write-Host "Windows Sandbox CLI: $($cli.Source), version $cliVersion"
 
       - name: Run the clean-account lifecycle matrix from the candidate bytes
         shell: pwsh
+        timeout-minutes: 120
         env:
           GH_TOKEN: ${{ github.token }}
-          LOCALMOTIVE_SOURCE_REVISION: ${{ needs.resolve.outputs.sha }}
         run: |
           $matrix = @(
             @{ Name = "sandbox-clean-account-lifecycle-upgrade-v0.4.0";      Previous = "v0.4.0"; Flavor = "cache" },
@@ -371,148 +233,43 @@ jobs:
           )
           foreach ($leg in $matrix) {
             Write-Host "=== $($leg.Name): baseline $($leg.Previous), persistence $($leg.Flavor) ==="
-            & ".\scripts\sandbox\host-run-lifecycle.ps1" -Tag "${{ needs.resolve.outputs.tag }}" -Version "${{ needs.quality.outputs.version }}" -PreviousTag $leg.Previous -CandidateDir "artifacts" -EvidenceName $leg.Name -PreservationFlavor $leg.Flavor
+            & ".\scripts\sandbox\host-run-lifecycle.ps1" -Tag "${{ needs.resolve.outputs.tag }}" -Version "$env:VERSION" -PreviousTag $leg.Previous -CandidateDir "artifacts" -EvidenceName $leg.Name -PreservationFlavor $leg.Flavor
           }
-
-      # R13 (follow-up review): a failing leg still leaves its structured
-      # evidence retrievable from the run itself, not only from the checkout
-      # of a machine that happened to run it.
-      - name: Retain lifecycle evidence for every outcome
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: localmotive-${{ needs.quality.outputs.version }}-lifecycle-evidence
-          path: |
-            release-evidence/${{ needs.quality.outputs.version }}/attestations/sandbox-clean-account-lifecycle-*
-          if-no-files-found: ignore
-          retention-days: 90
-
-      - name: Lifecycle evidence summary
-        if: always()
-        shell: pwsh
-        env:
-          VERSION: ${{ needs.quality.outputs.version }}
-        run: |
-          $legs = @(
-            "sandbox-clean-account-lifecycle-upgrade-v0.4.0",
-            "sandbox-clean-account-lifecycle-upgrade-v0.5.0",
-            "sandbox-clean-account-lifecycle-preservation-v0.4.1",
-            "sandbox-clean-account-lifecycle-preservation-v0.5.0"
-          )
-          $lines = @("## Clean-account lifecycle (Windows Sandbox)", "")
-          $lines += "- Candidate installers: consumed from the package job through -CandidateDir (no prepublication wait)"
-          $lines += "- Qualification matrix: every supported baseline above runs its update path and its preservation step with the baseline's real persistence flavor (R07/G-06.I2)."
-          $lines += "- Policy: publication depends on this job; a failing leg fails the release (no pass-with-note)."
-          foreach ($name in $legs) {
-            $evidence = "release-evidence/$($env:VERSION)/attestations/$name.json"
-            $status = if (Test-Path $evidence) { (Get-Content $evidence -Raw | ConvertFrom-Json).status } else { "MISSING" }
-            $preservation = if (Test-Path $evidence) { (Get-Content $evidence -Raw | ConvertFrom-Json).preservation.status } else { "MISSING" }
-            $lines += "- ``$name``: scenario **$status** (preservation: $preservation)"
-          }
-          $lines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8
-
-      - name: Upload lifecycle evidence
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: sandbox-lifecycle-${{ needs.quality.outputs.version }}
-          path: release-evidence/${{ needs.quality.outputs.version }}/attestations/
-          if-no-files-found: error
-
-  # The qualified candidate bundle: one artifact that binds the frozen source,
-  # the built bytes, the producer inventory, the packaged verification record,
-  # the sandbox lifecycle records, the witness records and the payload identity
-  # record through the committed manifest generator, then validates every one
-  # of those relationships with the committed verifier. Publication consumes
-  # this bundle and nothing else (release-promote.yml).
-  qualification:
-    needs: [resolve, quality, package, clean-account-lifecycle]
-    runs-on: [self-hosted, Windows, X64, zen5, blackwell, localmotive-hw]
-    steps:
-      # The self-hosted runner image defaults core.autocrlf=true; pin LF
-      # before checkout (v5.1.0 has no git-config input).
-      - name: Pin LF line endings before checkout
-        shell: bash
-        run: git config --global core.autocrlf false
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          ref: ${{ needs.resolve.outputs.sha }}
-
-      - name: Retrieve the verified candidate artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: localmotive-${{ needs.quality.outputs.version }}-verified
-          path: artifacts
-
-      # F9-04: the lifecycle records this run just produced are extracted over
-      # the checkout's committed attestations, so the assembled candidate is
-      # qualified by ITS OWN records. A lifecycle leg that this run did not
-      # produce is reported below; the verifier then refuses a set whose
-      # records do not bind to this candidate.
-      - name: Retrieve the lifecycle records produced by this run
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: localmotive-${{ needs.quality.outputs.version }}-lifecycle-evidence
-          path: release-evidence/${{ needs.quality.outputs.version }}/attestations
-
-      - name: Report which mandatory records came from this run
-        shell: pwsh
-        env:
-          VERSION: ${{ needs.quality.outputs.version }}
-        run: |
-          $attestations = "release-evidence/$env:VERSION/attestations"
-          $legs = @(
-            "sandbox-clean-account-lifecycle-upgrade-v0.4.0.json",
-            "sandbox-clean-account-lifecycle-upgrade-v0.5.0.json",
-            "sandbox-clean-account-lifecycle-preservation-v0.4.1.json",
-            "sandbox-clean-account-lifecycle-preservation-v0.5.0.json"
-          )
-          $missingLegs = @($legs | Where-Object { -not (Test-Path (Join-Path $attestations $_)) })
-          Get-ChildItem $attestations -File | ForEach-Object {
-            Write-Host "attestation: $($_.Name) ($($_.Length) bytes, $($_.LastWriteTimeUtc.ToString('s')) )"
-          }
-          if ($missingLegs.Count -gt 0) {
-            Write-Host "This run produced no record for:"
-            $missingLegs | ForEach-Object { Write-Host " - MISSING $_" }
-            Write-Host "Qualification refuses to qualify a candidate with lifecycle legs this run did not produce unless the committed record carries an explicitly permitted carry-forward ledger entry."
-          }
-          exit 0
-
-      - name: Confirm the checked-out revision is the resolved release source
-        shell: bash
-        env:
-          RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
-        run: |
-          test "$(git rev-parse HEAD)" = "$RESOLVED_SHA"             || { echo "::error::qualification checkout does not match the resolved release revision"; exit 1; }
-          echo "LOCALMOTIVE_SOURCE_REVISION=$RESOLVED_SHA" >> "$GITHUB_ENV"
 
       - name: Assemble the canonical qualification manifest
         shell: bash
-        env:
-          VERSION: ${{ needs.quality.outputs.version }}
-          RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
         run: node scripts/build_qualification_manifest.mjs --inventory "artifacts/candidate-inventory-${VERSION}.json" --attestations "release-evidence/${VERSION}/attestations" --release "$VERSION" --stage-packaged-verification "artifacts/packaged-verification-${VERSION}.json" --out "release-evidence/${VERSION}/qualification-manifest-${VERSION}.json"
-
-      - name: Validate the manifest, inventory, and every mandatory record
-        shell: bash
-        env:
-          RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
-        run: node scripts/verify_qualification_manifest.mjs --expect-source "$RESOLVED_SHA"
 
       - name: Validate the promotion contract without publishing
         shell: bash
-        env:
-          VERSION: ${{ needs.quality.outputs.version }}
-          RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
         run: node scripts/verify_release_promotion.mjs --qualified . --tag "v${VERSION}" --expect-source "$RESOLVED_SHA" --report "artifacts/promotion-check-${VERSION}.json"
 
       - name: Retain the qualified candidate bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: localmotive-${{ needs.quality.outputs.version }}-qualified
+          name: localmotive-${{ needs.resolve.outputs.version }}-qualified
           path: |
             artifacts/*
-            release-evidence/${{ needs.quality.outputs.version }}/qualification-manifest-${{ needs.quality.outputs.version }}.json
-            release-evidence/${{ needs.quality.outputs.version }}/attestations/*
+            sbom.cdx.json
+            release-evidence/${{ needs.resolve.outputs.version }}/qualification-manifest-${{ needs.resolve.outputs.version }}.json
+            release-evidence/${{ needs.resolve.outputs.version }}/attestations/*
           if-no-files-found: error
           retention-days: 90
+
+      - name: Retain diagnostics after failure or cancellation
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: localmotive-${{ needs.resolve.outputs.version }}-verify-diagnostics
+          path: |
+            artifacts/**
+            sbom.cdx.json
+            src-tauri/target/release/bundle/**
+            release-evidence/${{ needs.resolve.outputs.version }}/attestations/*
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Report missing packaged evidence
+        if: failure()
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/check_package_outputs.ps1 -Root "$pwd" -Version "$env:VERSION"

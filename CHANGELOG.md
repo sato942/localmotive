@@ -1,13 +1,79 @@
 # Changelog
 
+## 0.6.1
+
+Patch release on the 0.6 stabilization line. No product changes beyond the
+branch state; this release carries the search-first tuner
+(grid + nudge + confirm + trial ledger, advisor off by default), the
+packaged-verification Runtime-navigation repair, and the fully qualified
+0.6.1 evidence set. See `TODO.md` (U06-02 closed 2026-09-21) and
+`docs/QUALIFICATION-MAP-0.6.md` for the bound records.
+
 ## 0.6.0
 
-This is the stabilization release: every fix below traces to a confirmed
-finding in `docs/history/localmotive-comprehensive-audit.md`, lands with a
-regression test, and is recorded with its evidence in
-`docs/history/TODO-0.6.md`.
+This release combines the traced audit fixes with the owner-requested
+application and release-pipeline reduction. Current verification is recorded
+in `TODO-0.6.md`; accepted historical evidence remains under `docs/history/`.
+
+### Simplification
+
+- Removes quality-suite ranking, calibration fitting and storage controls,
+  external-evidence import/review, and share export from the UI and IPC surface.
+  Existing calibration and exchange files remain untouched but unsupported.
+- Retains v2 benchmarking, preflight, cancellation, replay, execution identity,
+  runtime and model management, launch profiles, and AI Tune.
+- Reduces release verification from six jobs to three. Checks, packaging,
+  lifecycle tests, and qualification use one workspace without intermediate
+  artifact transfers. Qualification and explicit publication remain separate.
+- Ships unsigned as standing policy (owner order 2026-09-20). No code-signing
+  step exists in the pipeline and none is pursued. Release notes disclose
+  SmartScreen behavior and SHA-256 checksums.
+- Validates downloaded evidence directly instead of overlaying checkout copies.
+  Missing current-run lifecycle records cannot fall back to committed evidence.
+- Removes obsolete diagnostic scripts and repeated test/validator execution.
 
 ### Security and robustness
+
+- Binds Stop requests to the server-operation generation observed before queuing.
+  Stale requests cannot terminate a replacement process or cancel its startup.
+  Stop retains the shared reservation through process termination and its bounded
+  log-drain wait.
+- Serializes legacy benchmark requests with other owned operations. Adds a
+  navigation-safe Cancel control and retains ownership until request workers exit.
+  Rejects duplicate clicks before the next render and removes the unused
+  uncancellable sampler.
+- Prevents finite benchmark samples from overflowing into null summary fields.
+  Keeps very small medians positive and scales tuning variance before squaring.
+  Sample standard deviation retains its existing `n - 1` denominator.
+- Validates all profile numeric fields before saving or sending preview, launch,
+  or tuning requests. Empty fields stay empty while editing. Invalid ranges,
+  fractional integer fields, and inconsistent batch/draft/image limits get a
+  field-specific message instead of an unusable saved profile.
+- Debounces command composition during typing and clears stale previews immediately.
+- Shows only runtime-advertised speculative choices after inspection. A saved
+  unsupported choice stays visible as unverified instead of appearing as `none`.
+- Adds an About link for manual release checks and repairs the Lucide credit link
+  without expanding opener permissions. Automatic updating remains unavailable.
+- Rejects oversized legacy benchmark workloads before HTTP requests and rejects
+  invalid tuning workloads before runtime preparation. The Tune editor keeps
+  blank edits visible and reports invalid counts before dispatch. Tuning reports
+  and trials use the same validated token and repetition counts.
+- Keeps v2 benchmark fields blank during incomplete edits. A blank warmup no
+  longer becomes a zero-warmup request. An explicit zero remains valid.
+- Keeps legacy benchmark edits blank and rejects invalid counts before IPC.
+  Corrected counts pass through unchanged; prior results remain intact.
+- Rejects speculative values absent from the inspected runtime help, including
+  values retained in a saved profile. GGUF reads and artifact inspection now reuse
+  the existing regular-file and reparse-ancestor checks before opening the model.
+- Corrects scaled-LoRA snapshot paths and includes every adapter and scale in
+  the LoRA identity. Keeps existing no-adapter and single ordinary-adapter
+  identities. Ambiguous older multiple/scaled records require fresh measurement.
+- Requires LoRA, projector, draft, template and TLS file options to use their
+  profile fields, even when those fields are empty. Raw arguments cannot bypass
+  the associated path validation and identity checks.
+- Fingerprints managed draft and LoRA paths in new benchmark command records.
+  Reads the prior argument format without rewriting saved records or bypassing
+  model and compatibility-key checks. Raw local records are not anonymized.
 
 - Runs the whole window under a narrow Content Security Policy and scopes the
   external-link opener to the origins the app actually uses.
@@ -37,6 +103,17 @@ regression test, and is recorded with its evidence in
   exact commit, SHA-pinned actions, immutable catalog revision pins, signed
   freshness (sequence/expiry) with replay refusal, and an SBOM workflow
   artifact.
+
+### Settings sessions and downloads
+
+- Keeps the settings-session WebView2 profile outside the mapped share and
+  preserves settings across owned lifecycle sessions, including graceful-close
+  errors. The owned app joins cleanly after close errors.
+- Owns the download cancellation fixture through resume.
+- Discards legacy benchmark successes cancelled before finalization. Publishes
+  the benchmark slot before client construction so Cancel works during
+  construction. Refuses server and tuning starts while an abandoned benchmark
+  slot is held.
 
 ### Honesty
 
@@ -278,14 +355,15 @@ Known limitations: no `test-backend-ops` in any pinned `b10796` archive (no `L3 
 
 ### AI Tune tab
 
-- New sixth destination, **AI Tune**: a cloud model proposes llama-server settings and this PC measures them; the best measured configuration wins.
+- New sixth destination, **AI Tune**: local search measures llama-server settings on this PC first — a short grid over flash attention, batch sizes, and KV cache types, then one-axis nudges from the best so far. Every trial, including failures, stays in a history table. Best measured in this session, never optimal.
+- The cloud advisor is an explicit opt-in extra step, off by default: after the table exists it may explain a loss, propose one non-duplicate extra try, or say converged. No key is needed and no paid call happens until that box is checked.
 - **Providers:** OpenRouter (API key or browser sign-in via OAuth PKCE, mirroring how Hermes Agent authenticates), Anthropic, OpenAI, Google Gemini, DeepSeek, and xAI through their OpenAI-compatible endpoints. Model lists are fetched live; a **Test connection** button proves the credential before spending anything.
 - **Credentials** are stored in Windows Credential Manager under the `GGUF Pilot` service via the `keyring` crate — never in local storage, settings files, logs, or the command line. The UI shows only a masked suffix. **Forget key** removes the entry.
 - **Context length** is chosen from powers of two up to the model's native maximum, read from the GGUF header; every trial runs at exactly that context.
 - The advisor receives a structured brief (hardware, GGUF architecture facts, runtime capabilities, current profile, every prior trial with its measurement) and must answer in strict JSON. It may change only a whitelisted set of throughput-relevant fields; host, port, alias, paths, and security settings are never touched. Proposals outside the whitelist or repeating a measured configuration are rejected before launch.
 - Each trial launches llama-server with the proposed flags, waits for `/health`, benchmarks through `/completion`, stops the server, and reports live through `tuning-progress` events. Failed launches are recorded and fed back to the advisor as evidence.
 - Hardened against real advisor behaviour seen in live runs: replies that echo the JSON schema in prose are parsed with a balanced-brace scanner (last valid object wins); a garbled reply costs a retry, and only three in a row end the session; when the advisor selects a model-backed method (`draft-dspark`, `draft-dflash`, `draft-eagle3`, `draft-mtp`, `draft-simple`) the tuner attaches the matching companion itself — `draftModel` stays tuner-owned and echoed values are ignored rather than rejected.
-- **Adopt best as profile** writes the winning configuration into the model's saved profile.
+- **Adopt best as profile** writes the winning configuration into the model's saved profile. Any measured history-table row can be adopted the same way through the new `apply_tuning_trial_changes` command, which re-validates the row's recorded changes against the session baseline. A baseline that fails at the requested context ends the session with the failure recorded in the table instead of vanishing into an error.
 - New modules: `src-tauri/src/gguf.rs` (header-only GGUF reader), `src-tauri/src/tune.rs` (brief, whitelist, proposal parsing, tuning loop), `src-tauri/src/cloud.rs` (providers, Credential Manager store, chat, PKCE). 45 Rust tests.
 - Verified live on the packaged build against OpenRouter (`anthropic/claude-sonnet-4.6`) with LFM2.5-2.6B-Q8_0 at 8,192 context: the advisor found DSpark speculation with `draftPMin=0.1` at 391.13 tok/s vs a 384.14 baseline (+1.8%) in one run and correctly declared the baseline unbeatable in another. The credential was removed from Windows Credential Manager afterwards.
 

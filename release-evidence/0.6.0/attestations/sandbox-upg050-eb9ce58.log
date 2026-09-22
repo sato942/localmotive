@@ -1,0 +1,39 @@
+﻿
+[2026-09-14T22:07:04.8076376Z] Sandbox lifecycle starting
+[2026-09-14T22:07:05.0887060Z] NSIS install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.6.0_x64-setup.exe
+[2026-09-14T22:08:18.1202638Z] NSIS fresh install executable version 0.6.0 digest 7891d815756d646963b9e529da261be0b8f505e603c1b57b1926a7c657c0f18b at C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-14T22:08:18.1359823Z] NSIS fresh install launch probe: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-14T22:09:27.8871059Z] CDP functional probe unavailable in this sandbox: The installed app exposed no CDP page target within 60 seconds
+[2026-09-14T22:09:29.9431526Z] NSIS fresh install launch probe: process survived 8 s; CDP target unavailable in this sandbox - The installed app exposed no CDP page target within 60 seconds
+[2026-09-14T22:09:29.9588281Z] NSIS uninstall: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\uninstall.exe
+[2026-09-14T22:09:34.2208357Z] NSIS fresh path PASS
+[2026-09-14T22:09:34.2377902Z] MSI install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.6.0_x64.msi
+[2026-09-14T22:11:38.2304504Z] MSI fresh install executable version 0.6.0 digest a3bf1580f566da8a6eafab61f8e39ec61dc65bf96fd84210049a5b2bb72f98f1 at C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-14T22:11:38.2464928Z] MSI fresh install launch probe: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-14T22:12:47.8816471Z] CDP functional probe unavailable in this sandbox: The installed app exposed no CDP page target within 60 seconds
+[2026-09-14T22:12:49.9117390Z] MSI fresh install launch probe: process survived 8 s; CDP target unavailable in this sandbox - The installed app exposed no CDP page target within 60 seconds
+[2026-09-14T22:12:49.9131521Z] MSI uninstall via package: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.6.0_x64.msi
+[2026-09-14T22:12:55.9277483Z] MSI fresh path PASS
+[2026-09-14T22:12:55.9434449Z] NSIS install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.5.0_x64-setup.exe
+[2026-09-14T22:12:59.0985518Z] Pre-update install executable version 0.5.0 digest 67f70fc399d1c31bcd573390042a49c97e8699beeb21759591b93a678a11ee76 at C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-14T22:12:59.1055627Z] NSIS install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.6.0_x64-setup.exe
+[2026-09-14T22:13:02.2509220Z] Post-update install executable version 0.6.0 digest 7891d815756d646963b9e529da261be0b8f505e603c1b57b1926a7c657c0f18b at C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-14T22:13:02.2666131Z] Post-update install launch probe: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-14T22:14:11.8821165Z] CDP functional probe unavailable in this sandbox: The installed app exposed no CDP page target within 60 seconds
+[2026-09-14T22:14:13.9020464Z] Post-update install launch probe: process survived 8 s; CDP target unavailable in this sandbox - The installed app exposed no CDP page target within 60 seconds
+[2026-09-14T22:14:13.9041120Z] NSIS uninstall: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\uninstall.exe
+[2026-09-14T22:14:17.8034143Z] NSIS update path PASS
+[2026-09-14T22:14:17.8034143Z] NSIS install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.5.0_x64-setup.exe
+[2026-09-14T22:14:20.9410278Z] Preservation baseline launch probe: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-14T22:15:30.2366506Z] CDP functional probe unavailable in this sandbox: The installed app exposed no CDP page target within 60 seconds
+[2026-09-14T22:15:32.2672434Z] Preservation baseline launch probe: process survived 8 s; CDP target unavailable in this sandbox - The installed app exposed no CDP page target within 60 seconds
+[2026-09-14T22:15:32.2987751Z] NSIS install: C:\Users\WDAGUtilityAccount\Desktop\shared\Localmotive_0.6.0_x64-setup.exe
+[2026-09-14T22:15:35.4350986Z] Preservation upgrade executable version 0.6.0 digest 7891d815756d646963b9e529da261be0b8f505e603c1b57b1926a7c657c0f18b at C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-14T22:15:35.4507981Z] Preservation upgrade launch probe: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\Localmotive.exe
+[2026-09-14T22:16:45.0620312Z] CDP functional probe unavailable in this sandbox: The installed app exposed no CDP page target within 60 seconds
+[2026-09-14T22:16:47.0753896Z] Preservation upgrade launch probe: process survived 8 s; CDP target unavailable in this sandbox - The installed app exposed no CDP page target within 60 seconds
+[2026-09-14T22:16:47.0910864Z] NSIS uninstall: C:\Users\WDAGUtilityAccount\AppData\Local\Localmotive\uninstall.exe
+[2026-09-14T22:16:50.9805883Z] Preservation path PASS
+[2026-09-14T22:16:51.0113180Z] NSIS-family installed payload digest consistent: 7891d815756d646963b9e529da261be0b8f505e603c1b57b1926a7c657c0f18b
+[2026-09-14T22:16:51.0113180Z] OBSERVED: MSI payload digest a3bf1580f566da8a6eafab61f8e39ec61dc65bf96fd84210049a5b2bb72f98f1 differs from the NSIS payload digest 7891d815756d646963b9e529da261be0b8f505e603c1b57b1926a7c657c0f18b
+[2026-09-14T22:16:51.1058820Z] ALL PASS

@@ -650,6 +650,7 @@ pub fn read_summary_cancellable(
     path: &Path,
     cancel: Option<&std::sync::atomic::AtomicBool>,
 ) -> Result<GgufSummary, String> {
+    crate::artifact::validate_regular_non_reparse_file("GGUF", path)?;
     let mut file = File::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
     file.seek(SeekFrom::Start(0))
         .map_err(|error| error.to_string())?;
@@ -660,6 +661,34 @@ pub fn read_summary_cancellable(
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[cfg(windows)]
+    #[test]
+    fn summary_read_refuses_a_junction_ancestor_before_parsing() {
+        let root = std::env::temp_dir().join(format!(
+            "localmotive-gguf-junction-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        let outside = root.join("outside");
+        let junction = root.join("linked");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("model.gguf"), fixture()).unwrap();
+        let status = crate::proc::hidden_command("cmd")
+            .args(["/D", "/C", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&outside)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let result = read_summary(&junction.join("model.gguf"));
+        let inspection =
+            crate::artifact::inspect_artifact(&junction.join("model.gguf"), &[], false);
+        std::fs::remove_dir(&junction).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(result.unwrap_err().contains("reparse-point ancestor"));
+        assert!(inspection.unwrap_err().contains("reparse-point ancestor"));
+    }
 
     fn put_str(out: &mut Vec<u8>, s: &str) {
         out.extend((s.len() as u64).to_le_bytes());
