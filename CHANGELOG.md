@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.1
+
+Patch release on the 0.6 stabilization line. No product changes beyond the
+branch state; this release carries the search-first tuner
+(grid + nudge + confirm + trial ledger, advisor off by default), the
+packaged-verification Runtime-navigation repair, and the fully qualified
+0.6.1 evidence set. See `TODO.md` (U06-02 closed 2026-09-21) and
+`docs/QUALIFICATION-MAP-0.6.md` for the bound records.
+
 ## 0.6.0
 
 This release combines the traced audit fixes with the owner-requested
