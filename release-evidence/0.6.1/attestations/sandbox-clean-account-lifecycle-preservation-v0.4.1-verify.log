@@ -1,0 +1,14 @@
+PRESERVE_PASS cache: record present and parseable (schemaVersion 1)
+PRESERVE_PASS settings: localmotive:model-root recovered
+PRESERVE_PASS settings: localmotive:runtime recovered
+PRESERVE_PASS settings: localmotive:cloud-provider recovered
+PRESERVE_PASS settings: localmotive:cloud-model recovered
+PRESERVE_PASS profile: name recovered
+PRESERVE_PASS profile: model recovered
+PRESERVE_PASS profile: port recovered
+PRESERVE_PASS profile: context recovered
+PRESERVE_PASS profile: seed recovered
+PRESERVE_PASS profile: temperature recovered
+PRESERVE_PASS profile: threads recovered
+PRESERVE_PASS profile: batch recovered
+PRESERVE_PASS userdata: canary content intact

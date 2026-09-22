@@ -1,0 +1,197 @@
+{
+  "schema": "localmotive.qualification-manifest.v1",
+  "release": "0.6.1",
+  "generatedAt": "2026-09-22T13:04:12.198Z",
+  "repositoryHeadAtGeneration": "4b31431d28d1503efc7b80a46c77ad2c3d54f082",
+  "sourceRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082",
+  "workflowFile": {
+    "path": ".github/workflows/release.yml",
+    "sha256": "51b2be8c47f167965f0a55f1826cf6e0967ca2cf5d28c83783b43d26877b4c57"
+  },
+  "inventory": {
+    "path": "artifacts/candidate-inventory-0.6.1.json",
+    "sha256": "2f6b50fb5b439c4db02ad3ecc1a64e16dfa541714012771be3898ebd3e00ed41"
+  },
+  "artifacts": [
+    {
+      "name": "Localmotive_0.6.1_x64-portable.exe",
+      "sizeBytes": 20372480,
+      "sha256": "1f355dea038867971b5a15bab05145359a4c1d80eedfba135b605137abc63ae0"
+    },
+    {
+      "name": "Localmotive_0.6.1_x64-setup.exe",
+      "sizeBytes": 5149326,
+      "sha256": "33be58faa6d940abb7f1bf05dd5b912b94598913c88f088a63abab01c9bbf139"
+    },
+    {
+      "name": "Localmotive_0.6.1_x64.msi",
+      "sizeBytes": 7229440,
+      "sha256": "e9bef60f935bb69146d92f2cf2c91b71162f10bc7e8873133aca0ba180b66c5b"
+    }
+  ],
+  "records": {
+    "packaged_verification": {
+      "path": "release-evidence/0.6.1/attestations/packaged-verification-0.6.1.json",
+      "exists": true,
+      "sha256": "8537c15eda9aee1f293ab5a0339280be40d186de65a2c3d9f888b6c9e46eb649",
+      "sha256_lf": "8537c15eda9aee1f293ab5a0339280be40d186de65a2c3d9f888b6c9e46eb649",
+      "overall_status": "PASS",
+      "checks": "26/26"
+    },
+    "lifecycle_upgrade_v0.4.0": {
+      "path": "release-evidence/0.6.1/attestations/sandbox-clean-account-lifecycle-upgrade-v0.4.0.json",
+      "exists": true,
+      "sha256": "ed9ceef70a5f54372eaed1540337991bffaf1506a8af9b0e2e8f98e53845202c",
+      "sha256_lf": "ed9ceef70a5f54372eaed1540337991bffaf1506a8af9b0e2e8f98e53845202c",
+      "status": "PASS",
+      "stage": "preservation-verification",
+      "sourceRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082",
+      "harnessRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082"
+    },
+    "lifecycle_upgrade_v0.5.0": {
+      "path": "release-evidence/0.6.1/attestations/sandbox-clean-account-lifecycle-upgrade-v0.5.0.json",
+      "exists": true,
+      "sha256": "e8699682dc58d628ffccaa9e652580d6ab4e6c9196754c0f0349c8b17a3aadb6",
+      "sha256_lf": "e8699682dc58d628ffccaa9e652580d6ab4e6c9196754c0f0349c8b17a3aadb6",
+      "status": "PASS",
+      "stage": "preservation-verification",
+      "sourceRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082",
+      "harnessRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082"
+    },
+    "lifecycle_preservation_v0.4.1": {
+      "path": "release-evidence/0.6.1/attestations/sandbox-clean-account-lifecycle-preservation-v0.4.1.json",
+      "exists": true,
+      "sha256": "c93d92f4bb6056193f7f0357d4607fc7c728698170091072eae098b94acaafde",
+      "sha256_lf": "c93d92f4bb6056193f7f0357d4607fc7c728698170091072eae098b94acaafde",
+      "status": "PASS",
+      "stage": "preservation-verification",
+      "sourceRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082",
+      "harnessRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082"
+    },
+    "lifecycle_preservation_v0.5.0": {
+      "path": "release-evidence/0.6.1/attestations/sandbox-clean-account-lifecycle-preservation-v0.5.0.json",
+      "exists": true,
+      "sha256": "dc4d3ed4b9f3be21ed87f243ec66a8cefa212db8e06d2caf929348b97002eee4",
+      "sha256_lf": "dc4d3ed4b9f3be21ed87f243ec66a8cefa212db8e06d2caf929348b97002eee4",
+      "status": "PASS",
+      "stage": "preservation-verification",
+      "sourceRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082",
+      "harnessRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082"
+    },
+    "witness_missing_assets": {
+      "path": "release-evidence/0.6.1/attestations/witness-missing-assets.json",
+      "exists": true,
+      "sha256": "8f9c9387ddc6156284d9dac5972e45eb4ceb9bdd22b2e05a3a72ed8034513215",
+      "sha256_lf": "8f9c9387ddc6156284d9dac5972e45eb4ceb9bdd22b2e05a3a72ed8034513215",
+      "status": "FAIL",
+      "stage": "resolve-installers",
+      "sourceRevision": null,
+      "harnessRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082"
+    },
+    "witness_timeout": {
+      "path": "release-evidence/0.6.1/attestations/witness-timeout.json",
+      "exists": true,
+      "sha256": "8f51a1554d318655a2a6d106267e4a695cb91a5fdf8e8e1c6a2b90750cb87d4b",
+      "sha256_lf": "8f51a1554d318655a2a6d106267e4a695cb91a5fdf8e8e1c6a2b90750cb87d4b",
+      "status": "TIMEOUT",
+      "stage": "sandbox-timeout",
+      "sourceRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082",
+      "harnessRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082"
+    },
+    "witness_malformed_result": {
+      "path": "release-evidence/0.6.1/attestations/witness-malformed-result.json",
+      "exists": true,
+      "sha256": "dd1f77ad86979fd96c15a80e8c72630a84d47ea6b57d327ae164eded034bf1e2",
+      "sha256_lf": "dd1f77ad86979fd96c15a80e8c72630a84d47ea6b57d327ae164eded034bf1e2",
+      "status": "FAIL",
+      "stage": "sandbox-run",
+      "sourceRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082",
+      "harnessRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082"
+    },
+    "witness_preservation_missing": {
+      "path": "release-evidence/0.6.1/attestations/witness-preservation-missing.json",
+      "exists": true,
+      "sha256": "653ad520f0866d23cc4907772cee73c24832ff155f2a4e6bc0fb6a5e31c57fda",
+      "sha256_lf": "653ad520f0866d23cc4907772cee73c24832ff155f2a4e6bc0fb6a5e31c57fda",
+      "status": "FAIL",
+      "stage": "preservation-verification",
+      "sourceRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082",
+      "harnessRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082"
+    },
+    "witness_stale_lock": {
+      "path": "release-evidence/0.6.1/attestations/witness-stale-lock.json",
+      "exists": true,
+      "sha256": "930c82116c838d9699348aafab65ad56ba3b2424aee17a3a67850bf9460988da",
+      "sha256_lf": "930c82116c838d9699348aafab65ad56ba3b2424aee17a3a67850bf9460988da",
+      "status": "FAIL",
+      "stage": "resolve-installers",
+      "sourceRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082",
+      "harnessRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082"
+    },
+    "witness_live_lock": {
+      "path": "release-evidence/0.6.1/attestations/witness-live-lock.json",
+      "exists": true,
+      "sha256": "2a1b2222dc8c172491cba51e5bd81f64cf03f53c3a72805b7ffc978862853984",
+      "sha256_lf": "2a1b2222dc8c172491cba51e5bd81f64cf03f53c3a72805b7ffc978862853984",
+      "status": "FAIL",
+      "stage": "resolve-installers",
+      "sourceRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082",
+      "harnessRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082"
+    },
+    "mt06_cancellation": {
+      "path": "release-evidence/0.6.1/attestations/mt06-cycles-result.json",
+      "exists": true,
+      "sha256": "4f452ea3d9213681478d07153f30540ff2f3bb6617d00a125754a920d7c7c6bf",
+      "sha256_lf": "4f452ea3d9213681478d07153f30540ff2f3bb6617d00a125754a920d7c7c6bf",
+      "sourceRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082",
+      "summary": "75/75 checks PASS (0 not exercised)",
+      "checks": "75/75"
+    },
+    "installer_payload_identity": {
+      "path": "release-evidence/0.6.1/attestations/installer-payload-identity.json",
+      "exists": true,
+      "sha256": "2941f4d3e49d08b4b3afa2095877e6a8a2d0cfea28ca7c6b868ec7b7a04ae191",
+      "sha256_lf": "2941f4d3e49d08b4b3afa2095877e6a8a2d0cfea28ca7c6b868ec7b7a04ae191",
+      "status": "PASS",
+      "sourceRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082"
+    },
+    "dc04_command_path": {
+      "path": "release-evidence/0.6.1/attestations/dc04-v2-command-path-verification.log",
+      "exists": true,
+      "sha256": "2e7fa1aa32311b05a0ca3fc96c2245b71af56e702502292d07d6b38a980a1021",
+      "sha256_lf": "2e7fa1aa32311b05a0ca3fc96c2245b71af56e702502292d07d6b38a980a1021"
+    },
+    "rt04_delayed_download": {
+      "path": "release-evidence/0.6.1/attestations/rt04v2-delayed-download-verification.log",
+      "exists": true,
+      "sha256": "3653e3b95cc578112af15220172f1cde1d326dc6ee41bb6cde66464d06fc2a4b",
+      "sha256_lf": "3653e3b95cc578112af15220172f1cde1d326dc6ee41bb6cde66464d06fc2a4b"
+    },
+    "a11y_packaged_verification": {
+      "path": "release-evidence/0.6.1/attestations/g05-a11y-packaged-verification.log",
+      "exists": true,
+      "sha256": "bd34deb67efc1ff4bdd87d918e7d671024c1a4606fc5ab861bd5829365b952d5",
+      "sha256_lf": "bd34deb67efc1ff4bdd87d918e7d671024c1a4606fc5ab861bd5829365b952d5"
+    },
+    "rt06_all_backends": {
+      "path": "release-evidence/0.6.1/attestations/rt06-all-backends.json",
+      "exists": true,
+      "sha256": "110936d035fec8e2f7c6f124181dbdc9d783ccf6cc14ea725020b00c9817d34d",
+      "sha256_lf": "110936d035fec8e2f7c6f124181dbdc9d783ccf6cc14ea725020b00c9817d34d",
+      "sourceRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082",
+      "summary": {
+        "total": 22,
+        "pass": 22,
+        "fail": 0
+      },
+      "checks": "22/22"
+    },
+    "rt06_full_run_log": {
+      "path": "release-evidence/0.6.1/attestations/rt06-full-run.log",
+      "exists": true,
+      "sha256": "3b6ac4dab43e3fb74d30dec19973879e18bc8b0bf1e2f1ddee2dac20c3e35a0b",
+      "sha256_lf": "3b6ac4dab43e3fb74d30dec19973879e18bc8b0bf1e2f1ddee2dac20c3e35a0b"
+    }
+  },
+  "supersededRecords": []
+}

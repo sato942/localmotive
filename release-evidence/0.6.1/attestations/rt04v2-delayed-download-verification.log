@@ -1,0 +1,28 @@
+CDP_READY after 1s
+fixture serving the pinned model (101016128 bytes) slowly on 127.0.0.1:10090
+PASS rt04v2.precondition-managed-active
+PASS rt04v2.precondition-adapter-selected | adapterId=luid:0000000000014f4f
+PASS rt04v2.dll-backup-captured | sha=87c4e9d09aac
+PASS rt04v2.health-run-started
+FIXTURE_HIT GET /ggml-org/SmolLM2-135M-GGUF/resolve/44686446221a479a9227d7a895cf92930f86de8a/SmolLM2-135M- range=bytes=0-0
+FIXTURE_HIT GET /ggml-org/SmolLM2-135M-GGUF/resolve/44686446221a479a9227d7a895cf92930f86de8a/SmolLM2-135M- range=bytes=50508064-58896671
+FIXTURE_HIT GET /ggml-org/SmolLM2-135M-GGUF/resolve/44686446221a479a9227d7a895cf92930f86de8a/SmolLM2-135M- range=bytes=0-8388607
+FIXTURE_HIT GET /ggml-org/SmolLM2-135M-GGUF/resolve/44686446221a479a9227d7a895cf92930f86de8a/SmolLM2-135M- range=bytes=75762096-84150703
+PASS rt04v2.download-in-flight | bytesServed=54525953
+PASS rt04v2.swap-inside-the-window-is-denied-while-the-runtime-is-pinned | write=EBUSY
+RUN1_RESULT {"ok":true,"value":{"runtimeId":"cuda-13.3","modelSha256":"e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5","adapterId":"luid:0000000000014f4f","startedAt":1790079096516,"finishedAt":1790079099018,"passed":true,"stages":[{"stage":"device_enumeration","status":"PASS","durationMs":262,"failureReason":null,"detail":"Bounded device enumeration identified the approved backend and exact adapter.","completion":null},{"stage":"backend_operations","status":"PASS","durationMs":795,"failur
+PASS rt04v2.health-run-finished
+PASS rt04v2.delayed-run-completes-on-untampered-content | passed=true
+PASS rt04v2.model-download-completed-before-execution | bytesServed=101016129 expected=101016128
+PASS rt04v2.no-process-outlives-the-run | children=0
+PASS rt04v2.tamper-outside-the-window-lands-in-both-copies
+PASS rt04v2.second-run-started
+RUN2_RESULT {"ok":true,"value":{"runtimeId":"cuda-13.3","modelSha256":"e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5","adapterId":"luid:0000000000014f4f","startedAt":1790079102042,"finishedAt":1790079102042,"passed":false,"stages":[{"stage":"device_enumeration","status":"FAIL","durationMs":0,"failureReason":"trust_failure","detail":"Managed runtime health trust verification failed: Managed runtime cuda-13.3 is not installed or fails content verification. Install it from the Runtime screen
+PASS rt04v2.lease-refuses-the-swapped-runtime-at-execution | passed=false
+PASS rt04v2.no-process-spawned-with-tampered-runtime | children=0
+PASS rt04v2.dll-restored-exactly
+PASS rt04v2.third-run-started
+RUN3_RESULT {"ok":true,"value":{"runtimeId":"cuda-13.3","modelSha256":"e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5","adapterId":"luid:0000000000014f4f","startedAt":1790079103851,"finishedAt":1790079106369,"passed":true,"stages":[{"stage":"device_enumeration","status":"PASS","durationMs":259,"failureReason":null,"detail":"Bounded device enumeration identified the approved backend and exact adapter.","completion":null},{"stage":"backend_operations","status":"PASS","durationMs":832,"failur
+PASS rt04v2.restored-runtime-passes-the-same-health-run | passed=true
+RT04V2 SUMMARY: 17/17 checks PASS
+RT04V2_EXIT=0

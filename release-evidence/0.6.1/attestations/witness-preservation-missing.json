@@ -1,0 +1,18 @@
+{
+  "status": "FAIL",
+  "notes": [
+    "fault simulation: preservation files omitted"
+  ],
+  "stage": "preservation-verification",
+  "preservation": {
+    "status": "missing-files",
+    "output": "collected files absent; the preservation step did not run"
+  },
+  "sourceRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082",
+  "harnessRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082",
+  "candidateDigests": {
+    "currentMsi": "e9bef60f935bb69146d92f2cf2c91b71162f10bc7e8873133aca0ba180b66c5b",
+    "currentSetup": "33be58faa6d940abb7f1bf05dd5b912b94598913c88f088a63abab01c9bbf139"
+  },
+  "candidateInventorySha256": "2f6b50fb5b439c4db02ad3ecc1a64e16dfa541714012771be3898ebd3e00ed41"
+}

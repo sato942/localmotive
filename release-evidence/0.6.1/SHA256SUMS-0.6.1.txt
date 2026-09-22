@@ -1,0 +1,3 @@
+e9bef60f935bb69146d92f2cf2c91b71162f10bc7e8873133aca0ba180b66c5b *Localmotive_0.6.1_x64.msi
+1f355dea038867971b5a15bab05145359a4c1d80eedfba135b605137abc63ae0 *Localmotive_0.6.1_x64-portable.exe
+33be58faa6d940abb7f1bf05dd5b912b94598913c88f088a63abab01c9bbf139 *Localmotive_0.6.1_x64-setup.exe

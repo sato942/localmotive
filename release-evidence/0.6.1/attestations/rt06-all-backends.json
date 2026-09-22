@@ -1,0 +1,741 @@
+{
+  "schema": "localmotive.rt06-all-backends.v1",
+  "sourceRevision": "4b31431d28d1503efc7b80a46c77ad2c3d54f082",
+  "portableDigest": "1f355dea038867971b5a15bab05145359a4c1d80eedfba135b605137abc63ae0",
+  "backendScope": {
+    "installed": [
+      {
+        "installKey": "cpu",
+        "backend": "cpu",
+        "outcome": "reused"
+      },
+      {
+        "installKey": "cuda-12.4",
+        "backend": "cuda",
+        "outcome": "reused"
+      },
+      {
+        "installKey": "cuda-13.3",
+        "backend": "cuda",
+        "outcome": "reused"
+      },
+      {
+        "installKey": "vulkan",
+        "backend": "vulkan",
+        "outcome": "reused"
+      }
+    ],
+    "refused": [
+      {
+        "installKey": "openvino",
+        "backend": "openvino",
+        "reason": "Error: GPU adapter luid:0000000000014f4f (nvidia) is incompatible with the openvino runtime"
+      },
+      {
+        "installKey": "rocm",
+        "backend": "rocm",
+        "reason": "Error: GPU adapter luid:0000000000014f4f (nvidia) is incompatible with the rocm runtime"
+      },
+      {
+        "installKey": "sycl",
+        "backend": "sycl",
+        "reason": "Error: GPU adapter luid:0000000000014f4f (nvidia) is incompatible with the sycl runtime"
+      }
+    ],
+    "selected": [
+      "cpu",
+      "cuda-12.4",
+      "cuda-13.3",
+      "vulkan"
+    ],
+    "launched": [
+      "cpu",
+      "cuda-12.4",
+      "cuda-13.3",
+      "vulkan"
+    ],
+    "verifiedThroughPrimaryRoot": [
+      "cpu",
+      "cuda-13.3"
+    ],
+    "verifiedThroughLaunchBoundary": [
+      "cuda-12.4",
+      "vulkan"
+    ],
+    "sevenBackendCriterionSatisfied": false,
+    "note": "Installed/selected/launched are the measured scope of this run on this host. Installing all seven backends simultaneously requires three GPU vendors; the three refusals are the compatibility guard's correct behavior, not installed backends, and do not satisfy the seven-installed-backend criterion. describe_runtime verifies only the primary data root, so installs found under the legacy root report managedVerified=false and are instead accepted through the launch boundary (their health run passed); the per-backend records name which root carried the verdict."
+  },
+  "availability": [
+    {
+      "installKey": "cpu",
+      "status": "available",
+      "reason": "Every mapped upstream job completed successfully."
+    },
+    {
+      "installKey": "cuda-12.4",
+      "status": "available",
+      "reason": "Every mapped upstream job completed successfully."
+    },
+    {
+      "installKey": "cuda-13.3",
+      "status": "available",
+      "reason": "Every mapped upstream job completed successfully."
+    },
+    {
+      "installKey": "openvino",
+      "status": "available",
+      "reason": "Every mapped upstream job completed successfully."
+    },
+    {
+      "installKey": "rocm",
+      "status": "available",
+      "reason": "Every mapped upstream job completed successfully."
+    },
+    {
+      "installKey": "sycl",
+      "status": "available",
+      "reason": "Every mapped upstream job completed successfully."
+    },
+    {
+      "installKey": "vulkan",
+      "status": "available",
+      "reason": "Every mapped upstream job completed successfully."
+    }
+  ],
+  "installedRecords": [
+    {
+      "installKey": "cpu",
+      "backend": "cpu",
+      "contentVerified": false
+    },
+    {
+      "installKey": "cuda-12.4",
+      "backend": "cuda",
+      "contentVerified": false
+    },
+    {
+      "installKey": "cuda-13.3",
+      "backend": "cuda",
+      "contentVerified": false
+    },
+    {
+      "installKey": "vulkan",
+      "backend": "vulkan",
+      "contentVerified": false
+    }
+  ],
+  "generatedAt": "2026-09-22T11:52:35.335Z",
+  "host": {
+    "cdpPort": 10041,
+    "adapterId": "luid:0000000000014f4f",
+    "batch": "all"
+  },
+  "catalog": {
+    "tag": "b10816",
+    "optionCount": 7,
+    "options": [
+      {
+        "installKey": "cpu",
+        "backend": "cpu",
+        "asset": "llama-b10816-bin-win-cpu-x64.zip",
+        "assetBytes": 18412922,
+        "companion": null,
+        "companionBytes": null,
+        "recommended": true
+      },
+      {
+        "installKey": "cuda-12.4",
+        "backend": "cuda",
+        "asset": "llama-b10816-bin-win-cuda-12.4-x64.zip",
+        "assetBytes": 253942297,
+        "companion": "cudart-llama-bin-win-cuda-12.4-x64.zip",
+        "companionBytes": 391443627,
+        "recommended": false
+      },
+      {
+        "installKey": "cuda-13.3",
+        "backend": "cuda",
+        "asset": "llama-b10816-bin-win-cuda-13.3-x64.zip",
+        "assetBytes": 149564704,
+        "companion": "cudart-llama-bin-win-cuda-13.3-x64.zip",
+        "companionBytes": 390970417,
+        "recommended": false
+      },
+      {
+        "installKey": "openvino",
+        "backend": "openvino",
+        "asset": "llama-b10816-bin-win-openvino-2026.3.1-x64.zip",
+        "assetBytes": 80318411,
+        "companion": null,
+        "companionBytes": null,
+        "recommended": false
+      },
+      {
+        "installKey": "rocm",
+        "backend": "rocm",
+        "asset": "llama-b10816-bin-win-rocm-10.0-x64.zip",
+        "assetBytes": 244244508,
+        "companion": null,
+        "companionBytes": null,
+        "recommended": false
+      },
+      {
+        "installKey": "sycl",
+        "backend": "sycl",
+        "asset": "llama-b10816-bin-win-sycl-x64.zip",
+        "assetBytes": 119727951,
+        "companion": null,
+        "companionBytes": null,
+        "recommended": false
+      },
+      {
+        "installKey": "vulkan",
+        "backend": "vulkan",
+        "asset": "llama-b10816-bin-win-vulkan-x64.zip",
+        "assetBytes": 35228033,
+        "companion": null,
+        "companionBytes": null,
+        "recommended": false
+      }
+    ]
+  },
+  "installs": [
+    {
+      "installKey": "cpu",
+      "backend": "cpu",
+      "outcome": "reused",
+      "asset": "llama-b10816-bin-win-cpu-x64.zip",
+      "assetBytes": 18412922,
+      "companionAsset": null,
+      "companionBytes": null,
+      "elapsedMs": 191,
+      "verification": {
+        "jobs_started": 0,
+        "jobs_coalesced": 0,
+        "bytes_hashed": 46741789,
+        "jobs_cancelled": 0
+      }
+    },
+    {
+      "installKey": "cuda-12.4",
+      "backend": "cuda",
+      "outcome": "reused",
+      "asset": "llama-b10816-bin-win-cuda-12.4-x64.zip",
+      "assetBytes": 253942297,
+      "companionAsset": "cudart-llama-bin-win-cuda-12.4-x64.zip",
+      "companionBytes": 391443627,
+      "elapsedMs": 781,
+      "verification": {
+        "jobs_started": 0,
+        "jobs_coalesced": 0,
+        "bytes_hashed": 1166447389,
+        "jobs_cancelled": 0
+      }
+    },
+    {
+      "installKey": "cuda-13.3",
+      "backend": "cuda",
+      "outcome": "reused",
+      "asset": "llama-b10816-bin-win-cuda-13.3-x64.zip",
+      "assetBytes": 149564704,
+      "companionAsset": "cudart-llama-bin-win-cuda-13.3-x64.zip",
+      "companionBytes": 390970417,
+      "elapsedMs": 558,
+      "verification": {
+        "jobs_started": 0,
+        "jobs_coalesced": 0,
+        "bytes_hashed": 704229997,
+        "jobs_cancelled": 0
+      }
+    },
+    {
+      "installKey": "openvino",
+      "backend": "openvino",
+      "outcome": "refused-by-design",
+      "asset": "llama-b10816-bin-win-openvino-2026.3.1-x64.zip",
+      "assetBytes": 80318411,
+      "elapsedMs": 157,
+      "error": "Error: GPU adapter luid:0000000000014f4f (nvidia) is incompatible with the openvino runtime"
+    },
+    {
+      "installKey": "rocm",
+      "backend": "rocm",
+      "outcome": "refused-by-design",
+      "asset": "llama-b10816-bin-win-rocm-10.0-x64.zip",
+      "assetBytes": 244244508,
+      "elapsedMs": 156,
+      "error": "Error: GPU adapter luid:0000000000014f4f (nvidia) is incompatible with the rocm runtime"
+    },
+    {
+      "installKey": "sycl",
+      "backend": "sycl",
+      "outcome": "refused-by-design",
+      "asset": "llama-b10816-bin-win-sycl-x64.zip",
+      "assetBytes": 119727951,
+      "elapsedMs": 165,
+      "error": "Error: GPU adapter luid:0000000000014f4f (nvidia) is incompatible with the sycl runtime"
+    },
+    {
+      "installKey": "vulkan",
+      "backend": "vulkan",
+      "outcome": "reused",
+      "asset": "llama-b10816-bin-win-vulkan-x64.zip",
+      "assetBytes": 35228033,
+      "companionAsset": null,
+      "companionBytes": null,
+      "elapsedMs": 206,
+      "verification": {
+        "jobs_started": 0,
+        "jobs_coalesced": 0,
+        "bytes_hashed": 102314781,
+        "jobs_cancelled": 0
+      }
+    }
+  ],
+  "installedCount": 4,
+  "refusedCount": 3,
+  "listing": [
+    {
+      "pass": 0,
+      "elapsedMs": 5,
+      "count": 4,
+      "verification": {
+        "jobs_started": 0,
+        "jobs_coalesced": 0,
+        "bytes_hashed": 0,
+        "jobs_cancelled": 0
+      }
+    },
+    {
+      "pass": 1,
+      "elapsedMs": 4,
+      "count": 4,
+      "verification": {
+        "jobs_started": 0,
+        "jobs_coalesced": 0,
+        "bytes_hashed": 0,
+        "jobs_cancelled": 0
+      }
+    }
+  ],
+  "selectingRuns": [
+    {
+      "installKey": "cpu",
+      "backend": "cpu",
+      "path": "<localappdata>\\Localmotive\\runtimes\\b10816\\cpu\\llama-server.exe",
+      "elapsedMs": 37,
+      "managedVerified": true,
+      "identityBackend": "cpu",
+      "identityTag": "b10816",
+      "identitySource": "manifest",
+      "verification": {
+        "jobs_started": 1,
+        "jobs_coalesced": 0,
+        "bytes_hashed": 46741789,
+        "jobs_cancelled": 0
+      }
+    },
+    {
+      "installKey": "cuda-12.4",
+      "backend": "cuda",
+      "path": "<localappdata>\\<legacy-data-root>\\runtimes\\b10816\\cuda-12.4\\llama-server.exe",
+      "elapsedMs": 2,
+      "managedVerified": false,
+      "identityBackend": "cuda",
+      "identityTag": "b10816",
+      "identitySource": "manifest",
+      "verification": {
+        "jobs_started": 0,
+        "jobs_coalesced": 0,
+        "bytes_hashed": 0,
+        "jobs_cancelled": 0
+      }
+    },
+    {
+      "installKey": "cuda-13.3",
+      "backend": "cuda",
+      "path": "<localappdata>\\Localmotive\\runtimes\\b10816\\cuda-13.3\\llama-server.exe",
+      "elapsedMs": 389,
+      "managedVerified": true,
+      "identityBackend": "cuda",
+      "identityTag": "b10816",
+      "identitySource": "manifest",
+      "verification": {
+        "jobs_started": 1,
+        "jobs_coalesced": 0,
+        "bytes_hashed": 704229997,
+        "jobs_cancelled": 0
+      }
+    },
+    {
+      "installKey": "vulkan",
+      "backend": "vulkan",
+      "path": "<localappdata>\\<legacy-data-root>\\runtimes\\b10816\\vulkan\\llama-server.exe",
+      "elapsedMs": 3,
+      "managedVerified": false,
+      "identityBackend": "vulkan",
+      "identityTag": "b10816",
+      "identitySource": "manifest",
+      "verification": {
+        "jobs_started": 0,
+        "jobs_coalesced": 0,
+        "bytes_hashed": 0,
+        "jobs_cancelled": 0
+      }
+    }
+  ],
+  "startingRuns": [
+    {
+      "installKey": "cpu",
+      "backend": "cpu",
+      "elapsedMs": 2159,
+      "passed": true,
+      "error": null,
+      "failedStages": [
+        "device_enumeration:PASS",
+        "backend_operations:PASS",
+        "pinned_model_load:PASS",
+        "loopback_server_health:PASS",
+        "deterministic_completion:PASS",
+        "cancellation:PASS",
+        "process_and_temporary_file_cleanup:PASS"
+      ],
+      "stages": [
+        "device_enumeration:PASS",
+        "backend_operations:PASS",
+        "pinned_model_load:PASS",
+        "loopback_server_health:PASS",
+        "deterministic_completion:PASS",
+        "cancellation:PASS",
+        "process_and_temporary_file_cleanup:PASS"
+      ],
+      "attempts": [
+        {
+          "attempt": 1,
+          "ok": true,
+          "passed": true,
+          "failedStages": [
+            "device_enumeration:PASS:",
+            "backend_operations:PASS:",
+            "pinned_model_load:PASS:",
+            "loopback_server_health:PASS:",
+            "deterministic_completion:PASS:",
+            "cancellation:PASS:",
+            "process_and_temporary_file_cleanup:PASS:"
+          ]
+        }
+      ],
+      "verification": {
+        "jobs_started": 0,
+        "jobs_coalesced": 0,
+        "bytes_hashed": 93483578,
+        "jobs_cancelled": 0
+      }
+    },
+    {
+      "installKey": "cuda-12.4",
+      "backend": "cuda",
+      "elapsedMs": 4285,
+      "passed": true,
+      "error": null,
+      "failedStages": [
+        "device_enumeration:PASS",
+        "backend_operations:PASS",
+        "pinned_model_load:PASS",
+        "loopback_server_health:PASS",
+        "deterministic_completion:PASS",
+        "cancellation:PASS",
+        "process_and_temporary_file_cleanup:PASS"
+      ],
+      "stages": [
+        "device_enumeration:PASS",
+        "backend_operations:PASS",
+        "pinned_model_load:PASS",
+        "loopback_server_health:PASS",
+        "deterministic_completion:PASS",
+        "cancellation:PASS",
+        "process_and_temporary_file_cleanup:PASS"
+      ],
+      "attempts": [
+        {
+          "attempt": 1,
+          "ok": true,
+          "passed": true,
+          "failedStages": [
+            "device_enumeration:PASS:",
+            "backend_operations:PASS:",
+            "pinned_model_load:PASS:",
+            "loopback_server_health:PASS:",
+            "deterministic_completion:PASS:",
+            "cancellation:PASS:",
+            "process_and_temporary_file_cleanup:PASS:"
+          ]
+        }
+      ],
+      "verification": {
+        "jobs_started": 0,
+        "jobs_coalesced": 0,
+        "bytes_hashed": 2332894778,
+        "jobs_cancelled": 0
+      }
+    },
+    {
+      "installKey": "cuda-13.3",
+      "backend": "cuda",
+      "elapsedMs": 3522,
+      "passed": true,
+      "error": null,
+      "failedStages": [
+        "device_enumeration:PASS",
+        "backend_operations:PASS",
+        "pinned_model_load:PASS",
+        "loopback_server_health:PASS",
+        "deterministic_completion:PASS",
+        "cancellation:PASS",
+        "process_and_temporary_file_cleanup:PASS"
+      ],
+      "stages": [
+        "device_enumeration:PASS",
+        "backend_operations:PASS",
+        "pinned_model_load:PASS",
+        "loopback_server_health:PASS",
+        "deterministic_completion:PASS",
+        "cancellation:PASS",
+        "process_and_temporary_file_cleanup:PASS"
+      ],
+      "attempts": [
+        {
+          "attempt": 1,
+          "ok": true,
+          "passed": true,
+          "failedStages": [
+            "device_enumeration:PASS:",
+            "backend_operations:PASS:",
+            "pinned_model_load:PASS:",
+            "loopback_server_health:PASS:",
+            "deterministic_completion:PASS:",
+            "cancellation:PASS:",
+            "process_and_temporary_file_cleanup:PASS:"
+          ]
+        }
+      ],
+      "verification": {
+        "jobs_started": 0,
+        "jobs_coalesced": 0,
+        "bytes_hashed": 1408459994,
+        "jobs_cancelled": 0
+      }
+    },
+    {
+      "installKey": "vulkan",
+      "backend": "vulkan",
+      "elapsedMs": 2718,
+      "passed": true,
+      "error": null,
+      "failedStages": [
+        "device_enumeration:PASS",
+        "backend_operations:PASS",
+        "pinned_model_load:PASS",
+        "loopback_server_health:PASS",
+        "deterministic_completion:PASS",
+        "cancellation:PASS",
+        "process_and_temporary_file_cleanup:PASS"
+      ],
+      "stages": [
+        "device_enumeration:PASS",
+        "backend_operations:PASS",
+        "pinned_model_load:PASS",
+        "loopback_server_health:PASS",
+        "deterministic_completion:PASS",
+        "cancellation:PASS",
+        "process_and_temporary_file_cleanup:PASS"
+      ],
+      "attempts": [
+        {
+          "attempt": 1,
+          "ok": true,
+          "passed": true,
+          "failedStages": [
+            "device_enumeration:PASS:",
+            "backend_operations:PASS:",
+            "pinned_model_load:PASS:",
+            "loopback_server_health:PASS:",
+            "deterministic_completion:PASS:",
+            "cancellation:PASS:",
+            "process_and_temporary_file_cleanup:PASS:"
+          ]
+        }
+      ],
+      "verification": {
+        "jobs_started": 0,
+        "jobs_coalesced": 0,
+        "bytes_hashed": 204629562,
+        "jobs_cancelled": 0
+      }
+    }
+  ],
+  "starting": {
+    "installKey": "cuda-13.3",
+    "backend": "cuda",
+    "elapsedMs": 3522,
+    "passed": true,
+    "error": null,
+    "failedStages": [
+      "device_enumeration:PASS",
+      "backend_operations:PASS",
+      "pinned_model_load:PASS",
+      "loopback_server_health:PASS",
+      "deterministic_completion:PASS",
+      "cancellation:PASS",
+      "process_and_temporary_file_cleanup:PASS"
+    ],
+    "stages": [
+      "device_enumeration:PASS",
+      "backend_operations:PASS",
+      "pinned_model_load:PASS",
+      "loopback_server_health:PASS",
+      "deterministic_completion:PASS",
+      "cancellation:PASS",
+      "process_and_temporary_file_cleanup:PASS"
+    ],
+    "attempts": [
+      {
+        "attempt": 1,
+        "ok": true,
+        "passed": true,
+        "failedStages": [
+          "device_enumeration:PASS:",
+          "backend_operations:PASS:",
+          "pinned_model_load:PASS:",
+          "loopback_server_health:PASS:",
+          "deterministic_completion:PASS:",
+          "cancellation:PASS:",
+          "process_and_temporary_file_cleanup:PASS:"
+        ]
+      }
+    ],
+    "verification": {
+      "jobs_started": 0,
+      "jobs_coalesced": 0,
+      "bytes_hashed": 1408459994,
+      "jobs_cancelled": 0
+    }
+  },
+  "checks": [
+    {
+      "name": "catalog.exposes-every-windows-backend",
+      "ok": true,
+      "detail": "options=cpu,cuda-12.4,cuda-13.3,openvino,rocm,sycl,vulkan"
+    },
+    {
+      "name": "install.cpu",
+      "ok": true,
+      "detail": "asset=llama-b10816-bin-win-cpu-x64.zip bytes=18412922 elapsed=191ms outcome=reused"
+    },
+    {
+      "name": "install.cuda-12.4",
+      "ok": true,
+      "detail": "asset=llama-b10816-bin-win-cuda-12.4-x64.zip bytes=253942297 elapsed=781ms outcome=reused"
+    },
+    {
+      "name": "install.cuda-13.3",
+      "ok": true,
+      "detail": "asset=llama-b10816-bin-win-cuda-13.3-x64.zip bytes=149564704 elapsed=558ms outcome=reused"
+    },
+    {
+      "name": "refusal.openvino",
+      "ok": true,
+      "detail": "guarded refusal: Error: GPU adapter luid:0000000000014f4f (nvidia) is incompatible with the openvino runtime"
+    },
+    {
+      "name": "refusal.rocm",
+      "ok": true,
+      "detail": "guarded refusal: Error: GPU adapter luid:0000000000014f4f (nvidia) is incompatible with the rocm runtime"
+    },
+    {
+      "name": "refusal.sycl",
+      "ok": true,
+      "detail": "guarded refusal: Error: GPU adapter luid:0000000000014f4f (nvidia) is incompatible with the sycl runtime"
+    },
+    {
+      "name": "install.vulkan",
+      "ok": true,
+      "detail": "asset=llama-b10816-bin-win-vulkan-x64.zip bytes=35228033 elapsed=206ms outcome=reused"
+    },
+    {
+      "name": "listing.reports-every-installed-runtime",
+      "ok": true,
+      "detail": "count=4 eligible=4 refused-by-design=3"
+    },
+    {
+      "name": "listing.second-pass-avoids-rehashing",
+      "ok": true,
+      "detail": "pass1_bytes=0 pass2_bytes=0"
+    },
+    {
+      "name": "selecting.cpu-identity-reports-managed-cpu",
+      "ok": true,
+      "detail": "backend=cpu tag=b10816 src=manifest managedVerified=true"
+    },
+    {
+      "name": "starting.cpu-health-run-passes",
+      "ok": true,
+      "detail": "elapsed=2159ms"
+    },
+    {
+      "name": "selecting.cpu-verified-through-its-root-boundary",
+      "ok": true,
+      "detail": "primary root verification"
+    },
+    {
+      "name": "selecting.cuda-12.4-identity-reports-managed-cuda",
+      "ok": true,
+      "detail": "backend=cuda tag=b10816 src=manifest managedVerified=false"
+    },
+    {
+      "name": "starting.cuda-12.4-health-run-passes",
+      "ok": true,
+      "detail": "elapsed=4285ms"
+    },
+    {
+      "name": "selecting.cuda-12.4-verified-through-its-root-boundary",
+      "ok": true,
+      "detail": "legacy root via the launch boundary"
+    },
+    {
+      "name": "selecting.cuda-13.3-identity-reports-managed-cuda",
+      "ok": true,
+      "detail": "backend=cuda tag=b10816 src=manifest managedVerified=true"
+    },
+    {
+      "name": "starting.cuda-13.3-health-run-passes",
+      "ok": true,
+      "detail": "elapsed=3522ms"
+    },
+    {
+      "name": "selecting.cuda-13.3-verified-through-its-root-boundary",
+      "ok": true,
+      "detail": "primary root verification"
+    },
+    {
+      "name": "selecting.vulkan-identity-reports-managed-vulkan",
+      "ok": true,
+      "detail": "backend=vulkan tag=b10816 src=manifest managedVerified=false"
+    },
+    {
+      "name": "starting.vulkan-health-run-passes",
+      "ok": true,
+      "detail": "elapsed=2718ms"
+    },
+    {
+      "name": "selecting.vulkan-verified-through-its-root-boundary",
+      "ok": true,
+      "detail": "legacy root via the launch boundary"
+    }
+  ],
+  "summary": {
+    "total": 22,
+    "pass": 22,
+    "fail": 0
+  }
+}
