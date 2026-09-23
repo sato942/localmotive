@@ -6,8 +6,9 @@ packaged candidate; **EXERCISED** through automated tests or scripted
 fixtures; **REVIEWED** from upstream documentation; **UNTESTED** - no claim.
 
 Machine-readable evidence lives in `release-evidence/<version>/` and
-`docs/EVIDENCE-MATRIX.md`; per-finding records live in
-`docs/history/TODO-0.6.md`.
+`docs/EVIDENCE-MATRIX.md`. Current findings are in `REVIEW.md`. The 0.6
+per-finding records are in `docs/history/TODO-0.6.md` in git history (last
+tree `9b09857`).
 
 Out of 0.6 scope (owner 2026-09-21, not an open 0.6 gate): multi-vendor GPU
 hosts, a second GPU adapter, HDD/SATA storage targets, and OS-crash /

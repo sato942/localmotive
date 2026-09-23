@@ -3,9 +3,9 @@
 Version → what was actually exercised. A cell says PASS only where release
 evidence for that exact version exists; everything else stays UNKNOWN or NOT
 RUN. This file is the index for the README support statement and is updated
-with each release. The authoritative per-item evidence lives in
-`TODO-0.6.md` and the release assets named below. Historical evidence stays in
-`docs/history/`.
+with each release. The authoritative per-item evidence lives in `TODO.md`,
+`release-evidence/`, and the release assets named below. Closed trackers are
+in git history (last tree `9b09857`).
 
 Legend: **PASS** evidence present · **FAIL** evidence present and failing ·
 **UNKNOWN** not established for that version · **NOT RUN** deliberately not
@@ -23,9 +23,9 @@ executed.
 | Version | Channel | CPU packaged lifecycle | Accelerator (CUDA) packaged | Clean-account Sandbox | Notes / evidence |
 |---|---|---|---|---|---|
 | 0.4.0 | Public release | PASS (as published) | UNKNOWN | UNKNOWN | Its release notes labeled three L2/PARTIAL rows "Supported"; the correction is explained in the 0.4.1 notes and this repository. Binaries stay immutable. |
-| 0.4.1 | Public release | PASS (as published) | UNKNOWN | UNKNOWN | See `docs/history/TODO-0.4.1.md` for the frozen record. |
-| 0.5.0 | Public release | PASS (release workflow `package-smoke` + packaged matrix on this host) | UNKNOWN | FAIL (failed before installation; recorded in the release evidence) | Health evidence is CPU only. Release notes disclose broad L4 limitations. See the ship ledger in `docs/history/TODO-0.5.md`. |
-| 0.6.0 | In development | In progress (tracked in `docs/history/TODO-0.6.md`) | NOT RUN | NOT RUN | No support claim before the 0.6 evidence exists. |
+| 0.4.1 | Public release | PASS (as published) | UNKNOWN | UNKNOWN | The frozen record is `docs/history/TODO-0.4.1.md` in git history (last tree `9b09857`). |
+| 0.5.0 | Public release | PASS (release workflow `package-smoke` + packaged matrix on this host) | UNKNOWN | FAIL (failed before installation; recorded in the release evidence) | Health evidence is CPU only. Release notes disclose broad L4 limitations. The ship ledger is `docs/history/TODO-0.5.md` in git history (last tree `9b09857`). |
+| 0.6.0 | In development | In progress (tracked in `TODO.md`) | NOT RUN | NOT RUN | No support claim before the 0.6 evidence exists. |
 
 ## What each column means
 

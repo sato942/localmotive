@@ -1266,10 +1266,6 @@ test("R13: publication rechecks the tag and trusts exact bytes, with failure dia
   assert.equal(diagnostics.if, "failure() || cancelled()");
   assert.match(diagnostics.with.path, /attestations\/\*/);
   assert.equal(diagnostics.with["retention-days"], 90);
-  // The review text no longer conflates workflow artifacts with release assets.
-  const review = await readFile(join(process.cwd(), "docs", "RELEASE-REVIEW-0.6.md"), "utf8");
-  assert.doesNotMatch(review, /Expected assets: the MSI, NSIS setup, portable exe, `SHA256SUMS`, the SBOM/);
-  assert.match(review, /WORKFLOW ARTIFACTS retained for 90 days/);
 });
 
 test("R09: installed version identity is exact and payload expectations are stated", async () => {
@@ -2250,9 +2246,6 @@ test("QD-04 active docs agree with the shipped unsigned policy and current platf
     "the product schema no longer claims the web platform",
   );
   assert.ok(product.includes("SQLite-backed local catalog mirror"), "the SQLite mirror is described");
-  const qualification = await readFile(join(process.cwd(), "docs", "qualification-tests.md"), "utf8");
-  assert.ok(qualification.includes("Frozen snapshot"), "the qualification snapshot is labelled");
-  assert.ok(!qualification.includes("verify_versions.mjs 0.4.1"), "the stale command is corrected");
 });
 
 test("QD-05 the toolchain minimum is declared", async () => {
@@ -2267,19 +2260,16 @@ test("QD-05 the toolchain minimum is declared", async () => {
   assert.ok(readme.includes("20.19"), "the README states the real Node minimum");
 });
 
-test("QD-06 vendored upstream docs carry provenance and links resolve elsewhere", async () => {
-  const vendored = await readFile(join(process.cwd(), "docs", "LLAMA-SERVER-README.md"), "utf8");
-  assert.ok(vendored.includes("Provenance"), "the vendored README identifies its source");
-  assert.ok(vendored.includes("ggml-org/llama.cpp"), "the upstream repository is named");
-  const optionMap = await readFile(join(process.cwd(), "docs", "OPTION_MAP.md"), "utf8");
-  assert.ok(optionMap.includes("--help` is authoritative"), "OPTION_MAP records its source policy");
-});
-
-test("QD-06 local doc links resolve (the vendored upstream README is excluded)", async () => {
-  // The vendored docs/LLAMA-SERVER-README.md intentionally keeps upstream
-  // relative targets (see its provenance banner); every other active doc
-  // must resolve its relative links inside this repository.
-  const files = ["README.md", "docs/OPTION_MAP.md", "docs/PRODUCT.md", "docs/RUNTIME_MANAGER.md"];
+test("QD-06 local doc links resolve in every active document", async () => {
+  // Closed trackers, old reviews, and vendored upstream copies were removed
+  // from the tree on 2026-09-24 (git history keeps them at 9b09857). A link
+  // from an active document to a removed file is a dangling link.
+  const files = [];
+  for (const dir of [".", "docs", "catalog"]) {
+    for (const name of await readdir(join(process.cwd(), dir))) {
+      if (name.endsWith(".md")) files.push(dir === "." ? name : `${dir}/${name}`);
+    }
+  }
   const missing = [];
   for (const file of files) {
     const content = await readFile(join(process.cwd(), file), "utf8");

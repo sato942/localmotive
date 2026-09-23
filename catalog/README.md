@@ -97,7 +97,8 @@ Version 1 files fail closed with an upgrade message: without rich fields the
 compatibility decision: the loader supports schema 2 only, and an older client
 with a v2-blind loader falls back to its bundled catalog rather than guessing at
 fields it cannot interpret (`schemaVersion` mismatches never replace a
-supported cache; see `docs/history/TODO-0.6.md`, DC-07).
+supported cache; see DC-07 in `docs/history/TODO-0.6.md`, which is in git
+history at `9b09857`).
 
 ## Curating a change
 

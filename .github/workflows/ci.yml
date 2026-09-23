@@ -7,7 +7,7 @@ name: CI
 # (audit GH-01). The push jobs stay the validation gate for main; the PR job
 # exists so required checks can actually execute for an ordinary pull
 # request. Merging is additionally gated by the repository's main-branch
-# ruleset (see AGENTS.md "CI and branch protection").
+# ruleset (see AGENTS.md "CI and publication").
 on:
   push:
     branches: [main]

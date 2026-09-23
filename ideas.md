@@ -1,8 +1,0 @@
-- security concerns if any is availble 
-- user interface speed and responsiveness
-- user interface sanity (no out of bound input)
-- ai tuning maybe can work first as search tree? some smart no-ai tuning (research algorithms?)
-- version check and auto update within the app itself
-- modern inference methods [Dspark2, Ngrams, MTP etc ..] research first
-- make sure project public face is accurate
-- [further] use lighteval for measuring intelligence
