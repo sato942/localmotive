@@ -157,7 +157,17 @@ through `scripts/verify_versions.mjs`. Add user-facing changes to `CHANGELOG.md`
 `release.yml` verifies and retains candidate bytes; it does not publish.
 `release-promote.yml` requires explicit authorization and validates the downloaded
 qualified bundle before publishing those same bytes. Never rebuild during promotion.
-Retain artifact inventory, checksums, native lifecycle/preservation evidence,
+Keep four identities distinct: product version (bumped once per release, before
+the freeze), producer SHA (the tree that was built), tag (a fixed pointer to
+that SHA, never a container for lab notes), and evidence (attestation commits
+or CI artifacts, never source). Accept a record only when its `sourceRevision`
+and candidate digests match the producer, never because the file happens to
+sit in the tag tree. Never bump the version because paperwork landed later,
+a verify job failed, or workflow YAML changed. Three builds of one source
+(`4b31431`) on one host produced three different portable digests, so
+digest-bound records (lifecycle, payload, packaged, mt06, rt06) cannot
+transfer between builds; only SHA-bound records do. Retain artifact inventory,
+checksums, native lifecycle/preservation evidence,
 and public asset readback. Do not replace current-candidate evidence with old records.
 Disclose unsigned artifacts and SmartScreen limitations in every release.
 No signing step exists and none is pursued. Do not publish without explicit

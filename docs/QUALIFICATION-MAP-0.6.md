@@ -48,6 +48,17 @@ Nothing here re-labels older bytes.
 - `node scripts/verify_release_promotion.mjs --qualified . --tag v0.6.0 --expect-source c0ae538…`: local contract PASS (no publish performed; tag untouched).
 - Candidate: portable `e3a7804269ef9396355af3fca9a5cd448951b65587e2377a825fb354e8bdb04d`, setup `900ac1074a526156a51ea5f315daa61f0c1ff99f814e62bf63ef2e721438e58c`, MSI `f411280b889c89177b097657ef55146ab811c65a06bec7c853b6f1b10c490a73`; inventory `ac21f7ea5ea1e58b1549006647c8c5e86df3d406a555b2478ffd93a4eb4e1353`.
 
+## Four-identity rule (2026-09-22; stops the v0.6.1 recurrence)
+
+Product version, producer SHA, tag, and evidence are distinct. Version `0.6.1`
+was bumped once, before the freeze. Producer `4b31431` is the tree that was
+built. Tag `v0.6.1` peels to that SHA and never moves. Evidence lives in
+`d3085ff` and CI artifacts under `release-evidence/0.6.1/`, never in the tag
+tree. A record counts only when its `sourceRevision` and candidate digests
+match the producer. Digest-bound records cannot transfer between builds
+(three builds of `4b31431` gave three portable digests); a green CI manifest
+needs all digest-bound legs produced in that run. No 0.6.2 exists for this.
+
 ## Earlier map refresh (2026-09-21, superseded — retained for history)
 
 Superseded by the qualify campaign above (U06-02 CLOSED 2026-09-21). Retained for history: map source was `1dc0793`; committed manifest bound `e9a36b3`; working manifest bound `da091a4`; gaps were workflow digest drift + sha256 mismatches + unparsed lifecycle rows. All resolved on the new files; no hash was rewritten to silence a gate.
