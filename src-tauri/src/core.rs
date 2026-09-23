@@ -741,9 +741,10 @@ impl LaunchProfile {
     /// Domain validation for profile values (audit S-13.I1): the selected
     /// runtime contract proves an argument exists, but not that its value is a
     /// legal member of its domain. Every list and range here comes from the
-    /// pinned `docs/LLAMA-SERVER-README.md` option map. An impossible value fails
-    /// early with an actionable message instead of reaching a server launch or a
-    /// paid advisor measurement.
+    /// upstream `llama-server` option tables in `tools/server/README.md` (the
+    /// copy imported on 2026-09-06 is in git history at `9b09857`). An impossible
+    /// value fails early with an actionable message instead of reaching a server
+    /// launch or a paid advisor measurement.
     pub fn validate_domains(&self) -> Result<(), String> {
         let profile = self;
         const CACHE_TYPES: [&str; 9] = [

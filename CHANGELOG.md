@@ -6,14 +6,14 @@ Patch release on the 0.6 stabilization line. No product changes beyond the
 branch state; this release carries the search-first tuner
 (grid + nudge + confirm + trial ledger, advisor off by default), the
 packaged-verification Runtime-navigation repair, and the fully qualified
-0.6.1 evidence set. See `TODO.md` (U06-02 closed 2026-09-21) and
-`docs/QUALIFICATION-MAP-0.6.md` for the bound records.
+0.6.1 evidence set. See `release-evidence/0.6.1/` for the bound records.
 
 ## 0.6.0
 
 This release combines the traced audit fixes with the owner-requested
-application and release-pipeline reduction. Current verification is recorded
-in `TODO-0.6.md`; accepted historical evidence remains under `docs/history/`.
+application and release-pipeline reduction. Current work is tracked in
+`TODO.md`. The 0.6 trackers are in git history (last tree `9b09857`).
+Accepted evidence remains under `release-evidence/0.6.0/`.
 
 ### Simplification
 

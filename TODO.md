@@ -1,294 +1,444 @@
-# Localmotive 0.6 — TODO
+# Localmotive tracker
 
-Single current tracker. Merged 2026-09-20 from the root `TODO-0.6.md` working
-copy and `docs/history/TODO-0.6.md` (frozen; untouched). The root copy is
-removed by this merge. Closed items keep their states from the working copy;
-only open work and the merge register below carry forward.
+This file is the one tracker for Localmotive. It lists the open work in
+priority order.
 
-Code comparison for this merge (2026-09-20, head `9436aec`):
+Basis: `REVIEW.md` (2026-09-24, source `9b098577095ab80ead9bff6e5475456166b340c1`).
+Finding IDs such as RT-05 refer to that review.
 
-- `cargo fmt --check`: clean. `cargo clippy --locked --all-targets -- -D
-  warnings`: clean. `cargo test --locked`: 622 pass, 7 ignored.
-  `release-gates` script tests: 164/164 pass.
-- GitHub rulesets read live: `main-pr-check` (branch) and
-  `immutable-release-tags` (tag) both active. This supports the closed
-  GH-01.I3 and GH-02.I3 states.
-- `reserve_operation` with `OperationOwner` exists in `src-tauri/src/lib.rs`.
-  This supports the closed MT-05.I1 state.
-- No `signtool`, `Get-AuthenticodeSignature`, or signing step exists in
-  `.github/workflows/`. `scripts/sign-windows.ps1` and
-  `src-tauri/tauri.signing.conf.json` are deleted. Releases ship unsigned as
-  standing policy (owner order 2026-09-20). No open or closed box below
-  requires signing work.
-- `src-tauri/src/recommend.rs` and `src-tauri/src/sharing.rs` are deleted.
-  No open box below requires them.
-- Catalog Ed25519 signing (`catalog.yml`, `sign_catalog_candidate.mjs`) is
-  untouched and unrelated to the unsigned-release policy.
+The closed trackers, the earlier audit, and the 0.6 reports are in git history
+only. The last tree that holds them is `9b098577095ab80ead9bff6e5475456166b340c1`.
+Do not restore them to the tree.
 
-Rule: a box closes only on its stated evidence. A checkbox is not evidence.
+## How to use this tracker
 
-## Open work packages
+- Each item states one outcome, its acceptance criteria, and its evidence.
+- Before you fix a defect, write a test that fails for the stated reason.
+  Record that failure in the ledger.
+- Record evidence in section 11 in this format:
+  `L-nn | date | revision | command or run ID | artifact | PASS, FAIL, or UNKNOWN`.
+- A checkbox is not proof. Check a box only when a ledger line says PASS.
+- The dev team decides every item in this tracker. No item waits for owner
+  approval (release authority in `AGENTS.md`, 2026-09-24). An item marked
+  **ADMIN** needs a one-time change in GitHub settings that only the
+  repository admin can make.
+- When an item is complete, check it and write its ledger ID after it.
+- Do not add another tracker, report, review snapshot, or campaign document
+  to the tree.
 
-- [x] **U06-02 — CLOSED 2026-09-21.** One qualify campaign executed on branch tip `c0ae53874b54fda90616f2c8afc291ae002d32d9`; all 18 mandatory records exist as new parses bound to that SHA and the candidate digests; manifest verifier and the previously drifting gates PASS on those files.
+---
 
-**Trace:** V06-GH-02.V3, V06-GH-03.V1/V3, V06-GH-06.V3, V06-G-04/V06-G-05/V06-G-06, V06-G-09.I2/V1; audit [GH-02](docs/history/localmotive-comprehensive-audit.md#gh-02), [GH-06](docs/history/localmotive-comprehensive-audit.md#gh-06), [release exit criteria](docs/history/localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release). **Evidence:** E08.
+## 1. State on 2026-09-24
 
-Build a producer/consumer map for all 18 mandatory manifest records, naming executable, prerequisite, output path, source/byte binding, artifact upload/download, validation and any explicitly supported historical scope. Confirm that the files consumed are the files produced by this run. Eight source-bound historical inputs must be regenerated/staged:
-
-| Records | Existing producer / prerequisite | Required binding |
+| Fact | Value | Evidence |
 |---|---|---|
+| Last published release | `v0.5.0` (`a4b7127`), published 2026-09-10T18:56:46Z | L-02 |
+| `v0.6.0` | Tag at `27349f9`. Never published. The tag is immutable. | L-04 |
+| `v0.6.1` | Tag at `4b31431`. Never published. The tag is immutable. | L-03, L-04 |
+| `main` | `0bd39fb` | L-03 |
+| Lane branch | `fix/u06-stabilization` at `9b09857`, merged into `main` | — |
+| Version in `package.json` | 0.6.1 | — |
+| Rulesets | `main-pr-check` (23218749) and `immutable-release-tags` (23218751), both active. The owner is the only bypass actor on `main-pr-check` (readback 2026-09-20). | old tracker, U06-05 |
+| Pull-request rule | strict `pr-check`, 0 required approvals. Tag rule: no update, no deletion; creation is open to Write. | `gh api` readback 2026-09-24 |
+| Collaborators | `sato942` (admin) only | `gh api` readback 2026-09-24 |
+| Self-hosted runners | 1: `DESKTOP-HPTF57N-zen5-blackwell` (owner's PC), labels `self-hosted, Windows, X64, zen5, blackwell, localmotive-hw` | `gh api` readback 2026-09-24 |
+| Environments | 0. `release-promote.yml` needs only the phrase `PUBLISH <tag>`. | `gh api` readback 2026-09-24 |
+| Local gates at `9b09857` | PASS | L-01 |
+| Release runs after `v0.5.0` | 14 started, 0 passed | L-02 |
+| Promotion runs, all time | 0 | L-02 |
 
-**Qualify campaign 2026-09-21 (U06-02 close).** Source freeze: `origin/fix/u06-stabilization` at `c0ae53874b54fda90616f2c8afc291ae002d32d9` (includes the `verify_041.mjs` Runtime-navigation fix committed as `c0ae538`; no doc commits after the freeze, so the manifest binds the producer). Clean worktree at that SHA; `npm run tauri build` exit 0. Candidate bytes: portable `e3a7804269ef9396355af3fca9a5cd448951b65587e2377a825fb354e8bdb04d` (`20372480` bytes), setup `900ac1074a526156a51ea5f315daa61f0c1ff99f814e62bf63ef2e721438e58c`, MSI `f411280b889c89177b097657ef55146ab811c65a06bec7c853b6f1b10c490a73`. Inventory SHA-256 `ac21f7ea5ea1e58b1549006647c8c5e86df3d406a555b2478ffd93a4eb4e1353` (`artifacts/candidate-inventory-0.6.0.json`, `sourceRevision` = freeze SHA). No `release.yml` dispatch (it would check out tag `v0.6.0`); all producers ran locally. No tag touched; no publish.
+Why nothing ships: `REVIEW.md` sections 1 and 2. In short:
 
-| Record | Producer → result on these bytes |
-|---|---|
-| `packaged_verification` | `verify_packaged_matrix.ps1` → PASS 26/26, `source_dirty` false (run on a pristine worktree with `-Portable artifacts/Localmotive_0.6.0_x64-portable.exe`) |
-| `lifecycle_upgrade_v0.4.0` / `v0.5.0`, `lifecycle_preservation_v0.4.1` / `v0.5.0` | `host-run-lifecycle.ps1` (4 Sandbox legs, baselines `v0.4.0`/`v0.4.1`/`v0.5.0` via `gh`) → all PASS, bound to freeze SHA + inventory |
-| `witness_missing_assets` / `timeout` / `malformed_result` / `preservation_missing` / `stale_lock` / `live_lock` | `test-fault-evidence.ps1` → ALL WITNESS LEGS PASS |
-| `mt06_cancellation` | `g05_mt06_cycles.mjs` → 75/75 PASS, 6 cycles, bound to freeze SHA + portable digest |
-| `installer_payload_identity` | `verify_installer_payloads.mjs` → PASS, bound to freeze SHA + inventory |
-| `dc04_command_path` | `g05_dc04_override.mjs` + loopback → 13/13 PASS |
-| `rt04_delayed_download` | adapted `run-rt04v2.sh` (worktree paths) + packaged candidate → 17/17 PASS |
-| `a11y_packaged_verification` | `verify_a11y.mjs` → A11Y_PASS (17 controls, 0 wordless; tree 148 nodes) |
-| `rt06_all_backends` / `rt06_full_run_log` | `g05_rt06_all_backends.mjs` → 22/22 PASS, bound to freeze SHA + digest; console captured to the log |
-
-Manifest rebuilt with `build_qualification_manifest.mjs` (no carry-forward; workflow digest follows the checkout, so the drift is gone): `verify_qualification_manifest.mjs --expect-source c0ae538…` → MANIFEST VERIFY PASS, 18/18 records exact. `release-gates.test.mjs` → 164/164 PASS. `qualification_manifest.test.mjs` → 28/28 PASS. `verify_release_promotion.mjs --qualified . --tag v0.6.0 --expect-source c0ae538…` → local contract PASS (no publish performed).
-
-Repairs made during the run (no hashes rewritten, no attestations faked): (1) `verify_041.mjs` `ui.runtime-cards` could never pass after `6099c6f` added the Benchmark navigation (the Runtime screen unmounts); the check now navigates back to Runtime first — committed as `c0ae538` before the freeze. (2) Campaign harnesses must run with a native Windows `RUNNER_TEMP` (`C:/Users/Mubarak/AppData/Local/Temp`); an MSYS `/tmp` value makes the app reject the catalog-root override and the cache check fails. (3) One matrix attempt failed three runtime IPC checks on a cold-start Busy-guard race; the rerun on the idle host passed 26/26.
-
-**U06-02 CLOSED 2026-09-21** on the evidence above. The `release-evidence/0.6.0` slots now carry the `c0ae538` parses; older bytes remain in git history.
-
-| Record | Producer → consumer | Present? | Bound to HEAD? | Gap |
-|---|---|---|---|---|
-| `packaged_verification` | `verify_packaged_matrix.ps1` → manifest (staged) | yes | no (`da091a4` era) | regenerate per candidate |
-| `lifecycle_upgrade_v0.4.0` / `v0.5.0` | `host-run-lifecycle.ps1` → manifest | yes | no | sha256 mismatch + not a parsed document (test 3169) |
-| `lifecycle_preservation_v0.4.1` / `v0.5.0` | same harness → manifest | yes | no | sha256 mismatch + not a parsed document (test 3169) |
-| `witness_missing_assets` / `timeout` / `malformed_result` / `preservation_missing` / `stale_lock` / `live_lock` | `test-fault-evidence.ps1` → manifest | yes | no (`85edee6` era) | regenerate 4 source-bound witness rows per candidate |
-| `mt06_cancellation` | `g05_mt06_cycles.mjs` → manifest | yes | no | regenerate per candidate |
-| `installer_payload_identity` | `verify_installer_payloads.mjs` → manifest + release-gates | yes | no | sha256 mismatch (test 3169) |
-| `dc04_command_path` | `g05_dc04_override.mjs` + loopback → manifest | yes | log scope retained | re-run with the candidate |
-| `rt04_delayed_download` | `run-rt04v2.sh` + packaged candidate → manifest | yes | log scope retained | re-run with the candidate |
-| `a11y_packaged_verification` | `verify_a11y.mjs` → manifest | yes | A11Y_PASS stands | none for U06-02 |
-| `rt06_all_backends` / `rt06_full_run_log` | `g05_rt06_all_backends.mjs` → manifest | yes | no | regenerate per candidate |
-| release.yml digest | — | — | — | workflow file digest drifted (test 3169) |
-
-Eight source-bound historical inputs (regenerated/staged this campaign, not
-carried): `installer_payload_identity`, `mt06_cancellation`,
-`rt06_all_backends` (+ log), `witness_timeout`, `witness_malformed_result`,
-`witness_preservation_missing`, `witness_stale_lock`, `witness_live_lock`.
-
-**U06-02 CLOSED 2026-09-21** (campaign table above). The per-record gap rows below are superseded by that campaign; the gaps listed there (sha256 drift, unbound records, workflow digest drift) are resolved on the new files.
+1. The gate needs a live GitHub API call that a fresh profile cannot make
+   reliably, and the harness discards the error kind (RT-05, RT-06, LAB-01).
+2. The gate needs developer-only files that a clean runner does not have
+   (REL-04).
+3. Promotion rejects the dispatch run that was chosen as the final producer
+   (REL-01).
+4. Owner stops forbade the other exits (REL-02, DOC-06). The owner lifted
+   them on 2026-09-24 and gave the team release authority.
 
 ---
 
-- [x] **U06-04 — DONE (2026-09-20).** Executed the four required current-candidate legs.
+## 2. Standing rules
 
-**Trace:** R06-01; V06-GH-04.V3, V06-G-06.I2, V06-GH-03.V1/V3, V06-GH-06.V3; audit [GH-04](docs/history/localmotive-comprehensive-audit.md#gh-04), [release exit criteria](docs/history/localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release).
+Release authority: the dev team has standing authority to bump versions,
+create tags, run release qualification, and publish releases. The owner
+granted it on 2026-09-24 (`AGENTS.md`, "CI and publication"). The owner stops
+of 2026-09-23 are lifted: promotion, changes to `release-promote.yml`, new
+tags, new versions, and `workflow_dispatch` runs are allowed. A used tag
+still never moves.
 
-| Leg | Baseline | Persistence |
-| 1 | v0.4.0 | upgrade + cache |
-| 2 | v0.4.1 | preservation / cache (profiles) |
-| 3 | v0.5.0 | upgrade + mirror |
-| 4 | v0.5.0 | preservation / mirror (SQLite + user-override) |
+Standing release policy:
 
-**Result (2026-09-20, candidate `fb0776b6b499fc4c26121664fe3b7162e0a15d75`):** all four legs PASS on the same installer bytes. Setup SHA-256 `fb21f7d17ab2d88d098fee596e3568b62bf9cf4bb68bc525610a8fb356383b25` (`5119018` bytes). MSI SHA-256 `a9015b926506536c14b993cf89a4b0fe4e7f469cfc24f33db56077f2921de77c` (`8798208` bytes). Inventory SHA-256 `58e82b4116ce9010aa9f58c8c876dc08b5975604776b8527fb1073646c8a7a84` (`artifacts/candidate-inventory-0.6.0.json`). Each leg records exact installed identity (`0.4.0`/`0.4.1`/`0.5.0` before update, `0.6.0` after), strict uninstall outcomes, and `preservation: PASS`. Both cache legs recovered `6/6` seeded settings keys with exact equality including the tuning value (retained digest `2b7ba23c5f06c8b7abef7d93a2c0114f50f838f3f725c97b9cb129d5ff8f8391`). Both mirror legs retained schema `1` with user-override rows (`user_sourced=1`) and the userdata canary. Evidence: `release-evidence/0.6.0/attestations/sandbox-clean-account-lifecycle-upgrade-v0.4.0.{json,log}`, `sandbox-clean-account-lifecycle-upgrade-v0.5.0.{json,log}`, `sandbox-clean-account-lifecycle-preservation-v0.4.1.{json,log,collected-settings.json}`, `sandbox-clean-account-lifecycle-preservation-v0.5.0.{json,log}`. Matrix log: `.hermes-0.6/u06-04-matrix-fb0776b.log`. No boot failure occurred, so no rerun was needed. Slot is free: `wsb.exe list` is empty and the harness removed its owning locks.
-
----
-
-- [x] **U06-05 — CLOSED by owner disposition 2026-09-20.** Solo-repo gate cost reduction; the two-actor rehearsal requirement is superseded.
-
-**Trace:** V06-GH-01.I3/V1/V2/V3, V06-GH-02.I3; audit [GH-01](docs/history/localmotive-comprehensive-audit.md#gh-01), [GH-02](docs/history/localmotive-comprehensive-audit.md#gh-02). **Evidence:** E03/E04/E05 as settings-and-policy records, not as a two-actor refusal.
-
-Solo-maintainer policy: the owner may author and merge a PR without a second reviewer, but strict required checks still apply; normal and emergency fixes use the protected PR path unless the owner uses the documented owner-only bypass. No standing bypass actor exists for ordinary contributors. Any exceptional policy change needs a specifically recorded disposition and effective-settings readback.
-
-U06-05 CLOSED by owner disposition 2026-09-20.
-
-GH-01.I3: main-pr-check and immutable-release-tags are active.
-GH-01.V1: pr-check already runs on pull_request to main under that stable job name on windows-latest. No new smoke PR required.
-GH-01.V2: dedicated failing-PR campaign is not a release blocker for a solo repo. Optional. Do not merge a failing revision if executed.
-GH-01.V3: waived as an access prerequisite. No Write collaborator exists and none will be created for this proof. Effective ruleset readback recorded. Owner is the sole documented bypass actor on main-pr-check. Ordinary-contributor direct-push refusal was not attempted and must not be fabricated. V3 reopens when the first Write collaborator is invited.
-
-Evidence: live ruleset readback after owner-bypass edit on 2026-09-20 (main-pr-check 23218749: enforcement active, refs/heads/main, required context pr-check with strict policy, pull_request required_approving_review_count 0, non_fast_forward plus deletion, bypass_actors owner sato942 id 2147851 only; immutable-release-tags 23218751 unchanged and active, refs/tags/v*, update plus deletion, no bypass); this disposition; current collaborator state (owner only). E03/E04/E05 as settings-and-policy records, not as a two-actor refusal.
+- Releases ship unsigned. No signing step exists, and none is pursued. Each
+  release discloses the unsigned files and the SmartScreen limits.
+- Claim support only for the scope that the evidence for that version covers.
+- The self-hosted runner is the validation gate for trusted Windows runs.
+  `windows-latest` runs only the untrusted `pr-check` job. It is not a
+  release gate.
+- Before a push, run the default-parallel local suite and get a green result.
+- Land each gate or verifier change RED before GREEN, with a mutation proof.
+- Fix flaky tests at the cause (unique temporary directories, robust
+  fixtures, load-aware assertions). A thread-count pin is a temporary
+  mitigation only.
+- Merges: `pr-check` must pass (strict). The rule requires 0 approvals, so a
+  Write member can merge a PR after `pr-check` passes.
 
 ---
 
-- [ ] **U06-06 — OPEN.** Select a fully reviewed source containing the corrections and obtain one successful, fully qualified final producer run.
+## 3. Team decisions
 
-**Trace:** V06-GH-02.I3/V3, V06-GH-03.V1/V3, V06-G-09.I1/I2; audit [GH-02](docs/history/localmotive-comprehensive-audit.md#gh-02), [GH-03](docs/history/localmotive-comprehensive-audit.md#gh-03).
-
-Finish U06-01/02/03 and their actual preflight before another final tag attempt. The existing tag remains at 27349f9 while current main contains later fixes. Present the concrete source, checks, publication state and tag/version policy disposition if a different final SHA is needed. A new SHA under an already-used immutable tag is a real conflict, not another general release permission request. No silent temporary bypass or retargeting loop.
-
-Current workflow facts: dispatching `release.yml` from main with the old tag still checks out that tag's source; re-running an old run does not load new committed workflow code; promotion requires a successful **push-event** Release verify at the tag's unchanged peeled SHA. Do not invent an RC-tag/version convention or weaken that contract to avoid reconciliation. An off-tag rehearsal is valid diagnostic work but not a substitute final producer run.
-
-Acceptance: applicable required CI, resolve, audit, quality, package, native lifecycle and qualification all succeed for the identified candidate; qualified bundle, inventory and every record agree. Record tag object, peeled SHA, run/attempt ID, workflow/harness identity and each artifact digest. New outputs get their own digests even when product source is unchanged.
-
-**U06-06 stays OPEN (2026-09-21 note).** The 2026-09-21 qualify campaign closed U06-02 off-tag: source `c0ae53874b54fda90616f2c8afc291ae002d32d9`, portable `e3a7804269ef9396355af3fca9a5cd448951b65587e2377a825fb354e8bdb04d`, setup `900ac1074a526156a51ea5f315daa61f0c1ff99f814e62bf63ef2e721438e58c`, MSI `f411280b889c89177b097657ef55146ab811c65a06bec7c853b6f1b10c490a73`, inventory `ac21f7ea5ea1e58b1549006647c8c5e86df3d406a555b2478ffd93a4eb4e1353`; producers were the local scripts (no CI run/attempt IDs; `release.yml` was not dispatched). Tag `v0.6.0` was not touched and still points at its old peeled SHA under `immutable-release-tags` (no bypass). A final publish of these bytes under `v0.6.0` would require retargeting a used immutable tag — a real conflict. The final tagged producer requires a new unused version name, which the owner has not authorized, and no tag push was performed. This off-tag qualify is not a substitute final U06-06.
-
-**0.6.1 campaign GREEN, tag pending (2026-09-22).** Bump commit `4b31431d28d1503efc7b80a46c77ad2c3d54f082` is on origin. Host network repaired (reversible, this host only): IPv4-mapped prefix precedence 35 to 46, DNS order to 1.1.1.1 first, IPv6 unbound from Ethernet; proof was v4 200 in 0.10 s and default path 200 with 18 ms DNS. Full local qualify on `4b31431`: build + inventory (portable `1f355dea038867971b5a15bab05145359a4c1d80eedfba135b605137abc63ae0`, setup `33be58faa6d940abb7f1bf05dd5b912b94598913c88f088a63abab01c9bbf139`, MSI `e9bef60f935bb69146d92f2cf2c91b71162f10bc7e8873133aca0ba180b66c5b`), payload PASS, mt06 75/75, rt06 22/22 + log, a11y PASS, witnesses ALL PASS, dc04 13/13, rt04 17/17, packaged matrix 26/26 clean, 4 lifecycle Sandbox legs PASS, manifest 18/18 exact, release-gates 164/164, manifest tests 28/28. Evidence committed under `release-evidence/0.6.1/` (the 0.6.0 rows are untouched). Tag `v0.6.1` pushed 2026-09-22, peel `4b31431` exact; `v0.6.0` untouched. Nothing published.
-
-**Push-event Release verify 35731266321 FAILED at the `resolve` gate (2026-09-22): `Release tags must point to a commit on main`. The tag points at a `fix/u06-stabilization` commit that is not merged to main. No product check ran; no bytes were built. The tag was NOT moved. U06-06 stays OPEN: merging the lane to main is an owner decision, and re-firing verify after such a merge needs owner direction (no tag move, no dispatch of `v0.6.0`).**
-
-**Merge + verify attempts (2026-09-22, later).** PR 51 merged to main (merge commit `4b3c3a2`; pr-check green after the `.gitattributes` LF-pin fix for digest-checked `artifacts/` text files — CI autocrlf had rewritten the producer inventory). Re-ran 35731266321: `resolve` PASS. `verify` failed 4x on `ipc.runtime-recommendation` / `ipc.reject-unknown-adapter` / `ipc.runtime-catalog-fetch` while every other check passed. Root cause is environmental, proven: concurrent catalog invokes collide on the backend `Busy` lock (reproduced locally — second concurrent invoke returns `kind: busy`), and the shared-IP unauthenticated GitHub quota (60/hr) was exhausted by the combined local + CI API storm (setup evidence showed `catalog_result: terminal-error`). A pristine tag-checkout build + full matrix passed 26/26 locally with healthy quota and no competing load. Fifth CI attempt: `verify_041` PASSED, but `Assemble the canonical qualification manifest` failed with 12 MISSING RECORDS (witnesses, mt06, dc04, rt04, a11y, rt06): those records live in evidence commit `d3085ff`, which is AFTER the tag target `4b31431` — the tag's tree does not contain them, and CI checks out the tag. The tag cannot move. A green Release verify for `v0.6.1` needs a new tag on a commit that already contains the records (not authorized) or a workflow that sources them elsewhere (not authorized scope). U06-06 stays OPEN. U06-08 stays OPEN.
-
-**Four-identity rule (2026-09-22, owner-directed, no 0.6.2).** Version `0.6.1` (bumped once, frozen), producer `4b31431` (the tree that was built), tag `v0.6.1` (fixed peel, never moves), evidence `d3085ff` + CI artifacts (never source). Written into `AGENTS.md` and `docs/QUALIFICATION-MAP-0.6.md`. Release-gates grew a 0.6.1 manifest test plus a negative test proving assembly is filesystem-based (untracked records assemble 18/18); gates 166/166 green. Cross-build staging of digest-bound records was REFUSED with local proof: a mixed manifest (simulated CI inventory + staged 0.6.1 records) assembles 18/18 but fails the verifier with 17 digest-coherence failures across lifecycle, payload, packaged, mt06, rt06. Witnesses + logs are SHA-bound only and do transfer. A green CI manifest needs every digest-bound leg produced in that run, so no staging step was added. Promote is already bundle-based (consumes the retained `qualified` artifact, never tag-tree records) and needs no change. U06-06 stays OPEN. U06-08 stays OPEN. No tag moved, no 0.6.2, no promote, no publish.
-
-**In-run legs + dispatch-from-main producer (2026-09-23, owner-authorized, no 0.6.2, no tag move, no publish).** `release.yml` on tag `v0.6.1` is stale YAML, so the official U06-06 producer is a `workflow_dispatch` from `main` with `tag=v0.6.1`: product checkout is the tag peel `4b31431`, workflow text is main's. The verify job grows two steps that produce all 12 missing records in-run against that run's bytes: lab legs (rt06 `all` installs, UI activation of cuda-13.3 through the sidebar managed-entry control, mt06 75 cycles, dc04, rt04 with downloaded pinned model, a11y) plus the witness fault harness (all 6 witnesses bind the run's candidate inventory). The clear step now wipes all 18 record names first so reruns are hermetic. Smoke findings baked in: probe `process.exit`, rt06-before-mt06 (benchmark needs the recommended runtime installed), condition-waits not fixed sleeps for reload/boot/nav/activation, normalized key comparison. Quota discipline: the shared-IP unauthenticated GitHub quota (60/hr) is consumed by every local app launch and CI fetch alike — evening smoke runs starved it to 0/60 and produced catalog-empty leg failures; keep all hands off the network window during the dispatch run. IPv4-prefer stays until green. U06-06 stays OPEN until that dispatch is green with 18 records, one inventory, peel `4b31431`, version `0.6.1`. U06-08 stays OPEN.
-
-**Activation root cause + fix (2026-09-23, proven live on `4b31431` bytes).** All-day `no-install` paradox solved: pwsh-generated `'...'' + EXPR + ''"'` concat boundaries come out backslash-escaped (`)(\' + ...`), so Node never concatenates and the page received the literal text `+ JSON.stringify(...) +` as key/path (app notice printed it verbatim). Backend data was always right. Fix: match node-side; drive the Runtime-screen path input + real Inspect button (same IPCs the Use control uses; no backend select command exists); pass args via `.replace('__ARG__', () => JSON.stringify(target))` with zero `+` concatenation. Proven: `activate-mode=key`, `runtime-active`, notice `b10816 inspected, 11 modes`, UI `llama.cpp b10816`; model-select via model-root + Rescan + row click proven (`SmolLM2-135M-Q4_K_M`, server-live PASS). Lesson: never emit `'' + node-expr + ''` from pwsh single-quoted lines; regenerate + `node --check` + byte-count `0x5c` at concat boundaries before any live run. Lab still needs the model-select step (driver assumes a selected model) before mt06.
-
-**Owner amendment (2026-09-23, final producer).** A workflow_dispatch of `release.yml` whose workflow file is `372965b` or later, product checkout `v0.6.1` peel `4b31431`, that builds the candidate and produces every digest-bound record in that same run, is the final producer. Push-event verify is historical. No tag move. No 0.6.2. Promote still consumes the qualified bundle only. U06-06 stays OPEN.
-
----
-
-- [ ] **U06-07 — OPEN.** Complete FE-05 evidence-based acceptance and the release decision under standing owner delegation; persist precise residual scope.
-
-**Trace:** R06-02, V06-G-08.V1, V06-FE-05.I1-I5/V1-V3, V06-G-05.I3, V06-S-25.I3; audit [FE-05](docs/history/localmotive-comprehensive-audit.md#fe-05), [release acceptance](docs/history/localmotive-comprehensive-audit.md#remediation-plan-and-release-acceptance).
-
-Reuse accepted FE-05 navigation, completion visibility, two-profile saved-manifest/anchor provenance and I1-I5 regression mappings. Do not invent a personal owner review or repeat the A/B walkthrough solely to generate a signature. Record who made the delegated evidence assessment and cite the actual owner authorization.
-
-Hardware D06-01..D06-05 is CLOSED-DEFERRED-FAR-FUTURE 2026-09-21 (owner scope): 0.6 will not obtain other-vendor GPUs, a second adapter, HDD/SATA targets, or an OS-crash/power-loss rig, and U06-07 does not wait on those rows. Not executed, not PASS. For S-25, the split is: (1) independent benchmark distributions and baseline drift stay BLOCKED-INPUT; (2) held-out calibration error and interval coverage stay BLOCKED-INPUT; (3) release queue/failure/evidence-retention metrics are collected in V06-S-25.I3. The tuner history table is in-sample evidence and closes neither science third. For G-05, retain the automated a11y PASS scope; manual Narrator/NVDA listening and authorized live-account scenarios are CLOSED-DEFERRED-USER-REPORTS 2026-09-21 and U06-07 does not wait on them. If a non-hardware residual is eligible for deferral under the existing Medium/Low/supplemental policy, make a separately reasoned delegated decision with owner, risk, workaround, supported scope, milestone and evidence gap; do not label the current hardware instruction as that decision. Mandatory High/native gates stay required.
-
-Acceptance: current evidence supports the stated release scope, no unresolved mandatory High/native gate is hidden, all unavailable hardware coverage is excluded honestly, every remaining non-hardware criterion has an executed result or policy-eligible explicit disposition. Final ship decision is based on prepublication evidence; publication/readback is the next action, not a circular prerequisite to that decision.
+- [x] **D1 — Exit the release deadlock.** Decision: Option A, 2026-09-24,
+  under the delegated authority. Fix P0-1 to P0-4, bump the version once, tag
+  a commit on `main`, and let the push-event run qualify that tag. `v0.6.1`
+  stays unpublished. The team can change this decision before the tag.
+  Options B and C are in `REVIEW.md` section 3.
+- [x] **D2 — Adopt the reduced release gate.** Adopted in `AGENTS.md`, "CI
+  and publication", on 2026-09-24. P0-7 implements it. The lab campaign moves
+  to `hardware-qualify.yml` and does not block a release.
+- [ ] **D3 — Remove `artifacts/` from the tree (TEAM).** 5,494 tracked files,
+  including 33 WebView2 profiles (DOC-01, DOC-02). A rewrite of public history
+  needs a force push, and only the owner can bypass `main-pr-check`.
+- [ ] **D4 — Decide the `v0.4.0` corrective note (TEAM).** Publish
+  `release-evidence/0.4.1/v0.4.0-corrective-note.md`, or delete it.
+- [ ] **D5 — Decide superseded evidence (TEAM).** `AGENTS.md` keeps accepted
+  evidence frozen. Allow the deletion of `release-evidence/0.6.0/history/`,
+  or keep it.
+- [ ] **A1 — Give the team access (ADMIN).** Give each developer the Write
+  role. Give the release lead Maintain or Admin. Before the first Write grant
+  takes effect, run the direct-push refusal test (section 8, V06-GH-01.V3).
+- [ ] **A2 — Remove the single-runner dependency (ADMIN).** Register a
+  self-hosted Windows runner that the team controls, or give the release
+  lead Admin so that the team can register one. See P1-12.
+- [x] **D6 — Approve the `AGENTS.md` pointer change (OWNER).** The owner
+  approved it on 2026-09-24 ("edit AGENTS.md"). L-07.
+  - `AGENTS.md:185-187` now reads: "Read `REVIEW.md` for the current
+    findings. Closed trackers and the earlier audit are in git history; the
+    last tree that holds them is `9b09857`."
+  - `AGENTS.md:190` now reads "Keep accepted evidence frozen." The words
+    "historical trackers" were removed, because the closed trackers are no
+    longer in the tree.
+  - `docs/history/localmotive-comprehensive-audit.md` was deleted.
 
 ---
 
-- [ ] **U06-08 — OPEN.** Complete the existing promotion controls, dry run, publication and public byte readback under standing authorization.
+## 4. P0 — Make the next release possible
 
-**Trace:** V06-G-09.I1/I2/I3/V1, V06-GH-02.V3, V06-GH-06.V3; audit [GH-02](docs/history/localmotive-comprehensive-audit.md#gh-02), [GH-03](docs/history/localmotive-comprehensive-audit.md#gh-03), [stabilization exit criteria](docs/history/localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release).
+Do these items in order. P0-1 to P0-6 are product or harness defects. They do
+not wait for D1.
 
-Use `release-promote.yml` with the final tag, selected successful verify run and exact confirm phrase `PUBLISH v0.6.0` (adjust only for an explicitly selected different version). Run `dry_run=true` first; actual publication uses `dry_run=false`. Promotion consumes the qualified bundle, never a fresh rebuild. Wrong source/tag, modified bytes, missing asset or missing lifecycle evidence must refuse publication in nonpublishing controls.
+- [ ] **P0-1 — Build the runtime catalog from the compiled approval (RT-05,
+  REL-06, LAB-02).**
+  - Behavior: `load_runtime_setup` and `fetch_runtime_catalog` return the
+    approved `b10816` catalog from `src-tauri/approved_runtimes.json` without
+    a network call. A download still checks the byte count and the SHA-256
+    from that file.
+  - A check for a newer upstream release stays a separate, manual action. It
+    must not block setup.
+  - RED test: a Rust test with no network and an empty cache expects a
+    catalog with the 13 approved assets. Today the call returns an error.
+  - Packaged check: the packaged matrix passes `ipc.runtime-setup`,
+    `ipc.runtime-catalog-fetch`, and `ipc.runtime-recommendation` while the
+    app cannot reach `api.github.com`.
 
-Acceptance: real release exists with the complete intended asset set; download public assets and compare SHA-256 and inventory/record identities to the qualified producer. Recheck tag, version, Latest/prerelease state and unsigned/SmartScreen/checksum wording. Inspect artifact contents, not merely successful upload-step labels. Preserve diagnostic and readback records. A successful dry run is not a published release.
+- [ ] **P0-2 — Share one catalog load between concurrent callers (RT-06).**
+  - Behavior: two concurrent calls to `load_runtime_setup` or
+    `fetch_runtime_catalog` get the same result. Neither call gets
+    `kind: Busy`.
+  - RED test: start two calls at the same time against a slow fetch double.
+    Today the second call returns `Busy`.
+  - Mutation proof: put back the fail-fast guard and confirm that the test
+    fails.
+
+- [ ] **P0-3 — Keep the error kind in harness evidence (LAB-01).**
+  - Behavior: `scripts/verify_041.mjs` records `catalogError.kind` and the
+    message for each failed runtime check. No reason field contains
+    `[object Object]`.
+  - RED test: a script test gives the harness a structured error
+    `{ kind, message }` and expects both values in the record.
+
+- [ ] **P0-4 — Fix the catalog query wire keys (FE-02).**
+  - Behavior: the frontend sends `pipelineTag`, `fitPerMille`, and
+    `budgetBytes`. The pipeline filter and the hardware-fit filter change the
+    result list.
+  - RED tests:
+    - a Rust test that reads the frontend-shaped payload and expects the
+      filters to apply;
+    - a Vitest test for the query builder in `src/model.ts`;
+    - a `CatalogQuery` entry in `scripts/tests/fixtures/ipc-contract.json`.
+  - Packaged check: in the packaged app, select a pipeline filter and assert
+    that the result count changes.
+
+- [ ] **P0-5 — Stage release files outside the checkout (REL-05).**
+  - Behavior: `release.yml` writes candidate and diagnostics files to a
+    directory under `$RUNNER_TEMP`, not to `artifacts/`. Each uploaded
+    artifact holds only files from the current run.
+  - RED test: a workflow test rejects a staging path inside the workspace.
+
+- [ ] **P0-6 — Name the failed step correctly (REL-09).**
+  - Behavior: when packaging passes and verification fails, the summary names
+    the verification step. It does not say "Packaging failed".
+
+- [ ] **P0-7 — Cut the release gate (D2; REL-03, REL-04, REL-07,
+  REL-12, REL-13).**
+  - Cut `release.yml` to the release gate in `AGENTS.md`, "CI and
+    publication".
+  - Remove the lab, witness, fault, and manifest steps from `release.yml`.
+    Move the lab legs that stay useful to `hardware-qualify.yml` as jobs that
+    do not block.
+  - Remove each dependency on `.hermes-0.6/`. A clean clone must hold every
+    input of the gate.
+  - Reduce `build_qualification_manifest.mjs` and
+    `verify_qualification_manifest.mjs` to the records of `REVIEW.md`
+    section 4, or delete them with their tests.
+  - Set `cancel-in-progress: false` for the release concurrency group.
+
+- [ ] **P0-8 — Keep promotion aligned with the producer (D1 = Option A;
+  REL-01, REL-02, REL-08).**
+  - Keep the push-event rule (`release-promote.yml:86-96`). The new tag gets
+    a push-event run, so promotion needs no change for option A.
+  - Implement the extra-file check that `verify_release_promotion.mjs:8` and
+    `:43` promise, or delete those comments.
+
+- [ ] **P0-9 — Correct the public text (DOC-04, DOC-05).**
+  - `README.md` names `v0.5.0` as the current release. It does not describe
+    0.6.0 or 0.6.1 as shipped.
+  - `CHANGELOG.md` marks 0.6.0 and 0.6.1 as not published.
+  - `docs/SUPPORT-MATRIX.md`, `docs/EVIDENCE-MATRIX.md`, and `README.md`
+    make the same support claims.
+
+- [ ] **P0-10 — Release 0.6.2 (D1).**
+  - Preconditions: P0-1 to P0-9 PASS. Follow `HANDOVER.md` section 5.
+  - Steps for option A:
+    1. Bump the version once in each version field.
+       `node scripts/verify_versions.mjs` passes.
+    2. Add the user-facing changes to `CHANGELOG.md`.
+    3. Merge to `main`. Tag one commit on `main`.
+    4. Let the push-event `release.yml` run qualify the tag.
+  - Acceptance:
+    - The verify run passes. The ledger records the run ID, the peel SHA, and
+      the SHA-256 of the portable EXE, the MSI, and the NSIS installer.
+    - On the exact candidate bytes, the lifecycle leg passes: clean install,
+      upgrade from `v0.5.0` with user data kept, and uninstall with no
+      leftovers.
+    - The candidate bundle holds the inventory, the checksums, the SBOM, and
+      the packaged record. Each record names the peel SHA.
+    - Negative publication controls fail as expected: wrong SHA, changed
+      bytes, and a missing asset.
+    - The release lead runs `release-promote.yml`, first with
+      `dry_run: true`, then with `dry_run: false`. No owner approval is
+      needed. The workflow publishes the same bytes. Nothing is rebuilt.
+    - Promotion occurs before the qualified bundle expires. `release.yml`
+      keeps the bundle and the diagnostics for 90 days.
+    - Readback: the public tag, the release metadata, the asset set, and the
+      downloaded digests match the candidate. The release is marked Latest.
+      The notes disclose the unsigned files and the SmartScreen limits.
+    - One ledger line records the final source, the run IDs, the asset
+      digests, and the open risks.
+  - This item replaces U06-06, U06-07, U06-08, U06-09, V06-GH-02.V3,
+    V06-GH-03.V1, V06-GH-03.V3, V06-GH-04.V3, V06-GH-06.V3, V06-G-06.I2,
+    V06-G-08.V1, V06-G-09.I1, V06-G-09.I2, V06-G-09.I3, V06-G-09.V1, and
+    V06-G-10.I1 from the old tracker.
+
+- [ ] **P0-11 — Revert the host network change after the release.**
+  - On 2026-09-22, the release host got a reversible network change: IPv4
+    prefix precedence from 35 to 46, DNS order with 1.1.1.1 first, and IPv6
+    unbound from Ethernet. The old tracker says: "IPv4-prefer stays until
+    green."
+  - After P0-10 passes, restore the original settings. Record the before and
+    after values in the ledger.
+  - P0-1 removes the reason for this change.
 
 ---
 
-- [ ] **U06-09 — OPEN.** Finish one current closeout record and update this tracker from evidence.
+## 5. P1 — Verified defects
 
-**Trace:** V06-G-10.I1/I2/I3/V1, V06-G-08.V1; audit [release acceptance](docs/history/localmotive-comprehensive-audit.md#remediation-plan-and-release-acceptance), [QD-04](docs/history/localmotive-comprehensive-audit.md#qd-04), [GH-07](docs/history/localmotive-comprehensive-audit.md#gh-07).
+Fix these after P0 and before the next feature.
 
-Record final source/tag/release/run identities, exact public artifact digests, commands/results, verified task IDs, named deferrals and remaining limitations. Check only completed criteria; retain DEFERRED-OWNER boxes unchecked. Preserve original audit and frozen evidence. Historical main/CI/tag observations keep their own dates and SHAs. Confirm no unreconciled owned processes remain. Update this tracker and its handoff from the same evidence; avoid a new documentation-only loop for unchanged results.
-## Open criterion ledger
-
-- [x] **V06-RT-06.V3 (seven-installed-backend acceptance portion)** — CLOSED-DEFERRED-FAR-FUTURE 2026-09-21 (owner scope). Not executed. Not PASS. 0.6 will not obtain the required hardware. Supported evidence remains: single-vendor NVIDIA host (RTX 5090), NVMe only, process-crash tests only. Reopen only if the owner later provides the missing environment and asks for that campaign. A deferral is not substitute evidence that the missing configuration works. The acceptance wording asks for all seven backends installed on a representative host; this host runs one GPU vendor (NVIDIA, adapter `luid:0000000000014f4f`), so the maximum eligible set is four installed/selected/launched backends plus the three vendor refusals. **Trace:** [Audit RT-06](docs/history/localmotive-comprehensive-audit.md#rt-06).
-  **Closed 2026-09-21.** D06-01 seven-installed hardware coverage is out of 0.6 scope, not an open gate. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L351).
-
----
-
-- [x] **V06-DC-12.V3** — CLOSED-DEFERRED-FAR-FUTURE 2026-09-21 (owner scope). Not executed. Not PASS. 0.6 will not obtain the required hardware. Supported evidence remains: single-vendor NVIDIA host (RTX 5090), NVMe only, process-crash tests only. Reopen only if the owner later provides the missing environment and asks for that campaign. A deferral is not substitute evidence that the missing configuration works. Distinguishing ordinary process-crash testing from target-environment OS-crash/power-loss validation, and throughput for 1/4/8 connections on HDD, SATA SSD, and NVMe targets, needs a storage-class rig and a power-loss facility this project does not have. **Trace:** [Audit DC-12](docs/history/localmotive-comprehensive-audit.md#dc-12).
-  **Closed 2026-09-21.** D06-02 storage-class and OS-crash/power-loss facility is out of 0.6 scope, not an open gate. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L743).
-
----
-
-- [x] **V06-GH-01.V2** — Introduce a controlled failing check in the test PR; verify merge is blocked until corrected, then confirm the corrected commit obtains the required successful statuses. **Trace:** [Audit GH-01](docs/history/localmotive-comprehensive-audit.md#gh-01).
-  **Current status: CLOSED by owner disposition 2026-09-20.** Dedicated failing-PR campaign is not a release blocker for a solo repo. A controlled failing PR remains optional owner work if a real regression needs it; do not merge a failing revision if executed. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L1704).
-
----
-
-- [x] **V06-GH-01.V3** — Read back effective branch/ruleset settings with appropriate access, record bypass actors and restrictions, and verify ordinary contributors cannot circumvent required checks through direct pushes. **Trace:** [Audit GH-01](docs/history/localmotive-comprehensive-audit.md#gh-01).
-  **Current status: WAIVED by owner disposition 2026-09-20 as an access prerequisite.** No Write collaborator exists and none will be created for this proof. Effective readback recorded: main-pr-check 23218749 active on refs/heads/main with required context pr-check (strict), pull_request required_approving_review_count 0, non_fast_forward plus deletion, bypass_actors owner sato942 (id 2147851) only; classic branches/main protection is absent (expected; rulesets are the gate). Ordinary-contributor direct-push refusal was not attempted and must not be fabricated; owner bypass is not contributor proof. V3 reopens automatically when the first Write collaborator is invited; run a direct-push refusal with that identity before that grant takes effect. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L1705).
-
----
-
-- [x] **V06-GH-02.I3** — CLOSED 2026-09-20 on live readback + standing policy. Protect released version tags against updates and deletion, document one-time tag creation, and require a new prerelease or patch version when source changes after an earlier candidate. **Trace:** [Audit GH-02](docs/history/localmotive-comprehensive-audit.md#gh-02).
-  **Closed:** live `GET /repos/sato942/localmotive/rulesets/23218751` returns `immutable-release-tags`, enforcement `active`, target `refs/tags/v*`, rules `update` + `deletion`, `bypass_actors` empty, `current_user_can_bypass` never. Standing policy: released version tags (`refs/tags/v*`) are created once and never updated or deleted. If source changes after a candidate or a failed attempt, use a new prerelease or patch name. Do not retarget a used tag. `immutable-release-tags` is the gate. No bypass actor. No tag was published by this close. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L1724).
-
----
-
-- [ ] **V06-GH-02.V3** — Run a complete candidate flow and compare checkout revisions, inventory, packaged evidence and publication metadata; read back the effective tag-update/deletion protection. **Trace:** [Audit GH-02](docs/history/localmotive-comprehensive-audit.md#gh-02).
-  **Current status: OPEN.** Split 2026-09-20: the tag-protection readback sub-ask is satisfied by the same live JSON as V06-GH-02.I3 (`immutable-release-tags` 23218751, active, `refs/tags/v*`, `update` + `deletion`, no bypass). The complete candidate flow vs checkout / inventory / packaged evidence / publication metadata stays OPEN, blocked on U06-06 then U06-08. No fixture or older release stands in as publication proof. U06-02/U06-06/U06-08: full candidate identities and publication metadata must agree. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L1731).
-
----
-
-- [ ] **V06-GH-03.V1** — Exercise a fresh-version release in a single-runner configuration; the lifecycle job must start only after candidate artifacts exist, without release-not-found polling blocking the producer. **Trace:** [Audit GH-03](docs/history/localmotive-comprehensive-audit.md#gh-03).
-  **Current status: OPEN.** U06-02/U06-04/U06-06: complete final producer chain required. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L1755).
-
----
-
-- [ ] **V06-GH-03.V3** — Run the selected lifecycle path against the exact candidate bytes and confirm publication behavior matches the documented required/non-gating policy, including failure and cancellation outcomes. **Trace:** [Audit GH-03](docs/history/localmotive-comprehensive-audit.md#gh-03).
-  **Current status: OPEN.** U06-04/U06-06: native lifecycle and observed failure/cancellation gating required. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L1757).
-
----
-
-- [ ] **V06-GH-04.V3** — Run clean-account installer scenarios and both version-specific migration fixtures on Windows; compare exact installed identity, retained data, uninstall outcomes and structured per-scenario verdicts. **Trace:** [Audit GH-04](docs/history/localmotive-comprehensive-audit.md#gh-04).
-  **Current status: OPEN.** R06-01 / U06-04: corrected current native installer and preservation observations remain required. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L1783).
-
----
-
-- [ ] **V06-GH-06.V3** — Inspect the completed workflow's artifact collection, not just its upload-step conclusion, and confirm the summary accurately reports both verification outcome and evidence availability. **Trace:** [Audit GH-06](docs/history/localmotive-comprehensive-audit.md#gh-06).
-  **Current status: OPEN.** U06-02/U06-06/U06-08: inspect actual retained/downloaded evidence and publication asset contents. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L1835).
+- [ ] **P1-1 — CORE-04:** Rust rejects a launch profile whose model is not the
+  first shard of its set. RED test: a profile that points at shard 2 of a
+  3-shard set gets a validation error that names the first shard.
+- [ ] **P1-2 — MT-10:** The cloud brief sends only the fields that the
+  disclosure lists. Remove `adapterId`, `compatibilityId`, and `physicalId`
+  from the payload, or add them to the disclosure. RED test on the serialized
+  brief in minimal mode and in full mode.
+- [ ] **P1-3 — RT-02:** Install keeps the rollback copy until the final
+  verification passes. RED test: make the final verification fail and expect
+  the previous runtime back in place.
+- [ ] **P1-4 — LAB-04:** Delete `scripts/g05_vitems_c.mjs`, or make it stop
+  only the processes that it started, by PID. Search all scripts and
+  workflows for stops by name or by port, and remove each one.
+- [ ] **P1-5 — REL-10:** Where a workflow stops the app, stop the whole
+  process tree that the step started.
+- [ ] **P1-6 — PROC-01:** Put the child process in the job object before it
+  runs: create it suspended, assign it, then resume it.
+- [ ] **P1-7 — FE-01:** Clear each credential draft on every exit path,
+  including a failed save and an unmount.
+- [ ] **P1-8 — DL-02:** Use checked arithmetic for GGUF split metadata. RED
+  test with a split number of `u64::MAX`.
+- [ ] **P1-9 — CORE-01, CORE-06:** Accept the verification overrides only with
+  the isolated root. Show a verification-mode banner while an override is
+  active. Document the WebView2 remote-debugging variable in `SECURITY.md`.
+- [ ] **P1-10 — RT-01, RT-03:** Close the same-user races with handle-based
+  opens and the existing execution lease.
+- [ ] **P1-11 — Check the 31 unverified High findings in `REVIEW.md`.**
+  For each finding, reproduce or refute it. Record VERIFIED or REFUTED in the
+  ledger. Add a P1 item for each verified defect.
+  - Release and lab: REL-11, LAB-03, LAB-05, LAB-06.
+  - Documentation: DOC-05, DOC-07.
+  - Runtime: RT-04, RT-07, RT-10.
+  - Core: CORE-03, CORE-05.
+  - Process and health: PROC-02, PROC-03, PROC-04, PROC-05, PROC-06,
+    PROC-07, PROC-08.
+  - Downloads and cloud: DL-01, DL-03, DL-04.
+  - Measurement: MT-01, MT-03, MT-05, MT-06, MT-07, MT-08, MT-09.
+  - Frontend: FE-04, FE-05, FE-06.
+- [ ] **P1-12 — Decouple the release jobs from the hardware host.** Today
+  `release.yml` and `release-promote.yml` need all six labels of the one
+  runner on the owner's PC.
+  - Behavior: the release jobs use `[self-hosted, Windows, X64,
+    localmotive-release]`. `hardware-qualify.yml` keeps the hardware labels.
+    At least one runner that the team controls carries `localmotive-release`
+    (A2).
+  - Evidence: one green `release.yml` run on that runner.
 
 ---
 
-- [x] **V06-GH-10.V3** — CLOSED 2026-09-21 on this-host comparison (existing Windows NVIDIA host; no new hardware, no fixtures, no invented MATCH). The recorded E07 parse defect (run 34819219650 trailing quote) is already repaired: `hardware qualify attestation block parses under pwsh (U06-03)` PASS 2026-09-21 under the real PowerShell parser, so no new parser fix was needed. Generator run 2026-09-21 with directly observed values (CPU `AMD Ryzen 9 9950X3D 16-Core Processor`, GPU `NVIDIA GeForce RTX 5090`, driver `32.0.16.1074`, OS `10.0.26100.0`, source `1dc0793`) emitted verdict MATCH: rows `amd-zen5-cpu`, `nvidia-blackwell-cuda`, `nvidia-blackwell-vulkan` all HOST_MATCH carrying the detected observations. Every row note requires packaged L4 checks; `supportClaimPolicy` forbids L4_PASS from host presence; `cannot claim L4 support` test PASS 2026-09-21. No host-only record claims CUDA/Vulkan inference success or complete L4. The comparison output was scratch-only, not filed as producer evidence. **Trace:** [Audit GH-10](docs/history/localmotive-comprehensive-audit.md#gh-10).
-  **Current status: CLOSED 2026-09-21.** Historical generator tests stay accepted. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L1941).
+## 6. P2 — Simplification after the release
+
+- [ ] **P2-1 — Remove `artifacts/` (D3).** Add a `.gitignore` rule.
+  Remove the `.gitattributes` LF rules for `artifacts/`. Confirm that no test
+  or workflow reads the directory.
+- [ ] **P2-2 — Delete dead scripts (LAB-05).** List each script in `scripts/`
+  with its callers. Delete each script that no `package.json` script,
+  workflow, or kept test calls. `scripts/g05_dc01.mjs` is one (FE-03).
+- [ ] **P2-3 — Keep one CDP client (LAB-03):** `scripts/lib/cdp_client.mjs`.
+- [ ] **P2-4 — Replace source-text tests with behavior tests.** Delete the
+  test-only `ALL_SOURCES` (`src-tauri/src/lib.rs:17-37`). Delete the prose
+  assertions in `scripts/tests/release-gates.test.mjs`.
+- [ ] **P2-5 — Remove the audit-ticket labels** from Rust source (399) and
+  rename ticket-named test modules by behavior.
+- [ ] **P2-6 — Keep one benchmark system (MT-09, FE-05).**
+- [ ] **P2-7 — Keep one catalog schema source (LAB-06).**
+- [ ] **P2-8 — Split `src/App.tsx` (FE-04)** and keep IPC out of the screens
+  (FE-06).
+- [ ] **P2-9 — Merge `docs/EVIDENCE-MATRIX.md` into
+  `docs/SUPPORT-MATRIX.md`.**
+- [ ] **P2-10 — Prune superseded evidence (D5).**
+- [ ] **P2-11 — Remove stale references to deleted files:** the
+  `HISTORICAL_FILES` entries in `scripts/verify_branding.mjs`, and the note in
+  `catalog/providers.json` that names `docs/history/TODO-0.5.md` (change it
+  at the next catalog change).
+- [ ] **P2-12 — Triage the 72 Medium and 9 Low findings** in `REVIEW.md`, one
+  part at a time.
 
 ---
 
-- [ ] **V06-S-25.I3 (split 2026-09-20)** — Three stapled asks, tracked separately. The search-first tuner history table is in-sample evidence only and closes neither science third. (1) Independent benchmark distributions / baseline drift — **BLOCKED-INPUT.** No external dataset, no multi-day drift program. A single tune session must not be synthesized into a distribution. Reopens only if the owner funds a measurement protocol. (2) Held-out calibration error / interval coverage — **BLOCKED-INPUT.** The on-screen calibration interval stays modest wording (Estimated interval). The tuner table is not a held-out study; no coverage percentages are reported from in-sample trials. (3) Release queue / failure / evidence-retention metrics — **DONE 2026-09-20** from existing GitHub data (window 2026-09-01..2026-09-20, no new workflows). Run counts by workflow and conclusion: CI 253 (push success 71, failure 37, cancelled 45; pull_request success 42, failure 52, cancelled 6 — the pull_request leg is the required `pr-check` context on `windows-latest`); Release verify 41 (push failure 21, success 12; workflow_dispatch failure 7; push cancelled 1); Release promote 0 runs in the window. Failure categories named from failed job/step names without guessing: CI — immutable workflow-action pin verification 30, deterministic release gates 18, frontend checks 18, Rust tests 13, dependency/security audit 11, manifest versions 2, Rust linting 2, toolchain/npm setup 2; 49 cancelled CI runs had no failed job. Release verify — packaged-executable verification 15 (plus 6 missing-evidence follow-on reports), tag-manifest match 3, Rust tests 2, frontend checks 2, prerelease checksum/inventory 1; 1 cancelled with no failed job. Durations (updated − started): CI median 383 s, p90 665 s; Release verify median 902 s, p90 1687 s. Queue delay (run_started_at − created_at) reads 0 s median/p90 on every run in the window; the API exposes no finer queue signal. Retention as configured today: verify qualified bundle 90 days and verify diagnostics 90 days on failure/cancel (`release.yml`); promote decision 90 days, public readback 90 days, publish diagnostics 30 days on failure (`release-promote.yml`). Long-term store is `release-evidence/` in git (committed); Actions artifacts expire. Sample runs: CI success `35505474440`/`35505071903`, CI failure `34912755547`/`34909564135`/`34905149184`; verify success `34514283693`/`34430058475`, verify failure `34819219725`/`34815989537`/`34813162097`. Avoid introducing virtualization or incompatible dependency unification purely from file size/counts. **Trace:** [Measurements after correctness](docs/history/localmotive-comprehensive-audit.md#what-to-measure-after-correctness-is-restored); [Frontend additional observations](docs/history/localmotive-comprehensive-audit.md#additional-product-and-maintenance-observations); [Rust dependency inventory](docs/history/localmotive-comprehensive-audit.md#rust).
-  **Current status: PARTIAL.** (1)(2) blocked-input named above; (3) collected with the note above. Hardware-only coverage (D06-05) is CLOSED-DEFERRED-FAR-FUTURE 2026-09-21 (owner scope): not executed, not PASS, out of 0.6 scope. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L2636).
+## 7. Open risks
+
+- **Startup slot.** The post-spawn local-client constructor can return before
+  `clear_starting` runs. This matches PROC-04. It needs a controlled
+  reproduction.
+- **LoRA paths.** The pinned runtime splits scaled LoRA entries on every
+  colon. A Windows drive path is therefore unproven. Reproduce with the
+  qualified runtime bytes before you propose a correction.
+- **Legacy ownership corrections** need an independent review.
+- **Shared checkout.** A file once disappeared from this checkout without an
+  owning command. Look for another worker that uses the same checkout.
+- **Harness quoting.** On 2026-09-23, PowerShell-generated JavaScript put the
+  literal text `+ JSON.stringify(...) +` into the page, because a
+  single-quoted `'' + expression + ''` boundary was escaped. Do not build
+  JavaScript by string concatenation in PowerShell. Pass values with a
+  placeholder replace, and run `node --check` on generated scripts.
+- **Measurement science (S-25.I3).** Both items are BLOCKED-INPUT:
+  - Independent benchmark distributions and baseline drift: no external
+    dataset and no multi-day drift program. Do not turn one tune session into
+    a distribution. Reopen only if the owner funds a measurement protocol.
+  - Held-out calibration error and interval coverage: the tuner table is not
+    a held-out study. Report no coverage percentages from in-sample trials.
+    Keep the modest wording "Estimated interval".
 
 ---
 
-- [x] **V06-G-05.I3** — CLOSED-DEFERRED-USER-REPORTS 2026-09-21 (owner scope). Manual Narrator/NVDA listening and authorized live cloud/HF credential scenarios are out of current 0.6 agent/owner campaign. Not executed. Not PASS. Automated a11y evidence stands as-is. Further accessibility and live-account defects will be handled when real users open issues; that is the accepted feedback path for this slice. Reopen only if the owner schedules a dedicated listening/live-account pass. **Covered in the packaged probe (unchanged PASS):** keyboard traversal with visible focus, reduced motion, high-DPI/zoom, forced-colors high contrast (`verify_a11y.mjs` A11Y_PASS; evidence `release-evidence/0.6.0/attestations/g05-a11y-packaged-verification.log`). Not upgraded to screen-reader verified or live HF verified. **Trace:** [Remaining target verification](docs/history/localmotive-comprehensive-audit.md#remaining-verification-requiring-the-target-environment).
-  **Current status: CLOSED 2026-09-21 (leftovers only).** U06-07 does not wait on manual listening or live-account scenarios. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L2854).
+## 8. Recorded deferrals
+
+These items are not executed and not PASS. Support claims must exclude them.
+
+- **D06-01 to D06-05** — CLOSED-DEFERRED-FAR-FUTURE 2026-09-21: a
+  seven-vendor GPU host, a storage-class and OS-crash facility, physical
+  configurations that were not provided, a same-model multi-GPU rig, and
+  hardware-dependent metrics.
+- **V06-RT-06.V3** (all seven backends installed) — CLOSED-DEFERRED-FAR-FUTURE
+  2026-09-21. The evidence covers one NVIDIA host (RTX 5090), NVMe only.
+- **V06-DC-12.V3** (OS-crash and power-loss validation) —
+  CLOSED-DEFERRED-FAR-FUTURE 2026-09-21. Only process-crash tests exist.
+- **V06-MT-07.V2** (live portability matrix) — CLOSED-DEFERRED-FAR-FUTURE
+  2026-09-21. No CPU-only machine. Make no claim that calibration works on
+  CPU-only hosts.
+- **V06-G-05.I3** (manual Narrator and NVDA listening, live cloud and Hugging
+  Face accounts) — CLOSED-DEFERRED-USER-REPORTS 2026-09-21. The automated
+  accessibility evidence stands. Real user reports are the feedback path.
+- **V06-GH-01.V3** (a normal contributor cannot push past the required
+  checks) — WAIVED 2026-09-20, because no Write collaborator exists. Trigger:
+  before the first Write collaborator gets access, run a direct-push refusal
+  test with that identity.
+
+Reopen a deferral when the missing environment exists. The team decides.
 
 ---
 
-- [ ] **V06-G-06.I2** — Test clean install/start and strict uninstall assertions for each supported installer. Test v0.4.1-to-v0.6 profile preservation separately from v0.5.0-to-v0.6 SQLite/user-override preservation. **Trace:** [Stabilization release exit criteria](docs/history/localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release); [GH-04](docs/history/localmotive-comprehensive-audit.md#gh-04); [GH-05](docs/history/localmotive-comprehensive-audit.md#gh-05); [GH-06](docs/history/localmotive-comprehensive-audit.md#gh-06).
-  **Current status: OPEN.** R06-01 / U06-04: same native campaign; historical checkbox is superseded. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L3149).
+## 9. Backlog
+
+These items are not scheduled.
+
+- UI speed and responsiveness. Measure first.
+- Bounded UI input: no value outside its valid range (see CORE-05).
+- Smarter tuning search without AI. Research the algorithms first.
+- In-app version check and automatic update. This needs a design decision on
+  update signing.
+- Modern inference methods (DSpark2, n-gram, MTP). Research first.
+- Model quality measurement with lighteval.
 
 ---
 
-- [ ] **V06-G-08.V1** — Reconcile task status, required checks, lifecycle results, immutable source/digests and public claims; a green aggregate summary must not hide an unresolved High finding or missing required evidence. **Kept open (2026-09-12, owner directive):** the reconciliation is maintained continuously in the third-pass record, but it closes only with the release decision - the unresolved High rows (GH-01, GH-02, GH-03, GH-06.V3) and the G-09/G-10 gates remain, and a written deferral is not treated as passing evidence. **Reconciled (2026-09-12 third pass):** the open boxes are individually categorised (owner-gated / environment-blocked) with completion criteria and unblock actions; unresolved High rows (GH-01, GH-02, GH-03, GH-06.V3) carry their criteria and are not marked verified; a written deferral is not treated as passing evidence anywhere in this record. **Trace:** [Stabilization release exit criteria](docs/history/localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release); [Audit priorities](docs/history/localmotive-comprehensive-audit.md#priority-scale).
-  **Current status: OPEN.** U06-07: current evidence-based release acceptance, under standing authorization and explicit hardware deferrals. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L3198).
+## 10. Documentation changes on 2026-09-24
+
+`REVIEW.md` section 11 gives the reason for each file. These files were
+deleted from the tree. Git history keeps them. The last tree that holds them
+is `9b09857`.
+
+- Second tracker and reports: `TODO-0.6-post-076a3eeecbdf.md`,
+  `REPORT-0.6.md`, `agents_feedback.md`, `ideas.md`.
+- Superseded reviews: `docs/RELEASE-REVIEW-0.6.md`,
+  `docs/localmotive-0.6-followup-review-db548c8.md`.
+- Campaign and snapshot documents: `docs/QUALIFICATION-MAP-0.6.md`,
+  `docs/qualification-tests.md`, `docs/OPTION_MAP.md`,
+  `docs/Future_branding.md`.
+- Unpinned upstream copy: `docs/LLAMA-SERVER-README.md`.
+- Closed trackers and the earlier audit: `docs/history/TODO-0.4.1.md`,
+  `docs/history/TODO-0.4.md`, `docs/history/TODO-0.5.md`,
+  `docs/history/TODO-0.6.md`, `docs/history/TODO.md`, and
+  `docs/history/localmotive-comprehensive-audit.md` (deleted after D6).
+- Dead scripts that read the deleted trackers: `scripts/check_tracker.mjs`,
+  `scripts/verify_tracker_links.mjs`.
+
+The live items of `agents_feedback.md` and `ideas.md` are in sections 7
+and 9.
+
+To restore one file: `git show 9b09857:<path> > <path>`.
 
 ---
 
-- [ ] **V06-G-09.I1** — After the recorded ship decision, create/protect the v0.6.0 tag at the verified immutable SHA and promote the exact tested candidate assets; do not rebuild or retarget a used tag. **Trace:** [Stabilization release exit criteria](docs/history/localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release); [GH-02](docs/history/localmotive-comprehensive-audit.md#gh-02); [GH-03](docs/history/localmotive-comprehensive-audit.md#gh-03).
-  **Current status: OPEN.** U06-06/U06-08: final source/tag disposition and exact-byte promotion; old tag is not the repaired candidate. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L3214).
+## 11. Evidence ledger
 
----
-
-- [ ] **V06-G-09.I2** — Bind release inventory, checksums, packaged/lifecycle records and provenance to that SHA and each artifact digest. Refuse publication when source, version, candidate or required evidence differs. **Trace:** [Stabilization release exit criteria](docs/history/localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release); [GH-02](docs/history/localmotive-comprehensive-audit.md#gh-02); [GH-03](docs/history/localmotive-comprehensive-audit.md#gh-03).
-  **Current status: OPEN.** U06-02/U06-06/U06-08: actual candidate inventory/records and promoted bytes agree. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L3215).
-
----
-
-- [ ] **V06-G-09.I3** — Read back the published tag/release metadata and complete asset set. Verify downloaded/public byte identity against the candidate where the release gate promises it, and verify Latest/prerelease/unsigned wording matches the intended release policy. **Trace:** [Stabilization release exit criteria](docs/history/localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release); [GH-02](docs/history/localmotive-comprehensive-audit.md#gh-02); [GH-03](docs/history/localmotive-comprehensive-audit.md#gh-03).
-  **Current status: OPEN.** U06-08: actual public metadata and downloaded asset identity readback. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L3216).
-
----
-
-- [ ] **V06-G-09.V1** — Exercise wrong SHA, moved tag, modified bytes, missing assets and absent lifecycle evidence as negative publication controls before using the real release path. **Trace:** [Stabilization release exit criteria](docs/history/localmotive-comprehensive-audit.md#suggested-exit-criteria-for-a-stabilization-release); [GH-02](docs/history/localmotive-comprehensive-audit.md#gh-02); [GH-03](docs/history/localmotive-comprehensive-audit.md#gh-03).
-  **Current status: OPEN.** U06-08: nonpublishing negative controls on the actual promotion contract. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L3220).
-
----
-
-- [ ] **V06-G-10.I1** — Record final source/release IDs, exact asset digests, successful and skipped verification, closure evidence for completed findings and the remaining risk register. **Trace:** [Remediation and release acceptance](docs/history/localmotive-comprehensive-audit.md#remediation-plan-and-release-acceptance); [QD-04](docs/history/localmotive-comprehensive-audit.md#qd-04); [GH-07](docs/history/localmotive-comprehensive-audit.md#gh-07); [What to measure next](docs/history/localmotive-comprehensive-audit.md#what-to-measure-after-correctness-is-restored).
-  **Current status: OPEN.** U06-09: actual final release/evidence/deferral closeout. [Source/evidence](https://github.com/sato942/localmotive/blob/1881db93c54f1c4a181ed5070d7c1449c50a7d74/docs/history/TODO-0.6.md#L3236).
-## Closed and not-applicable register for this merge
-
-- All 650 closed boxes from the working copy carry forward as closed with
-  their recorded evidence. No closed state changed in this merge.
-- Signing-deferred wording is superseded by the standing unsigned policy.
-  Closed boxes that mention the old deferral stay closed; the policy, not a
-  future signing step, is now the terminal state.
-- History-only duplicates (per-pass checkpoints, frozen ledgers, repeated
-  evidence rows) do not carry forward. The frozen original stays readable at
-  `docs/history/TODO-0.6.md`.
-- Owner hardware deferrals D06-01..D06-05 are CLOSED-DEFERRED-FAR-FUTURE
-  2026-09-21 (owner scope, not executed, not PASS): seven-vendor GPU host,
-  storage-class and OS-crash facility, unprovided physical configurations,
-  same-model multi-GPU rig, and hardware-dependent metrics. They are out of
-  0.6 scope, not open gates.
-- V06-MT-07.V2 live portability matrix is CLOSED-DEFERRED-FAR-FUTURE
-  2026-09-21 (owner scope): not executed, not PASS; 0.6 will not obtain a
-  CPU-only (or other extra) machine to prove calibration identity on that
-  class. Unit-level snapshot identity stays accepted; no claim that
-  calibration works on CPU-only hosts.
-- Search-first tuner CLOSED 2026-09-20 by owner acceptance: advisor-off
-  default session (local grid + one-axis nudge, persisted trial table with
-  outcome/choice rows, confirm bar, one optional advisor try after the
-  table). Evidence: 35 tune Rust tests (6 new, mutation-proved), 282 Vitest,
-  `npm run tauri build` exit 0 with exe + MSI + NSIS. Held-out/drift
-  science items are not closed by this work.
+- `L-01 | 2026-09-24 | 9b09857 | npm run check; npm audit --audit-level=moderate; verify_versions, verify_workflow_pins, verify_workflow_gates, verify_workflow_syntax (node.exe); verify_cleanup_matrix.ps1; cargo fmt --check; cargo clippy --locked --all-targets -- -D warnings; cargo test --locked | local logs | PASS` — node tests 276 of 276, Vitest 282 of 282, audit 0 vulnerabilities, cleanup matrix 12 of 12, Rust 628 passed and 7 ignored. The first run of the four workflow verifiers failed with `stdin is not a tty`. That was a tooling failure. The `node.exe` rerun passed.
+- `L-02 | 2026-09-24 | — | gh run list --workflow release.yml; gh run list --workflow release-promote.yml; gh release view v0.5.0 | — | FAIL` — after the `v0.5.0` release: 14 `release.yml` runs, 0 passed. `release-promote.yml`: 0 runs. Last published: `v0.5.0` at 2026-09-10T18:56:46Z.
+- `L-03 | 2026-09-23 | 0bd39fb | runs 35897526108, 35901604360 (workflow_dispatch, tag v0.6.1) | artifact localmotive-0.6.1-verify-diagnostics | FAIL` — step #19 failed on `ipc.runtime-recommendation` ("[object Object]"), `ipc.reject-unknown-adapter`, and `ipc.runtime-catalog-fetch` ("[object Object]"). Step #18 passed. Steps #24 to #27 did not run.
+- `L-04 | 2026-09-14 to 2026-09-22 | 27349f9, 4b31431 | v0.6.0 runs 34803387581 to 34819219725 (6 runs, 6 SHAs); v0.6.1 run 35731266321 (6 attempts) | — | FAIL` — `v0.6.1`: attempt 1 failed the main-ancestry gate, attempts 2 to 5 failed the packaged matrix, and attempt 6 had 12 of 18 records missing.
+- `L-05 | 2026-09-24 | 9b09857 plus uncommitted working-tree changes | REVIEW.md added; TODO.md rewritten; 16 Markdown files (1,258,783 bytes) and 2 dead scripts (9,342 bytes) deleted; pointers updated in 8 files | local scratch logs, not retained | PASS` — RED 1: `node --test scripts/tests/release-gates.test.mjs` after the deletions gave 166 tests, 162 pass, 4 fail (R13, QD-04, QD-06 twice), each an `ENOENT` on a deleted file. RED 2: the extended QD-06 failed on `README.md -> docs/LLAMA-SERVER-README.md` and `README.md -> docs/OPTION_MAP.md`. Mutation: a probe document with a dangling link failed QD-06; after its removal, QD-06 passed. GREEN: `npm run check` exit 0 (node tests 275 of 275, Vitest 282 of 282, branding PASS, build OK); `npm audit` 0 vulnerabilities; the four workflow verifiers exit 0; cleanup matrix 12 of 12; `cargo fmt --check` exit 0; `cargo clippy` exit 0 with 0 warnings; `cargo test` 628 passed, 0 failed, 7 ignored. Not run: `npm run tauri build`, because no product behavior changed (one Rust doc comment only).
+- `L-06 | 2026-09-24 | 9b09857 | AGENTS.md pointer edit | — | BLOCKED` — the approval prompt timed out, so no write occurred (`git diff --quiet HEAD -- AGENTS.md` is true). `docs/history/localmotive-comprehensive-audit.md` was restored from `9b09857` (329,370 bytes, identical to HEAD). Waits for D6. Resolved by L-07.
+- `L-07 | 2026-09-24 | 9b09857 plus uncommitted working-tree changes | owner approval ("edit AGENTS.md"); AGENTS.md:185-190 edited; docs/history/localmotive-comprehensive-audit.md (329,370 bytes) deleted; docs/history/ removed | local scratch logs, not retained | PASS` — `npm run check` exit 0 (node tests 275 of 275, Vitest 282 of 282, branding PASS, QD-06 PASS, build OK). No code or test reads `AGENTS.md` (`git grep`: one comment at `.github/workflows/ci.yml:10`). No Rust source changed in this step; the Rust results of L-05 stand.
+- `L-08 | 2026-09-24 | 9b09857 plus uncommitted working-tree changes | .github/workflows/ci.yml:10 comment now cites the AGENTS.md section "CI and publication" (was "CI and branch protection", which does not exist) | local scratch logs, not retained | PASS` — comment-only change; no other stale `AGENTS.md` section citation exists in the tree (`git grep`). The four workflow verifiers exit 0; `npm run check` exit 0 (node tests 275 of 275, Vitest 282 of 282, build OK).
+- `L-09 | 2026-09-24 | 9b09857 plus uncommitted working-tree changes | owner delegation ("i want them to have authority to publish and not wait for me (ceo) to interfere"; "remove limits and give explicit authority in AGENTS.md and also SOUL.md"): AGENTS.md "CI and publication" rewritten (release authority, fix-forward tags, release gate list, anti-lock rule) and a pointer to HANDOVER.md; tauridev SOUL.md release limits removed; HANDOVER.md added; TODO.md sections 2 and 3, P0-7, P0-8, P0-10, P1-12, P2-1, P2-10, and section 8 updated; REVIEW.md sections 3 and 4 dated notes | local scratch logs, not retained | PASS` — `npm run check` exit 0 (node tests 275 of 275, Vitest 282 of 282, QD-06 PASS with `HANDOVER.md`, branding PASS, build OK). `diff` against pre-edit backups: `AGENTS.md` changed only at 154-155, 158-174, and 183-187; `SOUL.md` changed only at the 10 release-limit lines (plus a final newline). A search for leftover limit wording finds only the new grant text and dated history. No Rust or workflow change in this step.
+- `L-10 | 2026-09-24 | tree of the commit that adds this line (parent 9b09857) | pre-push gate: npm run check; npm audit --audit-level=moderate; verify_versions, verify_workflow_pins, verify_workflow_gates, verify_workflow_syntax; verify_cleanup_matrix.ps1; cargo fmt --check; cargo clippy --locked --all-targets -- -D warnings; RUSTDOCFLAGS='-D warnings' cargo test --locked | local scratch logs, not retained | PASS` — node tests 275 of 275, Vitest 282 of 282, audit 0 vulnerabilities, the four workflow verifiers exit 0, cleanup matrix 12 passed and 0 failed, `cargo fmt --check` exit 0, clippy 0 warnings, Rust 628 passed, 0 failed, 7 ignored (default parallelism). The first attempt of this run failed in the shell parser (unbalanced quote) before any check ran. That was a tooling failure. The rerun from a script file passed.

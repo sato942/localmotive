@@ -58,7 +58,7 @@ The built-in llama-server WebUI remains the chat surface after the control plane
 
 ## Evidence on Hand
 
-- `LLAMA-SERVER-README.md` is the local option and endpoint reference.
+- The upstream [`llama-server` README](https://github.com/ggml-org/llama.cpp/blob/b10816/tools/server/README.md) at the approved runtime tag `b10816` is the option and endpoint reference.
 - The official GitHub releases API publishes Windows runtime asset names, sizes, and SHA-256 digests where available.
 - The test suite includes representative NVIDIA, AMD, Intel, x64, and dormant ARM64 catalog cases.
 - Test fixtures and upstream checks do not establish product support.

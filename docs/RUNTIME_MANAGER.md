@@ -105,7 +105,7 @@ Cancellation terminates and waits for the complete contained process tree.
 
 The ordinary `npm run tauri build` command produces unsigned test candidates.
 
-> Policy update (0.5 and later): public releases ship **unsigned with an explicit disclosure** as standing policy; see the release policy in `README.md` and the release notes in `CHANGELOG.md`. No code-signing step exists in the pipeline. Historical evidence in `docs/history/` is frozen and is not rewritten.
+> Policy update (0.5 and later): public releases ship **unsigned with an explicit disclosure** as standing policy; see the release policy in `README.md` and the release notes in `CHANGELOG.md`. No code-signing step exists in the pipeline. Historical evidence in `release-evidence/` is frozen and is not rewritten. Closed trackers are in git history (last tree `9b09857`).
 
 The release candidate must use the ordinary `npm run tauri build` command, which produces unsigned artifacts.
 

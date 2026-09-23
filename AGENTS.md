@@ -151,27 +151,54 @@ Keep its `CARGO_HOME` and `RUSTUP_HOME` separate from the owner's toolchains.
 Never clean the owner's personal Cargo or Rustup directories.
 
 Resolve a release tag to one full SHA. Build and qualify that source only.
-Do not retarget used version tags. Keep version fields and lockfiles consistent
-through `scripts/verify_versions.mjs`. Add user-facing changes to `CHANGELOG.md`.
+Never move or reuse a version tag. If a tagged candidate fails because of its
+source or its workflow, the tag is burned: fix the cause on `main`, bump the
+patch version, and tag again. If the run fails for a transient reason, such as
+a runner or network fault, run it again on the same tag. Keep version fields
+and lockfiles consistent through `scripts/verify_versions.mjs`. Add
+user-facing changes to `CHANGELOG.md`.
 
 `release.yml` verifies and retains candidate bytes; it does not publish.
-`release-promote.yml` requires explicit authorization and validates the downloaded
-qualified bundle before publishing those same bytes. Never rebuild during promotion.
-Keep four identities distinct: product version (bumped once per release, before
-the freeze), producer SHA (the tree that was built), tag (a fixed pointer to
-that SHA, never a container for lab notes), and evidence (attestation commits
-or CI artifacts, never source). Accept a record only when its `sourceRevision`
-and candidate digests match the producer, never because the file happens to
-sit in the tag tree. Never bump the version because paperwork landed later,
-a verify job failed, or workflow YAML changed. Three builds of one source
-(`4b31431`) on one host produced three different portable digests, so
-digest-bound records (lifecycle, payload, packaged, mt06, rt06) cannot
-transfer between builds; only SHA-bound records do. Retain artifact inventory,
-checksums, native lifecycle/preservation evidence,
-and public asset readback. Do not replace current-candidate evidence with old records.
-Disclose unsigned artifacts and SmartScreen limitations in every release.
-No signing step exists and none is pursued. Do not publish without explicit
-authority for that action.
+`release-promote.yml` validates the downloaded qualified bundle before
+publishing those same bytes. Never rebuild during promotion. Keep four
+identities distinct: product version, producer SHA (the tree that was built),
+tag (a fixed pointer to that SHA), and evidence (CI artifacts of the run that
+built the candidate, never source). Three builds of one source (`4b31431`) on
+one host produced three different portable digests, so a digest-bound record
+cannot transfer between builds. Produce each release record in the same run
+as the candidate bytes. Retain artifact inventory, checksums, native lifecycle
+and preservation evidence, and public asset readback. Do not replace
+current-candidate evidence with old records. Disclose unsigned artifacts and
+SmartScreen limitations in every release. No signing step exists and none is
+pursued.
+
+Release authority: the dev team has standing authority to bump versions,
+create tags, run release qualification, and publish releases. The owner
+granted this authority on 2026-09-24. No release waits for owner approval.
+The release lead is the team member who runs a release. The release lead
+publishes through `release-promote.yml` when the release gate passes, and
+records the release in `TODO.md`.
+
+The release gate is this list. Remove every other check from it.
+
+1. `npm run check`, `npm audit --audit-level=moderate`, the four workflow
+   verifiers, and `scripts/tests/verify_cleanup_matrix.ps1`.
+2. `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`,
+   and `cargo test --locked`.
+3. `npm run tauri build` from the tag peel.
+4. The packaged matrix, with fixtures only and no live network.
+5. Installer payload identity for the NSIS and MSI files.
+6. One lifecycle leg in Windows Sandbox: clean install, upgrade from the last
+   published version with user data kept, and uninstall.
+7. Checksums, the SBOM, and a retained candidate bundle.
+
+Keep the gate small. The gate reads only the tagged tree, the outputs of its
+own run, and pinned fixtures. Never add to it files outside the tagged tree,
+evidence committed after the tag, live third-party API calls, hardware
+campaigns, fault injection, soak cycles, or assertions on prose. Hardware work
+runs in `hardware-qualify.yml` and never blocks a release. If rules together
+block every path to a release, change the blocking rule in the same PR as the
+fix, and record the reason in `TODO.md`.
 
 ## Catalog and project records
 
@@ -180,13 +207,14 @@ Hugging Face. The application also keeps a local SQLite mirror and user override
 that mirror does not authorize downloads. Follow `catalog/README.md` for schema
 changes, signing, backward compatibility, and curation.
 
-Use `TODO.md` as the current tracker. Use one tracker only and do not version
-its name. Never use kanban boards, kanban tools, or kanban task protocols for
-this project. Consult
-`docs/history/localmotive-comprehensive-audit.md` for the traced findings.
+Start new work from `HANDOVER.md`. Use `TODO.md` as the current tracker. Use
+one tracker only and do not version its name. Never use kanban boards, kanban
+tools, or kanban task protocols for this project. Read `REVIEW.md` for the
+current findings. Closed trackers and the earlier audit are in git history;
+the last tree that holds them is `9b09857`.
 Record actual regression and verification evidence in the current ledger.
 Do not treat checkboxes as proof. Do not create another release tracker.
-Keep historical trackers and accepted evidence frozen.
+Keep accepted evidence frozen.
 
 For model-fit or measurement work, read `research/measuring/README.md`, then
 `research/measuring/SYNTHESIS.md`, then the relevant source and tests.
