@@ -3189,3 +3189,42 @@ test("the qualification manifest validates and references only committed records
   assert.match(manifest.sourceRevision, /^[0-9a-f]{40}$/);
   assert.ok(manifest.workflowFile?.sha256, "the release workflow revision is recorded separately");
 });
+
+test("the 0.6.1 qualification manifest validates and references only committed records", async () => {
+  const { verifyQualificationManifest } = await import("../verify_qualification_manifest.mjs");
+  const manifestPath = "release-evidence/0.6.1/qualification-manifest-0.6.1.json";
+  const { failures } = verifyQualificationManifest({ manifestPath });
+  const workflowDriftOnly = failures.filter(
+    (failure) => !failure.startsWith("workflow file digest drifted:"),
+  );
+  assert.deepEqual(workflowDriftOnly, [], failures.join("; "));
+  const manifest = JSON.parse(await readFile(join(process.cwd(), manifestPath), "utf8"));
+  assert.equal(Object.keys(manifest.records).length, 18);
+  assert.equal(manifest.sourceRevision, "4b31431d28d1503efc7b80a46c77ad2c3d54f082");
+});
+
+test("manifest assembly accepts records outside git containment (four-identity rule)", async () => {
+  const { buildQualificationManifest } = await import("../build_qualification_manifest.mjs");
+  const { cp, rm } = await import("node:fs/promises");
+  const stage = await mkdtemp(join(tmpdir(), "localmotive-untracked-assembly-"));
+  try {
+    await cp("release-evidence/0.6.1/attestations", join(stage, "attestations"), { recursive: true });
+    await cp("artifacts/candidate-inventory-0.6.1.json", join(stage, "inventory.json"));
+    await cp(
+      "artifacts/packaged-verification-0.6.1.json",
+      join(stage, "attestations", "packaged-verification-0.6.1.json"),
+    );
+    const { manifest, missing } = buildQualificationManifest({
+      inventoryPath: join(stage, "inventory.json"),
+      attestationsDir: join(stage, "attestations"),
+      outPath: join(stage, "manifest.json"),
+      release: "0.6.1",
+      stagePackagedVerification: join(stage, "attestations", "packaged-verification-0.6.1.json"),
+    });
+    assert.deepEqual(missing, [], "assembly must find all 18 records outside git");
+    assert.equal(Object.keys(manifest.records).length, 18);
+    assert.equal(manifest.sourceRevision, "4b31431d28d1503efc7b80a46c77ad2c3d54f082");
+  } finally {
+    await rm(stage, { recursive: true, force: true });
+  }
+});
