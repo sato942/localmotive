@@ -20,7 +20,7 @@ configuration works.
 
 | Claim | Status | Evidence |
 |---|---|---|
-| Windows 11 x64 (build 26100 observed) lifecycle: install (MSI and NSIS), launch, uninstall, update | MEASURED | Windows Sandbox clean-account lifecycle PASS for the 0.6.0 candidate and the v0.4.1 / v0.5.0 baseline upgrades, bound to source revision and candidate digests (`sandbox-preservation-*.json`). |
+| Windows 11 x64 (build 26100 observed) lifecycle: install (MSI and NSIS), launch, uninstall, update | MEASURED (0.6.1 candidate, unpublished) | Windows Sandbox clean-account lifecycle PASS for the 0.6.1 candidate and the v0.4.1 / v0.5.0 baseline upgrades, bound to source revision and candidate digests (`release-evidence/0.6.1/sandbox-*.json`). The 0.6.0 candidate line is retained as history only; it was never published. The latest published release is v0.5.0. |
 | Windows 10 | UNTESTED | No packaged lifecycle evidence; do not claim support. |
 | macOS and Linux | Out of scope | No artifacts are published. |
 
@@ -28,7 +28,7 @@ configuration works.
 
 | Claim | Status | Evidence |
 |---|---|---|
-| CUDA inference on the RTX 5090 (driver 610.74) via the approved managed runtime b10816 | MEASURED | Packaged health 7/7 PASS and decode benchmarks: warm means 999.00 / 995.11 tok/s; default workload 1002.60 tok/s (n=5, p95 1007.57); TLS profile 1004.76 tok/s. Model: SmolLM2-135M Q4_K_M. |
+| CUDA inference on the RTX 5090 (driver 610.74) via the approved managed runtime b10816 | MEASURED (0.6 development line, unpublished) | Packaged health 7/7 PASS and decode benchmarks: warm means 999.00 / 995.11 tok/s; default workload 1002.60 tok/s (n=5, p95 1007.57); TLS profile 1004.76 tok/s. Model: SmolLM2-135M Q4_K_M. These figures are historical 0.6-development lab observations, not version-bound release evidence: the laboratory legs moved out of the release gate, and no 0.6.x release is published. |
 | Other NVIDIA GPUs, AMD GPUs, Intel GPUs | UNTESTED | Single-GPU host. The capability list comes from each runtime's own `--help`; hardware qualification does not follow from it. |
 | Vulkan, OpenVINO, SYCL, CPU managed runtimes | UNTESTED | The catalog can offer these builds; no managed install was exercised. OpenVINO was refused on this NVIDIA host by adapter policy. |
 | CPU inference through a verified legacy runtime | MEASURED (single observation) | One legacy CPU runtime was adopted by discovery and served health; no managed CPU install was exercised. |

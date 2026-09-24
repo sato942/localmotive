@@ -1,14 +1,25 @@
 # Changelog
 
+## Unreleased
+
+0.6.1 is a tagged but unpublished candidate: tags `v0.6.0` and `v0.6.1`
+exist, but no 0.6.x release is published and no 0.6.x assets are on GitHub
+Latest. The latest published release is v0.5.0. The sections below describe
+the candidate line, not shipped releases.
+
 ## 0.6.1
 
-Patch release on the 0.6 stabilization line. No product changes beyond the
-branch state; this release carries the search-first tuner
+Unpublished candidate — not released.
+
+Patch candidate on the 0.6 stabilization line. No product changes beyond the
+branch state; this candidate carries the search-first tuner
 (grid + nudge + confirm + trial ledger, advisor off by default), the
-packaged-verification Runtime-navigation repair, and the fully qualified
-0.6.1 evidence set. See `release-evidence/0.6.1/` for the bound records.
+packaged-verification Runtime-navigation repair, and the retained 0.6.1
+evidence set. See `release-evidence/0.6.1/` for the bound records.
 
 ## 0.6.0
+
+Unpublished candidate — not released.
 
 This release combines the traced audit fixes with the owner-requested
 application and release-pipeline reduction. Current work is tracked in

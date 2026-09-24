@@ -2292,6 +2292,26 @@ test("QD-06 local doc links resolve in every active document", async () => {
   assert.deepEqual(missing, [], `unresolved relative links: ${missing.join(", ")}`);
 });
 
+test("public docs name v0.5.0 latest published; 0.6.x stays an unpublished candidate", async () => {
+  // P0-9 (DOC-04, DOC-05): the latest published release is v0.5.0. No
+  // 0.6.x line may read as shipped, and README, SUPPORT-MATRIX, and
+  // EVIDENCE-MATRIX must agree that 0.6.1 is candidate evidence only.
+  const readme = await readFile(join(process.cwd(), "README.md"), "utf8");
+  const changelog = await readFile(join(process.cwd(), "CHANGELOG.md"), "utf8");
+  const support = await readFile(join(process.cwd(), "docs", "SUPPORT-MATRIX.md"), "utf8");
+  const evidence = await readFile(join(process.cwd(), "docs", "EVIDENCE-MATRIX.md"), "utf8");
+  assert.match(readme, /the latest published release is v0\.5\.0/i);
+  assert.doesNotMatch(readme, /0\.6\.[01] ships/);
+  assert.doesNotMatch(readme, /In this 0\.6\.0 source build/);
+  assert.match(changelog, /## Unreleased/);
+  assert.match(changelog, /0\.6\.1 is a tagged but unpublished candidate/);
+  assert.match(changelog, /Unpublished candidate — not released/);
+  for (const doc of [readme, support, evidence]) {
+    assert.match(doc, /0\.6\.1 candidate/);
+  }
+  assert.match(evidence, /\| 0\.6\.1 \|/);
+});
+
 test("GH-07 the evidence matrix exists and the README reads it", async () => {
   const matrix = await readFile(join(process.cwd(), "docs", "EVIDENCE-MATRIX.md"), "utf8");
   for (const cell of ["CPU packaged lifecycle", "Accelerator (CUDA) packaged", "Clean-account Sandbox"]) {
