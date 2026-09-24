@@ -19,7 +19,7 @@
 // The checkout root supplies only the reviewed workflow. All candidate evidence
 // comes from the qualified directory, without a checkout fallback.
 import { createHash } from "node:crypto";
-import { readFile, stat, writeFile } from "node:fs/promises";
+import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { verifyQualificationManifest } from "./verify_qualification_manifest.mjs";
@@ -49,6 +49,20 @@ export function promisedAssetNames(release) {
     `SHA256SUMS-${release}.txt`,
     `packaged-verification-${release}.json`,
     `candidate-inventory-${release}.json`,
+  ];
+}
+
+/// Stage sidecar JSON records the gate produces alongside the promised
+/// assets. The collect step stages the four matrix/catalog records into the
+/// stage, and the promotion check writes its own report there. They ride in
+/// the retained bundle as evidence but are never published.
+export function allowedSidecarNames(release) {
+  return [
+    `promotion-check-${release}.json`,
+    `packaged-verification-catalog-${release}.json`,
+    "catalog-matrix-first-fill.json",
+    "catalog-matrix-restart.json",
+    "catalog-fixture-init.json",
   ];
 }
 
@@ -102,6 +116,27 @@ export async function verifyReleasePromotion(options) {
       }
     } catch {
       failures.push(`promised asset ${name} is missing from the qualified set`);
+    }
+  }
+
+  // --- The set is not inflated ------------------------------------------------
+  // P0-8 (REL-01): the header promises to refuse an inflated set. Publication
+  // uploads explicit names only, so this is defense in depth: a stray file
+  // that rode along in the bundle fails promotion before publication.
+  const allowed = new Set([...promised, ...allowedSidecarNames(releaseVersion)]);
+  let stagedEntries = null;
+  try {
+    stagedEntries = await readdir(artifactDirectory, { withFileTypes: true });
+  } catch {
+    failures.push("the qualified artifact set is unreadable");
+  }
+  if (stagedEntries) {
+    for (const entry of stagedEntries) {
+      if (!entry.isFile()) {
+        failures.push(`unexpected ${entry.name} in the qualified artifact set: files only`);
+      } else if (!allowed.has(entry.name)) {
+        failures.push(`unexpected file ${entry.name} in the qualified artifact set`);
+      }
     }
   }
 
