@@ -1,9 +1,0 @@
-{
-  "scope": "Added lines only; heuristic, not proof of absence",
-  "matches": {
-    "dynamic_execution": [],
-    "shell": [],
-    "raw_html": [],
-    "credential_literals": []
-  }
-}

@@ -97,14 +97,15 @@ Standing release policy:
 - [x] **D2 — Adopt the reduced release gate.** Adopted in `AGENTS.md`, "CI
   and publication", on 2026-09-24. P0-7 implements it. The lab campaign moves
   to `hardware-qualify.yml` and does not block a release.
-- [ ] **D3 — Remove `artifacts/` from the tree (TEAM).** 5,494 tracked files,
-  including 33 WebView2 profiles (DOC-01, DOC-02). A rewrite of public history
-  needs a force push, and only the owner can bypass `main-pr-check`.
-- [ ] **D4 — Decide the `v0.4.0` corrective note (TEAM).** Publish
-  `release-evidence/0.4.1/v0.4.0-corrective-note.md`, or delete it.
-- [ ] **D5 — Decide superseded evidence (TEAM).** `AGENTS.md` keeps accepted
-  evidence frozen. Allow the deletion of `release-evidence/0.6.0/history/`,
-  or keep it.
+- [x] **D3 — Remove `artifacts/` from the tree (TEAM).** Decided
+  2026-09-24: plain removal commit plus `/artifacts/` ignore rule, no history
+  rewrite. The 5,494 tracked files leave the tree; the bytes stay in history.
+- [x] **D4 — Decide the `v0.4.0` corrective note (TEAM).** Decided
+  2026-09-24: deleted, not published. The inline 0.4.1 changelog correction
+  stands as the published record.
+- [x] **D5 — Decide superseded evidence (TEAM).** Decided 2026-09-24:
+  exception granted; `release-evidence/0.6.0/history/` deleted. Accepted
+  published evidence stays frozen.
 - [ ] **A1 — Give the team access (ADMIN).** Give each developer the Write
   role. Give the release lead Maintain or Admin. Before the first Write grant
   takes effect, run the direct-push refusal test (section 8, V06-GH-01.V3).
@@ -315,9 +316,11 @@ Fix these after P0 and before the next feature.
 
 ## 6. P2 — Simplification after the release
 
-- [ ] **P2-1 — Remove `artifacts/` (D3).** Add a `.gitignore` rule.
-  Remove the `.gitattributes` LF rules for `artifacts/`. Confirm that no test
-  or workflow reads the directory.
+- [x] **P2-1 — Remove `artifacts/` (D3).** Done with D3: `/artifacts/`
+  ignore rule added, the four `.gitattributes` LF rules for `artifacts/`
+  removed. The one test that read tracked `artifacts/*.json` fixtures now
+  reads the byte-identical `release-evidence/0.6.1/` copies; all other
+  `artifacts/` references are runtime workspace paths or fixture-temp labels.
 - [ ] **P2-2 — Delete dead scripts (LAB-05).** List each script in `scripts/`
   with its callers. Delete each script that no `package.json` script,
   workflow, or kept test calls. `scripts/g05_dc01.mjs` is one (FE-03).

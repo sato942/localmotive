@@ -544,13 +544,44 @@ test("correct the three L2 claims in the new 0.4.1 changelog section", async () 
   const changelog = await readFile(join(process.cwd(), "CHANGELOG.md"), "utf8");
   assert.match(changelog, /The three 0\.4\.0 rows marked `Supported` had L2 direct-runtime evidence only/);
   assert.match(changelog, /Those rows did not establish Localmotive product support/);
-  assert.match(changelog, /See `release-evidence\/0\.4\.1\/v0\.4\.0-corrective-note\.md` for the proposed public correction/);
+  assert.match(changelog, /Owner decision D4 \(2026-09-24\) deleted the corrective-note draft/);
 });
 
-test("the 0.4.0 corrective note stays review-gated, not silently published", async () => {
-  const note = await readFile(join(process.cwd(), "release-evidence", "0.4.1", "v0.4.0-corrective-note.md"), "utf8");
-  assert.match(note, /This draft does not modify the published release/);
-  assert.match(note, /Review this correction before editing the public 0\.4\.0 release/);
+test("the tracked artifacts directory stays removed", async () => {
+  // D3 (owner decision 2026-09-24, plain removal): no file under
+  // artifacts/ may be tracked. Runtime outputs stay untracked and ignored.
+  const { execFileSync } = await import("node:child_process");
+  const out = execFileSync("git", ["ls-files", "artifacts"], { cwd: process.cwd(), encoding: "utf8" });
+  assert.equal(out.trim(), "", `tracked files remain under artifacts/: ${out.trim().split("\n").slice(0, 5).join(", ")}`);
+});
+
+test("the deleted 0.6.0 history stays deleted", async () => {
+  // D5 (owner decision 2026-09-24): the superseded 0.6.0 freeze history was
+  // deleted as an exception to the frozen-evidence rule. The directory must
+  // stay gone. (Carry-forward fixture labels may still name the old path;
+  // the fixture writes its own files and never reads the tree.)
+  const { existsSync } = await import("node:fs");
+  assert.equal(
+    existsSync(join(process.cwd(), "release-evidence", "0.6.0", "history")),
+    false,
+    "the 0.6.0 history was deleted by D5",
+  );
+  const review = await readFile(join(process.cwd(), "REVIEW.md"), "utf8");
+  assert.doesNotMatch(review, /Accepted evidence stays frozen/);
+});
+test("the deleted 0.4.0 corrective note stays deleted", async () => {
+  // D4 (owner decision 2026-09-24): the corrective-note draft was deleted,
+  // not published. The file must stay gone and no live document may link it.
+  const { existsSync } = await import("node:fs");
+  assert.equal(
+    existsSync(join(process.cwd(), "release-evidence", "0.4.1", "v0.4.0-corrective-note.md")),
+    false,
+    "the corrective note was deleted by D4",
+  );
+  const changelog = await readFile(join(process.cwd(), "CHANGELOG.md"), "utf8");
+  assert.doesNotMatch(changelog, /v0\.4\.0-corrective-note\.md/);
+  const review = await readFile(join(process.cwd(), "REVIEW.md"), "utf8");
+  assert.doesNotMatch(review, /Open owner decision D4/);
 });
 
 test("small icon layers remain readable at native resolution", async () => {
@@ -3188,8 +3219,24 @@ test("lifecycle harness refuses to race evidence for one scenario", async () => 
 // release.yml is repaired (runs 34803387581, 34807541476).
 test("the qualification manifest validates and references only committed records", async () => {
   const { verifyQualificationManifest } = await import("../verify_qualification_manifest.mjs");
+  const { cp, rm } = await import("node:fs/promises");
   const manifestPath = "release-evidence/0.6.0/qualification-manifest-0.6.0.json";
-  const { failures } = verifyQualificationManifest({ manifestPath });
+  // D3: the tracked artifacts/ directory is gone. Stage the still-committed
+  // evidence at the manifest's recorded paths and resolve records there; the
+  // workflow file still resolves in the checkout (drift stays exempt).
+  const stage = await mkdtemp(join(tmpdir(), "localmotive-historical-manifest-"));
+  try {
+    await cp("release-evidence/0.6.0", join(stage, "release-evidence", "0.6.0"), { recursive: true });
+    await mkdir(join(stage, "artifacts"), { recursive: true });
+    await cp(
+      "release-evidence/0.6.0/candidate-inventory-0.6.0.json",
+      join(stage, "artifacts", "candidate-inventory-0.6.0.json"),
+    );
+    const { failures } = verifyQualificationManifest({
+      manifestPath,
+      root: stage,
+      workflowRoot: process.cwd(),
+    });
   const workflowDriftOnly = failures.filter(
     (failure) => !failure.startsWith("workflow file digest drifted:"),
   );
@@ -3208,12 +3255,29 @@ test("the qualification manifest validates and references only committed records
   assert.equal(manifest.artifacts.length, 3, "the manifest binds exactly the three staged artifacts");
   assert.match(manifest.sourceRevision, /^[0-9a-f]{40}$/);
   assert.ok(manifest.workflowFile?.sha256, "the release workflow revision is recorded separately");
+  } finally {
+    await rm(stage, { recursive: true, force: true });
+  }
 });
 
 test("the 0.6.1 qualification manifest validates and references only committed records", async () => {
   const { verifyQualificationManifest } = await import("../verify_qualification_manifest.mjs");
+  const { cp, rm } = await import("node:fs/promises");
   const manifestPath = "release-evidence/0.6.1/qualification-manifest-0.6.1.json";
-  const { failures } = verifyQualificationManifest({ manifestPath });
+  // D3: same staging as the 0.6.0 manifest above.
+  const stage = await mkdtemp(join(tmpdir(), "localmotive-historical-manifest-"));
+  try {
+    await cp("release-evidence/0.6.1", join(stage, "release-evidence", "0.6.1"), { recursive: true });
+    await mkdir(join(stage, "artifacts"), { recursive: true });
+    await cp(
+      "release-evidence/0.6.1/candidate-inventory-0.6.1.json",
+      join(stage, "artifacts", "candidate-inventory-0.6.1.json"),
+    );
+    const { failures } = verifyQualificationManifest({
+      manifestPath,
+      root: stage,
+      workflowRoot: process.cwd(),
+    });
   const workflowDriftOnly = failures.filter(
     (failure) => !failure.startsWith("workflow file digest drifted:"),
   );
@@ -3221,6 +3285,9 @@ test("the 0.6.1 qualification manifest validates and references only committed r
   const manifest = JSON.parse(await readFile(join(process.cwd(), manifestPath), "utf8"));
   assert.equal(Object.keys(manifest.records).length, 18);
   assert.equal(manifest.sourceRevision, "4b31431d28d1503efc7b80a46c77ad2c3d54f082");
+  } finally {
+    await rm(stage, { recursive: true, force: true });
+  }
 });
 
 test("manifest assembly accepts records outside git containment (four-identity rule)", async () => {
@@ -3229,9 +3296,9 @@ test("manifest assembly accepts records outside git containment (four-identity r
   const stage = await mkdtemp(join(tmpdir(), "localmotive-untracked-assembly-"));
   try {
     await cp("release-evidence/0.6.1/attestations", join(stage, "attestations"), { recursive: true });
-    await cp("artifacts/candidate-inventory-0.6.1.json", join(stage, "inventory.json"));
+    await cp("release-evidence/0.6.1/candidate-inventory-0.6.1.json", join(stage, "inventory.json"));
     await cp(
-      "artifacts/packaged-verification-0.6.1.json",
+      "release-evidence/0.6.1/attestations/packaged-verification-0.6.1.json",
       join(stage, "attestations", "packaged-verification-0.6.1.json"),
     );
     const { manifest, missing } = buildQualificationManifest({

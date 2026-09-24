@@ -1,3 +1,0 @@
-Scope: verify-readback.py draft before the accepted cut.
-L5: delete unused re import. Delete the import.
-net: -1 lines possible.

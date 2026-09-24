@@ -1,2 +1,0 @@
-Scope: review follow-up tests and their evidence. This is not installer or release approval.
-Lean already. Install.

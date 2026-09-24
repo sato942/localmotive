@@ -1,5 +1,0 @@
-PASS workflow syntax guard: catalog.yml
-PASS workflow syntax guard: ci.yml
-PASS workflow syntax guard: hardware-qualify.yml
-PASS workflow syntax guard: release-promote.yml
-PASS workflow syntax guard: release.yml

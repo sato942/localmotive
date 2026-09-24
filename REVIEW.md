@@ -158,7 +158,8 @@ campaign to `hardware-qualify.yml` as a check that does not block a release.
 separate decision.
 
 **D4 — Decide the `v0.4.0` corrective note**
-(`release-evidence/0.4.1/v0.4.0-corrective-note.md`). Publish it or delete it.
+(`release-evidence/0.4.1/v0.4.0-corrective-note.md`). Decided 2026-09-24:
+deleted, not published.
 
 ---
 
@@ -359,8 +360,8 @@ keeps each deleted file. The last tree that holds all of them is
 | `docs/ARTIFACT-IDENTITY.md` | Keep | Design of model artifact identity. |
 | `docs/CATALOG-PROMOTION.md` | Keep | Catalog promotion procedure. |
 | `docs/SECURITY-REVIEW-LIMITS.md` | Keep | `SECURITY.md` links it. |
-| `release-evidence/0.4.1/v0.4.0-corrective-note.md` | Keep | Open owner decision D4. |
-| `release-evidence/0.6.0/history/freeze8-da091a4/README.md` | Keep | Accepted evidence stays frozen. |
+| `release-evidence/0.4.1/v0.4.0-corrective-note.md` | Deleted | Owner decision D4 (2026-09-24): deleted, not published. |
+| `release-evidence/0.6.0/history/freeze8-da091a4/README.md` | Deleted | Owner decision D5 (2026-09-24): exception to the frozen-evidence rule for superseded 0.6.0 history. |
 | `TODO-0.6-post-076a3eeecbdf.md` | Delete | Second tracker. It breaks the one-tracker rule. |
 | `REPORT-0.6.md` | Delete | Snapshot report. Superseded. |
 | `agents_feedback.md` | Delete | Agent log. Its open risks move to `TODO.md`. |

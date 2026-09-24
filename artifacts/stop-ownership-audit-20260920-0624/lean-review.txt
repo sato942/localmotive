@@ -1,3 +1,0 @@
-Scope: closing verifier draft; code-size review only.
-L6: delete unused re import from verify-closeout.py. Delete the import.
-net: -1 lines possible.

@@ -1,9 +1,0 @@
-
- RUN  v4.1.11 C:/Users/Mubarak/Documents/Projects/localmotive
-
-
- Test Files  1 passed (1)
-      Tests  22 passed | 32 skipped (54)
-   Start at  05:16:55
-   Duration  2.03s (transform 305ms, setup 0ms, import 434ms, tests 757ms, environment 711ms)
-
