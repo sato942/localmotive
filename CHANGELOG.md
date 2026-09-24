@@ -3,27 +3,34 @@
 ## Unreleased
 
 0.6.1 was a tagged but unpublished candidate; the `v0.6.2` tag burned on an
-invalid workflow file, and the `v0.6.3` tag burned on a record/inventory name
-mismatch (the matrix tested the raw build output while the inventory bound
-the staged portable). Tags `v0.6.0` through `v0.6.3` exist, but the latest
+invalid workflow file, the `v0.6.3` tag burned on a record/inventory name
+mismatch, and the `v0.6.4` tag burned on an unexpanded `${VERSION}` in a
+pwsh matrix step. Tags `v0.6.0` through `v0.6.4` exist, but the latest
 published release is still v0.5.0. The 0.6.0/0.6.1 sections below describe
 the candidate line, not shipped releases.
 
-## 0.6.4
+## 0.6.5
 
 First published release of the 0.6 line. It carries the 0.6 stabilization
 set: the compiled approved-runtime catalog with no network or cache in setup,
 single-flight catalog loads, structured IPC error kinds in harness evidence,
 camelCase catalog query wire keys, out-of-checkout release staging, named
 verification-step failures, the reduced release gate, promotion inflated-set
-refusal, and corrected public text. It also fixes the two burned attempts:
-the stage directory enters the release job through `GITHUB_ENV`, and the
+refusal, and corrected public text. It also fixes the three burned attempts:
+the stage directory enters the release job through `GITHUB_ENV`, the
 packaged matrix tests the staged portable so the tested bytes are the
-shipped bytes.
+shipped bytes, and the staged path uses `$env:VERSION` (a bare
+`${VERSION}` expands to nothing in pwsh).
 
 This release is honestly unsigned: no Authenticode signatures exist and none
 are claimed. Windows SmartScreen may warn on first launch. Verify the
-published SHA-256 checksums (`SHA256SUMS-0.6.4.txt`) before use.
+published SHA-256 checksums (`SHA256SUMS-0.6.5.txt`) before use.
+
+## 0.6.4
+
+Superseded — tag burned in the packaged matrix (a bare `${VERSION}` in the
+pwsh staged-portable path expanded to nothing, so the staged file was never
+found). Never published. See 0.6.5.
 
 ## 0.6.3
 

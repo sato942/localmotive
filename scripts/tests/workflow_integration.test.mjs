@@ -277,6 +277,9 @@ test("the packaged matrix tests the staged portable, not the raw build output", 
   assert.ok(stageIndex >= 0 && matrixIndex >= 0, "both steps exist");
   assert.ok(stageIndex < matrixIndex, "staging precedes the matrix");
   assert.match(steps[matrixIndex].run, /STAGE_DIR\/artifacts\/Localmotive_/);
+  // P0-10 (0.6.4 burned): a bare ${VERSION} in a pwsh step expands to
+  // nothing — environment variables need the env: drive qualifier.
+  assert.match(steps[matrixIndex].run, /\$portable = ".*Localmotive_\$env:VERSION/);
   assert.doesNotMatch(steps[matrixIndex].run, /target\/release\/localmotive\.exe/);
 });
 

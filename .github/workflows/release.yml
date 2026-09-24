@@ -200,7 +200,7 @@ jobs:
       - name: Verify the packaged executable
         shell: pwsh
         run: |
-          $portable = "$env:STAGE_DIR/artifacts/Localmotive_${VERSION}_x64-portable.exe"
+          $portable = "$env:STAGE_DIR/artifacts/Localmotive_$env:VERSION`_x64-portable.exe"
           if (-not (Test-Path $portable)) { throw "Staged portable was not produced by the stage step" }
           $cdpPort = 10041 + ([int]($env:GITHUB_RUN_ID % 2000))
           pwsh -NoProfile -File scripts/verify_packaged_matrix.ps1 -Portable $portable -Version "$env:VERSION" -ResolvedSha "$env:RESOLVED_SHA" -CdpPort $cdpPort
