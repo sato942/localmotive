@@ -26,7 +26,8 @@ executed.
 | 0.4.1 | Public release | PASS (as published) | UNKNOWN | UNKNOWN | The frozen record is `docs/history/TODO-0.4.1.md` in git history (last tree `9b09857`). |
 | 0.5.0 | Public release | PASS (release workflow `package-smoke` + packaged matrix on this host) | UNKNOWN | FAIL (failed before installation; recorded in the release evidence) | Health evidence is CPU only. Release notes disclose broad L4 limitations. The ship ledger is `docs/history/TODO-0.5.md` in git history (last tree `9b09857`). |
 | 0.6.0 | Superseded (never published) | Superseded; see 0.6.1 | NOT RUN | NOT RUN | Superseded by the 0.6.1 candidate; retained as history only. No support claim before the 0.6 evidence exists. |
-| 0.6.1 | Unpublished candidate | PASS (local packaged matrices plus retained `release-evidence/0.6.1/` records, source-bound) | NOT RUN under the release gate (laboratory legs moved out; historical observations only) | PASS (baseline upgrade legs for the 0.6.1 candidate, retained unpublished) | No support claim before publication. The latest published release is v0.5.0. |
+| 0.6.1 | Superseded (never published) | PASS (local packaged matrices plus retained `release-evidence/0.6.1/` records, source-bound) | NOT RUN under the release gate (laboratory legs moved out; historical observations only) | PASS (baseline upgrade legs for the 0.6.1 candidate, retained unpublished) | Superseded by the published 0.6.5. Earlier 0.6.x tags were never published. |
+| 0.6.5 | Public release | PASS (as published) | NOT RUN under the release gate | PASS (as published: one clean-account leg in the release gate) | Latest published release. Health evidence is CPU only; unsigned with SmartScreen disclosure. |
 
 ## What each column means
 
