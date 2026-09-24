@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
+use std::future::Future;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -2748,6 +2749,97 @@ pub async fn fetch_catalog(hardware: &HardwareInfo) -> Result<RuntimeCatalog, Ru
     compiled_runtime_catalog(hardware)
 }
 
+/// Shared outcome of one runtime catalog load (P0-2, RT-06).
+type CatalogLoadResult = Result<RuntimeCatalog, RuntimeCatalogError>;
+
+/// Which side of the gate a catalog caller takes (P0-2, RT-06).
+enum GateRole {
+    /// The first caller runs the fetch and publishes its outcome.
+    Leader(tokio::sync::watch::Sender<Option<CatalogLoadResult>>),
+    /// A concurrent caller awaits the leader's outcome.
+    Follower(tokio::sync::watch::Receiver<Option<CatalogLoadResult>>),
+}
+
+/// Single-flight gate for runtime catalog loads (P0-2, RT-06).
+///
+/// Concurrent callers share one in-flight load instead of failing with
+/// `Busy`. The first caller leads and runs `fetch`; followers await the
+/// leader's outcome and receive a clone of it, including a shared failure.
+/// If the leader disappears mid-load, a follower clears the dead slot and
+/// retries as the new leader. Completed results are never cached: a caller
+/// that arrives after the load finished leads a fresh load.
+#[derive(Debug, Default)]
+pub struct CatalogLoadGate {
+    slot: tokio::sync::Mutex<Option<tokio::sync::watch::Receiver<Option<CatalogLoadResult>>>>,
+}
+
+impl CatalogLoadGate {
+    /// Load the catalog through the gate with the production fetcher.
+    pub async fn load(&self, hardware: &HardwareInfo) -> CatalogLoadResult {
+        let hardware = hardware.clone();
+        self.load_with(move || async move { fetch_catalog(&hardware).await })
+            .await
+    }
+
+    /// Load the catalog through the gate with an injected fetcher, so tests
+    /// can serve a slow double without network access. The fetcher takes no
+    /// argument: callers that need owned inputs move them into the closure,
+    /// which keeps the returned future free of gate-lifetime borrows.
+    pub async fn load_with<F, Fut>(&self, fetch: F) -> CatalogLoadResult
+    where
+        F: FnOnce() -> Fut + Send,
+        Fut: Future<Output = CatalogLoadResult> + Send,
+    {
+        let mut fetch = Some(fetch);
+        loop {
+            let role = {
+                let mut slot = self.slot.lock().await;
+                match slot.as_mut() {
+                    Some(receiver) => GateRole::Follower(receiver.clone()),
+                    None => {
+                        let (sender, receiver) = tokio::sync::watch::channel(None);
+                        *slot = Some(receiver);
+                        GateRole::Leader(sender)
+                    }
+                }
+            };
+            match role {
+                GateRole::Follower(mut receiver) => {
+                    // Scope the read guard: it is not `Send`, so clone the
+                    // published outcome into an owned value before any
+                    // further await. A vanished leader yields no value, and
+                    // the caller retries as the new leader below.
+                    let shared: Option<CatalogLoadResult> = {
+                        receiver
+                            .wait_for(|result| result.is_some())
+                            .await
+                            .ok()
+                            .and_then(|guard| guard.clone())
+                    };
+                    match shared {
+                        Some(result) => return result,
+                        // The leader vanished mid-load. Clear the slot and
+                        // retry as the new leader instead of reporting a
+                        // failure. When a fresh leader installed a live slot
+                        // in the meantime, clearing it only costs one extra
+                        // load: both leaders finish and publish independently.
+                        None => {
+                            *self.slot.lock().await = None;
+                        }
+                    }
+                }
+                GateRole::Leader(sender) => {
+                    let fetch = fetch.take().expect("the leader runs the fetch once");
+                    let result = fetch().await;
+                    let _ = sender.send(Some(result.clone()));
+                    *self.slot.lock().await = None;
+                    return result;
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn fetch_runtime_setup_with<D, F>(
     detect: D,
@@ -5401,6 +5493,124 @@ mod tests {
         assert!(!status.update_available);
         assert_eq!(status.current_tag, identity.release_tag);
         assert_eq!(status.upstream_tag, identity.release_tag);
+    }
+
+    #[test]
+    fn concurrent_catalog_loads_share_one_slow_fetch() {
+        // P0-2 (RT-06): two concurrent callers share one in-flight catalog
+        // load. Neither caller gets `Busy`, both receive the same catalog,
+        // and the slow double runs exactly once.
+        use std::sync::atomic::AtomicUsize;
+
+        let gate = Arc::new(CatalogLoadGate::default());
+        let mut detected = detect_hardware();
+        detected.architecture = "x64".into();
+        let hardware = Arc::new(detected);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fetch_started = Arc::new(AtomicBool::new(false));
+
+        let slow_fetch = |calls: Arc<AtomicUsize>,
+                          fetch_started: Arc<AtomicBool>,
+                          hardware: Arc<HardwareInfo>| {
+            move || {
+                let calls = Arc::clone(&calls);
+                let fetch_started = Arc::clone(&fetch_started);
+                let hardware = Arc::clone(&hardware);
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    fetch_started.store(true, Ordering::SeqCst);
+                    // Keep the first load in flight long enough for the
+                    // second caller to attach as a follower. Blocking one
+                    // test worker thread is acceptable inside this test.
+                    std::thread::sleep(Duration::from_millis(300));
+                    compiled_runtime_catalog(&hardware)
+                }
+            }
+        };
+
+        tauri::async_runtime::block_on(async {
+            let first_gate = Arc::clone(&gate);
+            let first_calls = Arc::clone(&calls);
+            let first_started = Arc::clone(&fetch_started);
+            let first_hardware = Arc::clone(&hardware);
+            let first = tauri::async_runtime::spawn(async move {
+                first_gate
+                    .load_with(slow_fetch(first_calls, first_started, first_hardware))
+                    .await
+            });
+            // Wait until the first load is in flight, so the second call
+            // deterministically attaches as a follower instead of leading
+            // a second load.
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while !fetch_started.load(Ordering::SeqCst) {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the first load never started"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let second_gate = Arc::clone(&gate);
+            let second_calls = Arc::clone(&calls);
+            let second_started = Arc::clone(&fetch_started);
+            let second_hardware = Arc::clone(&hardware);
+            let second = tauri::async_runtime::spawn(async move {
+                second_gate
+                    .load_with(slow_fetch(second_calls, second_started, second_hardware))
+                    .await
+            });
+
+            let first_catalog = first
+                .await
+                .expect("the first load task runs")
+                .expect("the first caller shares the load");
+            let second_catalog = second
+                .await
+                .expect("the second load task runs")
+                .expect("the second caller shares the load");
+            assert_eq!(first_catalog.tag, second_catalog.tag);
+            assert_eq!(first_catalog.origin, second_catalog.origin);
+            assert_eq!(first_catalog.options.len(), second_catalog.options.len());
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                1,
+                "concurrent callers share one load"
+            );
+        });
+    }
+
+    #[test]
+    fn concurrent_catalog_loads_share_the_production_fetch() {
+        // P0-2 (RT-06): two concurrent loads through the production fetcher
+        // both succeed with the same compiled catalog. No overlap timing
+        // applies here; both outcomes must be equal regardless of order.
+        let gate = Arc::new(CatalogLoadGate::default());
+        let mut detected = detect_hardware();
+        detected.architecture = "x64".into();
+        let hardware = Arc::new(detected);
+
+        tauri::async_runtime::block_on(async {
+            let first_gate = Arc::clone(&gate);
+            let first_hardware = Arc::clone(&hardware);
+            let first =
+                tauri::async_runtime::spawn(async move { first_gate.load(&first_hardware).await });
+            let second_gate = Arc::clone(&gate);
+            let second_hardware = Arc::clone(&hardware);
+            let second =
+                tauri::async_runtime::spawn(
+                    async move { second_gate.load(&second_hardware).await },
+                );
+
+            let first_catalog = first
+                .await
+                .expect("the first load task runs")
+                .expect("the first production load succeeds");
+            let second_catalog = second
+                .await
+                .expect("the second load task runs")
+                .expect("the second production load succeeds");
+            assert_eq!(first_catalog.tag, second_catalog.tag);
+            assert_eq!(first_catalog.origin, second_catalog.origin);
+        });
     }
 
     #[test]

@@ -4,7 +4,7 @@
 //! runtime/health ownership (download verification, execution authorization,
 //! supervised health runs) stays in `runtime.rs` and `health.rs` with their
 //! tests — this module is the command surface over that authority.
-use crate::{health, runtime, AppState, ExclusiveOperation, RuntimeSetupResponse};
+use crate::{health, runtime, AppState, RuntimeSetupResponse};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::Emitter;
@@ -35,22 +35,16 @@ pub(crate) async fn load_runtime_setup(
             return Err("Selected adapter is not in the current hardware snapshot".into());
         }
     }
-    let catalog_result =
-        match ExclusiveOperation::acquire(&state.runtime_catalog, "runtime catalog") {
-            Ok(_active) => runtime::fetch_catalog(&hardware).await.map(|mut catalog| {
-                runtime::recommend_catalog_for_adapter(
-                    &mut catalog,
-                    &hardware,
-                    adapter_id.as_deref(),
-                );
-                catalog
-            }),
-            Err(message) => Err(runtime::RuntimeCatalogError {
-                kind: runtime::RuntimeCatalogErrorKind::Busy,
-                message,
-                retry_after_seconds: None,
-            }),
-        };
+    // P0-2: concurrent callers share one in-flight catalog load through the
+    // gate. Every caller shares the result.
+    let catalog_result = state
+        .runtime_catalog
+        .load(&hardware)
+        .await
+        .map(|mut catalog| {
+            runtime::recommend_catalog_for_adapter(&mut catalog, &hardware, adapter_id.as_deref());
+            catalog
+        });
     let (catalog, catalog_error) = match catalog_result {
         Ok(catalog) => (Some(catalog), None),
         Err(error) => (None, Some(error)),
@@ -81,13 +75,6 @@ pub(crate) async fn fetch_runtime_catalog(
     state: tauri::State<'_, AppState>,
     adapter_id: Option<String>,
 ) -> Result<runtime::RuntimeCatalog, runtime::RuntimeCatalogError> {
-    let _active = ExclusiveOperation::acquire(&state.runtime_catalog, "runtime catalog").map_err(
-        |message| runtime::RuntimeCatalogError {
-            kind: runtime::RuntimeCatalogErrorKind::Busy,
-            message,
-            retry_after_seconds: None,
-        },
-    )?;
     let hardware = tauri::async_runtime::spawn_blocking(runtime::detect_hardware)
         .await
         .map_err(|error| runtime::RuntimeCatalogError {
@@ -109,7 +96,9 @@ pub(crate) async fn fetch_runtime_catalog(
             });
         }
     }
-    let mut catalog = runtime::fetch_catalog(&hardware).await?;
+    // P0-2: share one in-flight catalog load with concurrent `load_runtime_setup`
+    // callers. Every caller shares the result.
+    let mut catalog = state.runtime_catalog.load(&hardware).await?;
     runtime::recommend_catalog_for_adapter(&mut catalog, &hardware, adapter_id.as_deref());
     Ok(catalog)
 }

@@ -45,6 +45,10 @@ cap-std = "4.0.3"
 ed25519-dalek = { version = "2.2", features = ["std"] }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_ProcessStatus", "Win32_System_SystemInformation", "Win32_System_Threading"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
+# P0-2: the runtime catalog single-flight gate uses tokio watch and Mutex.
+# tokio 1 with sync is already in the tree through tauri; this direct edge
+# adds no new code, only the use permission.
+tokio = { version = "1", default-features = false, features = ["sync"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_System_Threading"] }
