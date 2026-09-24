@@ -100,8 +100,9 @@ Standing release policy:
 - [ ] **D3 — Remove `artifacts/` from the tree (TEAM).** 5,494 tracked files,
   including 33 WebView2 profiles (DOC-01, DOC-02). A rewrite of public history
   needs a force push, and only the owner can bypass `main-pr-check`.
-- [ ] **D4 — Decide the `v0.4.0` corrective note (TEAM).** Publish
-  `release-evidence/0.4.1/v0.4.0-corrective-note.md`, or delete it.
+- [x] **D4 — Decide the `v0.4.0` corrective note (TEAM).** Decided
+  2026-09-24: deleted, not published. The inline 0.4.1 changelog correction
+  stands as the published record.
 - [ ] **D5 — Decide superseded evidence (TEAM).** `AGENTS.md` keeps accepted
   evidence frozen. Allow the deletion of `release-evidence/0.6.0/history/`,
   or keep it.

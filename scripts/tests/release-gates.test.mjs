@@ -544,13 +544,36 @@ test("correct the three L2 claims in the new 0.4.1 changelog section", async () 
   const changelog = await readFile(join(process.cwd(), "CHANGELOG.md"), "utf8");
   assert.match(changelog, /The three 0\.4\.0 rows marked `Supported` had L2 direct-runtime evidence only/);
   assert.match(changelog, /Those rows did not establish Localmotive product support/);
-  assert.match(changelog, /See `release-evidence\/0\.4\.1\/v0\.4\.0-corrective-note\.md` for the proposed public correction/);
+  assert.match(changelog, /Owner decision D4 \(2026-09-24\) deleted the corrective-note draft/);
 });
 
-test("the 0.4.0 corrective note stays review-gated, not silently published", async () => {
-  const note = await readFile(join(process.cwd(), "release-evidence", "0.4.1", "v0.4.0-corrective-note.md"), "utf8");
-  assert.match(note, /This draft does not modify the published release/);
-  assert.match(note, /Review this correction before editing the public 0\.4\.0 release/);
+test("the deleted 0.6.0 history stays deleted", async () => {
+  // D5 (owner decision 2026-09-24): the superseded 0.6.0 freeze history was
+  // deleted as an exception to the frozen-evidence rule. The directory must
+  // stay gone. (Carry-forward fixture labels may still name the old path;
+  // the fixture writes its own files and never reads the tree.)
+  const { existsSync } = await import("node:fs");
+  assert.equal(
+    existsSync(join(process.cwd(), "release-evidence", "0.6.0", "history")),
+    false,
+    "the 0.6.0 history was deleted by D5",
+  );
+  const review = await readFile(join(process.cwd(), "REVIEW.md"), "utf8");
+  assert.doesNotMatch(review, /Accepted evidence stays frozen/);
+});
+test("the deleted 0.4.0 corrective note stays deleted", async () => {
+  // D4 (owner decision 2026-09-24): the corrective-note draft was deleted,
+  // not published. The file must stay gone and no live document may link it.
+  const { existsSync } = await import("node:fs");
+  assert.equal(
+    existsSync(join(process.cwd(), "release-evidence", "0.4.1", "v0.4.0-corrective-note.md")),
+    false,
+    "the corrective note was deleted by D4",
+  );
+  const changelog = await readFile(join(process.cwd(), "CHANGELOG.md"), "utf8");
+  assert.doesNotMatch(changelog, /v0\.4\.0-corrective-note\.md/);
+  const review = await readFile(join(process.cwd(), "REVIEW.md"), "utf8");
+  assert.doesNotMatch(review, /Open owner decision D4/);
 });
 
 test("small icon layers remain readable at native resolution", async () => {

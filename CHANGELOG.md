@@ -258,7 +258,8 @@ The 0.4.0 `Windows 10/11 x64` statement described intended scope, not tested com
 
 The 0.4.0 release did not run its packaged verifier before publication.
 
-See `release-evidence/0.4.1/v0.4.0-corrective-note.md` for the proposed public correction.
+Owner decision D4 (2026-09-24) deleted the corrective-note draft instead of
+publishing it; the inline correction above is the published record.
 
 ### Qualification limitations
 
