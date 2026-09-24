@@ -12,6 +12,7 @@ import process from "node:process";
 import Ajv from "ajv";
 import WebSocket from "ws";
 import { classifyHealthCancellation } from "./lib/health_cancel.mjs";
+import { serializeIpcError, formatIpcError } from "./lib/ipc_errors.mjs";
 
 const port = Number.parseInt(process.argv[2] ?? "", 10);
 const artifactPath = process.argv[3] ? resolve(process.argv[3]) : "";
@@ -267,15 +268,30 @@ async function invoke(command, args = {}, timeoutMs = 120_000) {
       );
       return { ok: true, value };
     } catch (error) {
-      return { ok: false, error: String(error) };
+      // P0-3: ship the raw rejection across CDP as JSON text. CDP
+      // stringifies thrown objects into "[object Object]", so the
+      // harness parses and normalizes the text with the shared
+      // serializer instead of calling String(error) here.
+      let errorJson = null;
+      try {
+        const serialized = JSON.stringify(error);
+        errorJson = typeof serialized === "string" ? serialized : null;
+      } catch { errorJson = null; }
+      return { ok: false, errorJson };
     }
   })()`, timeoutMs);
-  if (!result?.ok) throw new Error(result?.error ?? `Tauri command ${command} failed`);
+  if (!result?.ok) {
+    const parsed = (() => {
+      try { return result?.errorJson ? JSON.parse(result.errorJson) : null; }
+      catch { return null; }
+    })();
+    throw new Error(`${command}: ${formatIpcError(serializeIpcError(parsed))}`);
+  }
   return result.value;
 }
 
 async function rejectedInvoke(command, args) {
-  return client.evaluate(`(async () => {
+  const result = await client.evaluate(`(async () => {
     try {
       const value = await window.__TAURI_INTERNALS__.invoke(
         ${JSON.stringify(command)},
@@ -283,29 +299,27 @@ async function rejectedInvoke(command, args) {
       );
       return { rejected: false, value };
     } catch (error) {
-      // Tauri serializes Rust errors across IPC as JSON values: structured
-      // errors arrive as objects, plain-string rejections (Err(String)) as
-      // bare strings. CDP returnByValue stringifies thrown objects into
-      // their message text ("[object Object]"), so serialize the raw error
-      // to JSON inside the page before it crosses the CDP boundary.
-      const serialized = (() => {
-        try { return JSON.stringify(error); } catch { return null; }
-      })();
-      const parsed = (() => {
-        try { return serialized ? JSON.parse(serialized) : null; } catch { return null; }
-      })();
-      const source = (parsed && typeof parsed === 'object') ? parsed
-        : (error && typeof error === 'object') ? error : null;
-      const structured = source
-        ? { kind: source.kind ?? 'unknown', message: source.message ?? String(error), retryAfterSeconds: source.retryAfterSeconds ?? null }
-        : { kind: 'unknown', message: String(error), retryAfterSeconds: null };
-      return {
-        rejected: true,
-        error: structured,
-        errorText: typeof structured.message === 'string' ? structured.message : String(error),
-      };
+      // P0-3: ship the raw rejection across CDP as JSON text (same as
+      // invoke above); the harness normalizes it with the shared serializer.
+      let errorJson = null;
+      try {
+        const serialized = JSON.stringify(error);
+        errorJson = typeof serialized === "string" ? serialized : null;
+      } catch { errorJson = null; }
+      return { rejected: true, errorJson };
     }
   })()`, 120_000);
+  if (!result?.rejected) return result;
+  const parsed = (() => {
+    try { return result?.errorJson ? JSON.parse(result.errorJson) : null; }
+    catch { return null; }
+  })();
+  const structured = serializeIpcError(parsed);
+  return {
+    rejected: true,
+    error: structured,
+    errorText: structured.message,
+  };
 }
 
 async function artifactRecord() {
@@ -461,6 +475,14 @@ try {
           architecture: baselineSetup.hardware.architecture,
           adapter_count: baselineSetup.hardware.adapters?.length ?? 0,
           catalog_result: baselineSetup.catalog ? "ready" : "terminal-error",
+          // P0-3: a terminal catalog result records the real error kind
+          // and detail from the setup response instead of a bare label.
+          ...(baselineSetup.catalog
+            ? {}
+            : {
+                error_kind: baselineSetup.catalogError?.kind ?? "unknown",
+                error_detail: baselineSetup.catalogError?.message ?? "(no detail)",
+              }),
           managed_runtime_count: baselineSetup.managedRuntimes.length,
         };
       },
@@ -496,6 +518,100 @@ try {
           requireCondition(result.error?.kind === "invalidResponse", "The rejection did not preserve the invalid-response kind");
           requireCondition(/not (?:present )?in the current hardware snapshot/i.test(result.errorText), "The rejection did not identify the hardware-snapshot mismatch");
           return { rejected: true, error: result.error };
+        },
+      );
+
+      await runCheck(
+        "ipc.fetch-error-kind",
+        "A failed catalog fetch records its real error kind and detail instead of [object Object].",
+        async () => {
+          // P0-3: fail a catalog fetch inside the packaged app through the
+          // throwing `invoke` path (not `rejectedInvoke`) and read back the
+          // failure text. Before the fix this text was "[object Object]".
+          const failure = await invoke(
+            "fetch_runtime_catalog",
+            { adapterId: "luid:ffffffffffffffff:ffffffffffffffff" },
+            120_000,
+          ).then(
+            () => {
+              throw new Error("The backend accepted an unknown adapter identifier");
+            },
+            (error) => error,
+          );
+          const text = String(failure?.message ?? failure);
+          requireCondition(!text.includes("[object Object]"), "The failure record lost the error kind");
+          requireCondition(text.includes("[invalidResponse]"), `The failure record missed the kind: ${text}`);
+          requireCondition(/hardware snapshot/i.test(text), `The failure record missed the detail: ${text}`);
+          return { kind: "invalidResponse", detail: text };
+        },
+      );
+
+      await runCheck(
+        "ipc.catalog-query-wire-keys",
+        "Selecting a pipeline filter changes the result count in the packaged app.",
+        async () => {
+          // P0-4 (FE-02): drive the real backend with a fixed row set and
+          // read back the counts. Before the fix the frontend sent
+          // snake_case keys, the backend ignored them, and every count
+          // stayed at the full list.
+          const file = (sizeBytes) => ({
+            quant: "Q4_K_M",
+            filename: "model-Q4_K_M.gguf",
+            sizeBytes,
+            sha256: "a".repeat(64),
+            revision: "main",
+            lastModified: "",
+            createdAt: "",
+          });
+          const row = (id, pipelineTag, sizeBytes) => ({
+            id,
+            repo: `fixture/${id}`,
+            family: "fixture",
+            parameters: "8B",
+            publisher: "fixture",
+            summary: "fixture row",
+            tags: [],
+            gated: false,
+            downloads: 1,
+            likes: 0,
+            pipelineTag,
+            files: [file(sizeBytes)],
+          });
+          const models = [
+            row("chat", "text-generation", 100),
+            row("vision", "image-text-to-text", 900),
+          ];
+          const baseQuery = {
+            text: "",
+            tag: "",
+            quant: "",
+            maxBytes: 0,
+            hideGated: false,
+            sort: "downloads",
+            author: "",
+            license: "",
+            architecture: "",
+          };
+          const unfiltered = { ...baseQuery, pipelineTag: "", fitPerMille: 0, budgetBytes: 0 };
+          const applyFilter = (query) =>
+            invoke("filter_catalog", { models, query }, 120_000);
+          const unfilteredRows = await applyFilter(unfiltered);
+          const pipelineRows = await applyFilter({
+            ...baseQuery,
+            pipelineTag: "text-generation",
+            fitPerMille: 0,
+            budgetBytes: 0,
+          });
+          const fitRows = await applyFilter({
+            ...baseQuery,
+            pipelineTag: "",
+            fitPerMille: 500,
+            budgetBytes: 1000,
+          });
+          requireCondition(unfilteredRows.length === 2, `The unfiltered list must hold both rows, got ${unfilteredRows.length}`);
+          requireCondition(pipelineRows.length === 1, `The pipeline filter must narrow the list, got ${pipelineRows.length}`);
+          requireCondition(fitRows.length === 1, `The hardware-fit filter must narrow the list, got ${fitRows.length}`);
+          return { unfiltered: unfilteredRows.length, pipeline: pipelineRows.length, fit: fitRows.length };
         },
       );
 

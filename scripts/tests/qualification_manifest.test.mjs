@@ -73,7 +73,9 @@ test("a missing required record is refused", () => {
 });
 
 test("an incorrect outcome inside a record is refused", () => {
-  withFixture({ lifecycleStatus: { key: "lifecycle_upgrade_v0.4.0", status: "FAIL" } }, (fixture) => {
+  // P0-7 (D2): the gate keeps one lifecycle record; the refusal contract is
+  // exercised on it.
+  withFixture({ lifecycleStatus: { key: "lifecycle_preservation_v0.5.0", status: "FAIL" } }, (fixture) => {
     const { failures } = verify(fixture);
     assert.ok(
       failures.some((failure) => failure.includes("status FAIL is not PASS")),
@@ -82,20 +84,14 @@ test("an incorrect outcome inside a record is refused", () => {
   });
 });
 
-test("a witness that lost its required outcome is refused", () => {
-  withFixture({ witnessOutcome: { key: "witness_timeout", status: "PASS" } }, (fixture) => {
-    const { failures } = verify(fixture);
-    assert.ok(
-      failures.some((failure) =>
-        failure.includes("witness_timeout: status PASS != required witness outcome TIMEOUT"),
-      ),
-      failures.join("\n"),
-    );
-  });
-});
+// P0-7 (D2): the witness legs moved out of the release gate, so no witness
+// record carries a required outcome. The lifecycle refusal above covers the
+// surviving per-record contract.
 
 test("a lifecycle record whose staged digests contradict the inventory is refused", () => {
-  withFixture({ lifecycleWrongSetupDigest: { key: "lifecycle_preservation_v0.4.1" } }, (fixture) => {
+  // P0-7 (D2): the gate keeps one lifecycle record; the refusal contract is
+  // exercised on it.
+  withFixture({ lifecycleWrongSetupDigest: { key: "lifecycle_preservation_v0.5.0" } }, (fixture) => {
     const { failures } = verify(fixture);
     assert.ok(
       failures.some((failure) => failure.includes("staged setup digest contradicts the inventory")),
@@ -105,7 +101,9 @@ test("a lifecycle record whose staged digests contradict the inventory is refuse
 });
 
 test("a lifecycle record bound to a different source is refused", () => {
-  withFixture({ lifecycleWrongSource: { key: "lifecycle_upgrade_v0.5.0" } }, (fixture) => {
+  // P0-7 (D2): the gate keeps one lifecycle record; the refusal contract is
+  // exercised on it.
+  withFixture({ lifecycleWrongSource: { key: "lifecycle_preservation_v0.5.0" } }, (fixture) => {
     const { failures } = verify(fixture);
     assert.ok(
       failures.some(

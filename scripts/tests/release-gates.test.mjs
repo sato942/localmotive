@@ -370,8 +370,10 @@ test("model catalog exposes rich filters with hardware auto-fit defaults", async
   assert.match(app, /catalogFitEnabled/);
   assert.match(app, /Hardware fit/);
   assert.match(app, /Fit budget/);
-  assert.match(app, /fit_per_mille/);
-  assert.match(app, /budget_bytes/);
+  // P0-4 (FE-02): the UI sends the camelCase wire keys the backend
+  // expects; the snake_case keys never reached the filters.
+  assert.match(app, /fitPerMille/);
+  assert.match(app, /budgetBytes/);
   assert.match(model, /hardwareFitBudget/);
   assert.match(model, /modelHiddenByFitRule/);
   assert.match(model, /DEFAULT_FIT_PER_MILLE/);
@@ -1176,14 +1178,9 @@ test("R07: preservation fixtures carry real released-version data, not markers",
   assert.match(host, /PreservationFlavor/);
   assert.match(sandbox, /canary-catalog-cache\.json/);
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
-  for (const leg of [
-    "sandbox-clean-account-lifecycle-upgrade-v0.4.0",
-    "sandbox-clean-account-lifecycle-upgrade-v0.5.0",
-    "sandbox-clean-account-lifecycle-preservation-v0.4.1",
-    "sandbox-clean-account-lifecycle-preservation-v0.5.0",
-  ]) {
-    assert.match(release, new RegExp(leg), `release matrix includes ${leg}`);
-  }
+  // P0-7 (D2): the gate keeps one lifecycle leg — upgrade from the last
+  // published version with user-data preservation.
+  assert.match(release, /sandbox-clean-account-lifecycle-preservation-v0\.5\.0/);
   assert.match(release, /PreservationFlavor \$leg\.Flavor/);
 });
 
@@ -1551,9 +1548,11 @@ test("release verify step waits for the candidate WebView before driving checks"
 test("release workflow serializes runs so two packages never share one runner", async () => {
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
   // Tag-push and dispatch each ran package on the same single runner; the
-  // second CDP session attached to the first WebView.
+  // second CDP session attached to the first WebView. Runs serialize on one
+  // group, and a queued release waits instead of cancelling the running one:
+  // cancelling mid-flight could kill a publish.
   assert.match(release, /concurrency:\s*\n\s*group:\s*localmotive-release/);
-  assert.match(release, /cancel-in-progress:\s*true/);
+  assert.match(release, /cancel-in-progress:\s*false/);
   // A promotion is never cancelled by a later tag push: it owns its own group
   // and refuses cancellation.
   const promote = await readFile(join(process.cwd(), ".github", "workflows", "release-promote.yml"), "utf8");
@@ -1815,7 +1814,11 @@ test("GH-03 the lifecycle consumes candidates instead of waiting for publication
   const steps = release.jobs.verify.steps;
   const lifecycle = steps.find((step) => step.run?.includes("host-run-lifecycle.ps1"));
   const assembly = steps.find((step) => step.run?.includes("build_qualification_manifest.mjs"));
-  assert.match(lifecycle.run, /-CandidateDir "artifacts"/);
+  // P0-5 (REL-05) + P0-7 (D2): the lifecycle consumes the staged candidates
+  // from the stage's artifacts/ directory, never the checkout's tracked
+  // artifacts/ directory.
+  assert.match(lifecycle.run, /-CandidateDir "\$env:STAGE_DIR\/artifacts"/);
+  assert.doesNotMatch(lifecycle.run, /-CandidateDir "artifacts"/);
   assert.doesNotMatch(lifecycle.run, /ReleaseWaitMinutes/);
   assert.equal(lifecycle["timeout-minutes"], 120);
   assert.ok(release.jobs.verify["timeout-minutes"] > lifecycle["timeout-minutes"]);
@@ -1834,17 +1837,14 @@ test("GH-04 installer verdicts fail on leftovers and verify installed versions",
   assert.match(sandbox, /Assert-AppVersion \$exe \$meta\.version "MSI fresh install"/);
   assert.match(sandbox, /Assert-AppVersion \$exe \$meta\.version "Post-update install"/);
   const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
-  // R07 (follow-up review db548c8): the single baseline variable became the
-  // explicit qualification matrix - every supported baseline runs its update
-  // path and its preservation step with the baseline's real persistence
-  // flavor.
-  for (const leg of ["v0.4.0", "v0.4.1", "v0.5.0"]) {
-    assert.ok(release.includes(`Previous = "${leg}"`), `baseline ${leg} runs in the matrix`);
-  }
-  assert.match(release, /Flavor = "cache"/, "the v0.4.x legs use the cache-record flavor");
-  assert.match(release, /Flavor = "mirror"/, "the v0.5.0 legs use the SQLite mirror flavor");
+  // R07 (follow-up review db548c8) became P0-7 (D2): the gate keeps one
+  // lifecycle leg — upgrade from the last published version (v0.5.0) with
+  // user-data preservation in the SQLite mirror flavor.
+  assert.ok(release.includes(`Previous = "v0.5.0"`), "baseline v0.5.0 runs the single leg");
+  assert.doesNotMatch(release, /Previous = "v0\.4\.[01]"/, "superseded baselines are gone");
+  assert.match(release, /Flavor = "mirror"/, "the surviving leg uses the SQLite mirror flavor");
   assert.match(release, /PreservationFlavor \$leg\.Flavor/);
-  assert.doesNotMatch(release, /-PreviousTag "v0\.4\.0"/, "the baseline flows through the explicit matrix entries");
+  assert.doesNotMatch(release, /-PreviousTag "v0\.4\.0"/, "the baseline flows through the explicit leg entry");
 });
 
 test("GH-06 lifecycle evidence survives every terminal outcome", async () => {
@@ -1880,9 +1880,14 @@ test("GH-06 lifecycle evidence survives every terminal outcome", async () => {
   assert.equal(diagnostics.if, "failure() || cancelled()");
   assert.equal(qualified.if, undefined);
   for (const upload of [diagnostics, qualified]) {
-    assert.match(upload.with.path, /release-evidence.*attestations/);
+    assert.match(upload.with.path, /STAGE_DIR/);
     assert.equal(upload.with["retention-days"], 90);
   }
+  // P0-7 (D2): the qualified bundle is exactly the stage, which mirrors the
+  // bundle layout (artifacts/, sbom, release-evidence attestations); the
+  // diagnostics upload keeps the workspace attestations for failure forensics.
+  assert.match(qualified.with.path, /\$\{\{ env\.STAGE_DIR \}\}\/\*\*/);
+  assert.match(diagnostics.with.path, /release-evidence.*attestations/);
   assert.equal(qualified.with["if-no-files-found"], "error");
 });
 
@@ -2287,6 +2292,26 @@ test("QD-06 local doc links resolve in every active document", async () => {
   assert.deepEqual(missing, [], `unresolved relative links: ${missing.join(", ")}`);
 });
 
+test("public docs name v0.5.0 latest published; 0.6.x stays an unpublished candidate", async () => {
+  // P0-9 (DOC-04, DOC-05): the latest published release is v0.5.0. No
+  // 0.6.x line may read as shipped, and README, SUPPORT-MATRIX, and
+  // EVIDENCE-MATRIX must agree that 0.6.1 is candidate evidence only.
+  const readme = await readFile(join(process.cwd(), "README.md"), "utf8");
+  const changelog = await readFile(join(process.cwd(), "CHANGELOG.md"), "utf8");
+  const support = await readFile(join(process.cwd(), "docs", "SUPPORT-MATRIX.md"), "utf8");
+  const evidence = await readFile(join(process.cwd(), "docs", "EVIDENCE-MATRIX.md"), "utf8");
+  assert.match(readme, /the latest published release is v0\.5\.0/i);
+  assert.doesNotMatch(readme, /0\.6\.[01] ships/);
+  assert.doesNotMatch(readme, /In this 0\.6\.0 source build/);
+  assert.match(changelog, /## Unreleased/);
+  assert.match(changelog, /0\.6\.1.*tagged but unpublished candidate/);
+  assert.match(changelog, /Unpublished candidate — not released/);
+  for (const doc of [readme, support, evidence]) {
+    assert.match(doc, /0\.6\.1 candidate/);
+  }
+  assert.match(evidence, /\| 0\.6\.1 \|/);
+});
+
 test("GH-07 the evidence matrix exists and the README reads it", async () => {
   const matrix = await readFile(join(process.cwd(), "docs", "EVIDENCE-MATRIX.md"), "utf8");
   for (const cell of ["CPU packaged lifecycle", "Accelerator (CUDA) packaged", "Clean-account Sandbox"]) {
@@ -2329,7 +2354,10 @@ test("GH-08 supply-chain posture and SBOM step are documented", async () => {
   assert.ok(release.includes("npm sbom --sbom-format cyclonedx"), "the SBOM step exists");
   const bundle = (await loadWorkflows(process.cwd()))["release.yml"].jobs.verify.steps
     .find((step) => step.with?.name?.endsWith("-qualified"));
-  assert.match(bundle.with.path, /^sbom\.cdx\.json$/m, "the qualified bundle retains the SBOM");
+  // P0-7 (D2): the qualified bundle is exactly the stage, and the stage
+  // mirrors the bundle layout — the mirror step copies the SBOM in.
+  assert.match(bundle.with.path, /\$\{\{ env\.STAGE_DIR \}\}\/\*\*/, "the qualified bundle is the stage");
+  assert.match(release, /cp sbom\.cdx\.json "\$STAGE_DIR\/sbom\.cdx\.json"/, "the SBOM is mirrored into the stage");
   assert.equal(bundle.with["retention-days"], 90);
 });
 
@@ -2741,7 +2769,9 @@ test("lifecycle retains the actual settings reads under lock ownership", { skip:
   const release = (await loadWorkflows(process.cwd()))["release.yml"];
   for (const name of ["Retain the qualified candidate bundle", "Retain diagnostics after failure or cancellation"]) {
     const upload = release.jobs.verify.steps.find((step) => step.name === name);
-    assert.match(upload.with.path, /attestations\/\*/);
+    // P0-7 (D2): both uploads retain the stage; the stage mirrors the bundle
+    // layout, so the mirrored attestations (with the settings reads) ride along.
+    assert.match(upload.with.path, /STAGE_DIR/);
   }
 });
 
@@ -3209,10 +3239,13 @@ test("manifest assembly accepts records outside git containment (four-identity r
       attestationsDir: join(stage, "attestations"),
       outPath: join(stage, "manifest.json"),
       release: "0.6.1",
+      // P0-7 (D2): records resolve against the stage, not the checkout.
+      recordRoot: stage,
       stagePackagedVerification: join(stage, "attestations", "packaged-verification-0.6.1.json"),
     });
-    assert.deepEqual(missing, [], "assembly must find all 18 records outside git");
-    assert.equal(Object.keys(manifest.records).length, 18);
+    assert.deepEqual(missing, [], "assembly must find all gate records outside git");
+    assert.equal(Object.keys(manifest.records).length, 3);
+    assert.equal(manifest.inventory.path, "inventory.json");
     assert.equal(manifest.sourceRevision, "4b31431d28d1503efc7b80a46c77ad2c3d54f082");
   } finally {
     await rm(stage, { recursive: true, force: true });

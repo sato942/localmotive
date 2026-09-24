@@ -14,7 +14,9 @@ The same executable provides the local API and optional WebUI.
 
 Download the current release from [GitHub Releases][releases].
 Use the release marked **Latest**, not the repository's unreleased source tip.
-In this 0.6.0 source build, select **About → Check releases** to open that page.
+The latest published release is v0.5.0. This checkout is 0.6.1 development
+source, not a release: tags `v0.6.0` and `v0.6.1` exist, but no 0.6.x release
+is published. In this source build, select **About → Check releases** to open that page.
 Updates require a manual download and installation; the application has no automatic updater.
 
 Each release provides these Windows x64 files:
@@ -328,11 +330,13 @@ Review the generated command before launch.
 
 Read the support matrix by evidence type, not by inference (audit GH-07):
 
-- **The 0.6.0 candidate** passed the packaged lifecycle (MSI and NSIS
+- **The 0.6.1 candidate (unpublished)** passed the packaged lifecycle (MSI and NSIS
   install, launch, uninstall) and the upgrade checks from both v0.4.1 and
   v0.5.0 in Windows Sandbox, bound to candidate digests. CUDA inference on
   the RTX 5090 was measured through the packaged app; tamper refusal, TLS
   serving, catalog fallback and download resume were exercised packaged.
+  These are candidate results retained under `release-evidence/0.6.1/`, not a
+  published release: the latest published release is v0.5.0.
 - **Do not generalize**: other hardware classes, Windows 10, screen
   readers, live cloud providers and OS-crash behavior remain untested and
   unclaimed. The full matrix, row by row with its evidence class, is
@@ -366,14 +370,14 @@ Windows installers remain honestly unsigned with disclosure. Windows SmartScreen
 - Catalog downloads support single-file GGUF entries only.
 - Inventory scanning supports split GGUF files already on disk.
 - Application updates require a newer manual installation or executable.
-- Localmotive 0.6.0 ships unsigned under the deferred-signing exception: no Authenticode signatures exist, so no signature match can be claimed. Verify the published SHA-256 checksums before use. SmartScreen can warn on unsigned files.
+- Localmotive ships unsigned under the standing unsigned policy (owner order 2026-09-20): no Authenticode signatures exist, so no signature match can be claimed. Verify the published SHA-256 checksums before use. SmartScreen can warn on unsigned files.
 - Signing boxes are deferred, not green, and block no gate.
 
 ## Troubleshooting
 
 ### SmartScreen shows a warning
 
-Localmotive 0.6.0 ships unsigned under the deferred-signing exception: there is no Authenticode signer to verify. Verify the published SHA-256 checksums before use.
+Localmotive ships unsigned under the standing unsigned policy (owner order 2026-09-20): there is no Authenticode signer to verify. Verify the published SHA-256 checksums before use.
 
 SmartScreen can warn on unsigned files.
 

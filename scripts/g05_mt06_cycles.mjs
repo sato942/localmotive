@@ -31,7 +31,10 @@ const EVIDENCE_PATH = process.env.MT06_EVIDENCE_PATH ?? join(process.cwd(), ".he
 const BENCH_DIR = join(process.env.APPDATA ?? "", "io.github.localmotive.app", "benchmarks");
 const RUN_SETTLE_BOUND_MS = 60_000;
 const DRAIN_BOUND_MS = 300_000;
-const API_KEY = readFileSync(join(process.cwd(), ".hermes-0.6", "g05-tls", "api-key.txt"), "utf8").trim();
+// P0-7 (D2): the lab generates its TLS material in-run; the historic
+// .hermes-0.6 default stays only for local archaeology runs.
+const TLS_DIR = process.env.G05_TLS_DIR ?? join(process.cwd(), ".hermes-0.6", "g05-tls");
+const API_KEY = readFileSync(join(TLS_DIR, "api-key.txt"), "utf8").trim();
 
 const client = await attach(Number(portArg));
 const evaluate = (expr) => client.evaluate(expr);

@@ -100,25 +100,6 @@ impl HealthProcess for proc::ContainedProcess {
     }
 }
 
-pub(crate) struct ExclusiveOperation<'a> {
-    active: &'a AtomicBool,
-}
-
-impl<'a> ExclusiveOperation<'a> {
-    fn acquire(active: &'a AtomicBool, operation: &str) -> Result<Self, String> {
-        active
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .map_err(|_| format!("A {operation} request is already active"))?;
-        Ok(Self { active })
-    }
-}
-
-impl Drop for ExclusiveOperation<'_> {
-    fn drop(&mut self) {
-        self.active.store(false, Ordering::Release);
-    }
-}
-
 #[derive(Default)]
 pub(crate) struct AppState {
     server: Mutex<Option<ManagedServer>>,
@@ -130,8 +111,8 @@ pub(crate) struct AppState {
     downloads: Mutex<std::collections::HashMap<String, Arc<AtomicBool>>>,
     /// One managed-runtime installation may run at a time.
     runtime_install: Mutex<Option<Arc<AtomicBool>>>,
-    /// One approved runtime catalog request may run at a time.
-    runtime_catalog: AtomicBool,
+    /// Concurrent catalog readers share one in-flight load (P0-2, RT-06).
+    runtime_catalog: runtime::CatalogLoadGate,
     /// One cancellable GGUF metadata read may run at a time.
     gguf_read: Mutex<Option<Arc<AtomicBool>>>,
     /// The in-flight managed-server start, when one is pending: the child
@@ -2283,6 +2264,7 @@ pub fn run() {
             runtime_service::load_runtime_setup,
             runtime_service::detect_hardware,
             runtime_service::fetch_runtime_catalog,
+            runtime_service::check_runtime_update,
             runtime_service::managed_runtime_root,
             runtime_service::install_managed_runtime,
             runtime_service::cancel_managed_runtime_install,
@@ -2375,15 +2357,6 @@ mod release_security_tests {
             trust_check < probe,
             "managed trust must be checked before execution"
         );
-    }
-
-    #[test]
-    fn catalog_request_gate_permits_only_one_active_request() {
-        let active = AtomicBool::new(false);
-        let first = ExclusiveOperation::acquire(&active, "runtime catalog").unwrap();
-        assert!(ExclusiveOperation::acquire(&active, "runtime catalog").is_err());
-        drop(first);
-        assert!(ExclusiveOperation::acquire(&active, "runtime catalog").is_ok());
     }
 
     fn put_test_string(bytes: &mut Vec<u8>, value: &str) {
@@ -3884,29 +3857,12 @@ mod fe11_download_identity_tests {
 
 #[cfg(test)]
 mod runtime_service_source_tests {
-    use super::*;
-
     #[test]
-    fn exclusive_operation_allows_one_holder_and_releases_on_drop() {
-        // The runtime catalog lock: a second acquire fails while held and the
-        // slot frees when the holder drops (audit S-27 slice-2 boundary).
-        let active = std::sync::atomic::AtomicBool::new(false);
-        let first = ExclusiveOperation::acquire(&active, "runtime catalog").unwrap();
-        let second = ExclusiveOperation::acquire(&active, "runtime catalog");
-        assert!(second.is_err(), "a second exclusive acquire must fail");
-        drop(first);
-        assert!(
-            ExclusiveOperation::acquire(&active, "runtime catalog").is_ok(),
-            "the slot must be reusable after the holder drops"
-        );
-    }
-
-    #[test]
-    fn runtime_service_commands_hold_the_exclusive_catalog_lock() {
-        // Source guard (audit S-27 slice 2): both the fetch and the install
-        // command must take the exclusive runtime-catalog lock before doing
-        // their work — mutations QA1/QA2 initially passed without these
-        // assertions, which is why they exist.
+    fn runtime_service_commands_share_the_catalog_load() {
+        // Source guard (audit S-27 slice 2, P0-2): the fetch command shares
+        // one catalog load through the gate, while the install command keeps
+        // the exclusive runtime_install slot. Mutations QA1/QA2 initially
+        // passed without these assertions, which is why they exist.
         let source = include_str!("runtime_service.rs");
         let fetch = source
             .split("fn fetch_runtime_catalog(")
@@ -3915,13 +3871,28 @@ mod runtime_service_source_tests {
             .split("fn managed_runtime_root(")
             .next()
             .unwrap();
-        let fetch_lock = fetch
-            .find("ExclusiveOperation::acquire")
-            .expect("fetch_runtime_catalog must take the exclusive lock");
-        let fetch_work = fetch
-            .find("runtime::fetch_catalog")
-            .expect("fetch_runtime_catalog must call the fetcher");
-        assert!(fetch_lock < fetch_work, "the lock must precede the fetch");
+        // P0-2 (RT-06): the fetch command shares one in-flight catalog load
+        // through the gate instead of failing with `Busy`. The behavioral
+        // proof lives in the `CatalogLoadGate` concurrency tests in
+        // `runtime.rs`; this guard pins the wiring.
+        assert!(
+            fetch.find("ExclusiveOperation").is_none(),
+            "fetch_runtime_catalog must not take the exclusive lock"
+        );
+        assert!(
+            fetch.find("Busy").is_none(),
+            "fetch_runtime_catalog must never fail with Busy"
+        );
+        let fetch_load = fetch
+            .find("state.runtime_catalog.load")
+            .expect("fetch_runtime_catalog must share one catalog load");
+        let fetch_recommend = fetch
+            .find("runtime::recommend_catalog_for_adapter")
+            .expect("fetch_runtime_catalog must recommend for the adapter");
+        assert!(
+            fetch_load < fetch_recommend,
+            "the shared load must precede the recommendation"
+        );
 
         let install = source
             .split("fn install_managed_runtime(")
@@ -4423,6 +4394,28 @@ mod ipc_contract_tests {
             serde_json::to_value(&drop).unwrap(),
             types["catalogDrop"],
             "CatalogDrop wire shape drifted"
+        );
+
+        // P0-4 (FE-02): the catalog query wire shape. The frontend must
+        // send these exact camelCase keys; snake_case keys are ignored.
+        let query = catalog::CatalogQuery {
+            text: "qwen".into(),
+            tag: "chat".into(),
+            quant: "Q4_K_M".into(),
+            max_bytes: 8_589_934_592,
+            hide_gated: true,
+            sort: catalog::CatalogSort::Downloads,
+            author: "unsloth".into(),
+            license: "apache-2.0".into(),
+            pipeline_tag: "text-generation".into(),
+            architecture: "qwen35".into(),
+            fit_per_mille: 500,
+            budget_bytes: 34_359_738_368,
+        };
+        assert_eq!(
+            serde_json::to_value(&query).unwrap(),
+            types["catalogQuery"],
+            "CatalogQuery wire shape drifted"
         );
     }
 }

@@ -101,6 +101,43 @@ test("a missing promised asset is refused", async () => {
   });
 });
 
+test("an extra file in the qualified artifact set is refused", async () => {
+  // P0-8 (REL-01): the validator promises to refuse an inflated set. A stray
+  // installer that rode along in the bundle must fail promotion, even though
+  // publication itself uploads explicit names only.
+  await withFixture({ withQualifiedSet: true }, async (fixture) => {
+    writeFileSync(join(fixture.root, "artifacts", `Localmotive_${RELEASE}_x64-extra.exe`), "stray\n");
+    const result = await run(fixture);
+    assert.equal(result.ok, false);
+    assert.ok(
+      result.failures.some((failure) =>
+        failure.includes(`unexpected file Localmotive_${RELEASE}_x64-extra.exe in the qualified artifact set`),
+      ),
+      result.failures.join("\n"),
+    );
+  });
+});
+
+test("gate-produced sidecar records are allowed in the qualified artifact set", async () => {
+  // P0-8 (REL-01): the collect step stages the matrix/catalog records and
+  // the promotion check writes its own report into the stage. They ride in
+  // the retained bundle as evidence but are never published.
+  await withFixture({ withQualifiedSet: true }, async (fixture) => {
+    for (const name of [
+      `promotion-check-${RELEASE}.json`,
+      `packaged-verification-catalog-${RELEASE}.json`,
+      "catalog-matrix-first-fill.json",
+      "catalog-matrix-restart.json",
+      "catalog-fixture-init.json",
+    ]) {
+      writeFileSync(join(fixture.root, "artifacts", name), "{}\n");
+    }
+    const result = await run(fixture);
+    assert.deepEqual(result.failures, [], result.failures.join("\n"));
+    assert.equal(result.ok, true);
+  });
+});
+
 test("missing lifecycle evidence is refused", async () => {
   await withFixture({ withQualifiedSet: true }, async (fixture) => {
     unlinkSync(

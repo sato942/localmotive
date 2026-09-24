@@ -1,14 +1,38 @@
 # Changelog
 
+## Unreleased
+
+0.6.1 was a tagged but unpublished candidate: tags `v0.6.0` and `v0.6.1`
+exist, but no 0.6.x release was published before 0.6.2. The latest published
+release is v0.6.2. The 0.6.0/0.6.1 sections below describe the candidate
+line, not shipped releases.
+
+## 0.6.2
+
+First published release of the 0.6 line. It carries the 0.6 stabilization
+set: the compiled approved-runtime catalog with no network or cache in setup,
+single-flight catalog loads, structured IPC error kinds in harness evidence,
+camelCase catalog query wire keys, out-of-checkout release staging, named
+verification-step failures, the reduced release gate, promotion inflated-set
+refusal, and corrected public text.
+
+This release is honestly unsigned: no Authenticode signatures exist and none
+are claimed. Windows SmartScreen may warn on first launch. Verify the
+published SHA-256 checksums (`SHA256SUMS-0.6.2.txt`) before use.
+
 ## 0.6.1
 
-Patch release on the 0.6 stabilization line. No product changes beyond the
-branch state; this release carries the search-first tuner
+Unpublished candidate — not released.
+
+Patch candidate on the 0.6 stabilization line. No product changes beyond the
+branch state; this candidate carries the search-first tuner
 (grid + nudge + confirm + trial ledger, advisor off by default), the
-packaged-verification Runtime-navigation repair, and the fully qualified
-0.6.1 evidence set. See `release-evidence/0.6.1/` for the bound records.
+packaged-verification Runtime-navigation repair, and the retained 0.6.1
+evidence set. See `release-evidence/0.6.1/` for the bound records.
 
 ## 0.6.0
+
+Unpublished candidate — not released.
 
 This release combines the traced audit fixes with the owner-requested
 application and release-pipeline reduction. Current work is tracked in

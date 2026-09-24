@@ -62,6 +62,7 @@ import {
   type DownloadJob,
   type CatalogModel,
   type CatalogQuery,
+  buildCatalogQuery,
   type CatalogSnapshot,
   type CatalogFacets,
   type DownloadEvent,
@@ -1351,20 +1352,23 @@ function App() {
   useEffect(() => {
     if (!catalogSnapshot) return;
     const sequence = ++catalogFilterSeq.current;
-    const query: CatalogQuery = {
+    // P0-4 (FE-02): the query builder emits the camelCase wire keys the
+    // backend expects (`pipelineTag`, `fitPerMille`, `budgetBytes`).
+    const query: CatalogQuery = buildCatalogQuery({
       text: catalogSearchDebounced,
       tag: catalogTag,
       quant: catalogQuant,
       author: catalogAuthor,
       license: catalogLicense,
-      pipeline_tag: catalogPipeline,
+      pipeline: catalogPipeline,
       architecture: catalogArchitecture,
-      maxBytes: catalogMaxGiB > 0 ? catalogMaxGiB * 1024 ** 3 : 0,
+      maxGiB: catalogMaxGiB,
       hideGated: catalogHideGated,
       sort: catalogSort,
-      fit_per_mille: catalogFitEnabled ? catalogFitPerMille : 0,
-      budget_bytes: catalogFitEnabled ? (catalogFitBudget?.budgetBytes ?? 0) : 0,
-    };
+      fitEnabled: catalogFitEnabled,
+      fitPerMille: catalogFitPerMille,
+      budgetBytes: catalogFitBudget?.budgetBytes ?? 0,
+    });
     invoke<CatalogModel[]>("filter_catalog", {
       models: catalogAllRows,
       query,

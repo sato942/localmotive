@@ -15,7 +15,9 @@
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sandbox/test-fault-evidence.ps1
 param(
   [string]$Version = "0.6.0",
-  [string]$CandidateDir = ".hermes-0.6/final-candidates",
+  # P0-7 (D2): no default may point at scratch history; the caller names the
+  # candidate set explicitly (the release passed its stage directory).
+  [Parameter(Mandatory = $true)][string]$CandidateDir,
   [string]$PreviousTag = "v0.4.1"
 )
 $ErrorActionPreference = "Stop"

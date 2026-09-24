@@ -97,7 +97,7 @@ describe("RuntimeScreen presentation contract", () => {
                 publishedAt: "2026-09-01T00:00:00Z",
                 options: [],
                 availability: [],
-                origin: "cache",
+                origin: "compiled",
               } as RuntimeScreenProps["runtimeCatalogState"] extends { catalog: infer C }
                 ? C
                 : never,

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
+use std::future::Future;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -705,7 +706,9 @@ pub struct BackendAvailability {
 #[serde(rename_all = "camelCase")]
 pub enum RuntimeCatalogOrigin {
     Network,
-    Cache,
+    /// The catalog was built from the compiled approval in
+    /// `approved_runtimes.json` with no network call (P0-1).
+    Compiled,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -2387,72 +2390,7 @@ fn runtime_data_dir(product: &str) -> PathBuf {
     PathBuf::from(product).join("runtimes")
 }
 
-const RUNTIME_CATALOG_CACHE_SCHEMA: u32 = 2;
 const MAX_RUNTIME_CATALOG_BYTES: usize = 2 * 1024 * 1024;
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct RuntimeCatalogCacheRecord {
-    schema_version: u32,
-    url: String,
-    release_tag: String,
-    release_commit: String,
-    manifest_sha256: String,
-    etag: Option<String>,
-    observed_at_ms: u64,
-    body_sha256: String,
-    body: String,
-}
-
-fn catalog_cache_record(
-    identity: &ApprovedRuntimeIdentity,
-    etag: Option<String>,
-    body: String,
-) -> RuntimeCatalogCacheRecord {
-    RuntimeCatalogCacheRecord {
-        schema_version: RUNTIME_CATALOG_CACHE_SCHEMA,
-        url: identity.source.clone(),
-        release_tag: identity.release_tag.clone(),
-        release_commit: identity.release_commit.clone(),
-        manifest_sha256: identity.manifest_sha256.clone(),
-        etag,
-        observed_at_ms: observed_at_ms(),
-        body_sha256: hex::encode(Sha256::digest(body.as_bytes())),
-        body,
-    }
-}
-
-fn validate_catalog_cache(
-    bytes: &[u8],
-    identity: &ApprovedRuntimeIdentity,
-) -> Result<RuntimeCatalogCacheRecord, String> {
-    if bytes.len() > MAX_RUNTIME_CATALOG_BYTES {
-        return Err("Runtime catalog cache exceeds the 2 MiB limit".into());
-    }
-    let record: RuntimeCatalogCacheRecord = serde_json::from_slice(bytes)
-        .map_err(|error| format!("Runtime catalog cache is invalid: {error}"))?;
-    if record.schema_version != RUNTIME_CATALOG_CACHE_SCHEMA
-        || record.url != identity.source
-        || record.release_tag != identity.release_tag
-        || record.release_commit != identity.release_commit
-        || record.manifest_sha256 != identity.manifest_sha256
-        || record.observed_at_ms == 0
-    {
-        return Err("Runtime catalog cache key does not match the approved release".into());
-    }
-    let actual_digest = hex::encode(Sha256::digest(record.body.as_bytes()));
-    if actual_digest != record.body_sha256 {
-        return Err("Runtime catalog cache body digest does not match".into());
-    }
-    let release: GithubRelease = serde_json::from_str(&record.body)
-        .map_err(|error| format!("Runtime catalog cache body is invalid: {error}"))?;
-    if release.tag_name != identity.release_tag
-        || release.target_commitish != identity.release_commit
-    {
-        return Err("Runtime catalog cache release identity does not match approval".into());
-    }
-    Ok(record)
-}
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -2494,7 +2432,7 @@ impl std::fmt::Display for RuntimeCatalogError {
 #[derive(Debug)]
 enum CatalogHttpResponse {
     NotModified,
-    Body { body: String, etag: Option<String> },
+    Body { body: String },
 }
 
 const RUNTIME_CATALOG_TIMEOUT: Duration = Duration::from_secs(15);
@@ -2525,12 +2463,8 @@ fn runtime_catalog_client(timeout: Duration) -> Result<reqwest::Client, RuntimeC
 async fn fetch_catalog_http(
     client: &reqwest::Client,
     url: &str,
-    etag: Option<&str>,
 ) -> Result<CatalogHttpResponse, RuntimeCatalogError> {
-    let mut request = client.get(url);
-    if let Some(etag) = etag {
-        request = request.header(reqwest::header::IF_NONE_MATCH, etag);
-    }
+    let request = client.get(url);
     let response = request.send().await.map_err(|error| {
         let kind = if error.is_timeout() {
             RuntimeCatalogErrorKind::Timeout
@@ -2600,14 +2534,6 @@ async fn fetch_catalog_http(
             "Runtime catalog metadata exceeds the 2 MiB limit.",
         ));
     }
-    let etag = response
-        .headers()
-        .get(reqwest::header::ETAG)
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_owned)
-        // Weak or malformed validators are observed but never stored, so
-        // they can never be replayed as If-None-Match (audit S-10).
-        .filter(|etag| crate::catalog::etag_is_strong(etag));
     let body = read_runtime_catalog_body_bounded(response).await?;
     let body = String::from_utf8(body).map_err(|_| {
         RuntimeCatalogError::new(
@@ -2624,7 +2550,7 @@ async fn fetch_catalog_http(
             "GitHub release response was invalid: the metadata body is not a complete release document.",
         ));
     }
-    Ok(CatalogHttpResponse::Body { body, etag })
+    Ok(CatalogHttpResponse::Body { body })
 }
 
 /// One bounded streaming reader for runtime catalog bodies, for success and
@@ -2668,87 +2594,6 @@ fn bounded_excerpt(body: &[u8]) -> String {
     excerpt
 }
 
-fn runtime_catalog_cache_path() -> Result<PathBuf, String> {
-    let runtime_root = runtime_data_dir("Localmotive");
-    let product_root = runtime_root
-        .parent()
-        .ok_or_else(|| "Could not resolve the Localmotive data directory".to_string())?;
-    Ok(product_root.join("cache").join("runtime-catalog-v1.json"))
-}
-
-fn read_catalog_cache(
-    path: &Path,
-    identity: &ApprovedRuntimeIdentity,
-) -> Result<Option<RuntimeCatalogCacheRecord>, String> {
-    let metadata = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(format!("Could not inspect runtime catalog cache: {error}")),
-    };
-    if !metadata.is_file()
-        || metadata.file_type().is_symlink()
-        || is_reparse_point(&metadata)
-        || metadata.len() > MAX_RUNTIME_CATALOG_BYTES as u64
-    {
-        return Err("Runtime catalog cache is not a bounded regular file".into());
-    }
-    let bytes = fs::read(path).map_err(|error| format!("Could not read catalog cache: {error}"))?;
-    validate_catalog_cache(&bytes, identity).map(Some)
-}
-
-fn write_catalog_cache(path: &Path, record: &RuntimeCatalogCacheRecord) -> Result<(), String> {
-    let bytes = serde_json::to_vec(record)
-        .map_err(|error| format!("Could not serialize runtime catalog cache: {error}"))?;
-    if bytes.len() > MAX_RUNTIME_CATALOG_BYTES {
-        return Err("Runtime catalog cache exceeds the 2 MiB limit".into());
-    }
-    let parent = path
-        .parent()
-        .ok_or_else(|| "Runtime catalog cache has no parent directory".to_string())?;
-    fs::create_dir_all(parent)
-        .map_err(|error| format!("Could not create runtime catalog cache directory: {error}"))?;
-    let parent_metadata = fs::symlink_metadata(parent)
-        .map_err(|error| format!("Could not inspect runtime catalog cache directory: {error}"))?;
-    if !parent_metadata.is_dir()
-        || parent_metadata.file_type().is_symlink()
-        || is_reparse_point(&parent_metadata)
-    {
-        return Err("Runtime catalog cache directory is a link or reparse point".into());
-    }
-    if fs::symlink_metadata(path).is_ok_and(|metadata| {
-        !metadata.is_file() || metadata.file_type().is_symlink() || is_reparse_point(&metadata)
-    }) {
-        return Err("Runtime catalog cache target is not a regular file".into());
-    }
-    let temporary = parent.join(format!(
-        ".runtime-catalog-{}-{}.tmp",
-        std::process::id(),
-        observed_at_ms()
-    ));
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temporary)
-        .map_err(|error| format!("Could not create runtime catalog cache: {error}"))?;
-    let result = (|| {
-        io::Write::write_all(&mut file, &bytes)
-            .map_err(|error| format!("Could not write runtime catalog cache: {error}"))?;
-        file.sync_all()
-            .map_err(|error| format!("Could not flush runtime catalog cache: {error}"))?;
-        drop(file);
-        if path.exists() {
-            fs::remove_file(path)
-                .map_err(|error| format!("Could not replace runtime catalog cache: {error}"))?;
-        }
-        fs::rename(&temporary, path)
-            .map_err(|error| format!("Could not publish runtime catalog cache: {error}"))
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    result
-}
-
 fn catalog_from_release(
     release: &GithubRelease,
     hardware: &HardwareInfo,
@@ -2781,107 +2626,216 @@ fn catalog_from_release(
     })
 }
 
-fn cache_catalog(
-    record: &RuntimeCatalogCacheRecord,
+/// Serve the runtime catalog from the compiled approval in
+/// `approved_runtimes.json` (P0-1: RT-05, REL-06, LAB-02).
+///
+/// Setup never touches the network: a fresh or offline profile gets the
+/// same approved `b10816` catalog. The compiled manifest is the trust
+/// root. Each served asset carries the manifest byte count and SHA-256
+/// digest, and downloads still verify those values before use. A newer
+/// upstream release is checked only by the separate manual
+/// [`check_runtime_update`] action.
+pub fn compiled_runtime_catalog(
     hardware: &HardwareInfo,
-    approved: &[ApprovedRuntimeAsset],
-    jobs: &[RequiredUpstreamJob],
-    warning: String,
 ) -> Result<RuntimeCatalog, RuntimeCatalogError> {
-    let release = serde_json::from_str::<GithubRelease>(&record.body).map_err(|error| {
-        RuntimeCatalogError::new(
-            RuntimeCatalogErrorKind::CacheFailure,
-            format!("Validated runtime catalog cache could not be parsed: {error}"),
-        )
-    })?;
-    catalog_from_release(
-        &release,
-        hardware,
-        approved,
-        jobs,
-        RuntimeCatalogOrigin::Cache,
-        Some(warning),
-    )
-    .map_err(|error| RuntimeCatalogError::new(RuntimeCatalogErrorKind::TrustFailure, error))
-}
-
-pub async fn fetch_catalog(hardware: &HardwareInfo) -> Result<RuntimeCatalog, RuntimeCatalogError> {
     let (approved, jobs) = approved_manifest()
         .map_err(|error| RuntimeCatalogError::new(RuntimeCatalogErrorKind::TrustFailure, error))?;
     let identity = approved_runtime_identity()
         .map_err(|error| RuntimeCatalogError::new(RuntimeCatalogErrorKind::TrustFailure, error))?;
-    let cache_path = runtime_catalog_cache_path()
-        .map_err(|error| RuntimeCatalogError::new(RuntimeCatalogErrorKind::CacheFailure, error))?;
-    let (cached, cache_warning) = match read_catalog_cache(&cache_path, &identity) {
-        Ok(record) => (record, None),
-        Err(error) => (
-            None,
-            Some(format!("The saved runtime catalog was rejected: {error}")),
-        ),
+    let release = GithubRelease {
+        tag_name: identity.release_tag.clone(),
+        target_commitish: identity.release_commit,
+        published_at: Some(identity.published_at),
+        assets: approved.iter().map(github_asset_from_approval).collect(),
     };
+    let mut catalog = build_approved_catalog(&release, hardware, &approved, &jobs)
+        .map_err(|error| RuntimeCatalogError::new(RuntimeCatalogErrorKind::TrustFailure, error))?;
+    catalog.origin = RuntimeCatalogOrigin::Compiled;
+    catalog.recommendation_reason =
+        apply_capability_recommendation(&mut catalog.options, hardware, None);
+    Ok(catalog)
+}
+
+/// Outcome of the manual upstream runtime check (P0-1).
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeUpdateStatus {
+    pub current_tag: String,
+    pub upstream_tag: String,
+    pub update_available: bool,
+    pub detail: String,
+}
+
+/// Check github.com for a newer runtime release (P0-1).
+///
+/// This is the only live `api.github.com` call in the runtime path, and it
+/// stays a separate manual action: it never runs during setup and never
+/// blocks catalog serving. It compares the live release identity against
+/// the compiled approval and reports drift. It never builds install
+/// options from unapproved bytes: when the identities match, the upstream
+/// release is fully validated before the check reports current.
+pub async fn check_runtime_update() -> Result<RuntimeUpdateStatus, RuntimeCatalogError> {
+    let identity = approved_runtime_identity()
+        .map_err(|error| RuntimeCatalogError::new(RuntimeCatalogErrorKind::TrustFailure, error))?;
     let client = runtime_catalog_client(RUNTIME_CATALOG_TIMEOUT)?;
     let url = approved_release_url()
         .map_err(|error| RuntimeCatalogError::new(RuntimeCatalogErrorKind::TrustFailure, error))?;
-    let response = fetch_catalog_http(
-        &client,
-        &url,
-        cached.as_ref().and_then(|record| record.etag.as_deref()),
-    )
-    .await;
-    match response {
-        Ok(CatalogHttpResponse::NotModified) => {
-            let record = cached.ok_or_else(|| {
-                RuntimeCatalogError::new(
-                    RuntimeCatalogErrorKind::InvalidResponse,
-                    "GitHub returned 304 without a validated runtime catalog cache.",
-                )
-            })?;
-            cache_catalog(
-                &record,
-                hardware,
-                &approved,
-                &jobs,
-                "GitHub confirmed the saved runtime catalog is current.".into(),
-            )
+    let body = match fetch_catalog_http(&client, &url).await? {
+        CatalogHttpResponse::Body { body } => body,
+        CatalogHttpResponse::NotModified => {
+            return Err(RuntimeCatalogError::new(
+                RuntimeCatalogErrorKind::InvalidResponse,
+                "GitHub returned 304 for an unconditioned runtime catalog request.",
+            ));
         }
-        Ok(CatalogHttpResponse::Body { body, etag }) => {
-            let release = serde_json::from_str::<GithubRelease>(&body).map_err(|error| {
-                RuntimeCatalogError::new(
-                    RuntimeCatalogErrorKind::InvalidResponse,
-                    format!("GitHub release response was invalid: {error}"),
-                )
-            })?;
-            let mut catalog = catalog_from_release(
-                &release,
-                hardware,
-                &approved,
-                &jobs,
-                RuntimeCatalogOrigin::Network,
-                cache_warning,
-            )
-            .map_err(|error| {
-                RuntimeCatalogError::new(RuntimeCatalogErrorKind::TrustFailure, error)
-            })?;
-            let record = catalog_cache_record(&identity, etag, body);
-            if let Err(error) = write_catalog_cache(&cache_path, &record) {
-                catalog.warning = Some(match catalog.warning {
-                    Some(existing) => format!("{existing} Could not save catalog cache: {error}"),
-                    None => format!("Could not save catalog cache: {error}"),
-                });
+    };
+    let release = serde_json::from_str::<GithubRelease>(&body).map_err(|error| {
+        RuntimeCatalogError::new(
+            RuntimeCatalogErrorKind::InvalidResponse,
+            format!("GitHub release response was invalid: {error}"),
+        )
+    })?;
+    let status = runtime_update_status(&identity, &release);
+    if !status.update_available {
+        let (approved, jobs) = approved_manifest().map_err(|error| {
+            RuntimeCatalogError::new(RuntimeCatalogErrorKind::TrustFailure, error)
+        })?;
+        let hardware = detect_hardware();
+        catalog_from_release(
+            &release,
+            &hardware,
+            &approved,
+            &jobs,
+            RuntimeCatalogOrigin::Network,
+            None,
+        )
+        .map_err(|error| RuntimeCatalogError::new(RuntimeCatalogErrorKind::TrustFailure, error))?;
+    }
+    Ok(status)
+}
+
+/// Pure drift comparison between the compiled approval identity and a live
+/// release identity (P0-1). Unit-tested without network; the async
+/// [`check_runtime_update`] adds the fetch and the full release validation.
+fn runtime_update_status(
+    identity: &ApprovedRuntimeIdentity,
+    release: &GithubRelease,
+) -> RuntimeUpdateStatus {
+    let drift = release.tag_name != identity.release_tag
+        || release.target_commitish != identity.release_commit
+        || release.published_at.as_deref() != Some(identity.published_at.as_str());
+    if drift {
+        return RuntimeUpdateStatus {
+            current_tag: identity.release_tag.clone(),
+            upstream_tag: release.tag_name.clone(),
+            update_available: true,
+            detail: format!(
+                "Upstream runtime {} differs from the approved {}. A catalog update stays a manual curation step.",
+                release.tag_name, identity.release_tag
+            ),
+        };
+    }
+    RuntimeUpdateStatus {
+        current_tag: identity.release_tag.clone(),
+        upstream_tag: release.tag_name.clone(),
+        update_available: false,
+        detail:
+            "Upstream matches the approved release and validates against the compiled approval."
+                .into(),
+    }
+}
+
+pub async fn fetch_catalog(hardware: &HardwareInfo) -> Result<RuntimeCatalog, RuntimeCatalogError> {
+    compiled_runtime_catalog(hardware)
+}
+
+/// Shared outcome of one runtime catalog load (P0-2, RT-06).
+type CatalogLoadResult = Result<RuntimeCatalog, RuntimeCatalogError>;
+
+/// Which side of the gate a catalog caller takes (P0-2, RT-06).
+enum GateRole {
+    /// The first caller runs the fetch and publishes its outcome.
+    Leader(tokio::sync::watch::Sender<Option<CatalogLoadResult>>),
+    /// A concurrent caller awaits the leader's outcome.
+    Follower(tokio::sync::watch::Receiver<Option<CatalogLoadResult>>),
+}
+
+/// Single-flight gate for runtime catalog loads (P0-2, RT-06).
+///
+/// Concurrent callers share one in-flight load instead of failing with
+/// `Busy`. The first caller leads and runs `fetch`; followers await the
+/// leader's outcome and receive a clone of it, including a shared failure.
+/// If the leader disappears mid-load, a follower clears the dead slot and
+/// retries as the new leader. Completed results are never cached: a caller
+/// that arrives after the load finished leads a fresh load.
+#[derive(Debug, Default)]
+pub struct CatalogLoadGate {
+    slot: tokio::sync::Mutex<Option<tokio::sync::watch::Receiver<Option<CatalogLoadResult>>>>,
+}
+
+impl CatalogLoadGate {
+    /// Load the catalog through the gate with the production fetcher.
+    pub async fn load(&self, hardware: &HardwareInfo) -> CatalogLoadResult {
+        let hardware = hardware.clone();
+        self.load_with(move || async move { fetch_catalog(&hardware).await })
+            .await
+    }
+
+    /// Load the catalog through the gate with an injected fetcher, so tests
+    /// can serve a slow double without network access. The fetcher takes no
+    /// argument: callers that need owned inputs move them into the closure,
+    /// which keeps the returned future free of gate-lifetime borrows.
+    pub async fn load_with<F, Fut>(&self, fetch: F) -> CatalogLoadResult
+    where
+        F: FnOnce() -> Fut + Send,
+        Fut: Future<Output = CatalogLoadResult> + Send,
+    {
+        let mut fetch = Some(fetch);
+        loop {
+            let role = {
+                let mut slot = self.slot.lock().await;
+                match slot.as_mut() {
+                    Some(receiver) => GateRole::Follower(receiver.clone()),
+                    None => {
+                        let (sender, receiver) = tokio::sync::watch::channel(None);
+                        *slot = Some(receiver);
+                        GateRole::Leader(sender)
+                    }
+                }
+            };
+            match role {
+                GateRole::Follower(mut receiver) => {
+                    // Scope the read guard: it is not `Send`, so clone the
+                    // published outcome into an owned value before any
+                    // further await. A vanished leader yields no value, and
+                    // the caller retries as the new leader below.
+                    let shared: Option<CatalogLoadResult> = {
+                        receiver
+                            .wait_for(|result| result.is_some())
+                            .await
+                            .ok()
+                            .and_then(|guard| guard.clone())
+                    };
+                    match shared {
+                        Some(result) => return result,
+                        // The leader vanished mid-load. Clear the slot and
+                        // retry as the new leader instead of reporting a
+                        // failure. When a fresh leader installed a live slot
+                        // in the meantime, clearing it only costs one extra
+                        // load: both leaders finish and publish independently.
+                        None => {
+                            *self.slot.lock().await = None;
+                        }
+                    }
+                }
+                GateRole::Leader(sender) => {
+                    let fetch = fetch.take().expect("the leader runs the fetch once");
+                    let result = fetch().await;
+                    let _ = sender.send(Some(result.clone()));
+                    *self.slot.lock().await = None;
+                    return result;
+                }
             }
-            Ok(catalog)
-        }
-        Err(error) => {
-            if let Some(record) = cached {
-                return cache_catalog(
-                    &record,
-                    hardware,
-                    &approved,
-                    &jobs,
-                    format!("Using the validated saved catalog because refresh failed: {error}"),
-                );
-            }
-            Err(error)
         }
     }
 }
@@ -5454,6 +5408,212 @@ mod tests {
     }
 
     #[test]
+    fn compiled_catalog_serves_the_approved_release_without_network_or_cache() {
+        // P0-1 (RT-05, REL-06, LAB-02): runtime setup must not depend on a
+        // live api.github.com call or on a populated catalog cache. A fresh
+        // profile with an empty cache gets the approved b10816 catalog that
+        // ships in `approved_runtimes.json`. The constructor under test makes
+        // no network call and reads no cache file by construction.
+        let mut hardware = detect_hardware();
+        hardware.architecture = "x64".into();
+
+        let catalog = compiled_runtime_catalog(&hardware)
+            .expect("the compiled approval must yield a catalog with no network and no cache");
+
+        assert_eq!(catalog.tag, "b10816");
+        assert_eq!(catalog.origin, RuntimeCatalogOrigin::Compiled);
+        let (approved, _) = approved_manifest().expect("the compiled approval must parse");
+        assert_eq!(
+            approved.len(),
+            13,
+            "the approved manifest must hold 13 assets"
+        );
+        for option in &catalog.options {
+            let entry = approved
+                .iter()
+                .find(|entry| entry.name == option.asset.name)
+                .expect("every catalog option must come from the approved manifest");
+            assert_eq!(option.asset.size, entry.bytes);
+            assert_eq!(option.asset.digest.as_deref(), Some(entry.digest.as_str()));
+        }
+        assert!(
+            catalog.options.iter().any(|option| option.backend == "cpu"),
+            "the compiled catalog must offer the CPU fallback"
+        );
+    }
+
+    #[test]
+    fn fetch_catalog_serves_the_compiled_release_without_network_or_cache() {
+        // P0-1: the command-level fetcher returns the same compiled catalog,
+        // so `fetch_runtime_catalog` works on a fresh offline profile.
+        let mut hardware = detect_hardware();
+        hardware.architecture = "x64".into();
+
+        let catalog = tauri::async_runtime::block_on(fetch_catalog(&hardware))
+            .expect("fetch_catalog must succeed with no network and no cache");
+
+        assert_eq!(catalog.tag, "b10816");
+        assert_eq!(catalog.origin, RuntimeCatalogOrigin::Compiled);
+    }
+
+    #[test]
+    fn update_status_reports_drift_for_a_newer_upstream_tag() {
+        // P0-1: the manual upstream check reports drift without touching
+        // setup. A newer upstream tag means an update is available.
+        let identity = approved_runtime_identity().unwrap();
+        let release = GithubRelease {
+            tag_name: "b99999".into(),
+            target_commitish: identity.release_commit.clone(),
+            published_at: Some(identity.published_at.clone()),
+            assets: Vec::new(),
+        };
+
+        let status = runtime_update_status(&identity, &release);
+
+        assert!(status.update_available);
+        assert_eq!(status.current_tag, identity.release_tag);
+        assert_eq!(status.upstream_tag, "b99999");
+    }
+
+    #[test]
+    fn update_status_reports_current_for_a_matching_identity() {
+        // P0-1: when the live identity equals the compiled approval, no
+        // update is available. Full release validation stays in
+        // `check_runtime_update`, outside this pure comparison.
+        let identity = approved_runtime_identity().unwrap();
+        let release = GithubRelease {
+            tag_name: identity.release_tag.clone(),
+            target_commitish: identity.release_commit.clone(),
+            published_at: Some(identity.published_at.clone()),
+            assets: Vec::new(),
+        };
+
+        let status = runtime_update_status(&identity, &release);
+
+        assert!(!status.update_available);
+        assert_eq!(status.current_tag, identity.release_tag);
+        assert_eq!(status.upstream_tag, identity.release_tag);
+    }
+
+    #[test]
+    fn concurrent_catalog_loads_share_one_slow_fetch() {
+        // P0-2 (RT-06): two concurrent callers share one in-flight catalog
+        // load. Neither caller gets `Busy`, both receive the same catalog,
+        // and the slow double runs exactly once.
+        use std::sync::atomic::AtomicUsize;
+
+        let gate = Arc::new(CatalogLoadGate::default());
+        let mut detected = detect_hardware();
+        detected.architecture = "x64".into();
+        let hardware = Arc::new(detected);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fetch_started = Arc::new(AtomicBool::new(false));
+
+        let slow_fetch = |calls: Arc<AtomicUsize>,
+                          fetch_started: Arc<AtomicBool>,
+                          hardware: Arc<HardwareInfo>| {
+            move || {
+                let calls = Arc::clone(&calls);
+                let fetch_started = Arc::clone(&fetch_started);
+                let hardware = Arc::clone(&hardware);
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    fetch_started.store(true, Ordering::SeqCst);
+                    // Keep the first load in flight long enough for the
+                    // second caller to attach as a follower. Blocking one
+                    // test worker thread is acceptable inside this test.
+                    std::thread::sleep(Duration::from_millis(300));
+                    compiled_runtime_catalog(&hardware)
+                }
+            }
+        };
+
+        tauri::async_runtime::block_on(async {
+            let first_gate = Arc::clone(&gate);
+            let first_calls = Arc::clone(&calls);
+            let first_started = Arc::clone(&fetch_started);
+            let first_hardware = Arc::clone(&hardware);
+            let first = tauri::async_runtime::spawn(async move {
+                first_gate
+                    .load_with(slow_fetch(first_calls, first_started, first_hardware))
+                    .await
+            });
+            // Wait until the first load is in flight, so the second call
+            // deterministically attaches as a follower instead of leading
+            // a second load.
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while !fetch_started.load(Ordering::SeqCst) {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the first load never started"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let second_gate = Arc::clone(&gate);
+            let second_calls = Arc::clone(&calls);
+            let second_started = Arc::clone(&fetch_started);
+            let second_hardware = Arc::clone(&hardware);
+            let second = tauri::async_runtime::spawn(async move {
+                second_gate
+                    .load_with(slow_fetch(second_calls, second_started, second_hardware))
+                    .await
+            });
+
+            let first_catalog = first
+                .await
+                .expect("the first load task runs")
+                .expect("the first caller shares the load");
+            let second_catalog = second
+                .await
+                .expect("the second load task runs")
+                .expect("the second caller shares the load");
+            assert_eq!(first_catalog.tag, second_catalog.tag);
+            assert_eq!(first_catalog.origin, second_catalog.origin);
+            assert_eq!(first_catalog.options.len(), second_catalog.options.len());
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                1,
+                "concurrent callers share one load"
+            );
+        });
+    }
+
+    #[test]
+    fn concurrent_catalog_loads_share_the_production_fetch() {
+        // P0-2 (RT-06): two concurrent loads through the production fetcher
+        // both succeed with the same compiled catalog. No overlap timing
+        // applies here; both outcomes must be equal regardless of order.
+        let gate = Arc::new(CatalogLoadGate::default());
+        let mut detected = detect_hardware();
+        detected.architecture = "x64".into();
+        let hardware = Arc::new(detected);
+
+        tauri::async_runtime::block_on(async {
+            let first_gate = Arc::clone(&gate);
+            let first_hardware = Arc::clone(&hardware);
+            let first =
+                tauri::async_runtime::spawn(async move { first_gate.load(&first_hardware).await });
+            let second_gate = Arc::clone(&gate);
+            let second_hardware = Arc::clone(&hardware);
+            let second =
+                tauri::async_runtime::spawn(
+                    async move { second_gate.load(&second_hardware).await },
+                );
+
+            let first_catalog = first
+                .await
+                .expect("the first load task runs")
+                .expect("the first production load succeeds");
+            let second_catalog = second
+                .await
+                .expect("the second load task runs")
+                .expect("the second production load succeeds");
+            assert_eq!(first_catalog.tag, second_catalog.tag);
+            assert_eq!(first_catalog.origin, second_catalog.origin);
+        });
+    }
+
+    #[test]
     fn blocked_backend_update_stops_when_a_required_job_fails_or_queues() {
         let jobs: Vec<RequiredUpstreamJob> =
             serde_json::from_str(include_str!("../tests/fixtures/runtime/blocked-jobs.json"))
@@ -6012,38 +6172,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn offline_catalog_cache_requires_the_exact_approved_identity_and_body_digest() {
-        let identity = approved_runtime_identity().unwrap();
-        let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "../tests/fixtures/runtime/b10816-release.json"
-        ))
-        .unwrap();
-        let body = serde_json::to_string(&fixture["body"]).unwrap();
-        let cache = catalog_cache_record(&identity, Some("fixture-etag".into()), body);
-        let bytes = serde_json::to_vec(&cache).unwrap();
-        let encoded: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        let compiled_manifest_sha256 = hex::encode(Sha256::digest(APPROVED_RUNTIMES.as_bytes()));
-
-        assert_eq!(
-            encoded["manifestSha256"].as_str(),
-            Some(compiled_manifest_sha256.as_str())
-        );
-
-        assert!(validate_catalog_cache(&bytes, &identity).is_ok());
-
-        let mut wrong_identity = identity.clone();
-        wrong_identity.release_commit = "0000000000000000000000000000000000000000".into();
-        assert!(validate_catalog_cache(&bytes, &wrong_identity).is_err());
-
-        let mut tampered: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        let changed_body = format!("{} ", tampered["body"].as_str().unwrap());
-        tampered["body"] = serde_json::Value::String(changed_body);
-        assert!(
-            validate_catalog_cache(&serde_json::to_vec(&tampered).unwrap(), &identity).is_err()
-        );
-    }
-
     /// Phase 1: the catalog client sends no secret header. The metadata
     /// request carries only the GitHub API accept header and the public
     /// product user-agent, so no credential can leak through catalog
@@ -6219,7 +6347,6 @@ Connection: close
         let _ = tauri::async_runtime::block_on(fetch_catalog_http(
             &client,
             &format!("http://{address}/release"),
-            None,
         ));
 
         let head = String::from_utf8_lossy(&seen.lock().unwrap()).to_ascii_lowercase();
@@ -6277,7 +6404,6 @@ Connection: close
         let error = tauri::async_runtime::block_on(fetch_catalog_http(
             &client,
             &format!("http://{address}/release"),
-            None,
         ))
         .unwrap_err();
 
@@ -6299,7 +6425,6 @@ Connection: close
         let error = tauri::async_runtime::block_on(fetch_catalog_http(
             &client,
             &format!("http://{address}/release"),
-            None,
         ))
         .unwrap_err();
 
@@ -6336,7 +6461,6 @@ Connection: close
         let error = tauri::async_runtime::block_on(fetch_catalog_http(
             &client,
             &format!("http://{address}/release"),
-            None,
         ))
         .unwrap_err();
 
@@ -6370,7 +6494,6 @@ Connection: close
         let error = tauri::async_runtime::block_on(fetch_catalog_http(
             &client,
             &format!("http://{address}/release"),
-            None,
         ))
         .unwrap_err();
 
@@ -6405,7 +6528,6 @@ Connection: close
         let error = tauri::async_runtime::block_on(fetch_catalog_http(
             &client,
             &format!("http://{address}/release"),
-            None,
         ))
         .unwrap_err();
 
@@ -7598,7 +7720,6 @@ Connection: close
             let error = tauri::async_runtime::block_on(fetch_catalog_http(
                 &client,
                 &format!("http://{address}/release"),
-                None,
             ))
             .unwrap_err();
             if body_too_large {
@@ -7638,7 +7759,6 @@ Connection: close
         let error = tauri::async_runtime::block_on(fetch_catalog_http(
             &client,
             &format!("http://{address}/release"),
-            None,
         ))
         .unwrap_err();
         assert_eq!(error.kind, RuntimeCatalogErrorKind::RateLimited);

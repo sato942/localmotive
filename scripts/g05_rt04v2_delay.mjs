@@ -129,9 +129,12 @@ const originalDllSha = createHash("sha256").update(readFileSync(MANAGED_DLL)).di
 // The swap must be undone from a backup of THIS driver's own capture - never
 // from the caller's arguments (an earlier revision restored the health-model
 // fixture over the DLL, which passes the run and corrupts the install).
-const DLL_BACKUP = join(process.cwd(), ".hermes-0.6", "rt04v2", "dll-backup.bin");
+// P0-7 (D2): the lab points this at its scratch directory; the historic
+// .hermes-0.6 default stays only for local archaeology runs.
+const RT04_BACKUP_DIR = process.env.RT04_BACKUP_DIR ?? join(process.cwd(), ".hermes-0.6", "rt04v2");
+const DLL_BACKUP = join(RT04_BACKUP_DIR, "dll-backup.bin");
 copyFileSync(MANAGED_DLL, DLL_BACKUP);
-const DLL_BACKUP_LEGACY = join(process.cwd(), ".hermes-0.6", "rt04v2", "dll-backup-legacy.bin");
+const DLL_BACKUP_LEGACY = join(RT04_BACKUP_DIR, "dll-backup-legacy.bin");
 copyFileSync(LEGACY_DLL, DLL_BACKUP_LEGACY);
 const backupLegacySha = createHash("sha256").update(readFileSync(DLL_BACKUP_LEGACY)).digest("hex");
 const backupDllSha = createHash("sha256").update(readFileSync(DLL_BACKUP)).digest("hex");

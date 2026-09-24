@@ -17,7 +17,7 @@ permissions:
 
 concurrency:
   group: localmotive-release
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   resolve:
@@ -98,6 +98,12 @@ jobs:
       VERSION: ${{ needs.resolve.outputs.version }}
       RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
       LOCALMOTIVE_SOURCE_REVISION: ${{ needs.resolve.outputs.sha }}
+      # P0-5 (REL-05) + P0-7 (D2): candidate and diagnostics files stage
+      # here, under $RUNNER_TEMP — never in the checkout's tracked
+      # artifacts/ directory. The stage mirrors the qualified-bundle
+      # layout (artifacts/, sbom.cdx.json, release-evidence/), so the
+      # uploaded bundle keeps the exact shape promotion publishes.
+      STAGE_DIR: ${{ runner.temp }}/localmotive-release
     steps:
       # The self-hosted runner image defaults core.autocrlf=true; pin LF
       # before checkout (v5.1.0 has no git-config input).
@@ -176,40 +182,48 @@ jobs:
           $cdpPort = 10041 + ([int]($env:GITHUB_RUN_ID % 2000))
           pwsh -NoProfile -File scripts/verify_packaged_matrix.ps1 -Portable $portable -Version "$env:VERSION" -ResolvedSha "$env:RESOLVED_SHA" -CdpPort $cdpPort
           if ($LASTEXITCODE -ne 0) { throw "Packaged verification orchestration failed with code $LASTEXITCODE" }
+
+      - name: Collect packaged verification evidence into the stage
+        # P0-5 (REL-05): the matrix writes its JSON records to the
+        # workspace for local runs. The release keeps only copies of the
+        # current run's records in the stage's artifacts/ directory, so
+        # uploads never sweep up tracked or leftover files. Runs on failure
+        # too, so a failed verification still retains its partial evidence.
+        if: success() || failure()
+        shell: bash
+        run: |
+          mkdir -p "$STAGE_DIR/artifacts"
+          for record in "packaged-verification-${VERSION}.json" "packaged-verification-catalog-${VERSION}.json" "catalog-matrix-first-fill.json" "catalog-matrix-restart.json" "catalog-fixture-init.json"; do
+            if test -f "artifacts/$record"; then cp "artifacts/$record" "$STAGE_DIR/artifacts/$record"; fi
+          done
+
       - name: Stage release artifacts
         shell: bash
         run: |
-          mkdir -p artifacts
-          cp "src-tauri/target/release/bundle/msi/Localmotive_${VERSION}_x64_en-US.msi" "artifacts/Localmotive_${VERSION}_x64.msi"
-          cp "src-tauri/target/release/bundle/nsis/Localmotive_${VERSION}_x64-setup.exe" "artifacts/Localmotive_${VERSION}_x64-setup.exe"
-          cp "src-tauri/target/release/localmotive.exe" "artifacts/Localmotive_${VERSION}_x64-portable.exe"
-          test -s "artifacts/Localmotive_${VERSION}_x64.msi"
-          test -s "artifacts/Localmotive_${VERSION}_x64-setup.exe"
-          test -s "artifacts/Localmotive_${VERSION}_x64-portable.exe"
-          (cd artifacts && sha256sum Localmotive_* > "SHA256SUMS-${VERSION}.txt")
-          test "$(wc -l < "artifacts/SHA256SUMS-${VERSION}.txt")" -eq 3
+          mkdir -p "$STAGE_DIR/artifacts"
+          cp "src-tauri/target/release/bundle/msi/Localmotive_${VERSION}_x64_en-US.msi" "$STAGE_DIR/artifacts/Localmotive_${VERSION}_x64.msi"
+          cp "src-tauri/target/release/bundle/nsis/Localmotive_${VERSION}_x64-setup.exe" "$STAGE_DIR/artifacts/Localmotive_${VERSION}_x64-setup.exe"
+          cp "src-tauri/target/release/localmotive.exe" "$STAGE_DIR/artifacts/Localmotive_${VERSION}_x64-portable.exe"
+          test -s "$STAGE_DIR/artifacts/Localmotive_${VERSION}_x64.msi"
+          test -s "$STAGE_DIR/artifacts/Localmotive_${VERSION}_x64-setup.exe"
+          test -s "$STAGE_DIR/artifacts/Localmotive_${VERSION}_x64-portable.exe"
+          (cd "$STAGE_DIR/artifacts" && sha256sum Localmotive_* > "SHA256SUMS-${VERSION}.txt")
+          test "$(wc -l < "$STAGE_DIR/artifacts/SHA256SUMS-${VERSION}.txt")" -eq 3
 
       - name: Verify and record the exact candidate inventory
         shell: bash
-        run: node scripts/verify_candidate_inventory.mjs artifacts "$VERSION" "artifacts/candidate-inventory-${VERSION}.json"
+        run: node scripts/verify_candidate_inventory.mjs "$STAGE_DIR/artifacts" "$VERSION" "$STAGE_DIR/artifacts/candidate-inventory-${VERSION}.json"
 
       - name: Clear candidate-generated attestations
         shell: bash
         run: |
           mkdir -p "release-evidence/${VERSION}/attestations"
-          rm -f "release-evidence/${VERSION}/qualification-manifest-${VERSION}.json"
           rm -f "release-evidence/${VERSION}/attestations/installer-payload-identity.json"
           rm -f "release-evidence/${VERSION}/attestations"/sandbox-clean-account-lifecycle-*
-          rm -f "release-evidence/${VERSION}/attestations"/witness-*.json "release-evidence/${VERSION}/attestations"/witness-*.log
-          rm -f "release-evidence/${VERSION}/attestations/mt06-cycles-result.json"
-          rm -f "release-evidence/${VERSION}/attestations/dc04-v2-command-path-verification.log"
-          rm -f "release-evidence/${VERSION}/attestations/rt04v2-delayed-download-verification.log"
-          rm -f "release-evidence/${VERSION}/attestations/g05-a11y-packaged-verification.log"
-          rm -f "release-evidence/${VERSION}/attestations/rt06-all-backends.json" "release-evidence/${VERSION}/attestations/rt06-full-run.log"
 
       - name: Measure the staged installer payload identities
         shell: bash
-        run: node scripts/verify_installer_payloads.mjs artifacts "artifacts/candidate-inventory-${VERSION}.json" "release-evidence/${VERSION}/attestations/installer-payload-identity.json"
+        run: node scripts/verify_installer_payloads.mjs "$STAGE_DIR/artifacts" "$STAGE_DIR/artifacts/candidate-inventory-${VERSION}.json" "release-evidence/${VERSION}/attestations/installer-payload-identity.json"
 
       - name: Ensure Windows Sandbox is available
         shell: pwsh
@@ -225,276 +239,43 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or -not $cliVersion) { throw "Windows Sandbox CLI could not report its version. Repair wsb.exe before lifecycle verification." }
           Write-Host "Windows Sandbox CLI: $($cli.Source), version $cliVersion"
 
-      - name: Run the clean-account lifecycle matrix from the candidate bytes
+      - name: Run the clean-account lifecycle leg from the candidate bytes
+        # P0-7 (D2): the gate keeps one lifecycle leg — clean install,
+        # upgrade from the last published version with user-data
+        # preservation, and uninstall.
         shell: pwsh
         timeout-minutes: 120
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $matrix = @(
-            @{ Name = "sandbox-clean-account-lifecycle-upgrade-v0.4.0";      Previous = "v0.4.0"; Flavor = "cache" },
-            @{ Name = "sandbox-clean-account-lifecycle-upgrade-v0.5.0";      Previous = "v0.5.0"; Flavor = "mirror" },
-            @{ Name = "sandbox-clean-account-lifecycle-preservation-v0.4.1"; Previous = "v0.4.1"; Flavor = "cache" },
-            @{ Name = "sandbox-clean-account-lifecycle-preservation-v0.5.0"; Previous = "v0.5.0"; Flavor = "mirror" }
-          )
-          foreach ($leg in $matrix) {
-            Write-Host "=== $($leg.Name): baseline $($leg.Previous), persistence $($leg.Flavor) ==="
-            & ".\scripts\sandbox\host-run-lifecycle.ps1" -Tag "${{ needs.resolve.outputs.tag }}" -Version "$env:VERSION" -PreviousTag $leg.Previous -CandidateDir "artifacts" -EvidenceName $leg.Name -PreservationFlavor $leg.Flavor
-          }
+          $leg = @{ Name = "sandbox-clean-account-lifecycle-preservation-v0.5.0"; Previous = "v0.5.0"; Flavor = "mirror" }
+          Write-Host "=== $($leg.Name): baseline $($leg.Previous), persistence $($leg.Flavor) ==="
+          & ".\scripts\sandbox\host-run-lifecycle.ps1" -Tag "${{ needs.resolve.outputs.tag }}" -Version "$env:VERSION" -PreviousTag $leg.Previous -CandidateDir "$env:STAGE_DIR/artifacts" -EvidenceName $leg.Name -PreservationFlavor $leg.Flavor
 
-      - name: Produce lab qualification legs in-run (mt06/rt06/dc04/rt04/a11y)
-        shell: pwsh
-        timeout-minutes: 150
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Mirror attestations and the SBOM into the stage
+        # P0-7 (D2): the stage mirrors the qualified-bundle layout, so the
+        # manifest binds stage-relative record paths and the uploaded bundle
+        # keeps the exact shape promotion publishes. Producers still write
+        # to the workspace; only current-run files are mirrored.
+        shell: bash
         run: |
-          $ErrorActionPreference = "Stop"
-          $version = "$env:VERSION"
-          $sha = "$env:RESOLVED_SHA"
-          $repoRoot = (Get-Location).Path
-          $portable = Join-Path $repoRoot "artifacts/Localmotive_${version}_x64-portable.exe"
-          if (-not (Test-Path $portable)) { throw "Candidate portable missing: $portable" }
-          $portableDigest = (Get-FileHash $portable -Algorithm SHA256).Hash.ToLowerInvariant()
-          $att = "release-evidence/$version/attestations"
-          $attFs = Join-Path $repoRoot $att
-          $labPort = 10041 + (([int]$env:GITHUB_RUN_ID + 700) % 2000)
-          $dc04Port = $labPort + 1
-          $rt04Port = $labPort + 2
-          $scratch = Join-Path $env:RUNNER_TEMP "localmotive-lab-legs-$version-$labPort"
-          $isoRoot = Join-Path $scratch "appdata"
-          $profile = Join-Path $scratch "webview2"
-          Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Force -Path $isoRoot, $profile, (Join-Path $scratch "dc04") | Out-Null
-          $env:LOCALAPPDATA = $isoRoot
-          $env:LOCALMOTIVE_VERIFY_ISOLATED_ROOT = $isoRoot
-
-          function Start-LabApp([int]$Port, [string]$Profile, [string]$HfBase) {
-            $env:WEBVIEW2_USER_DATA_FOLDER = $Profile
-            $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$Port --user-data-dir=$Profile"
-            if ($HfBase) { $env:LOCALMOTIVE_HF_BASE = $HfBase } else { Remove-Item Env:LOCALMOTIVE_HF_BASE -ErrorAction SilentlyContinue }
-            $proc = Start-Process $portable -PassThru
-            $deadline = (Get-Date).AddSeconds(90)
-            while ($true) {
-              try {
-                $tabs = Invoke-RestMethod "http://127.0.0.1:$Port/json/list"
-                $ready = @($tabs | Where-Object { $_.type -eq 'page' -and $_.webSocketDebuggerUrl })
-                if ($ready.Count -gt 0) { break }
-              } catch { }
-              if ((Get-Date) -gt $deadline) {
-                try { $proc.Kill() } catch { }
-                throw "Lab candidate did not expose a page CDP target in 90s (port $Port)"
-              }
-              Start-Sleep -Seconds 2
-            }
-            return $proc
-          }
-          function Stop-LabApp($proc) {
-            if (-not $proc) { return }
-            try { $proc.Kill() } catch { }
-            if (-not $proc.WaitForExit(15000)) { throw "Lab candidate pid $($proc.Id) still alive after kill" }
-            Start-Sleep -Seconds 5
-          }
-
-          $probe = Join-Path $scratch "adapter.mjs"
-          $clientPath = (Join-Path $repoRoot "scripts/lib/cdp_client.mjs").Replace("\", "/")
-          $importLine = 'import { attach } from "file:///' + $clientPath + '";'
-          $probeLines = @(
-            $importLine,
-            'const client = await attach(Number(process.argv[2]));',
-            'const setup = await client.evaluate("(async () => { try { const value = await window.__TAURI_INTERNALS__.invoke(''load_runtime_setup'', { adapterId: null }); return { ok: true, value }; } catch (error) { return { ok: false, error: String(error) }; } })()", 120000);',
-            'if (!setup || !setup.ok) { console.error((setup && setup.error) || ''setup invoke failed''); process.exit(1); }',
-            'console.log(setup.value.hardware.adapters[0].adapterId);',
-            'process.exit(0);'
-          )
-          Set-Content $probe ($probeLines -join "`n") -Encoding utf8NoBOM -NoNewline:$false
-
-          # The pinned model is needed by the mt06 precondition (selected model)
-          # and by rt04. Download once up front; rt04 reuses the same bytes.
-          $modelBackup = Join-Path $scratch "SmolLM2-135M-Q4_K_M.gguf"
-          if (-not (Test-Path $modelBackup)) {
-            curl.exe -fSL -o $modelBackup "https://huggingface.co/ggml-org/SmolLM2-135M-GGUF/resolve/44686446221a479a9227d7a895cf92930f86de8a/SmolLM2-135M-Q4_K_M.gguf"
-            if ($LASTEXITCODE -ne 0) { throw "rt04 model download failed" }
-          }
-          $candidate = Start-LabApp $labPort $profile ""
-          try {
-            $adapterId = (node $probe $labPort).Trim()
-            if (-not $adapterId) { throw "No GPU adapter reported by the lab candidate" }
-            Write-Host "lab adapter: $adapterId"
-            $env:RT06_EVIDENCE_PATH = Join-Path $repoRoot "$att/rt06-all-backends.json"
-            $env:RT06_LOG_PATH = Join-Path $repoRoot "$att/rt06-full-run.log"
-            $env:LOCALMOTIVE_SOURCE_REVISION = $sha
-            $env:RT06_PORTABLE_DIGEST = $portableDigest
-            & node scripts/g05_rt06_all_backends.mjs $labPort $adapterId all
-            if ($LASTEXITCODE -ne 0) { throw "rt06 leg failed with code $LASTEXITCODE" }
-            # Activate the recommended managed build through the same inspect
-            # path the "Use this build" control uses (activateRuntime -> the
-            # inspect_runtime / describe_runtime IPCs). No backend "select"
-            # command exists; selection is frontend state, so drive the
-            # always-present Runtime-screen path input + Inspect button
-            # instead of catalog-dependent sidebar controls.
-            $activate = Join-Path $scratch "activate.mjs"
-            $activateLines = @(
-              $importLine,
-              'const client = await attach(Number(process.argv[2]));',
-              'const wantKey = process.argv[3];',
-              'const hex = (s) => Array.from(String(s)).map((c) => c.codePointAt(0).toString(16)).join(''-'');',
-              'const setupJson = await client.evaluate("( async () => { const setup = await window.__TAURI_INTERNALS__.invoke(''load_runtime_setup'', { adapterId: null }); return JSON.stringify((setup.managedRuntimes || []).map((m) => ({ key: m.installKey, path: m.runtimePath }))); } )()", 120000);',
-              'console.error(''managed-records='' + setupJson);',
-              'console.error(''want-key len='' + String(wantKey).length + '' hex='' + hex(wantKey));',
-              'const records = JSON.parse(setupJson);',
-              'const norm = (s) => String(s == null ? '''' : s).trim().toLowerCase();',
-              'const wantNorm = norm(wantKey);',
-              'const hitRec = records.find((r) => norm(r.key) === wantNorm);',
-              'const singleRec = records.length === 1 ? records[0] : null;',
-              'const target = (hitRec && hitRec.path) ? hitRec.path : ((singleRec && singleRec.path) ? singleRec.path : null);',
-              'if (!target) { console.error(''no-runtime-path; recs='' + setupJson + '' want='' + wantKey + '' wantHex='' + hex(wantKey)); process.exit(1); }',
-              'console.error(''activate-mode='' + ((hitRec && hitRec.path) ? ''key'' : ''single''));',
-              'const navOk = await client.evaluate("( async () => { for (let i = 0; i < 20; i += 1) { const nav = Array.from(document.querySelectorAll(''button'')).find((b) => (b.textContent || '''').trim() === ''Runtime''); if (nav) { nav.click(); await new Promise((r) => setTimeout(r, 1500)); if (document.querySelector(''input[placeholder=\"Path to llama-server.exe\"]'')) return ''nav-ok''; } else { await new Promise((r) => setTimeout(r, 1500)); } } return ''no-runtime-screen''; } )()", 120000);',
-              'if (navOk !== ''nav-ok'') { console.error(navOk); process.exit(1); }',
-              'const filled = await client.evaluate("( (path) => { const input = document.querySelector(''input[placeholder=\"Path to llama-server.exe\"]''); if (!input) return ''no-path-input''; const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, ''value'').set; setter.call(input, path); input.dispatchEvent(new Event(''input'', { bubbles: true })); input.dispatchEvent(new Event(''change'', { bubbles: true })); return input.value === path ? ''filled'' : ''fill-mismatch:'' + input.value; } )(ARG)".replace(''ARG'', () => JSON.stringify(target)), 60000);',
-              'if (filled !== ''filled'') { console.error(filled); process.exit(1); }',
-              'const inspected = await client.evaluate("( async () => { const btn = Array.from(document.querySelectorAll(''button'')).find((b) => (b.textContent || '''').trim() === ''Inspect''); if (!btn || btn.disabled) return ''no-inspect-button''; btn.click(); for (let i = 0; i < 60; i += 1) { await new Promise((r) => setTimeout(r, 1500)); if (document.body.textContent.includes(''inspected;'')) return ''inspected''; } return ''inspect-timeout''; } )()", 150000);',
-              'if (inspected !== ''inspected'') { console.error(inspected); process.exit(1); }',
-              'console.log(''runtime-active'');',
-              'process.exit(0);'
-            )
-            Set-Content $activate ($activateLines -join "`n") -Encoding utf8NoBOM -NoNewline:$false
-            & node $activate $labPort "cuda-13.3"
-            if ($LASTEXITCODE -ne 0) { throw "runtime activation failed with code $LASTEXITCODE" }
-            # mt06 assumes a selected model. Point Inventory at the pinned
-            # model and select its row through the same controls a user uses.
-            $modelsDir = Join-Path $scratch "models"
-            New-Item -ItemType Directory -Force -Path $modelsDir | Out-Null
-            Copy-Item $modelBackup (Join-Path $modelsDir "SmolLM2-135M-Q4_K_M.gguf") -Force
-            $selectmodel = Join-Path $scratch "selectmodel.mjs"
-            $selectmodelLines = @(
-              $importLine,
-              'const client = await attach(Number(process.argv[2]));',
-              'const root = process.argv[3];',
-              'const sel = await client.evaluate("( async () => { const nav = Array.from(document.querySelectorAll(''button'')).find((b) => (b.textContent || '''').trim() === ''Inventory''); if (!nav) return ''no-inventory-nav''; nav.click(); await new Promise((r) => setTimeout(r, 2000)); const input = document.querySelector(''input[aria-label=\"Model root\"]''); if (!input) return ''no-model-root-input''; const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, ''value'').set; setter.call(input, ARG); input.dispatchEvent(new Event(''input'', { bubbles: true })); input.dispatchEvent(new Event(''change'', { bubbles: true })); await new Promise((r) => setTimeout(r, 1000)); const rescan = Array.from(document.querySelectorAll(''button'')).find((b) => (b.textContent || '''').trim() === ''Rescan''); if (!rescan || rescan.disabled) return ''no-rescan''; rescan.click(); for (let i = 0; i < 45; i += 1) { await new Promise((r) => setTimeout(r, 2000)); const row = document.querySelector(''button.row-target''); if (row) { const name = row.textContent.trim().slice(0, 40); row.click(); await new Promise((r) => setTimeout(r, 2000)); const start = Array.from(document.querySelectorAll(''button'')).find((b) => (b.textContent || '''').trim() === ''Start''); return `model-selected:${name}:start=${start ? (start.disabled ? ''disabled'' : ''enabled'') : ''missing''}`; } } return ''no-model-row''; } )()".replace(''ARG'', () => root), 180000);',
-              'if (!String(sel).startsWith(''model-selected:'')) { console.error(sel); process.exit(1); }',
-              'if (!String(sel).includes(''start=enabled'')) { console.error(sel); process.exit(1); }',
-              'console.log(sel);',
-              'process.exit(0);'
-            )
-            Set-Content $selectmodel ($selectmodelLines -join "`n") -Encoding utf8NoBOM -NoNewline:$false
-            & node $selectmodel $labPort $modelsDir
-            if ($LASTEXITCODE -ne 0) { throw "model selection failed with code $LASTEXITCODE" }
-            # TLS/API-key material is profile state (empty by default, so the
-            # server starts plain HTTP). Fill the same Profile inputs a user
-            # fills, then Save so the spawn reads them.
-            $tlsDir = Join-Path $repoRoot ".hermes-0.6/g05-tls"
-            $filltls = Join-Path $scratch "filltls.mjs"
-            $filltlsLines = @(
-              $importLine,
-              'const client = await attach(Number(process.argv[2]));',
-              'const keyPath = process.argv[3];',
-              'const certPath = process.argv[4];',
-              'const apiPath = process.argv[5];',
-              'const tls = await client.evaluate("( async () => { const nav = Array.from(document.querySelectorAll(''button'')).find((b) => (b.textContent || '''').trim() === ''Profile''); if (!nav) return ''no-profile-nav''; nav.click(); await new Promise((r) => setTimeout(r, 2000)); const findInput = (label) => { const lab = Array.from(document.querySelectorAll(''label'')).find((l) => (l.textContent || '''').trim() === label); return lab ? lab.querySelector(''input'') : null; }; const key = findInput(''SSL private key''); const cert = findInput(''SSL certificate''); const api = findInput(''API key file''); if (!key || !cert || !api) return `missing-inputs:key=${!!key}:cert=${!!cert}:api=${!!api}`; const set = (input, value) => { const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, ''value'').set; setter.call(input, value); input.dispatchEvent(new Event(''input'', { bubbles: true })); input.dispatchEvent(new Event(''change'', { bubbles: true })); }; set(key, ARGKEY); set(cert, ARGCERT); set(api, ARGAPI); await new Promise((r) => setTimeout(r, 1000)); const save = Array.from(document.querySelectorAll(''button'')).find((b) => (b.textContent || '''').trim() === ''Save''); if (!save) return ''no-save-button''; save.click(); await new Promise((r) => setTimeout(r, 2500)); return `saved:key=${key.value}:cert=${cert.value}:api=${api.value}`; } )()".replace(''ARGKEY'', () => JSON.stringify(keyPath)).replace(''ARGCERT'', () => JSON.stringify(certPath)).replace(''ARGAPI'', () => JSON.stringify(apiPath)), 120000);',
-              'console.log(tls);',
-              'if (!String(tls).startsWith(''saved:'')) { process.exit(1); }',
-              'process.exit(0);'
-            )
-            Set-Content $filltls ($filltlsLines -join "`n") -Encoding utf8NoBOM -NoNewline:$false
-            & node $filltls $labPort (Join-Path $tlsDir "key.pem") (Join-Path $tlsDir "cert.pem") (Join-Path $tlsDir "api-key.txt")
-            if ($LASTEXITCODE -ne 0) { throw "TLS profile fill failed with code $LASTEXITCODE" }
-            # Pre-mt06 gate: start a server from the UI, prove the spawn
-            # carries the TLS flags and answers https metrics, then stop it
-            # so mt06 starts its own from the same profile state.
-            $srvstart = Join-Path $scratch "srvstart.mjs"
-            $srvstartLines = @(
-              $importLine,
-              'const client = await attach(Number(process.argv[2]));',
-              'const up = await client.evaluate("( async () => { const nav = Array.from(document.querySelectorAll(''button'')).find((b) => (b.textContent || '''').trim() === ''Profile''); if (!nav) return ''no-profile-nav''; nav.click(); await new Promise((r) => setTimeout(r, 2500)); const start = Array.from(document.querySelectorAll(''button'')).find((b) => (b.textContent || '''').trim() === ''Start''); if (!start) return ''no-start''; if (start.disabled) return ''start-disabled''; start.click(); for (let i = 0; i < 60; i += 1) { await new Promise((r) => setTimeout(r, 2000)); const lines = Array.from(document.querySelectorAll(''.notice-line'')).map((n) => (n.textContent || '''').replace(/\\s+/g, '' '').trim()).filter(Boolean); const hit = lines.find((l) => /Started .* on port \\d+/.test(l)); if (hit) return `SERVER-UP:${hit}`; } return ''start-timeout''; } )()", 180000);',
-              'if (!String(up).startsWith(''SERVER-UP:'')) { console.error(up); process.exit(1); }',
-              'console.log(up);',
-              'process.exit(0);'
-            )
-            Set-Content $srvstart ($srvstartLines -join "`n") -Encoding utf8NoBOM -NoNewline:$false
-            & node $srvstart $labPort
-            if ($LASTEXITCODE -ne 0) { throw "gate server start failed with code $LASTEXITCODE" }
-            # Pre-mt06 gate: the spawn must carry the TLS flags and answer
-            # https metrics, or the driver grinds blind on 000s.
-            $serverArgs = ((Get-CimInstance Win32_Process -Filter "Name='llama-server.exe'" | Where-Object { $_.ParentProcessId -eq $candidate.Id }).CommandLine -join " ")
-            if ($serverArgs -notmatch "--ssl-key-file" -or $serverArgs -notmatch "--ssl-cert-file") { throw "TLS flags missing from server argv" }
-            $gatetls = Join-Path $scratch "gatetls.mjs"
-            $gatetlsLines = @(
-              'import { readFileSync } from "node:fs";',
-              'import https from "node:https";',
-              'const key = readFileSync(process.argv[2], "utf8").trim();',
-              'const req = https.request({ host: "127.0.0.1", port: 8080, path: "/metrics", method: "GET", headers: { Authorization: `Bearer ${key}` }, rejectUnauthorized: false, timeout: 4000 }, (res) => { let n = 0; res.on("data", (c) => { n += c.length; }); res.on("end", () => { if (res.statusCode === 200 && n > 0) { console.log("https-metrics-200"); process.exit(0); } console.error(`https-metrics-status=${res.statusCode}`); process.exit(1); }); });',
-              'req.on("timeout", () => { console.error("https-metrics-timeout"); process.exit(1); });',
-              'req.on("error", (e) => { console.error(`https-metrics-error=${e.message}`); process.exit(1); });',
-              'req.end();'
-            )
-            Set-Content $gatetls ($gatetlsLines -join "`n") -Encoding utf8NoBOM -NoNewline:$false
-            & node $gatetls (Join-Path $tlsDir "api-key.txt")
-            if ($LASTEXITCODE -ne 0) { throw "https metrics gate failed with code $LASTEXITCODE" }
-            $srvstop = Join-Path $scratch "srvstop.mjs"
-            $srvstopLines = @(
-              $importLine,
-              'const client = await attach(Number(process.argv[2]));',
-              'const r = await client.evaluate("( async () => { const nav = Array.from(document.querySelectorAll(''button'')).find((b) => (b.textContent || '''').trim() === ''Control''); if (!nav) return ''no-control''; nav.click(); await new Promise((r) => setTimeout(r, 2000)); const stop = Array.from(document.querySelectorAll(''button'')).find((b) => (b.textContent || '''').trim() === ''Stop server''); if (!stop) return ''no-stop''; stop.click(); for (let i = 0; i < 30; i += 1) { await new Promise((r) => setTimeout(r, 2000)); if (!/Stop server/.test(document.body.textContent || '''')) return ''stopped''; } return ''still-live''; } )()", 120000);',
-              'if (r !== ''stopped'') { console.error(r); process.exit(1); }',
-              'console.log(r);',
-              'process.exit(0);'
-            )
-            Set-Content $srvstop ($srvstopLines -join "`n") -Encoding utf8NoBOM -NoNewline:$false
-            & node $srvstop $labPort
-            if ($LASTEXITCODE -ne 0) { throw "gate server stop failed with code $LASTEXITCODE" }
-            $env:MT06_EVIDENCE_PATH = Join-Path $repoRoot "$att/mt06-cycles-result.json"
-            & node scripts/g05_mt06_cycles.mjs $labPort 75 $candidate.Id $sha $portableDigest
-            if ($LASTEXITCODE -ne 0) { throw "mt06 leg failed with code $LASTEXITCODE" }
-          } finally { Stop-LabApp $candidate }
-
-          $candidate = Start-LabApp $labPort $profile "http://127.0.0.1:$dc04Port"
-          try {
-            cmd /c "node scripts/g05_dc04_override.mjs $labPort $dc04Port $scratch\dc04 > $attFs\dc04-v2-command-path-verification.log 2>&1"
-            if ($LASTEXITCODE -ne 0) { throw "dc04 leg failed with code $LASTEXITCODE" }
-          } finally { Stop-LabApp $candidate }
-
-          $candidate = Start-LabApp $labPort $profile "http://127.0.0.1:$rt04Port"
-          try {
-            cmd /c "node scripts/g05_rt04v2_delay.mjs $labPort $rt04Port $modelBackup > $attFs\rt04v2-delayed-download-verification.log 2>&1"
-            if ($LASTEXITCODE -ne 0) { throw "rt04 leg failed with code $LASTEXITCODE" }
-          } finally { Stop-LabApp $candidate }
-
-          Remove-Item Env:LOCALMOTIVE_HF_BASE -ErrorAction SilentlyContinue
-          $env:WEBVIEW2_USER_DATA_FOLDER = (Join-Path $scratch "webview2-a11y")
-          cmd /c "node scripts/verify_a11y.mjs $portable > $attFs\g05-a11y-packaged-verification.log 2>&1"
-          if ($LASTEXITCODE -ne 0) { throw "a11y leg failed with code $LASTEXITCODE" }
-
-          foreach ($f in @("mt06-cycles-result.json", "rt06-all-backends.json", "rt06-full-run.log", "dc04-v2-command-path-verification.log", "rt04v2-delayed-download-verification.log", "g05-a11y-packaged-verification.log")) {
-            if (-not (Test-Path (Join-Path $attFs $f))) { throw "Lab leg produced no record: $f" }
-          }
-
-      - name: Produce witness fault evidence in-run
-        shell: pwsh
-        timeout-minutes: 60
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          pwsh -NoProfile -File scripts/sandbox/test-fault-evidence.ps1 -Version "$env:VERSION" -CandidateDir "artifacts"
-          if ($LASTEXITCODE -ne 0) { throw "Witness fault harness failed with code $LASTEXITCODE" }
+          mkdir -p "$STAGE_DIR/release-evidence/${VERSION}/attestations"
+          cp release-evidence/${VERSION}/attestations/* "$STAGE_DIR/release-evidence/${VERSION}/attestations/"
+          cp sbom.cdx.json "$STAGE_DIR/sbom.cdx.json"
 
       - name: Assemble the canonical qualification manifest
         shell: bash
-        run: node scripts/build_qualification_manifest.mjs --inventory "artifacts/candidate-inventory-${VERSION}.json" --attestations "release-evidence/${VERSION}/attestations" --release "$VERSION" --stage-packaged-verification "artifacts/packaged-verification-${VERSION}.json" --out "release-evidence/${VERSION}/qualification-manifest-${VERSION}.json"
+        run: node scripts/build_qualification_manifest.mjs --inventory "$STAGE_DIR/artifacts/candidate-inventory-${VERSION}.json" --attestations "$STAGE_DIR/release-evidence/${VERSION}/attestations" --release "$VERSION" --stage-packaged-verification "$STAGE_DIR/artifacts/packaged-verification-${VERSION}.json" --record-root "$STAGE_DIR" --out "$STAGE_DIR/release-evidence/${VERSION}/qualification-manifest-${VERSION}.json"
 
       - name: Validate the promotion contract without publishing
         shell: bash
-        run: node scripts/verify_release_promotion.mjs --qualified . --tag "v${VERSION}" --expect-source "$RESOLVED_SHA" --report "artifacts/promotion-check-${VERSION}.json"
+        run: node scripts/verify_release_promotion.mjs --qualified "$STAGE_DIR" --tag "v${VERSION}" --expect-source "$RESOLVED_SHA" --report "$STAGE_DIR/artifacts/promotion-check-${VERSION}.json"
 
       - name: Retain the qualified candidate bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: localmotive-${{ needs.resolve.outputs.version }}-qualified
-          path: |
-            artifacts/*
-            sbom.cdx.json
-            release-evidence/${{ needs.resolve.outputs.version }}/qualification-manifest-${{ needs.resolve.outputs.version }}.json
-            release-evidence/${{ needs.resolve.outputs.version }}/attestations/*
+          path: ${{ env.STAGE_DIR }}/**
           if-no-files-found: error
           retention-days: 90
 
@@ -504,7 +285,7 @@ jobs:
         with:
           name: localmotive-${{ needs.resolve.outputs.version }}-verify-diagnostics
           path: |
-            artifacts/**
+            ${{ env.STAGE_DIR }}/**
             sbom.cdx.json
             src-tauri/target/release/bundle/**
             release-evidence/${{ needs.resolve.outputs.version }}/attestations/*
@@ -514,4 +295,4 @@ jobs:
       - name: Report missing packaged evidence
         if: failure()
         shell: pwsh
-        run: pwsh -NoProfile -File scripts/check_package_outputs.ps1 -Root "$pwd" -Version "$env:VERSION"
+        run: pwsh -NoProfile -File scripts/check_package_outputs.ps1 -Root "$env:STAGE_DIR/artifacts" -Version "$env:VERSION"

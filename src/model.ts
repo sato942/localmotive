@@ -821,7 +821,7 @@ export type RuntimeCatalog = {
     blockingJobs: string[];
     evidenceUrls: string[];
   }>;
-  origin: "network" | "cache";
+  origin: "network" | "compiled";
   warning: string | null;
   recommendationReason: string;
 };
@@ -1768,11 +1768,47 @@ export type CatalogQuery = {
   sort: CatalogSort;
   author?: string;
   license?: string;
-  pipeline_tag?: string;
+  // The Rust `CatalogQuery` serializes with rename_all = "camelCase": the
+  // pipeline and fit keys must use camelCase here. Sending snake_case left
+  // the backend filters with their defaults and both filters had no effect
+  // (FE-02).
+  pipelineTag?: string;
   architecture?: string;
-  fit_per_mille?: number;
-  budget_bytes?: number;
+  fitPerMille?: number;
+  budgetBytes?: number;
 };
+
+/** Build the `filter_catalog` query from catalog UI state (FE-02). */
+export function buildCatalogQuery(input: {
+  text: string;
+  tag: string;
+  quant: string;
+  author: string;
+  license: string;
+  pipeline: string;
+  architecture: string;
+  maxGiB: number;
+  hideGated: boolean;
+  sort: CatalogSort;
+  fitEnabled: boolean;
+  fitPerMille: number;
+  budgetBytes: number;
+}): CatalogQuery {
+  return {
+    text: input.text,
+    tag: input.tag,
+    quant: input.quant,
+    author: input.author,
+    license: input.license,
+    pipelineTag: input.pipeline,
+    architecture: input.architecture,
+    maxBytes: input.maxGiB > 0 ? input.maxGiB * 1024 ** 3 : 0,
+    hideGated: input.hideGated,
+    sort: input.sort,
+    fitPerMille: input.fitEnabled ? input.fitPerMille : 0,
+    budgetBytes: input.fitEnabled ? input.budgetBytes : 0,
+  };
+}
 
 export type CatalogFacets = {
   tags: string[];

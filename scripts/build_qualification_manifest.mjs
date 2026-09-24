@@ -27,24 +27,12 @@ import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const ATTESTATION_RECORDS = {
+  // P0-7 (D2): the release gate keeps three records. The lab, witness, and
+  // fault legs moved out of the gate, so their records are gone; the single
+  // Sandbox leg binds preservation-v0.5.0 only.
   packaged_verification: (version) => `packaged-verification-${version}.json`,
-  "lifecycle_upgrade_v0.4.0": () => "sandbox-clean-account-lifecycle-upgrade-v0.4.0.json",
-  "lifecycle_upgrade_v0.5.0": () => "sandbox-clean-account-lifecycle-upgrade-v0.5.0.json",
-  "lifecycle_preservation_v0.4.1": () => "sandbox-clean-account-lifecycle-preservation-v0.4.1.json",
   "lifecycle_preservation_v0.5.0": () => "sandbox-clean-account-lifecycle-preservation-v0.5.0.json",
-  witness_missing_assets: () => "witness-missing-assets.json",
-  witness_timeout: () => "witness-timeout.json",
-  witness_malformed_result: () => "witness-malformed-result.json",
-  witness_preservation_missing: () => "witness-preservation-missing.json",
-  witness_stale_lock: () => "witness-stale-lock.json",
-  witness_live_lock: () => "witness-live-lock.json",
-  mt06_cancellation: () => "mt06-cycles-result.json",
   installer_payload_identity: () => "installer-payload-identity.json",
-  dc04_command_path: () => "dc04-v2-command-path-verification.log",
-  rt04_delayed_download: () => "rt04v2-delayed-download-verification.log",
-  a11y_packaged_verification: () => "g05-a11y-packaged-verification.log",
-  rt06_all_backends: () => "rt06-all-backends.json",
-  rt06_full_run_log: () => "rt06-full-run.log",
 };
 
 function sha256Of(bytes) {
@@ -60,10 +48,10 @@ function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8").replace(/^\uFEFF/, ""));
 }
 
-function recordEntry(root, path) {
-  // Record repository-relative paths: a fresh checkout validates the same
-  // manifest, and the verifier refuses scratch paths outright.
-  const rel = relative(root, path).replaceAll("\\", "/");
+function recordEntry(recordRoot, path) {
+  // Record recordRoot-relative paths: the verifier refuses scratch paths
+  // outright, and the release stages candidates outside the checkout.
+  const rel = relative(recordRoot, path).replaceAll("\\", "/");
   const entry = { path: rel.startsWith("..") ? path.replaceAll("\\", "/") : rel, exists: existsSync(path) };
   if (!entry.exists) return entry;
   const bytes = readFileSync(path);
@@ -130,9 +118,15 @@ export function buildQualificationManifest({
   // fall back to a stale committed copy.
   stagePackagedVerification = null,
   root = process.cwd(),
+  // P0-7 (D2): the release stages candidates outside the checkout, so
+  // record paths are resolved against recordRoot (the stage) while the
+  // repository-bound inputs (workflow file, git head) stay on root.
+  recordRoot = root,
 }) {
   const inventoryFile = resolve(root, inventoryPath);
   const inventory = readJson(inventoryFile);
+  const inventoryRel = relative(recordRoot, inventoryFile).replaceAll("\\", "/");
+  const inventoryRecorded = inventoryRel.startsWith("..") ? inventoryFile.replaceAll("\\", "/") : inventoryRel;
   const manifest = {
     schema: "localmotive.qualification-manifest.v1",
     release,
@@ -148,7 +142,7 @@ export function buildQualificationManifest({
       sha256: sha256Of(readFileSync(resolve(root, ".github/workflows/release.yml"))),
     },
     inventory: {
-      path: inventoryPath.replaceAll("\\", "/"),
+      path: inventoryRecorded,
       sha256: sha256Of(readFileSync(inventoryFile)),
     },
     artifacts: inventory.artifacts,
@@ -176,7 +170,7 @@ export function buildQualificationManifest({
       writeFileSync(attestationFile, stagedBytes);
     }
     const file = join(resolve(root, attestationsDir), nameFor(release));
-    manifest.records[key] = recordEntry(root, file);
+    manifest.records[key] = recordEntry(recordRoot, file);
     const carried = entryFor.get(key);
     if (carried) {
       manifest.records[key].carriedForward = carried;
@@ -212,7 +206,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const release = option("release");
   if (!inventoryPath || !attestationsDir || !outPath || !release) {
     console.error(
-      "usage: node scripts/build_qualification_manifest.mjs --inventory <path> --attestations <dir> --out <path> --release <version> [--superseded <path>]",
+      "usage: node scripts/build_qualification_manifest.mjs --inventory <path> --attestations <dir> --out <path> --release <version> [--record-root <dir>] [--superseded <path>]",
     );
     process.exit(2);
   }
@@ -243,6 +237,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     attestationsDir,
     outPath,
     release,
+    recordRoot: option("record-root") ?? process.cwd(),
     supersededPath: option("superseded"),
     carryForward,
     carryForwardGroups,

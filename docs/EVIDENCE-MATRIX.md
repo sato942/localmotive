@@ -25,7 +25,8 @@ executed.
 | 0.4.0 | Public release | PASS (as published) | UNKNOWN | UNKNOWN | Its release notes labeled three L2/PARTIAL rows "Supported"; the correction is explained in the 0.4.1 notes and this repository. Binaries stay immutable. |
 | 0.4.1 | Public release | PASS (as published) | UNKNOWN | UNKNOWN | The frozen record is `docs/history/TODO-0.4.1.md` in git history (last tree `9b09857`). |
 | 0.5.0 | Public release | PASS (release workflow `package-smoke` + packaged matrix on this host) | UNKNOWN | FAIL (failed before installation; recorded in the release evidence) | Health evidence is CPU only. Release notes disclose broad L4 limitations. The ship ledger is `docs/history/TODO-0.5.md` in git history (last tree `9b09857`). |
-| 0.6.0 | In development | In progress (tracked in `TODO.md`) | NOT RUN | NOT RUN | No support claim before the 0.6 evidence exists. |
+| 0.6.0 | Superseded (never published) | Superseded; see 0.6.1 | NOT RUN | NOT RUN | Superseded by the 0.6.1 candidate; retained as history only. No support claim before the 0.6 evidence exists. |
+| 0.6.1 | Unpublished candidate | PASS (local packaged matrices plus retained `release-evidence/0.6.1/` records, source-bound) | NOT RUN under the release gate (laboratory legs moved out; historical observations only) | PASS (baseline upgrade legs for the 0.6.1 candidate, retained unpublished) | No support claim before publication. The latest published release is v0.5.0. |
 
 ## What each column means
 

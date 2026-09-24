@@ -20,6 +20,20 @@ const expectations = {
     cmdNotice: "nullable-string",
   },
   catalogDrop: { id: "string", repo: "string", reason: "string" },
+  catalogQuery: {
+    text: "string",
+    tag: "string",
+    quant: "string",
+    maxBytes: "number",
+    hideGated: "boolean",
+    sort: "string",
+    author: "string",
+    license: "string",
+    pipelineTag: "string",
+    architecture: "string",
+    fitPerMille: "number",
+    budgetBytes: "number",
+  },
 };
 
 test("IPC contract: fixture entries match the TypeScript wire expectations", () => {
