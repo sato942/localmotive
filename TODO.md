@@ -103,9 +103,9 @@ Standing release policy:
 - [x] **D4 — Decide the `v0.4.0` corrective note (TEAM).** Decided
   2026-09-24: deleted, not published. The inline 0.4.1 changelog correction
   stands as the published record.
-- [ ] **D5 — Decide superseded evidence (TEAM).** `AGENTS.md` keeps accepted
-  evidence frozen. Allow the deletion of `release-evidence/0.6.0/history/`,
-  or keep it.
+- [x] **D5 — Decide superseded evidence (TEAM).** Decided 2026-09-24:
+  exception granted; `release-evidence/0.6.0/history/` deleted. Accepted
+  published evidence stays frozen.
 - [ ] **A1 — Give the team access (ADMIN).** Give each developer the Write
   role. Give the release lead Maintain or Admin. Before the first Write grant
   takes effect, run the direct-push refusal test (section 8, V06-GH-01.V3).

@@ -361,7 +361,7 @@ keeps each deleted file. The last tree that holds all of them is
 | `docs/CATALOG-PROMOTION.md` | Keep | Catalog promotion procedure. |
 | `docs/SECURITY-REVIEW-LIMITS.md` | Keep | `SECURITY.md` links it. |
 | `release-evidence/0.4.1/v0.4.0-corrective-note.md` | Deleted | Owner decision D4 (2026-09-24): deleted, not published. |
-| `release-evidence/0.6.0/history/freeze8-da091a4/README.md` | Keep | Accepted evidence stays frozen. |
+| `release-evidence/0.6.0/history/freeze8-da091a4/README.md` | Deleted | Owner decision D5 (2026-09-24): exception to the frozen-evidence rule for superseded 0.6.0 history. |
 | `TODO-0.6-post-076a3eeecbdf.md` | Delete | Second tracker. It breaks the one-tracker rule. |
 | `REPORT-0.6.md` | Delete | Snapshot report. Superseded. |
 | `agents_feedback.md` | Delete | Agent log. Its open risks move to `TODO.md`. |
