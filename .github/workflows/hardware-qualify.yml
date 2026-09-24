@@ -214,7 +214,7 @@ jobs:
           $portableDigest = (Get-FileHash $portable -Algorithm SHA256).Hash.ToLowerInvariant()
           $att = "release-evidence/$version/attestations"
           $attFs = Join-Path $repoRoot $att
-          $labPort = 10041 + (([int]$env:GITHUB_RUN_ID + 700) % 2000)
+          $labPort = 10041 + (([int64]$env:GITHUB_RUN_ID + 700) % 2000)
           $dc04Port = $labPort + 1
           $rt04Port = $labPort + 2
           $scratch = Join-Path $env:RUNNER_TEMP "localmotive-lab-legs-$version-$labPort"
