@@ -265,13 +265,33 @@ test("the release gate holds only the AGENTS.md checks", async () => {
   assert.ok(legs[0].includes("v0.5.0"), "the surviving leg upgrades from the last published version");
 });
 
+test("release job env names no runner context", async () => {
+  // P0-10: `runner.temp` in job-level env invalidated the whole workflow
+  // file — the v0.6.2 tag burned with no release run at all. The stage
+  // directory enters through GITHUB_ENV from a step instead.
+  const release = (await loadWorkflows(process.cwd()))["release.yml"];
+  for (const [name, job] of Object.entries(release.jobs)) {
+    for (const [key, value] of Object.entries(job.env ?? {})) {
+      assert.doesNotMatch(
+        String(value),
+        /runner\./,
+        `job ${name} env ${key} must not use the runner context (not allowed in job env)`,
+      );
+    }
+  }
+  const yml = readFileSync(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  assert.match(yml, /STAGE_DIR=.*GITHUB_ENV/, "the stage directory enters through GITHUB_ENV");
+});
+
 test("release stages candidate and diagnostics files outside the checkout", async () => {
   // P0-5 (REL-05) + P0-7 (D2): tracked artifacts/ must never ride into the
   // release uploads. The stage lives under $RUNNER_TEMP and mirrors the
   // qualified-bundle layout; staging, collect, mirror, and upload steps
   // reference only the stage.
   const yml = readFileSync(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
-  assert.match(yml, /STAGE_DIR: \$\{\{ runner\.temp \}\}/);
+  // P0-10: the runner context is not allowed in job-level env, so the stage
+  // directory enters through GITHUB_ENV from a setter step.
+  assert.match(yml, /echo "STAGE_DIR=.*>> "\$GITHUB_ENV"/);
   assert.match(yml, /mkdir -p "\$STAGE_DIR\/artifacts"/);
   assert.match(yml, /Mirror attestations and the SBOM into the stage/);
   assert.match(yml, /\$\{\{ env\.STAGE_DIR \}\}\/\*\*/);

@@ -103,7 +103,8 @@ jobs:
       # artifacts/ directory. The stage mirrors the qualified-bundle
       # layout (artifacts/, sbom.cdx.json, release-evidence/), so the
       # uploaded bundle keeps the exact shape promotion publishes.
-      STAGE_DIR: ${{ runner.temp }}/localmotive-release
+      # P0-10: the runner context is not allowed in job-level env, so the
+      # setter step below exports STAGE_DIR through GITHUB_ENV instead.
     steps:
       # The self-hosted runner image defaults core.autocrlf=true; pin LF
       # before checkout (v5.1.0 has no git-config input).
@@ -120,6 +121,16 @@ jobs:
         run: |
           test "$(git rev-parse HEAD)" = "$RESOLVED_SHA" \
             || { echo "::error::verify checkout does not match the resolved release revision"; exit 1; }
+
+      - name: Set the out-of-checkout stage directory
+        # P0-10: job-level env cannot use the runner context, so STAGE_DIR
+        # enters through GITHUB_ENV. Forward slashes work in bash, pwsh,
+        # node, and the upload-artifact path alike.
+        shell: bash
+        run: |
+          STAGE_DIR="${RUNNER_TEMP//\\//}/localmotive-release"
+          echo "STAGE_DIR=${STAGE_DIR}" >> "$GITHUB_ENV"
+          mkdir -p "${STAGE_DIR}/artifacts"
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
