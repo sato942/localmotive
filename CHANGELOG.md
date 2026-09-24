@@ -2,23 +2,31 @@
 
 ## Unreleased
 
-0.6.1 was a tagged but unpublished candidate: tags `v0.6.0` and `v0.6.1`
-exist, but no 0.6.x release was published before 0.6.2. The latest published
-release is v0.6.2. The 0.6.0/0.6.1 sections below describe the candidate
-line, not shipped releases.
+0.6.1 was a tagged but unpublished candidate, and the `v0.6.2` tag burned:
+its workflow file used the runner context in job-level env, so no release
+run existed. Tags `v0.6.0`, `v0.6.1`, and `v0.6.2` exist, but the latest
+published release is still v0.5.0. The 0.6.0/0.6.1 sections below describe
+the candidate line, not shipped releases.
 
-## 0.6.2
+## 0.6.3
 
 First published release of the 0.6 line. It carries the 0.6 stabilization
 set: the compiled approved-runtime catalog with no network or cache in setup,
 single-flight catalog loads, structured IPC error kinds in harness evidence,
 camelCase catalog query wire keys, out-of-checkout release staging, named
 verification-step failures, the reduced release gate, promotion inflated-set
-refusal, and corrected public text.
+refusal, and corrected public text. It also fixes the burned 0.6.2 attempt:
+the stage directory enters the release job through `GITHUB_ENV` because the
+runner context is not allowed in job-level env.
 
 This release is honestly unsigned: no Authenticode signatures exist and none
 are claimed. Windows SmartScreen may warn on first launch. Verify the
-published SHA-256 checksums (`SHA256SUMS-0.6.2.txt`) before use.
+published SHA-256 checksums (`SHA256SUMS-0.6.3.txt`) before use.
+
+## 0.6.2
+
+Superseded — tag burned before any release run (invalid workflow file: the
+runner context in job-level env). Never published. See 0.6.3.
 
 ## 0.6.1
 
