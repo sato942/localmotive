@@ -172,11 +172,13 @@ test("a missing staged packaged record fails instead of binding a stale copy", a
 });
 
 test("a missing lifecycle record fails qualification", async () => {
+  // P0-7 (D2): the gate keeps one lifecycle record; the missing-record
+  // refusal is exercised on it.
   await withRepository({ withQualifiedSet: true }, async (fixture) => {
     generateManifest(fixture);
     renameSync(
-      attestationPath(fixture, "sandbox-clean-account-lifecycle-upgrade-v0.4.0.json"),
-      attestationPath(fixture, "sandbox-clean-account-lifecycle-upgrade-v0.4.0.moved"),
+      attestationPath(fixture, "sandbox-clean-account-lifecycle-preservation-v0.5.0.json"),
+      attestationPath(fixture, "sandbox-clean-account-lifecycle-preservation-v0.5.0.moved"),
     );
     const promotion = await promote(fixture);
     assert.equal(promotion.ok, false, "a vanished lifecycle record cannot qualify");
@@ -184,8 +186,10 @@ test("a missing lifecycle record fails qualification", async () => {
 });
 
 test("an unrelated run's lifecycle record fails without a permitted carry-forward", async () => {
+  // P0-7 (D2): the gate keeps one lifecycle record; the wrong-source
+  // refusal is exercised on it.
   await withRepository(
-    { withQualifiedSet: true, lifecycleWrongSource: { key: "lifecycle_preservation_v0.4.1" } },
+    { withQualifiedSet: true, lifecycleWrongSource: { key: "lifecycle_preservation_v0.5.0" } },
     async (fixture) => {
       generateManifest(fixture);
       const promotion = await promote(fixture);
@@ -245,19 +249,34 @@ test("the fixture writes every mandatory record under the generator's name", asy
   });
 });
 
+test("the release gate holds only the AGENTS.md checks", async () => {
+  // P0-7 (D2): the release gate is the AGENTS.md list. Lab, witness, and
+  // fault steps are out; the manifest binds only gate records; one Sandbox
+  // leg (upgrade from the last published version) stays.
+  const yml = readFileSync(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  assert.doesNotMatch(yml, /Produce lab qualification legs in-run/);
+  assert.doesNotMatch(yml, /g05_mt06_cycles|g05_rt06_all_backends|g05_dc04_override|g05_rt04v2_delay|verify_a11y/);
+  assert.doesNotMatch(yml, /Produce witness fault evidence in-run/);
+  assert.doesNotMatch(yml, /test-fault-evidence/);
+  assert.doesNotMatch(yml, /\.hermes-0\.6/);
+  assert.match(yml, /cancel-in-progress: false/);
+  const legs = yml.match(/Previous = "v\d+\.\d+\.\d+"/g) ?? [];
+  assert.equal(legs.length, 1, `the gate keeps one lifecycle leg, found ${legs.length}`);
+  assert.ok(legs[0].includes("v0.5.0"), "the surviving leg upgrades from the last published version");
+});
+
 test("release stages candidate and diagnostics files outside the checkout", async () => {
-  // P0-5 (REL-05): tracked artifacts/ must never ride into the release
-  // uploads. The stage lives under $RUNNER_TEMP; the staging, collect, and
-  // upload steps reference only the stage. (The manifest/promotion steps
-  // still name workspace paths; P0-7 reworks their path contract.)
+  // P0-5 (REL-05) + P0-7 (D2): tracked artifacts/ must never ride into the
+  // release uploads. The stage lives under $RUNNER_TEMP and mirrors the
+  // qualified-bundle layout; staging, collect, mirror, and upload steps
+  // reference only the stage.
   const yml = readFileSync(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
   assert.match(yml, /STAGE_DIR: \$\{\{ runner\.temp \}\}/);
-  assert.match(yml, /mkdir -p "\$STAGE_DIR"/);
-  assert.match(yml, /Collect packaged verification evidence into the stage/);
-  assert.match(yml, /\$\{\{ env\.STAGE_DIR \}\}/);
-  assert.doesNotMatch(yml, /mkdir -p artifacts/);
-  assert.doesNotMatch(yml, /CandidateDir "artifacts"/);
+  assert.match(yml, /mkdir -p "\$STAGE_DIR\/artifacts"/);
+  assert.match(yml, /Mirror attestations and the SBOM into the stage/);
+  assert.match(yml, /\$\{\{ env\.STAGE_DIR \}\}\/\*\*/);
   assert.doesNotMatch(yml, /^ +artifacts\//m);
+  assert.doesNotMatch(yml, /CandidateDir "artifacts"/);
 });
 
 test("a controlled package-stage failure reports every missing output", async () => {
@@ -365,8 +384,10 @@ test("the produced evidence name and the promotion contract agree", () => {
   );
   // F9-04: the qualification step must stage the freshly produced record into
   // the manifest; an unused --stage/--source pair leaves the stale committed
-  // copy bound instead.
-  assert.match(release, /--stage-packaged-verification "artifacts\/packaged-verification-/);
+  // copy bound instead. P0-7 (D2): inputs live in the stage, and records
+  // resolve against the stage root.
+  assert.match(release, /--stage-packaged-verification "\$STAGE_DIR\/artifacts\/packaged-verification-/);
+  assert.match(release, /--record-root "\$STAGE_DIR"/);
   assert.doesNotMatch(release, /build_qualification_manifest\.mjs --stage artifacts/);
   const builder = readFileSync(join(process.cwd(), "scripts", "build_qualification_manifest.mjs"), "utf8");
   assert.match(builder, /stagePackagedVerification/);

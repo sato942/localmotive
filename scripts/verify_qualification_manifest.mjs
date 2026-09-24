@@ -41,11 +41,9 @@ const DEFAULT_MANIFEST = "release-evidence/0.6.0/qualification-manifest-0.6.0.js
 
 /// Scenario contract for every lifecycle record: the evidence name, the
 /// baseline it must exercise, and the exactly-one preservation step it must
-/// carry for that baseline.
+/// carry for that baseline. P0-7 (D2): the gate keeps one Sandbox leg —
+/// upgrade from the last published version with user-data preservation.
 const LIFECYCLE_RECORDS = {
-  "lifecycle_upgrade_v0.4.0": { scenario: "sandbox-clean-account-lifecycle-upgrade-v0.4.0", previousTag: "v0.4.0" },
-  "lifecycle_upgrade_v0.5.0": { scenario: "sandbox-clean-account-lifecycle-upgrade-v0.5.0", previousTag: "v0.5.0" },
-  "lifecycle_preservation_v0.4.1": { scenario: "sandbox-clean-account-lifecycle-preservation-v0.4.1", previousTag: "v0.4.1" },
   "lifecycle_preservation_v0.5.0": { scenario: "sandbox-clean-account-lifecycle-preservation-v0.5.0", previousTag: "v0.5.0" },
 };
 
@@ -56,30 +54,19 @@ const LIFECYCLE_BASE_STEPS = [
 ];
 
 /// Witness legs: each must carry its own bounded outcome at the documented
-/// stage. A missing or PASS witness is a failure, never a skip.
-const WITNESS_RECORDS = {
-  witness_missing_assets: { status: "FAIL", stage: "resolve-installers" },
-  witness_timeout: { status: "TIMEOUT", stage: "sandbox-timeout" },
-  witness_malformed_result: { status: "FAIL", stage: "sandbox-run" },
-  witness_preservation_missing: { status: "FAIL", stage: "preservation-verification", preservation: "missing-files" },
-  witness_stale_lock: { status: "FAIL", stage: "resolve-installers" },
-  witness_live_lock: { status: "FAIL", stage: "resolve-installers" },
-};
+/// stage. A missing or PASS witness is a failure, never a skip. P0-7 (D2):
+/// the witness legs moved out of the release gate, so no witness record is
+/// required; the machinery stays for any record a manifest still carries.
+const WITNESS_RECORDS = {};
 
 /// Records whose absence means the release is not qualified. The negative
 /// controls (byte-doctored refusals) are retained as history but not required
-/// per candidate; every entry here is mandatory.
+/// per candidate; every entry here is mandatory. P0-7 (D2): the gate binds
+/// the packaged matrix, the single Sandbox leg, and the installer payloads.
 const REQUIRED_RECORDS = [
   "packaged_verification",
-  "mt06_cancellation",
-  "rt06_all_backends",
-  "rt06_full_run_log",
-  "a11y_packaged_verification",
+  "lifecycle_preservation_v0.5.0",
   "installer_payload_identity",
-  "dc04_command_path",
-  "rt04_delayed_download",
-  ...Object.keys(LIFECYCLE_RECORDS),
-  ...Object.keys(WITNESS_RECORDS),
 ];
 
 function sha256Of(bytes) {
