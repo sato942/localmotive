@@ -1,7 +1,0 @@
-{
-  "src/model.ts": "21732a384ef89903781feb531513ae79e43206d0cdd8a2c13a03b3309474f24b",
-  "src/model.test.ts": "6fd77854e4592b94dd54c7b2b0b71cead7089e4c6e30a6ee8a8298b7620cb38a",
-  "src/App.tsx": "f4d261ae5f2f7aa69e99aeab7c7a6061e3fe5acccdecfed7c4ec18ae99746b00",
-  "src/App.staleResponses.test.tsx": "b534149abcff598ec369413e61ba24891929acd74933c16a2c6a09c0116845e4",
-  "src/screens/BenchmarkScreen.tsx": "1ac11b3459cfda6206ac1017398dfbd85b3a8db43a3d294389e41c7e319a2e33"
-}

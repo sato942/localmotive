@@ -4,6 +4,11 @@
 node_modules
 /localmotive.exe
 
+# D3: the tracked artifacts/ directory was removed from the tree. Runtime
+# verification outputs stay untracked here and never ride into a commit.
+# (The release stage uses $RUNNER_TEMP, not this directory.)
+/artifacts/
+
 # Python bytecode from the verification scripts
 __pycache__/
 *.pyc

@@ -1,2 +1,0 @@
-Scope: the legacy benchmark input correction and its regression coverage. This is not installer or release approval.
-Lean already. Install.
