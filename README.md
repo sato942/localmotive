@@ -14,9 +14,9 @@ The same executable provides the local API and optional WebUI.
 
 Download the current release from [GitHub Releases][releases].
 Use the release marked **Latest**, not the repository's unreleased source tip.
-The latest published release is v0.5.0. This checkout is 0.6.1 development
-source, not a release: tags `v0.6.0` and `v0.6.1` exist, but no 0.6.x release
-is published. In this source build, select **About → Check releases** to open that page.
+The latest published release is v0.6.5. This checkout is development source:
+tags `v0.6.0` through `v0.6.5` exist, but only `v0.6.5` is published. In this
+source build, select **About → Check releases** to open that page.
 Updates require a manual download and installation; the application has no automatic updater.
 
 Each release provides these Windows x64 files:
@@ -330,13 +330,12 @@ Review the generated command before launch.
 
 Read the support matrix by evidence type, not by inference (audit GH-07):
 
-- **The 0.6.1 candidate (unpublished)** passed the packaged lifecycle (MSI and NSIS
-  install, launch, uninstall) and the upgrade checks from both v0.4.1 and
-  v0.5.0 in Windows Sandbox, bound to candidate digests. CUDA inference on
-  the RTX 5090 was measured through the packaged app; tamper refusal, TLS
-  serving, catalog fallback and download resume were exercised packaged.
-  These are candidate results retained under `release-evidence/0.6.1/`, not a
-  published release: the latest published release is v0.5.0.
+- **The 0.6.5 release** passed the packaged checks (28 of 28, bound to
+  candidate digests) and one Windows Sandbox clean-account leg from the
+  candidate bytes: clean install, upgrade from v0.5.0 with user-data
+  preservation, and uninstall. These results are published with the release
+  (`packaged-verification-0.6.5.json` and `candidate-inventory-0.6.5.json`
+  among the six published assets). Earlier 0.6.x tags were never published.
 - **Do not generalize**: other hardware classes, Windows 10, screen
   readers, live cloud providers and OS-crash behavior remain untested and
   unclaimed. The full matrix, row by row with its evidence class, is

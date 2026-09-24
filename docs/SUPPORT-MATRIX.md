@@ -20,7 +20,7 @@ configuration works.
 
 | Claim | Status | Evidence |
 |---|---|---|
-| Windows 11 x64 (build 26100 observed) lifecycle: install (MSI and NSIS), launch, uninstall, update | MEASURED (0.6.1 candidate, unpublished) | Windows Sandbox clean-account lifecycle PASS for the 0.6.1 candidate and the v0.4.1 / v0.5.0 baseline upgrades, bound to source revision and candidate digests (`release-evidence/0.6.1/sandbox-*.json`). The 0.6.0 candidate line is retained as history only; it was never published. The latest published release is v0.5.0. |
+| Windows 11 x64 (build 26100 observed) lifecycle: install, upgrade with user-data preservation, uninstall | MEASURED (0.6.5 published release) | Windows Sandbox clean-account leg PASS for the 0.6.5 release (clean install, upgrade from v0.5.0 with preservation, uninstall), bound to source revision and candidate digests (published `packaged-verification-0.6.5.json` + `candidate-inventory-0.6.5.json`). Earlier 0.6.x lines were never published. |
 | Windows 10 | UNTESTED | No packaged lifecycle evidence; do not claim support. |
 | macOS and Linux | Out of scope | No artifacts are published. |
 

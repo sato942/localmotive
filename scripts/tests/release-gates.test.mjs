@@ -2292,24 +2292,24 @@ test("QD-06 local doc links resolve in every active document", async () => {
   assert.deepEqual(missing, [], `unresolved relative links: ${missing.join(", ")}`);
 });
 
-test("public docs name v0.5.0 latest published; 0.6.x stays an unpublished candidate", async () => {
-  // P0-9 (DOC-04, DOC-05): the latest published release is v0.5.0. No
-  // 0.6.x line may read as shipped, and README, SUPPORT-MATRIX, and
-  // EVIDENCE-MATRIX must agree that 0.6.1 is candidate evidence only.
+test("public docs name v0.6.5 latest published; earlier 0.6.x stays unpublished", async () => {
+  // P0-10: v0.6.5 is the first published 0.6 release. README, CHANGELOG,
+  // SUPPORT-MATRIX, and EVIDENCE-MATRIX must agree that v0.6.5 is latest
+  // and the earlier 0.6.x tags never shipped.
   const readme = await readFile(join(process.cwd(), "README.md"), "utf8");
   const changelog = await readFile(join(process.cwd(), "CHANGELOG.md"), "utf8");
   const support = await readFile(join(process.cwd(), "docs", "SUPPORT-MATRIX.md"), "utf8");
   const evidence = await readFile(join(process.cwd(), "docs", "EVIDENCE-MATRIX.md"), "utf8");
-  assert.match(readme, /the latest published release is v0\.5\.0/i);
+  assert.match(readme, /the latest published release is v0\.6\.5/i);
   assert.doesNotMatch(readme, /0\.6\.[01] ships/);
   assert.doesNotMatch(readme, /In this 0\.6\.0 source build/);
   assert.match(changelog, /## Unreleased/);
-  assert.match(changelog, /0\.6\.1.*tagged but unpublished candidate/);
-  assert.match(changelog, /Unpublished candidate — not released/);
+  assert.match(changelog, /0\.6\.1 was a tagged but unpublished candidate/);
+  assert.match(changelog, /## 0\.6\.5/);
   for (const doc of [readme, support, evidence]) {
-    assert.match(doc, /0\.6\.1 candidate/);
+    assert.match(doc, /never published/);
   }
-  assert.match(evidence, /\| 0\.6\.1 \|/);
+  assert.match(evidence, /\| 0\.6\.5 \| Public release \|/);
 });
 
 test("GH-07 the evidence matrix exists and the README reads it", async () => {
