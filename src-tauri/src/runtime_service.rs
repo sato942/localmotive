@@ -114,6 +114,15 @@ pub(crate) async fn fetch_runtime_catalog(
     Ok(catalog)
 }
 
+/// Manual upstream runtime check (P0-1): report whether github.com holds a
+/// newer release than the compiled approval. This command never runs during
+/// setup and never blocks catalog serving.
+#[tauri::command]
+pub(crate) async fn check_runtime_update(
+) -> Result<runtime::RuntimeUpdateStatus, runtime::RuntimeCatalogError> {
+    runtime::check_runtime_update().await
+}
+
 #[tauri::command]
 pub(crate) fn managed_runtime_root() -> Result<String, String> {
     Ok(runtime::managed_runtime_install_root()

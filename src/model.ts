@@ -821,7 +821,7 @@ export type RuntimeCatalog = {
     blockingJobs: string[];
     evidenceUrls: string[];
   }>;
-  origin: "network" | "cache";
+  origin: "network" | "compiled";
   warning: string | null;
   recommendationReason: string;
 };

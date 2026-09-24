@@ -2283,6 +2283,7 @@ pub fn run() {
             runtime_service::load_runtime_setup,
             runtime_service::detect_hardware,
             runtime_service::fetch_runtime_catalog,
+            runtime_service::check_runtime_update,
             runtime_service::managed_runtime_root,
             runtime_service::install_managed_runtime,
             runtime_service::cancel_managed_runtime_install,
