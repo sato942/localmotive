@@ -2694,11 +2694,37 @@ pub async fn check_runtime_update() -> Result<RuntimeUpdateStatus, RuntimeCatalo
             format!("GitHub release response was invalid: {error}"),
         )
     })?;
+    let status = runtime_update_status(&identity, &release);
+    if !status.update_available {
+        let (approved, jobs) = approved_manifest().map_err(|error| {
+            RuntimeCatalogError::new(RuntimeCatalogErrorKind::TrustFailure, error)
+        })?;
+        let hardware = detect_hardware();
+        catalog_from_release(
+            &release,
+            &hardware,
+            &approved,
+            &jobs,
+            RuntimeCatalogOrigin::Network,
+            None,
+        )
+        .map_err(|error| RuntimeCatalogError::new(RuntimeCatalogErrorKind::TrustFailure, error))?;
+    }
+    Ok(status)
+}
+
+/// Pure drift comparison between the compiled approval identity and a live
+/// release identity (P0-1). Unit-tested without network; the async
+/// [`check_runtime_update`] adds the fetch and the full release validation.
+fn runtime_update_status(
+    identity: &ApprovedRuntimeIdentity,
+    release: &GithubRelease,
+) -> RuntimeUpdateStatus {
     let drift = release.tag_name != identity.release_tag
         || release.target_commitish != identity.release_commit
         || release.published_at.as_deref() != Some(identity.published_at.as_str());
     if drift {
-        return Ok(RuntimeUpdateStatus {
+        return RuntimeUpdateStatus {
             current_tag: identity.release_tag.clone(),
             upstream_tag: release.tag_name.clone(),
             update_available: true,
@@ -2706,28 +2732,16 @@ pub async fn check_runtime_update() -> Result<RuntimeUpdateStatus, RuntimeCatalo
                 "Upstream runtime {} differs from the approved {}. A catalog update stays a manual curation step.",
                 release.tag_name, identity.release_tag
             ),
-        });
+        };
     }
-    let (approved, jobs) = approved_manifest()
-        .map_err(|error| RuntimeCatalogError::new(RuntimeCatalogErrorKind::TrustFailure, error))?;
-    let hardware = detect_hardware();
-    catalog_from_release(
-        &release,
-        &hardware,
-        &approved,
-        &jobs,
-        RuntimeCatalogOrigin::Network,
-        None,
-    )
-    .map_err(|error| RuntimeCatalogError::new(RuntimeCatalogErrorKind::TrustFailure, error))?;
-    Ok(RuntimeUpdateStatus {
-        current_tag: identity.release_tag,
-        upstream_tag: release.tag_name,
+    RuntimeUpdateStatus {
+        current_tag: identity.release_tag.clone(),
+        upstream_tag: release.tag_name.clone(),
         update_available: false,
         detail:
             "Upstream matches the approved release and validates against the compiled approval."
                 .into(),
-    })
+    }
 }
 
 pub async fn fetch_catalog(hardware: &HardwareInfo) -> Result<RuntimeCatalog, RuntimeCatalogError> {
@@ -5348,6 +5362,45 @@ mod tests {
 
         assert_eq!(catalog.tag, "b10816");
         assert_eq!(catalog.origin, RuntimeCatalogOrigin::Compiled);
+    }
+
+    #[test]
+    fn update_status_reports_drift_for_a_newer_upstream_tag() {
+        // P0-1: the manual upstream check reports drift without touching
+        // setup. A newer upstream tag means an update is available.
+        let identity = approved_runtime_identity().unwrap();
+        let release = GithubRelease {
+            tag_name: "b99999".into(),
+            target_commitish: identity.release_commit.clone(),
+            published_at: Some(identity.published_at.clone()),
+            assets: Vec::new(),
+        };
+
+        let status = runtime_update_status(&identity, &release);
+
+        assert!(status.update_available);
+        assert_eq!(status.current_tag, identity.release_tag);
+        assert_eq!(status.upstream_tag, "b99999");
+    }
+
+    #[test]
+    fn update_status_reports_current_for_a_matching_identity() {
+        // P0-1: when the live identity equals the compiled approval, no
+        // update is available. Full release validation stays in
+        // `check_runtime_update`, outside this pure comparison.
+        let identity = approved_runtime_identity().unwrap();
+        let release = GithubRelease {
+            tag_name: identity.release_tag.clone(),
+            target_commitish: identity.release_commit.clone(),
+            published_at: Some(identity.published_at.clone()),
+            assets: Vec::new(),
+        };
+
+        let status = runtime_update_status(&identity, &release);
+
+        assert!(!status.update_available);
+        assert_eq!(status.current_tag, identity.release_tag);
+        assert_eq!(status.upstream_tag, identity.release_tag);
     }
 
     #[test]
