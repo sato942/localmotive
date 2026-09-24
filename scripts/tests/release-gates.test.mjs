@@ -370,8 +370,10 @@ test("model catalog exposes rich filters with hardware auto-fit defaults", async
   assert.match(app, /catalogFitEnabled/);
   assert.match(app, /Hardware fit/);
   assert.match(app, /Fit budget/);
-  assert.match(app, /fit_per_mille/);
-  assert.match(app, /budget_bytes/);
+  // P0-4 (FE-02): the UI sends the camelCase wire keys the backend
+  // expects; the snake_case keys never reached the filters.
+  assert.match(app, /fitPerMille/);
+  assert.match(app, /budgetBytes/);
   assert.match(model, /hardwareFitBudget/);
   assert.match(model, /modelHiddenByFitRule/);
   assert.match(model, /DEFAULT_FIT_PER_MILLE/);

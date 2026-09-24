@@ -40,6 +40,7 @@ import {
   managedHealthRequest,
   manualGpuOverride,
   modelHiddenByFitRule,
+  buildCatalogQuery,
   retainOrDisposeListener,
   etaLabel,
   originLabel,
@@ -1236,5 +1237,75 @@ describe("errorText (S-22)", () => {
     // An object without a message serializes instead of stringifying to junk.
     expect(errorText({ code: "c1" })).toBe('{"code":"c1"}');
     expect(errorText(null)).toBe("null");
+  });
+});
+
+describe("buildCatalogQuery (FE-02)", () => {
+  it("sends camelCase wire keys so the backend applies the filters", () => {
+    const query = buildCatalogQuery({
+      text: "",
+      tag: "",
+      quant: "",
+      author: "",
+      license: "",
+      pipeline: "text-generation",
+      architecture: "",
+      maxGiB: 0,
+      hideGated: false,
+      sort: "downloads",
+      fitEnabled: true,
+      fitPerMille: 500,
+      budgetBytes: 1000,
+    });
+    expect(query).toEqual({
+      text: "",
+      tag: "",
+      quant: "",
+      author: "",
+      license: "",
+      pipelineTag: "text-generation",
+      architecture: "",
+      maxBytes: 0,
+      hideGated: false,
+      sort: "downloads",
+      fitPerMille: 500,
+      budgetBytes: 1000,
+    });
+    // The wire payload carries exactly the camelCase keys Rust expects.
+    expect(Object.keys(JSON.parse(JSON.stringify(query))).sort()).toEqual([
+      "architecture",
+      "author",
+      "budgetBytes",
+      "fitPerMille",
+      "hideGated",
+      "license",
+      "maxBytes",
+      "pipelineTag",
+      "quant",
+      "sort",
+      "tag",
+      "text",
+    ]);
+  });
+
+  it("disables the fit rule and converts GiB to bytes", () => {
+    const query = buildCatalogQuery({
+      text: "qwen",
+      tag: "",
+      quant: "",
+      author: "",
+      license: "",
+      pipeline: "",
+      architecture: "",
+      maxGiB: 8,
+      hideGated: true,
+      sort: "name",
+      fitEnabled: false,
+      fitPerMille: 500,
+      budgetBytes: 34_359_738_368,
+    });
+    expect(query.maxBytes).toBe(8 * 1024 ** 3);
+    expect(query.fitPerMille).toBe(0);
+    expect(query.budgetBytes).toBe(0);
   });
 });

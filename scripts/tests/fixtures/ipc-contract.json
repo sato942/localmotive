@@ -16,6 +16,20 @@
       "id": "fixture/one",
       "repo": "fixture/one-GGUF",
       "reason": "missing model id"
+    },
+    "catalogQuery": {
+      "text": "qwen",
+      "tag": "chat",
+      "quant": "Q4_K_M",
+      "maxBytes": 8589934592,
+      "hideGated": true,
+      "sort": "downloads",
+      "author": "unsloth",
+      "license": "apache-2.0",
+      "pipelineTag": "text-generation",
+      "architecture": "qwen35",
+      "fitPerMille": 500,
+      "budgetBytes": 34359738368
     }
   }
 }

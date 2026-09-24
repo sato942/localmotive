@@ -2570,6 +2570,47 @@ mod tests {
     }
 
     #[test]
+    fn frontend_shaped_catalog_query_applies_pipeline_and_fit_filters() {
+        // P0-4 (FE-02): this payload mirrors the query object App.tsx sends
+        // to `filter_catalog` (camelCase wire keys). The pipeline filter
+        // and the hardware-fit filter must narrow the list. Before the fix
+        // the frontend sent snake_case keys, which the backend ignored, and
+        // both rows came back.
+        let file = |size_bytes: u64| CatalogFile {
+            quant: "Q4_K_M".into(),
+            filename: "model-Q4_K_M.gguf".into(),
+            size_bytes,
+            sha256: "a".repeat(64),
+            revision: "main".into(),
+            last_modified: String::new(),
+            created_at: String::new(),
+            user_sourced: false,
+        };
+        let row = |id: &str, pipeline: &str, size_bytes: u64| CatalogModel {
+            id: id.into(),
+            repo: format!("fixture/{id}"),
+            pipeline_tag: pipeline.into(),
+            files: vec![file(size_bytes)],
+            ..Default::default()
+        };
+        let models = vec![
+            row("small-chat", "text-generation", 100),
+            row("big-vision", "image-text-to-text", 900),
+        ];
+        let query: CatalogQuery = serde_json::from_str(
+            r#"{"text":"","tag":"","quant":"","maxBytes":0,"hideGated":false,"sort":"downloads","author":"","license":"","pipelineTag":"text-generation","architecture":"","fitPerMille":500,"budgetBytes":1000}"#,
+        )
+        .unwrap();
+        let rows = filter_models(&models, &query);
+        assert_eq!(
+            rows.len(),
+            1,
+            "the pipeline and fit filters must narrow the list"
+        );
+        assert_eq!(rows[0].id, "small-chat");
+    }
+
+    #[test]
     fn hardware_fit_rule_hides_models_above_a_tunable_budget_fraction() {
         // Default auto-filter: hide files above half the detected budget so a
         // 32 GiB card does not offer a 27 GiB Q8 row first. The user can

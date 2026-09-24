@@ -4395,5 +4395,27 @@ mod ipc_contract_tests {
             types["catalogDrop"],
             "CatalogDrop wire shape drifted"
         );
+
+        // P0-4 (FE-02): the catalog query wire shape. The frontend must
+        // send these exact camelCase keys; snake_case keys are ignored.
+        let query = catalog::CatalogQuery {
+            text: "qwen".into(),
+            tag: "chat".into(),
+            quant: "Q4_K_M".into(),
+            max_bytes: 8_589_934_592,
+            hide_gated: true,
+            sort: catalog::CatalogSort::Downloads,
+            author: "unsloth".into(),
+            license: "apache-2.0".into(),
+            pipeline_tag: "text-generation".into(),
+            architecture: "qwen35".into(),
+            fit_per_mille: 500,
+            budget_bytes: 34_359_738_368,
+        };
+        assert_eq!(
+            serde_json::to_value(&query).unwrap(),
+            types["catalogQuery"],
+            "CatalogQuery wire shape drifted"
+        );
     }
 }

@@ -547,6 +547,75 @@ try {
       );
 
       await runCheck(
+        "ipc.catalog-query-wire-keys",
+        "Selecting a pipeline filter changes the result count in the packaged app.",
+        async () => {
+          // P0-4 (FE-02): drive the real backend with a fixed row set and
+          // read back the counts. Before the fix the frontend sent
+          // snake_case keys, the backend ignored them, and every count
+          // stayed at the full list.
+          const file = (sizeBytes) => ({
+            quant: "Q4_K_M",
+            filename: "model-Q4_K_M.gguf",
+            sizeBytes,
+            sha256: "a".repeat(64),
+            revision: "main",
+            lastModified: "",
+            createdAt: "",
+          });
+          const row = (id, pipelineTag, sizeBytes) => ({
+            id,
+            repo: `fixture/${id}`,
+            family: "fixture",
+            parameters: "8B",
+            publisher: "fixture",
+            summary: "fixture row",
+            tags: [],
+            gated: false,
+            downloads: 1,
+            likes: 0,
+            pipelineTag,
+            files: [file(sizeBytes)],
+          });
+          const models = [
+            row("chat", "text-generation", 100),
+            row("vision", "image-text-to-text", 900),
+          ];
+          const baseQuery = {
+            text: "",
+            tag: "",
+            quant: "",
+            maxBytes: 0,
+            hideGated: false,
+            sort: "downloads",
+            author: "",
+            license: "",
+            architecture: "",
+          };
+          const unfiltered = { ...baseQuery, pipelineTag: "", fitPerMille: 0, budgetBytes: 0 };
+          const applyFilter = (query) =>
+            invoke("filter_catalog", { models, query }, 120_000);
+          const unfilteredRows = await applyFilter(unfiltered);
+          const pipelineRows = await applyFilter({
+            ...baseQuery,
+            pipelineTag: "text-generation",
+            fitPerMille: 0,
+            budgetBytes: 0,
+          });
+          const fitRows = await applyFilter({
+            ...baseQuery,
+            pipelineTag: "",
+            fitPerMille: 500,
+            budgetBytes: 1000,
+          });
+          requireCondition(unfilteredRows.length === 2, `The unfiltered list must hold both rows, got ${unfilteredRows.length}`);
+          requireCondition(pipelineRows.length === 1, `The pipeline filter must narrow the list, got ${pipelineRows.length}`);
+          requireCondition(fitRows.length === 1, `The hardware-fit filter must narrow the list, got ${fitRows.length}`);
+          return { unfiltered: unfilteredRows.length, pipeline: pipelineRows.length, fit: fitRows.length };
+        },
+      );
+
+      await runCheck(
         "ipc.runtime-catalog-fetch",
         "The packaged app fetches the real approved runtime catalog through IPC and the response carries exact install identities.",
         async () => {
