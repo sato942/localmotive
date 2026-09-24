@@ -2304,7 +2304,7 @@ test("public docs name v0.5.0 latest published; 0.6.x stays an unpublished candi
   assert.doesNotMatch(readme, /0\.6\.[01] ships/);
   assert.doesNotMatch(readme, /In this 0\.6\.0 source build/);
   assert.match(changelog, /## Unreleased/);
-  assert.match(changelog, /0\.6\.1 is a tagged but unpublished candidate/);
+  assert.match(changelog, /0\.6\.1.*tagged but unpublished candidate/);
   assert.match(changelog, /Unpublished candidate — not released/);
   for (const doc of [readme, support, evidence]) {
     assert.match(doc, /0\.6\.1 candidate/);

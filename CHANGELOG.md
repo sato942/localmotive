@@ -2,10 +2,23 @@
 
 ## Unreleased
 
-0.6.1 is a tagged but unpublished candidate: tags `v0.6.0` and `v0.6.1`
-exist, but no 0.6.x release is published and no 0.6.x assets are on GitHub
-Latest. The latest published release is v0.5.0. The sections below describe
-the candidate line, not shipped releases.
+0.6.1 was a tagged but unpublished candidate: tags `v0.6.0` and `v0.6.1`
+exist, but no 0.6.x release was published before 0.6.2. The latest published
+release is v0.6.2. The 0.6.0/0.6.1 sections below describe the candidate
+line, not shipped releases.
+
+## 0.6.2
+
+First published release of the 0.6 line. It carries the 0.6 stabilization
+set: the compiled approved-runtime catalog with no network or cache in setup,
+single-flight catalog loads, structured IPC error kinds in harness evidence,
+camelCase catalog query wire keys, out-of-checkout release staging, named
+verification-step failures, the reduced release gate, promotion inflated-set
+refusal, and corrected public text.
+
+This release is honestly unsigned: no Authenticode signatures exist and none
+are claimed. Windows SmartScreen may warn on first launch. Verify the
+published SHA-256 checksums (`SHA256SUMS-0.6.2.txt`) before use.
 
 ## 0.6.1
 
