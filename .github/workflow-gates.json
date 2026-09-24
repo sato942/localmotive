@@ -81,11 +81,11 @@
         "verify": [
           "npm run tauri build",
           "pwsh -NoProfile -File scripts/verify_packaged_matrix.ps1 -Portable $portable -Version \"$env:VERSION\" -ResolvedSha \"$env:RESOLVED_SHA\" -CdpPort $cdpPort",
-          "node scripts/verify_candidate_inventory.mjs artifacts \"$VERSION\" \"artifacts/candidate-inventory-${VERSION}.json\"",
-          "node scripts/verify_installer_payloads.mjs artifacts \"artifacts/candidate-inventory-${VERSION}.json\" \"release-evidence/${VERSION}/attestations/installer-payload-identity.json\"",
-          "& \".\\scripts\\sandbox\\host-run-lifecycle.ps1\" -Tag \"${{ needs.resolve.outputs.tag }}\" -Version \"$env:VERSION\" -PreviousTag $leg.Previous -CandidateDir \"artifacts\" -EvidenceName $leg.Name -PreservationFlavor $leg.Flavor",
+          "node scripts/verify_candidate_inventory.mjs \"$STAGE_DIR\" \"$VERSION\" \"$STAGE_DIR/candidate-inventory-${VERSION}.json\"",
+          "node scripts/verify_installer_payloads.mjs \"$STAGE_DIR\" \"$STAGE_DIR/candidate-inventory-${VERSION}.json\" \"release-evidence/${VERSION}/attestations/installer-payload-identity.json\"",
+          "& \".\\scripts\\sandbox\\host-run-lifecycle.ps1\" -Tag \"${{ needs.resolve.outputs.tag }}\" -Version \"$env:VERSION\" -PreviousTag $leg.Previous -CandidateDir \"$env:STAGE_DIR\" -EvidenceName $leg.Name -PreservationFlavor $leg.Flavor",
           "node scripts/build_qualification_manifest.mjs --inventory \"artifacts/candidate-inventory-${VERSION}.json\" --attestations \"release-evidence/${VERSION}/attestations\" --release \"$VERSION\" --stage-packaged-verification \"artifacts/packaged-verification-${VERSION}.json\" --out \"release-evidence/${VERSION}/qualification-manifest-${VERSION}.json\"",
-          "node scripts/verify_release_promotion.mjs --qualified . --tag \"v${VERSION}\" --expect-source \"$RESOLVED_SHA\" --report \"artifacts/promotion-check-${VERSION}.json\""
+          "node scripts/verify_release_promotion.mjs --qualified . --tag \"v${VERSION}\" --expect-source \"$RESOLVED_SHA\" --report \"$STAGE_DIR/promotion-check-${VERSION}.json\""
         ]
       },
       "publicationJobs": {},

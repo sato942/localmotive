@@ -98,6 +98,9 @@ jobs:
       VERSION: ${{ needs.resolve.outputs.version }}
       RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
       LOCALMOTIVE_SOURCE_REVISION: ${{ needs.resolve.outputs.sha }}
+      # P0-5 (REL-05): candidate and diagnostics files stage here, under
+      # $RUNNER_TEMP — never in the checkout's tracked artifacts/ directory.
+      STAGE_DIR: ${{ runner.temp }}/localmotive-release
     steps:
       # The self-hosted runner image defaults core.autocrlf=true; pin LF
       # before checkout (v5.1.0 has no git-config input).
@@ -176,22 +179,37 @@ jobs:
           $cdpPort = 10041 + ([int]($env:GITHUB_RUN_ID % 2000))
           pwsh -NoProfile -File scripts/verify_packaged_matrix.ps1 -Portable $portable -Version "$env:VERSION" -ResolvedSha "$env:RESOLVED_SHA" -CdpPort $cdpPort
           if ($LASTEXITCODE -ne 0) { throw "Packaged verification orchestration failed with code $LASTEXITCODE" }
+
+      - name: Collect packaged verification evidence into the stage
+        # P0-5 (REL-05): the matrix writes its JSON records to the
+        # workspace for local runs. The release keeps only copies of the
+        # current run's records in the stage, so uploads never sweep up
+        # tracked or leftover files. Runs on failure too, so a failed
+        # verification still retains its partial evidence.
+        if: success() || failure()
+        shell: bash
+        run: |
+          mkdir -p "$STAGE_DIR"
+          for record in "packaged-verification-${VERSION}.json" "packaged-verification-catalog-${VERSION}.json" "catalog-matrix-first-fill.json" "catalog-matrix-restart.json" "catalog-fixture-init.json"; do
+            if test -f "artifacts/$record"; then cp "artifacts/$record" "$STAGE_DIR/$record"; fi
+          done
+
       - name: Stage release artifacts
         shell: bash
         run: |
-          mkdir -p artifacts
-          cp "src-tauri/target/release/bundle/msi/Localmotive_${VERSION}_x64_en-US.msi" "artifacts/Localmotive_${VERSION}_x64.msi"
-          cp "src-tauri/target/release/bundle/nsis/Localmotive_${VERSION}_x64-setup.exe" "artifacts/Localmotive_${VERSION}_x64-setup.exe"
-          cp "src-tauri/target/release/localmotive.exe" "artifacts/Localmotive_${VERSION}_x64-portable.exe"
-          test -s "artifacts/Localmotive_${VERSION}_x64.msi"
-          test -s "artifacts/Localmotive_${VERSION}_x64-setup.exe"
-          test -s "artifacts/Localmotive_${VERSION}_x64-portable.exe"
-          (cd artifacts && sha256sum Localmotive_* > "SHA256SUMS-${VERSION}.txt")
-          test "$(wc -l < "artifacts/SHA256SUMS-${VERSION}.txt")" -eq 3
+          mkdir -p "$STAGE_DIR"
+          cp "src-tauri/target/release/bundle/msi/Localmotive_${VERSION}_x64_en-US.msi" "$STAGE_DIR/Localmotive_${VERSION}_x64.msi"
+          cp "src-tauri/target/release/bundle/nsis/Localmotive_${VERSION}_x64-setup.exe" "$STAGE_DIR/Localmotive_${VERSION}_x64-setup.exe"
+          cp "src-tauri/target/release/localmotive.exe" "$STAGE_DIR/Localmotive_${VERSION}_x64-portable.exe"
+          test -s "$STAGE_DIR/Localmotive_${VERSION}_x64.msi"
+          test -s "$STAGE_DIR/Localmotive_${VERSION}_x64-setup.exe"
+          test -s "$STAGE_DIR/Localmotive_${VERSION}_x64-portable.exe"
+          (cd "$STAGE_DIR" && sha256sum Localmotive_* > "SHA256SUMS-${VERSION}.txt")
+          test "$(wc -l < "$STAGE_DIR/SHA256SUMS-${VERSION}.txt")" -eq 3
 
       - name: Verify and record the exact candidate inventory
         shell: bash
-        run: node scripts/verify_candidate_inventory.mjs artifacts "$VERSION" "artifacts/candidate-inventory-${VERSION}.json"
+        run: node scripts/verify_candidate_inventory.mjs "$STAGE_DIR" "$VERSION" "$STAGE_DIR/candidate-inventory-${VERSION}.json"
 
       - name: Clear candidate-generated attestations
         shell: bash
@@ -209,7 +227,7 @@ jobs:
 
       - name: Measure the staged installer payload identities
         shell: bash
-        run: node scripts/verify_installer_payloads.mjs artifacts "artifacts/candidate-inventory-${VERSION}.json" "release-evidence/${VERSION}/attestations/installer-payload-identity.json"
+        run: node scripts/verify_installer_payloads.mjs "$STAGE_DIR" "$STAGE_DIR/candidate-inventory-${VERSION}.json" "release-evidence/${VERSION}/attestations/installer-payload-identity.json"
 
       - name: Ensure Windows Sandbox is available
         shell: pwsh
@@ -239,7 +257,7 @@ jobs:
           )
           foreach ($leg in $matrix) {
             Write-Host "=== $($leg.Name): baseline $($leg.Previous), persistence $($leg.Flavor) ==="
-            & ".\scripts\sandbox\host-run-lifecycle.ps1" -Tag "${{ needs.resolve.outputs.tag }}" -Version "$env:VERSION" -PreviousTag $leg.Previous -CandidateDir "artifacts" -EvidenceName $leg.Name -PreservationFlavor $leg.Flavor
+            & ".\scripts\sandbox\host-run-lifecycle.ps1" -Tag "${{ needs.resolve.outputs.tag }}" -Version "$env:VERSION" -PreviousTag $leg.Previous -CandidateDir "$env:STAGE_DIR" -EvidenceName $leg.Name -PreservationFlavor $leg.Flavor
           }
 
       - name: Produce lab qualification legs in-run (mt06/rt06/dc04/rt04/a11y)
@@ -252,7 +270,7 @@ jobs:
           $version = "$env:VERSION"
           $sha = "$env:RESOLVED_SHA"
           $repoRoot = (Get-Location).Path
-          $portable = Join-Path $repoRoot "artifacts/Localmotive_${version}_x64-portable.exe"
+          $portable = Join-Path $env:STAGE_DIR "Localmotive_${version}_x64-portable.exe"
           if (-not (Test-Path $portable)) { throw "Candidate portable missing: $portable" }
           $portableDigest = (Get-FileHash $portable -Algorithm SHA256).Hash.ToLowerInvariant()
           $att = "release-evidence/$version/attestations"
@@ -475,7 +493,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          pwsh -NoProfile -File scripts/sandbox/test-fault-evidence.ps1 -Version "$env:VERSION" -CandidateDir "artifacts"
+          pwsh -NoProfile -File scripts/sandbox/test-fault-evidence.ps1 -Version "$env:VERSION" -CandidateDir "$env:STAGE_DIR"
           if ($LASTEXITCODE -ne 0) { throw "Witness fault harness failed with code $LASTEXITCODE" }
 
       - name: Assemble the canonical qualification manifest
@@ -484,14 +502,14 @@ jobs:
 
       - name: Validate the promotion contract without publishing
         shell: bash
-        run: node scripts/verify_release_promotion.mjs --qualified . --tag "v${VERSION}" --expect-source "$RESOLVED_SHA" --report "artifacts/promotion-check-${VERSION}.json"
+        run: node scripts/verify_release_promotion.mjs --qualified . --tag "v${VERSION}" --expect-source "$RESOLVED_SHA" --report "$STAGE_DIR/promotion-check-${VERSION}.json"
 
       - name: Retain the qualified candidate bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: localmotive-${{ needs.resolve.outputs.version }}-qualified
           path: |
-            artifacts/*
+            ${{ env.STAGE_DIR }}/*
             sbom.cdx.json
             release-evidence/${{ needs.resolve.outputs.version }}/qualification-manifest-${{ needs.resolve.outputs.version }}.json
             release-evidence/${{ needs.resolve.outputs.version }}/attestations/*
@@ -504,7 +522,7 @@ jobs:
         with:
           name: localmotive-${{ needs.resolve.outputs.version }}-verify-diagnostics
           path: |
-            artifacts/**
+            ${{ env.STAGE_DIR }}/**
             sbom.cdx.json
             src-tauri/target/release/bundle/**
             release-evidence/${{ needs.resolve.outputs.version }}/attestations/*
@@ -514,4 +532,4 @@ jobs:
       - name: Report missing packaged evidence
         if: failure()
         shell: pwsh
-        run: pwsh -NoProfile -File scripts/check_package_outputs.ps1 -Root "$pwd" -Version "$env:VERSION"
+        run: pwsh -NoProfile -File scripts/check_package_outputs.ps1 -Root "$env:STAGE_DIR" -Version "$env:VERSION"

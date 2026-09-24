@@ -1817,7 +1817,10 @@ test("GH-03 the lifecycle consumes candidates instead of waiting for publication
   const steps = release.jobs.verify.steps;
   const lifecycle = steps.find((step) => step.run?.includes("host-run-lifecycle.ps1"));
   const assembly = steps.find((step) => step.run?.includes("build_qualification_manifest.mjs"));
-  assert.match(lifecycle.run, /-CandidateDir "artifacts"/);
+  // P0-5 (REL-05): the lifecycle consumes the staged candidates under
+  // $RUNNER_TEMP, never the checkout's tracked artifacts/ directory.
+  assert.match(lifecycle.run, /-CandidateDir "\$env:STAGE_DIR"/);
+  assert.doesNotMatch(lifecycle.run, /-CandidateDir "artifacts"/);
   assert.doesNotMatch(lifecycle.run, /ReleaseWaitMinutes/);
   assert.equal(lifecycle["timeout-minutes"], 120);
   assert.ok(release.jobs.verify["timeout-minutes"] > lifecycle["timeout-minutes"]);

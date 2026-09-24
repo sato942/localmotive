@@ -9,7 +9,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildFixture } from "./lib/manifest_fixture.mjs";
@@ -245,6 +245,21 @@ test("the fixture writes every mandatory record under the generator's name", asy
   });
 });
 
+test("release stages candidate and diagnostics files outside the checkout", async () => {
+  // P0-5 (REL-05): tracked artifacts/ must never ride into the release
+  // uploads. The stage lives under $RUNNER_TEMP; the staging, collect, and
+  // upload steps reference only the stage. (The manifest/promotion steps
+  // still name workspace paths; P0-7 reworks their path contract.)
+  const yml = readFileSync(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  assert.match(yml, /STAGE_DIR: \$\{\{ runner\.temp \}\}/);
+  assert.match(yml, /mkdir -p "\$STAGE_DIR"/);
+  assert.match(yml, /Collect packaged verification evidence into the stage/);
+  assert.match(yml, /\$\{\{ env\.STAGE_DIR \}\}/);
+  assert.doesNotMatch(yml, /mkdir -p artifacts/);
+  assert.doesNotMatch(yml, /CandidateDir "artifacts"/);
+  assert.doesNotMatch(yml, /^ +artifacts\//m);
+});
+
 test("a controlled package-stage failure reports every missing output", async () => {
   // F9-04: the job's failure report must name the evidence it did not produce
   // and keep the failing outcome. Both outcomes are exercised here with the
@@ -261,21 +276,20 @@ test("a controlled package-stage failure reports every missing output", async ()
   } catch (error) {
     assert.equal(error.status, 1, "the report must exit non-zero");
     const output = `${error.stdout ?? ""}${error.stderr ?? ""}`;
+    // An empty stage reports the packaging group only; the verification
+    // group has its own report (see the verification-stage test below).
     for (const outputName of [
       `Localmotive_${RELEASE}_x64-portable.exe`,
       `Localmotive_${RELEASE}_x64-setup.exe`,
       `Localmotive_${RELEASE}_x64.msi`,
       `candidate-inventory-${RELEASE}.json`,
       `SHA256SUMS-${RELEASE}.txt`,
-      `packaged-verification-${RELEASE}.json`,
     ]) {
-      assert.match(output, new RegExp(`MISSING artifacts/${outputName.replace(/[.]/g, "\.")}`));
+      assert.match(output, new RegExp(`MISSING ${outputName.replace(/[.]/g, "\\.")}`));
     }
   }
   try {
     // A complete set exits zero: the report must not fire on a healthy stage.
-    const artifacts = join(root, "artifacts");
-    mkdirSync(artifacts, { recursive: true });
     for (const outputName of [
       `Localmotive_${RELEASE}_x64-portable.exe`,
       `Localmotive_${RELEASE}_x64-setup.exe`,
@@ -284,7 +298,7 @@ test("a controlled package-stage failure reports every missing output", async ()
       `SHA256SUMS-${RELEASE}.txt`,
       `packaged-verification-${RELEASE}.json`,
     ]) {
-      writeFileSync(join(artifacts, outputName), "fixture");
+      writeFileSync(join(root, outputName), "fixture");
     }
     const result = execFileSync(
       "powershell",
@@ -292,6 +306,38 @@ test("a controlled package-stage failure reports every missing output", async ()
       { encoding: "utf8", stdio: "pipe" },
     );
     assert.match(result, /Every expected package output exists/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a verification-stage failure names the verification step", async () => {
+  // P0-6 (REL-09): when packaging passed and verification failed, the
+  // report names the verification step. It must not say "Packaging failed".
+  const checker = join(process.cwd(), "scripts", "check_package_outputs.ps1");
+  const root = mkdtempSync(join(tmpdir(), "lm-verify-fail-"));
+  try {
+    for (const outputName of [
+      `Localmotive_${RELEASE}_x64-portable.exe`,
+      `Localmotive_${RELEASE}_x64-setup.exe`,
+      `Localmotive_${RELEASE}_x64.msi`,
+      `candidate-inventory-${RELEASE}.json`,
+      `SHA256SUMS-${RELEASE}.txt`,
+    ]) {
+      writeFileSync(join(root, outputName), "fixture");
+    }
+    const failing = execFileSync(
+      "powershell",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", checker, "-Root", root, "-Version", RELEASE],
+      { encoding: "utf8", stdio: "pipe" },
+    );
+    assert.fail(`expected the verification-evidence report to fail: ${failing}`);
+  } catch (error) {
+    assert.equal(error.status, 1, "the report must exit non-zero");
+    const output = `${error.stdout ?? ""}${error.stderr ?? ""}`;
+    assert.doesNotMatch(output, /Packaging failed/);
+    assert.match(output, /[Vv]erification/);
+    assert.match(output, new RegExp(`packaged-verification-${RELEASE}\\.json`));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
