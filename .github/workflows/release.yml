@@ -185,11 +185,23 @@ jobs:
       - name: Build installers and portable executable
         run: npm run tauri build
 
+      - name: Stage release artifacts
+        shell: bash
+        run: |
+          mkdir -p "$STAGE_DIR/artifacts"
+          cp "src-tauri/target/release/bundle/msi/Localmotive_${VERSION}_x64_en-US.msi" "$STAGE_DIR/artifacts/Localmotive_${VERSION}_x64.msi"
+          cp "src-tauri/target/release/bundle/nsis/Localmotive_${VERSION}_x64-setup.exe" "$STAGE_DIR/artifacts/Localmotive_${VERSION}_x64-setup.exe"
+          cp "src-tauri/target/release/localmotive.exe" "$STAGE_DIR/artifacts/Localmotive_${VERSION}_x64-portable.exe"
+          test -s "$STAGE_DIR/artifacts/Localmotive_${VERSION}_x64.msi"
+          test -s "$STAGE_DIR/artifacts/Localmotive_${VERSION}_x64-setup.exe"
+          test -s "$STAGE_DIR/artifacts/Localmotive_${VERSION}_x64-portable.exe"
+          (cd "$STAGE_DIR/artifacts" && sha256sum Localmotive_* > "SHA256SUMS-${VERSION}.txt")
+          test "$(wc -l < "$STAGE_DIR/artifacts/SHA256SUMS-${VERSION}.txt")" -eq 3
       - name: Verify the packaged executable
         shell: pwsh
         run: |
-          $portable = "src-tauri/target/release/localmotive.exe"
-          if (-not (Test-Path $portable)) { throw "Portable executable was not built" }
+          $portable = "$env:STAGE_DIR/artifacts/Localmotive_${VERSION}_x64-portable.exe"
+          if (-not (Test-Path $portable)) { throw "Staged portable was not produced by the stage step" }
           $cdpPort = 10041 + ([int]($env:GITHUB_RUN_ID % 2000))
           pwsh -NoProfile -File scripts/verify_packaged_matrix.ps1 -Portable $portable -Version "$env:VERSION" -ResolvedSha "$env:RESOLVED_SHA" -CdpPort $cdpPort
           if ($LASTEXITCODE -ne 0) { throw "Packaged verification orchestration failed with code $LASTEXITCODE" }
@@ -208,18 +220,6 @@ jobs:
             if test -f "artifacts/$record"; then cp "artifacts/$record" "$STAGE_DIR/artifacts/$record"; fi
           done
 
-      - name: Stage release artifacts
-        shell: bash
-        run: |
-          mkdir -p "$STAGE_DIR/artifacts"
-          cp "src-tauri/target/release/bundle/msi/Localmotive_${VERSION}_x64_en-US.msi" "$STAGE_DIR/artifacts/Localmotive_${VERSION}_x64.msi"
-          cp "src-tauri/target/release/bundle/nsis/Localmotive_${VERSION}_x64-setup.exe" "$STAGE_DIR/artifacts/Localmotive_${VERSION}_x64-setup.exe"
-          cp "src-tauri/target/release/localmotive.exe" "$STAGE_DIR/artifacts/Localmotive_${VERSION}_x64-portable.exe"
-          test -s "$STAGE_DIR/artifacts/Localmotive_${VERSION}_x64.msi"
-          test -s "$STAGE_DIR/artifacts/Localmotive_${VERSION}_x64-setup.exe"
-          test -s "$STAGE_DIR/artifacts/Localmotive_${VERSION}_x64-portable.exe"
-          (cd "$STAGE_DIR/artifacts" && sha256sum Localmotive_* > "SHA256SUMS-${VERSION}.txt")
-          test "$(wc -l < "$STAGE_DIR/artifacts/SHA256SUMS-${VERSION}.txt")" -eq 3
 
       - name: Verify and record the exact candidate inventory
         shell: bash

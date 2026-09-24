@@ -265,6 +265,21 @@ test("the release gate holds only the AGENTS.md checks", async () => {
   assert.ok(legs[0].includes("v0.5.0"), "the surviving leg upgrades from the last published version");
 });
 
+test("the packaged matrix tests the staged portable, not the raw build output", async () => {
+  // P0-10 (0.6.3 burned): the matrix recorded basename(localmotive.exe)
+  // while the inventory bound Localmotive_X-portable.exe — same bytes,
+  // different names, and promotion refused. The matrix now launches the
+  // staged file, so the tested bytes ARE the shipped bytes.
+  const release = (await loadWorkflows(process.cwd()))["release.yml"];
+  const steps = release.jobs.verify.steps;
+  const stageIndex = steps.findIndex((step) => step.name === "Stage release artifacts");
+  const matrixIndex = steps.findIndex((step) => step.name === "Verify the packaged executable");
+  assert.ok(stageIndex >= 0 && matrixIndex >= 0, "both steps exist");
+  assert.ok(stageIndex < matrixIndex, "staging precedes the matrix");
+  assert.match(steps[matrixIndex].run, /STAGE_DIR\/artifacts\/Localmotive_/);
+  assert.doesNotMatch(steps[matrixIndex].run, /target\/release\/localmotive\.exe/);
+});
+
 test("release job env names no runner context", async () => {
   // P0-10: `runner.temp` in job-level env invalidated the whole workflow
   // file — the v0.6.2 tag burned with no release run at all. The stage
