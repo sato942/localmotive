@@ -668,6 +668,38 @@ Fix these after P0 and before the next feature.
   - RT-01/RT-03 (Medium, same-user races): ACCEPT per the Medium threat
     model; P1-10/P1-15 closed the user-data half. Rust 661/0, fmt/clippy
     clean.
+  Part 3 done 2026-09-25 (CORE-07..12 + CORE-01/02/06 adjudication):
+  - CORE-01 (catalog override + banner): CLOSED — done in P1-9
+    (`verification_mode` + banner + SECURITY.md).
+  - CORE-02 (Low, StrictMode double effects): ACCEPT — dev-only; the packaged
+    collision half is RT-06's scope.
+  - CORE-06 (WEBVIEW2 env args): ACCEPT — standard platform behavior,
+    same-user trigger per the Medium model.
+  - CORE-07 (SKIP_HARDWARE_PROBE): ACCEPT — set only in `ci.yml` Rust steps;
+    release/hardware never set it, and the skip writes a visible
+    `detection_status` string in-product (runtime.rs:1352).
+  - CORE-08 (help parser weaker than contract): REFUTED — same evidence as
+    RT-09 (`filter_supported_args`, core.rs:1645).
+  - CORE-09 (capability not minimal): PART FIXED — removed the two dead
+    opener origins (`tauri.app`, `react.dev`; no in-app URL targets them),
+    gated by `opener allowlist carries no unused origins` (RED→GREEN).
+    `core:default` bundle + loopback wildcard ACCEPTED: bundle replacement
+    risks packaged-only breakage beyond a Medium; loopback serves
+    user-selected server ports.
+  - CORE-10 (dead commands/duplicates): VERIFIED + fixed — legacy
+    `scan_models` command deleted (no frontend/script caller; tests mock
+    `scan_models_report`); registration + expensive-command span re-anchored;
+    `core::scan_models` kept as `#[cfg(test)]` shorthand. Cancellation
+    commands are live (P1-35); runtime-setup/scan pairs are distinct commands.
+  - CORE-11 (mixed domains): ACCEPT as managed-incrementally — narration
+    stripped (P2-5), splits continue per-increment (P1-34/P2-8); no big-bang
+    rewrite.
+  - CORE-12 (error conversion + lock unwraps): SPLIT — plain-string errors
+    are contractual (S-18 wire contract) → REFUTED half; all 14 command-slot
+    `.lock().unwrap()` (6 runtime_service + 8 lib.rs) converted to the shared
+    `lock_recover` → FIXED half (661/0, fmt/clippy clean). Lesson: new Rust
+    comments must not carry ticket labels (P2-5 gate caught three).
+  `npm run check` EXIT 0, 15 files / 265 tests (`/tmp/check51.log`).
 
 ---
 

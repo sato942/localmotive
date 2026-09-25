@@ -40,12 +40,13 @@ mod proc;
 mod property_tests;
 mod runtime;
 mod runtime_service;
+use runtime_service::lock_recover;
 mod server_service;
 #[cfg(test)]
 mod test_support;
 mod tune;
 
-use core::{LaunchProfile, LogicalModel, RuntimeCapabilities};
+use core::{LaunchProfile, RuntimeCapabilities};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 #[cfg(test)]
@@ -1424,16 +1425,9 @@ fn wait_until_healthy_inner(
     }
 }
 
-#[tauri::command]
-async fn scan_models(root: String) -> Result<Vec<LogicalModel>, String> {
-    tauri::async_runtime::spawn_blocking(move || core::scan_models(Path::new(&root)))
-        .await
-        .map_err(|error| format!("Model scan task failed: {error}"))?
-}
-
 /// Bounded, cancellable discovery for the application path.
 /// Runs off the interface thread and returns bounded diagnostics alongside
-/// the models; the legacy `scan_models` command stays for verifier scripts.
+/// the models.
 #[tauri::command]
 async fn scan_models_report(
     state: tauri::State<'_, AppState>,
@@ -2112,7 +2106,7 @@ async fn download_catalog_file(
     let revision = revision.unwrap_or_else(|| "main".into());
     let root = catalog_service::catalog_cache_root(&app);
     let authorized = {
-        let active = state.catalog.lock().unwrap();
+        let active = lock_recover(&state.catalog);
         resolve_catalog_download(active.as_ref(), &root, &repo, &filename, &revision)?
     };
     let expected_size = authorized.file.size_bytes;
@@ -2128,7 +2122,7 @@ async fn download_catalog_file(
     let event_key = download_event_key(&repo, &filename, &revision, &destination);
     let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     {
-        let mut running = state.downloads.lock().unwrap();
+        let mut running = lock_recover(&state.downloads);
         if running.contains_key(&lock_key) {
             return Err("That file is already downloading.".into());
         }
@@ -2185,7 +2179,7 @@ async fn download_catalog_file(
     })
     .await;
 
-    state.downloads.lock().unwrap().remove(&lock_key);
+    lock_recover(&state.downloads).remove(&lock_key);
     let result = task_result.map_err(|error| format!("Download task failed: {error}"))?;
 
     match result {
@@ -2232,7 +2226,7 @@ fn cancel_download(
     let Ok((_, lock_key)) = download_target(&destination, &filename) else {
         return false;
     };
-    match state.downloads.lock().unwrap().get(&lock_key) {
+    match lock_recover(&state.downloads).get(&lock_key) {
         Some(flag) => {
             flag.store(true, std::sync::atomic::Ordering::Relaxed);
             true
@@ -2306,7 +2300,6 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
-            scan_models,
             inspect_runtime,
             check_runtime_health,
             describe_runtime,
@@ -3677,7 +3670,7 @@ mod startup_tests {
             !startup_is_current(&state, operation_id, &cancel),
             "no starting slot must not publish"
         );
-        *state.starting.lock().unwrap() = Some(StartingServer {
+        *lock_recover(&state.starting) = Some(StartingServer {
             operation_id,
             cancel: Arc::new(AtomicBool::new(false)),
         });
@@ -3789,7 +3782,7 @@ mod startup_tests {
         let source = crate::ALL_SOURCES;
         for (start, end) in [
             (
-                "async fn scan_models(root: String)",
+                "async fn scan_models_report(",
                 "async fn inspect_runtime(path: String)",
             ),
             (
@@ -3873,7 +3866,7 @@ mod catalog_command_tests {
         assert!(snapshot.refresh_error.is_none());
 
         // The published state authorizes a download of one of its own rows...
-        let active = slot.lock().unwrap();
+        let active = lock_recover(&slot);
         let state_catalog = active.as_ref().expect("local load must publish state");
         let (model, file) = state_catalog
             .models
@@ -3912,7 +3905,7 @@ mod catalog_command_tests {
         catalog_service::publish_loaded_catalog(&slot, &snapshot);
 
         assert_eq!(snapshot.origin, "bundled");
-        let active = slot.lock().unwrap();
+        let active = lock_recover(&slot);
         assert!(active
             .as_ref()
             .is_some_and(|catalog| !catalog.models.is_empty()));
@@ -4022,7 +4015,7 @@ mod runtime_service_source_tests {
         // The install command guards through the single runtime_install slot:
         // it must refuse a second install, keep the slot for the run, and
         // clear it afterwards. The slot is taken through `lock_recover`
-        // (RT-11: poison recovery), which locks the same mutex.
+        // (poison recovery), which locks the same mutex.
         let slot = install
             .find("lock_recover(&state.runtime_install)")
             .expect("install_managed_runtime must take the runtime_install slot");
@@ -4313,14 +4306,14 @@ mod operation_coordinator_tests {
         let state = AppState::default();
         assert!(active_operation_owner(&state.operations).is_none());
         assert!(reject_if_benchmark_active(&state).is_ok());
-        *state.benchmark.lock().unwrap() = Some(std::sync::Arc::new(
+        *lock_recover(&state.benchmark) = Some(std::sync::Arc::new(
             std::sync::atomic::AtomicBool::new(false),
         ));
         assert!(active_operation_owner(&state.operations).is_none());
         let err = reject_if_benchmark_active(&state).unwrap_err();
         assert!(err.contains("already running"), "{err}");
         assert!(benchmark_slot_occupied(&state));
-        *state.benchmark.lock().unwrap() = None;
+        *lock_recover(&state.benchmark) = None;
         assert!(reject_if_benchmark_active(&state).is_ok());
     }
 

@@ -1727,6 +1727,15 @@ test("a tag push verifies without publishing and publication needs explicit auth
   assert.doesNotMatch(promote, /tauri build|npm run build/, "promotion never rebuilds the candidate");
 });
 
+test("opener allowlist carries no unused origins (CORE-09)", async () => {
+  // CORE-09: least privilege. No in-app URL targets the Tauri/React doc
+  // origins, so the allowlist must not open them.
+  // RED: the two doc origins are still allowlisted.
+  const cap = await readFile(join(process.cwd(), "src-tauri", "capabilities", "default.json"), "utf8");
+  assert.doesNotMatch(cap, /tauri\.app/);
+  assert.doesNotMatch(cap, /react\.dev/);
+});
+
 test("catalog builder sorts carry deterministic tie-breakers (LAB-12)", async () => {
   // LAB-12: equal download/size keys must not inherit upstream order, or
   // every publication rewrites the file with semantic-looking diffs.

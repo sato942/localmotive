@@ -421,6 +421,8 @@ pub fn scan_models_with_cancel(
     })
 }
 
+/// Test-only shorthand: production paths go through `scan_models_with_cancel`.
+#[cfg(test)]
 pub fn scan_models(root: &Path) -> Result<Vec<LogicalModel>, String> {
     scan_models_with_cancel(root, &AtomicBool::new(false), &ScanLimits::default())
         .map(|report| report.models)

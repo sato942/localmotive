@@ -9,10 +9,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::Emitter;
 
-/// Recover a state mutex instead of panicking on poisoning (RT-11): a
+/// Recover a state mutex instead of panicking on poisoning: a
 /// poisoned lock means a previous holder panicked, not that the guarded value
 /// is unusable. Commands keep serving with the recovered value.
-fn lock_recover<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+pub(crate) fn lock_recover<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poison| poison.into_inner())
 }
 
@@ -285,7 +285,7 @@ mod lock_tests {
 
     #[test]
     fn poisoned_state_lock_recovers_instead_of_panicking() {
-        // RT-11: a holder that panics poisons the mutex. Commands must keep
+        // A holder that panics poisons the mutex. Commands must keep
         // serving with the recovered value instead of panicking on `.unwrap()`.
         let mutex = std::sync::Mutex::new(7u32);
         let _ = std::panic::catch_unwind(|| {
