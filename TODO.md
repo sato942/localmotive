@@ -699,7 +699,41 @@ Fix these after P0 and before the next feature.
     `.lock().unwrap()` (6 runtime_service + 8 lib.rs) converted to the shared
     `lock_recover` → FIXED half (661/0, fmt/clippy clean). Lesson: new Rust
     comments must not carry ticket labels (P2-5 gate caught three).
-  `npm run check` EXIT 0, 15 files / 265 tests (`/tmp/check51.log`).
+  Part 5 done 2026-09-25 (DL-05..16, all mutant-proven unless noted):
+  - DL-05 FIX: GGUF pair budget 1,000,000 to 65,536; relevant facts capped
+    at 1,024 via new `max_facts` parse limit (file order kept, sorted
+    after). Duplicates stay first-wins (deterministic `find`), not
+    rejected: rejecting risks breaking legitimate files.
+  - DL-06 FIX: row bound moved into SQL (`ORDER BY id LIMIT 5001`);
+    per-model file cap 4,096 added. Boundary inserts run in transactions
+    (0.43 s for the set, was 23 s of fsyncs).
+  - DL-07 FIX: override revisions pass the shared signed-catalog
+    `is_safe_revision` rule (now `pub(crate)`); traversal, empty
+    segments, blank, padded values rejected, `refs/pr/27` accepted.
+    Single-dot segments stay accepted (normalize away in URLs, same as
+    the signed path).
+  - DL-08 REFUTED: CRLF normalization is semantics-preserving for JSON
+    (both forms parse identically); exact-bytes would break CRLF
+    checkouts, pinned by `crlf_catalog_still_verifies_after_normalization`.
+  - DL-10 FIX: cloud API client carries explicit `Policy::none`; a 302
+    surfaces as an error, credentials never follow.
+  - DL-11 FIX: request-side bounds (key 4 KiB, model id 256 B, prompts
+    256 KiB) enforced in `save_credential` and `chat_with_deadline`
+    before keyring writes and request construction.
+  - DL-12 FIX: cloud retry-after delegates to the one shared
+    download-side parser (numeric, date, 86,400 s horizon); orphaned
+    `MAX_RETRY_AFTER_SECS` removed. Absurd waits fall back to backoff
+    instead of sleeping 30 s.
+  - DL-13 FIX: `httpdate_secs` allowlists weekday names; 14-case
+    boundary test pins shape, ranges, junk rejection, leap-:60
+    documentation.
+  - DL-15 FIX: `open_catalog_db` validates reparse ancestors before
+    creation; squatted roots fail loudly. Rejection arm is
+    privilege-gated (this host cannot create symlinks); control
+    (real dir opens) proves everywhere.
+  - DL-16 REFUTED: resume identity is same-source string equality;
+    mismatch direction is safe (full re-download, never a wrong resume).
+  - DL-09 OPEN: rotation protocol doc for `catalog/README.md` (next).
   Part 4 done 2026-09-25 (PROC-09..22):
   - PROC-09 (cleanup port-closed): REFUTED with measured evidence — this
     host reports closed loopback ports (even never-bound ones) as `TimedOut`,

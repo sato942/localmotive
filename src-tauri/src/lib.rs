@@ -4252,7 +4252,7 @@ mod tuning_lifecycle_source_tests {
             .split("impl tune::Bench for LiveBench<'_> {")
             .nth(1)
             .expect("LiveBench must implement tune::Bench")
-            .split("// Give the OS a moment to release the port")
+            .split("fn wait_for_port_release(")
             .next()
             .unwrap();
         assert!(

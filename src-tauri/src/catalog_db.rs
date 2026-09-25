@@ -32,6 +32,9 @@ pub const MAX_USER_OVERRIDE_MODELS: usize = 200;
 /// Upper bound for rows read from the mirror database: beyond
 /// this the file is treated as corrupt and the recovery path rebuilds it.
 pub const MAX_CATALOG_MIRROR_ROWS: usize = 5000;
+/// Files attached to one mirror model: the read caps each model's file set
+/// before materializing it, the same way the row bound caps the model list.
+pub const MAX_CATALOG_MODEL_FILES: usize = 4096;
 pub const MAX_USER_OVERRIDE_TEXT_LEN: usize = 512;
 pub const MAX_USER_OVERRIDE_TAGS: usize = 32;
 pub const MAX_USER_OVERRIDE_TAG_TEXT_LEN: usize = 256;
@@ -48,10 +51,13 @@ pub fn catalog_db_path(root: &Path) -> PathBuf {
     root.join("catalog-mirror.sqlite")
 }
 
-/// Open the mirror, creating parent directories. Callers run
-/// [`migrate_catalog_db`] next; a database that cannot migrate rebuilds from
-/// verified bytes via [`recover_catalog_db_from_verified`].
+/// Open the mirror, creating parent directories. The root is validated the
+/// same way as the managed runtime root before anything is created: no
+/// symlink or reparse point in the ancestors, and an already-existing root
+/// must be a real directory. A squatted fallback or cache path fails loudly
+/// here instead of redirecting reads and writes through a planted link.
 pub fn open_catalog_db(root: &Path) -> Result<Connection, String> {
+    super::artifact::validate_no_reparse_ancestors("Catalog database root", root)?;
     std::fs::create_dir_all(root)
         .map_err(|error| format!("Could not create {}: {error}", root.display()))?;
     Connection::open(catalog_db_path(root))
@@ -301,14 +307,18 @@ fn insert_model_with_ownership_guard(
 /// [`super::catalog`] functions, so SQLite is storage, not a second filter
 /// implementation.
 pub fn read_catalog_db_models(connection: &Connection) -> Result<Vec<CatalogModel>, String> {
-    let mut statement = connection
-        .prepare(
-            "SELECT id, repo, family, parameters, publisher, author, summary,
+    // The row bound lives in the query, not after materialization: one more
+    // than the bound is enough to report the overflow.
+    let query = format!(
+        "SELECT id, repo, family, parameters, publisher, author, summary,
                     tags_json, gated, downloads, likes, license, pipeline_tag,
                     library_name, architecture, last_modified, created_at,
                     user_sourced
-             FROM catalog_model ORDER BY id",
-        )
+             FROM catalog_model ORDER BY id LIMIT {}",
+        MAX_CATALOG_MIRROR_ROWS + 1
+    );
+    let mut statement = connection
+        .prepare(&query)
         .map_err(|error| format!("Could not read the local catalog database: {error}"))?;
     let rows = statement
         .query_map([], |row| {
@@ -357,12 +367,14 @@ pub fn read_catalog_db_models(connection: &Connection) -> Result<Vec<CatalogMode
             user_sourced,
         ) = row.map_err(|error| format!("Could not read the local catalog database: {error}"))?;
         let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
-        let mut file_statement = connection
-            .prepare(
-                "SELECT quant, filename, size_bytes, sha256, revision,
+        let file_query = format!(
+            "SELECT quant, filename, size_bytes, sha256, revision,
                         last_modified, created_at, user_sourced
-                 FROM catalog_file WHERE model_id = ?1 ORDER BY filename",
-            )
+                 FROM catalog_file WHERE model_id = ?1 ORDER BY filename LIMIT {}",
+            MAX_CATALOG_MODEL_FILES + 1
+        );
+        let mut file_statement = connection
+            .prepare(&file_query)
             .map_err(|error| format!("Could not read the local catalog database: {error}"))?;
         let files = file_statement
             .query_map([&id], |row| {
@@ -401,6 +413,11 @@ pub fn read_catalog_db_models(connection: &Connection) -> Result<Vec<CatalogMode
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
+        if files.len() > MAX_CATALOG_MODEL_FILES {
+            return Err(format!(
+                "The local catalog database contains too many files for model {id}."
+            ));
+        }
         models.push(CatalogModel {
             id,
             repo,
@@ -693,6 +710,15 @@ pub fn validate_user_override(model: &CatalogModel) -> Result<(), String> {
                 "A revision is too long (maximum {MAX_USER_OVERRIDE_REVISION_LEN} bytes)."
             ));
         }
+        // Revisions become URL path segments at download through
+        // `resolve_url_with`: the signed-catalog rule applies here too, so
+        // traversal and dot segments fail before the row is tagged or stored.
+        if !super::catalog::is_safe_revision(&file.revision) {
+            return Err(format!(
+                "Override file {} has an unsafe revision.",
+                file.filename
+            ));
+        }
         for date in [&file.last_modified, &file.created_at] {
             if date.len() > MAX_USER_OVERRIDE_DATE_LEN {
                 return Err(format!(
@@ -947,6 +973,93 @@ pub fn user_override_file(
 mod tests {
     use super::super::catalog;
     use super::*;
+
+    #[test]
+    fn override_revision_rejects_traversal_and_dot_segments() {
+        // Revisions become URL path segments at download: `..`, empty
+        // segments, and blank or padded values must fail validation, not
+        // just length. A single `.` segment normalizes away in URLs and
+        // stays accepted under the shared signed-catalog rule.
+        for revision in ["../../evil", "a//b", "", "main "] {
+            let mut model = sample_override("traversal");
+            model.files[0].revision = revision.into();
+            let error = validate_user_override(&model).unwrap_err();
+            assert!(error.contains("revision"), "{revision}: {error}");
+        }
+        let mut model = sample_override("traversal-ok");
+        model.files[0].revision = "refs/pr/27".into();
+        validate_user_override(&model).unwrap();
+    }
+
+    #[test]
+    fn catalog_db_open_rejects_a_planted_link_root() {
+        // The cache root (including the temp fallback) must fail loudly
+        // when it is a planted link, not redirect reads and writes.
+        let outer = crate::test_support::unique_temp_dir("db-link");
+        std::fs::create_dir_all(&outer).unwrap();
+        // Control: a real directory always opens (the validation must not
+        // reject legitimate roots on machines without symlink privilege).
+        open_catalog_db(&outer).unwrap();
+        let link = outer.join("linked-root");
+        if std::os::windows::fs::symlink_dir(&outer, &link).is_err() {
+            return;
+        }
+        let error = open_catalog_db(&link).unwrap_err();
+        assert!(
+            error.contains("link or reparse"),
+            "unexpected error: {error}"
+        );
+        let _ = std::fs::remove_dir_all(&outer);
+    }
+
+    #[test]
+    fn mirror_row_bound_rejects_an_overgrown_database() {
+        // The row bound must report the overflow: 5,001 rows fail, and the
+        // query caps the read instead of materializing an unbounded set.
+        let root = crate::test_support::unique_temp_dir("row-bound");
+        let mut connection = open_catalog_db(&root).unwrap();
+        migrate_catalog_db(&connection).unwrap();
+        let transaction = connection.transaction().unwrap();
+        for index in 0..=MAX_CATALOG_MIRROR_ROWS {
+            transaction
+                .execute(
+                    "INSERT INTO catalog_model (id, repo) VALUES (?1, ?2)",
+                    rusqlite::params![format!("m{index}"), "r"],
+                )
+                .unwrap();
+        }
+        transaction.commit().unwrap();
+        let error = read_catalog_db_models(&connection).unwrap_err();
+        assert!(error.contains("too many rows"), "{error}");
+        drop(connection);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn mirror_file_bound_rejects_an_overgrown_file_set() {
+        // One model with 4,097 files fails the read; the per-model file set
+        // is capped in the query, not after materializing it all.
+        let root = crate::test_support::unique_temp_dir("file-bound");
+        let mut connection = open_catalog_db(&root).unwrap();
+        migrate_catalog_db(&connection).unwrap();
+        let transaction = connection.transaction().unwrap();
+        transaction
+            .execute("INSERT INTO catalog_model (id, repo) VALUES ('m', 'r')", [])
+            .unwrap();
+        for index in 0..=MAX_CATALOG_MODEL_FILES {
+            transaction
+                .execute(
+                    "INSERT INTO catalog_file (filename_lower, model_id, filename, size_bytes, sha256) VALUES (?1, 'm', ?2, 10, 'd')",
+                    rusqlite::params![format!("f{index}"), format!("f{index}.gguf")],
+                )
+                .unwrap();
+        }
+        transaction.commit().unwrap();
+        let error = read_catalog_db_models(&connection).unwrap_err();
+        assert!(error.contains("too many files"), "{error}");
+        drop(connection);
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     fn sample_catalog() -> Catalog {
         catalog::parse_catalog(

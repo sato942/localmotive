@@ -231,6 +231,11 @@ pub fn save_credential<S: SecretStore>(
     if trimmed.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return Err("API key contains whitespace or control characters".into());
     }
+    if trimmed.len() > MAX_CREDENTIAL_BYTES {
+        return Err(format!(
+            "API key is too long (maximum {MAX_CREDENTIAL_BYTES} bytes)."
+        ));
+    }
     store.set(&account_for(provider_id), trimmed)?;
     credential_status(store, provider_id)
 }
@@ -622,10 +627,17 @@ pub fn exchange_code_for_key(code: &str, verifier: &str) -> Result<String, Strin
 fn http_client(timeout: Duration) -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
         .user_agent(format!("Localmotive/{}", env!("CARGO_PKG_VERSION")))
+        .redirect(redirect_policy())
         .connect_timeout(Duration::from_secs(20))
         .timeout(timeout)
         .build()
         .map_err(|error| error.to_string())
+}
+
+/// Cloud API calls never follow redirects: a 3xx from a JSON API is an
+/// error to surface, never a hop to take with credentials attached.
+pub(crate) fn redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::none()
 }
 
 fn authed(
@@ -682,10 +694,13 @@ pub const MAX_CHAT_BYTES: usize = 2 * 1024 * 1024;
 /// The key-exchange answer is one short JSON object (`{"key": "..."}`), so
 /// its cap is far below the model-list and chat caps.
 pub const MAX_KEY_EXCHANGE_BYTES: usize = 16 * 1024;
-/// One bounded retry after a 429: at most this many seconds of waiting
-///.
-pub const MAX_RETRY_AFTER_SECS: u64 = 30;
-
+/// Request-side input bounds. UI controls are hints only: a compromised
+/// webview can send any JSON, so oversize input is rejected in Rust before a
+/// keyring write or a request body is built. All generous: no legitimate
+/// API key, model id, or tuning prompt hits them.
+pub const MAX_CREDENTIAL_BYTES: usize = 4 * 1024;
+pub const MAX_CHAT_MODEL_BYTES: usize = 256;
+pub const MAX_CHAT_PROMPT_BYTES: usize = 256 * 1024;
 /// Read a response body with a hard byte cap. Exceeding the cap is an error
 /// naming the limit, not a silent truncation and not an unbounded buffer.
 /// Takes any reader so the cap is unit-testable without network access.
@@ -709,22 +724,13 @@ fn read_bounded_body(mut body: impl std::io::Read, cap: usize) -> Result<String,
 }
 
 /// The bounded wait named by a `Retry-After` header (numeric seconds or an
-/// HTTP date), clamped to 1..=MAX_RETRY_AFTER_SECS. `None` means no usable
-/// header.
+/// HTTP date) under the one shared download-side policy. `None` means no
+/// usable header.
 pub fn retry_after_secs(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    // One policy only: the shared download-side parser owns numeric, date,
+    // and horizon rules, so both request paths wait the same way.
     let raw = headers.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?;
-    let raw = raw.trim();
-    let secs = if let Ok(value) = raw.parse::<u64>() {
-        value
-    } else {
-        let target = crate::download::httpdate_secs(raw)? as i64;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .ok()?
-            .as_secs() as i64;
-        (target - now).max(0) as u64
-    };
-    Some(secs.clamp(1, MAX_RETRY_AFTER_SECS))
+    crate::download::bounded_retry_after_secs(Some(raw))
 }
 
 /// The one place both request paths turn an HTTP status into the same user
@@ -866,6 +872,16 @@ pub fn chat_with_deadline<S: SecretStore>(
 ) -> Result<String, String> {
     let provider = provider(provider_id)?;
     let secret = require_secret(store, provider_id)?;
+    if model.len() > MAX_CHAT_MODEL_BYTES {
+        return Err(format!(
+            "Model id is too long (maximum {MAX_CHAT_MODEL_BYTES} bytes)."
+        ));
+    }
+    if system.len() > MAX_CHAT_PROMPT_BYTES || user.len() > MAX_CHAT_PROMPT_BYTES {
+        return Err(format!(
+            "Chat prompt is too long (maximum {MAX_CHAT_PROMPT_BYTES} bytes)."
+        ));
+    }
     chat_via(
         provider,
         provider.base_url,
@@ -992,6 +1008,37 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cloud_api_calls_do_not_follow_redirects() {
+        // A 302 must come back as a 302, never followed: credentials stay
+        // on the API host. The redirect target is a closed port, so a
+        // following client would fail instead of returning the 302.
+        let probe = TcpListener::bind("127.0.0.1:0").unwrap();
+        let closed = probe.local_addr().unwrap().port();
+        drop(probe);
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            use std::io::{Read, Write};
+            let mut head = [0_u8; 1024];
+            let _ = stream.read(&mut head);
+            let _ = stream.write_all(
+                format!(
+                    "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{closed}/x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                )
+                .as_bytes(),
+            );
+        });
+        let status = http_client(Duration::from_secs(10))
+            .unwrap()
+            .get(format!("http://127.0.0.1:{port}/models"))
+            .send()
+            .unwrap()
+            .status();
+        assert_eq!(status.as_u16(), 302);
+    }
+
+    #[test]
     fn bounded_body_refuses_an_oversized_response() {
         // response bodies are read with a hard cap, never
         // buffered unbounded. A body one byte over the cap is an error
@@ -1083,6 +1130,25 @@ mod tests {
         assert!(save_credential(&store, "unknown", "sk-x").is_err());
         assert!(!clear_credential(&store, "openrouter").unwrap().configured);
         assert_eq!(mask_secret("short"), "••••");
+    }
+
+    #[test]
+    fn oversize_cloud_inputs_are_rejected_before_any_write_or_request() {
+        let store = MemoryStore::default();
+        let big_key = "k".repeat(MAX_CREDENTIAL_BYTES + 1);
+        assert!(save_credential(&store, "openrouter", &big_key).is_err());
+        assert!(store.get("cloud:openrouter").unwrap().is_none());
+        save_credential(&store, "openrouter", "sk-or-test").unwrap();
+        let big_model = "m".repeat(MAX_CHAT_MODEL_BYTES + 1);
+        let error = chat_with_deadline(&store, "openrouter", &big_model, "", "", None).unwrap_err();
+        assert!(error.contains("too long"), "{error}");
+        let big_prompt = "p".repeat(MAX_CHAT_PROMPT_BYTES + 1);
+        let error =
+            chat_with_deadline(&store, "openrouter", "model", &big_prompt, "", None).unwrap_err();
+        assert!(error.contains("too long"), "{error}");
+        let error =
+            chat_with_deadline(&store, "openrouter", "model", "", &big_prompt, None).unwrap_err();
+        assert!(error.contains("too long"), "{error}");
     }
 
     #[test]
@@ -1427,7 +1493,7 @@ mod tests {
             let wait = quota["retryAfter"]
                 .as_u64()
                 .or_else(|| quota["retryAfter"].as_str().and_then(|s| s.parse().ok()))
-                .map(|secs: u64| secs.clamp(1, MAX_RETRY_AFTER_SECS));
+                .map(|secs: u64| secs.clamp(1, 30));
             let message = status_outcome(
                 provider,
                 reqwest::StatusCode::from_u16(quota["status"].as_u64().unwrap() as u16).unwrap(),
@@ -1467,18 +1533,16 @@ mod tests {
             headers
         };
         assert_eq!(retry_after_secs(&header("7")), Some(7));
-        // Anything above the cap clamps to the cap; anything unusable is None.
-        assert_eq!(
-            retry_after_secs(&header("9999")),
-            Some(MAX_RETRY_AFTER_SECS)
-        );
+        // Above the 86_400 s horizon the shared policy refuses the wait and
+        // the caller falls back to backoff; the old cloud-local clamp slept.
+        assert_eq!(retry_after_secs(&header("99999")), None);
         assert_eq!(retry_after_secs(&header("0")), Some(1));
         assert_eq!(retry_after_secs(&header("soon")), None);
         assert_eq!(retry_after_secs(&reqwest::header::HeaderMap::new()), None);
         // An HTTP-date an hour in the future clamps to the cap too.
         let future = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
         let date = httpdate_format(future);
-        assert_eq!(retry_after_secs(&header(&date)), Some(MAX_RETRY_AFTER_SECS));
+        assert_eq!(retry_after_secs(&header(&date)), Some(30));
     }
 
     /// Minimal IMF-fixdate formatter for the retry-after date case.

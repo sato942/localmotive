@@ -1104,8 +1104,11 @@ pub(crate) fn httpdate_secs(value: &str) -> Option<u64> {
     let value = value.trim_end();
     let value = value.strip_suffix(" GMT")?;
     let (weekday, rest) = value.split_once(", ")?;
-    if weekday.len() != 3 {
-        return None;
+    // The weekday carries no date information, but an unknown name proves
+    // the value is not an IMF-fixdate at all.
+    match weekday {
+        "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" => {}
+        _ => return None,
     }
     let mut parts = rest.split(' ');
     let day: u64 = parts.next()?.parse().ok()?;
@@ -1899,6 +1902,36 @@ fn fetch_chunk(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn httpdate_rejects_non_dates_and_bounds_checks_each_field() {
+        // The parser accepts exactly one IMF-fixdate shape. Garbage names,
+        // short years, out-of-range fields, and trailing junk are None; a
+        // leap second (:60) is accepted and lands on the minute edge.
+        assert_eq!(
+            httpdate_secs("Sun, 06 Nov 1994 08:49:37 GMT"),
+            Some(784111777)
+        );
+        assert_eq!(httpdate_secs("Xyz, 06 Nov 1994 08:49:37 GMT"), None);
+        assert_eq!(httpdate_secs("Sunday, 06 Nov 1994 08:49:37 GMT"), None);
+        assert_eq!(httpdate_secs("Sun, 06 Nov 94 08:49:37 GMT"), None);
+        assert_eq!(httpdate_secs("Sun, 00 Nov 1994 08:49:37 GMT"), None);
+        assert_eq!(httpdate_secs("Sun, 32 Nov 1994 08:49:37 GMT"), None);
+        assert_eq!(httpdate_secs("Sun, 06 Xyz 1994 08:49:37 GMT"), None);
+        assert_eq!(httpdate_secs("Sun, 06 Nov 1994 24:00:00 GMT"), None);
+        assert_eq!(httpdate_secs("Sun, 06 Nov 1994 08:60:00 GMT"), None);
+        assert_eq!(
+            httpdate_secs("Sun, 06 Nov 1994 08:49:37 GMT "),
+            Some(784111777)
+        );
+        assert_eq!(httpdate_secs("Sun, 06 Nov 1994 08:49:37 GMT extra"), None);
+        assert_eq!(httpdate_secs("Sun, 06 Nov 1994 08:49:37"), None);
+        assert_eq!(httpdate_secs("soon"), None);
+        assert_eq!(
+            httpdate_secs("Sun, 06 Nov 1994 08:49:60 GMT"),
+            Some(784111800)
+        );
+    }
 
     /// Give each test its own temp directory.
     ///

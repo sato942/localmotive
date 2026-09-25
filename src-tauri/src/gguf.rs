@@ -20,8 +20,9 @@ const MAX_TENSOR_COUNT: u64 = 1_000_000;
 const MAX_RECORDED_TENSORS: usize = 4_096;
 const MAX_TENSOR_DIMENSIONS: u32 = 8;
 /// Metadata key/value pairs are counted; a file claiming more fails before
-/// any per-pair work starts.
-const MAX_KV_COUNT: u64 = 1_000_000;
+/// any per-pair work starts. Production keeps this far above real files
+/// (tens of entries) but far below the old one-million budget.
+const MAX_KV_COUNT: u64 = 65_536;
 /// One metadata key.
 const MAX_KEY_BYTES: u64 = 16 * 1024;
 /// One retained string value.
@@ -31,6 +32,8 @@ const MAX_RETAINED_METADATA_BYTES: u64 = 2 * 1024 * 1024;
 /// Aggregate parser work units (one per scalar or array element touched),
 /// bounding total CPU spent on adversarially arranged metadata.
 const MAX_PARSER_WORK_UNITS: u64 = 64 * 1024 * 1024;
+/// Relevant-key facts retained for the IPC summary, in file order.
+const MAX_METADATA_FACTS: usize = 1_024;
 
 /// The documented allocation/work limits of one parse. Production always
 /// uses `Default`; tests can pass tiny limits to assert exact boundary
@@ -38,6 +41,7 @@ const MAX_PARSER_WORK_UNITS: u64 = 64 * 1024 * 1024;
 #[derive(Clone, Copy, Debug)]
 pub struct ParseLimits {
     pub max_kv_count: u64,
+    pub max_facts: usize,
     pub max_key_bytes: u64,
     pub max_string_bytes: u64,
     pub max_retained_bytes: u64,
@@ -49,6 +53,7 @@ impl Default for ParseLimits {
     fn default() -> Self {
         Self {
             max_kv_count: MAX_KV_COUNT,
+            max_facts: MAX_METADATA_FACTS,
             max_key_bytes: MAX_KEY_BYTES,
             max_string_bytes: MAX_RETAINED_STRING_BYTES,
             max_retained_bytes: MAX_RETAINED_METADATA_BYTES,
@@ -595,6 +600,10 @@ fn parse_inner<R: Read>(
     summary.metadata_facts = pairs
         .iter()
         .filter(|(key, _)| relevant_metadata_key(key))
+        // Facts feed the IPC summary: keep only the first `max_facts` in
+        // file order so a hostile file cannot grow the summary without
+        // bound. Duplicate keys resolve first-wins through the same order.
+        .take(reader.limits.max_facts)
         .filter_map(|(key, value)| {
             value.as_metadata_value().map(|value| MetadataFact {
                 key: key.clone(),
@@ -821,12 +830,45 @@ mod tests {
     fn tiny_limits() -> ParseLimits {
         ParseLimits {
             max_kv_count: 4,
+            max_facts: 2,
             max_key_bytes: 64,
             max_string_bytes: 16,
             max_retained_bytes: 64,
             max_work_units: 16,
             max_array_elements: 4,
         }
+    }
+
+    #[test]
+    fn kv_count_budget_rejects_tens_of_thousands_of_pairs() {
+        // Production caps pairs far below the old one-million budget: a
+        // header declaring 65,537 pairs fails on the count alone, while the
+        // fixture itself stays a few dozen bytes.
+        let bytes = gguf_header(0, 65_537);
+        let error = parse(bytes.as_slice()).unwrap_err();
+        assert!(
+            error.to_string().contains("exceeds the supported limit"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn retained_facts_truncate_deterministically_at_their_cap() {
+        // Relevant-key facts feed the IPC summary: only the first
+        // `max_facts` survive, in file order, so a hostile file cannot grow
+        // the summary without bound.
+        let mut bytes = gguf_header(0, 3);
+        kv_str(&mut bytes, "general.b", "two");
+        kv_str(&mut bytes, "general.a", "one");
+        kv_str(&mut bytes, "general.c", "three");
+        let summary = parse_with_limits(bytes.as_slice(), None, tiny_limits()).unwrap();
+        let keys: Vec<&str> = summary
+            .metadata_facts
+            .iter()
+            .map(|fact| fact.key.as_str())
+            .collect();
+        // `general.c` is dropped; the survivors sort by key after truncation.
+        assert_eq!(keys, vec!["general.a", "general.b"]);
     }
 
     #[test]
