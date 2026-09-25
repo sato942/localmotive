@@ -816,11 +816,21 @@ pub fn validate_attempt_consistency(
     terminal_outcome: Option<AttemptOutcome>,
 ) -> Result<(), DomainError> {
     if observations.is_empty() {
-        return Err(DomainError::new(
-            ErrorCode::MissingValue,
-            "observations",
-            "A finalized record requires at least one observation",
-        ));
+        // MT-03: a run that dies in warmup has no observations, but it
+        // carries its terminal failure outcome and warmup errors. It
+        // persists as a Failed record instead of vanishing. Cancellation
+        // still leaves no record, and a run with no outcome at all is still
+        // contentless.
+        match terminal_outcome {
+            Some(AttemptOutcome::Failed) | Some(AttemptOutcome::TimedOut) => return Ok(()),
+            _ => {
+                return Err(DomainError::new(
+                    ErrorCode::MissingValue,
+                    "observations",
+                    "A finalized record requires at least one observation",
+                ));
+            }
+        }
     }
     if let Some(outcome) = terminal_outcome {
         if outcome == AttemptOutcome::Succeeded {
@@ -1192,6 +1202,19 @@ mod tests {
         assert_eq!(workload.warmups, 1);
         assert_eq!(workload.trials, 5);
         assert_eq!(workload.seed, Some(42));
+    }
+
+    #[test]
+    fn proc12_warmup_only_failure_validates_as_a_failed_attempt() {
+        // P1-29 (MT-03): a run that dies in warmup carries its terminal
+        // outcome and warmup errors but zero observations. The contract must
+        // accept it so the partial run persists as Failed instead of
+        // vanishing; a run with no outcome at all is still rejected.
+        let workload = Workload::default();
+        validate_attempt_consistency(&workload, &[], Some(AttemptOutcome::Failed)).unwrap();
+        validate_attempt_consistency(&workload, &[], Some(AttemptOutcome::TimedOut)).unwrap();
+        let error = validate_attempt_consistency(&workload, &[], None).unwrap_err();
+        assert_eq!(error.field, "observations");
     }
 
     #[test]

@@ -456,10 +456,13 @@ Fix these after P0 and before the next feature.
   field `confirmed` kept so old reports load (documented on the struct);
   stopped_reason "stays unconfirmed" → "records no verdict". RED render test
   + label mutant failed, `npm run check` EXIT 0 (291/291), cargo 670/0.
-- [ ] **P1-29 — MT-03: persist warmup-only failures as Failed manifests.**
-  Warmup failure returns with empty `observations`, so `validate_attempt_consistency`
-  rejects the manifest and nothing is saved. Persist the partial run (Failed class)
-  with a RED warmup-failure test.
+- [x] **P1-29 — MT-03: persist warmup-only failures as Failed manifests.** Done
+  2026-09-25: `validate_attempt_consistency` accepts empty observations iff the
+  terminal outcome is Failed or TimedOut (the run carries warmup errors +
+  outcome, so it persists as Failed via the existing `(Err, Some)` summary
+  arm). Cancelled/None/Succeeded + empty still rejected (cancel leaves no
+  record, as before). RED contract test + reject-mutant failed, fmt/clippy
+  clean, cargo 671/0.
 - [ ] **P1-30 — MT-05: restore the server after a cold v2 benchmark.**
   `benchmark_v2` takes the user's server (`slot.take()`), terminates it for cold
   mode, and never relaunches it. Relaunch the same profile after the run (or refuse
