@@ -534,10 +534,22 @@ Fix these after P0 and before the next feature.
   11 dead files, then caught a 12th (`watch_console_windows.py`, REVIEW-only
   mention) the manual pass missed; deleted all 12 via `git rm`. `npm run check`
   EXIT 0 (265/265).
-- [ ] **P2-3 — Keep one CDP client (LAB-03):** `scripts/lib/cdp_client.mjs`.
-- [ ] **P2-4 — Replace source-text tests with behavior tests.** Delete the
-  test-only `ALL_SOURCES` (`src-tauri/src/lib.rs:17-37`). Delete the prose
-  assertions in `scripts/tests/release-gates.test.mjs`.
+- [x] **P2-3 — Keep one CDP client (LAB-03):** `scripts/lib/cdp_client.mjs`.
+  Triple-checked 2026-09-25: exactly one `new WebSocket(` in `scripts/`
+  (`lib/cdp_client.mjs:44`); consolidated by P1-13; enforced by the
+  `the CDP WebSocket is constructed in exactly one place` gate (green in
+  `npm run check` EXIT 0 runs). No change needed.
+- [x] **P2-4 — Replace source-text tests with behavior tests.** Done (safe
+  subset) 2026-09-25: deleted `cold_benchmark_uses_a_fresh_runtime...` (twinned
+  by `proc13` + `cold_harness_*` behaviorals) and `r16_..._releases_ownership...`
+  (twinned by `proc14` + `r16_*` + `f9_02_*` behaviorals, all mutant-proven in
+  P1-30/P1-31). KEPT the other 7 `ALL_SOURCES` guards (managed-trust, lease
+  ordering RT-04, contained-spawn, launch evidence, snapshot gate, memory
+  wiring, IPC-01 placement: ordering/absence/wiring invariants with no
+  unit-observable equivalent; deleting them loses trust-boundary coverage) so
+  `ALL_SOURCES` stays; KEPT the release-gates doc/decision pins (D3/D4/D5, L2
+  ceiling, unsigned disclosure: owner-ordered locks, not incidental prose).
+  Rust 668/0, fmt/clippy clean.
 - [ ] **P2-5 — Remove the audit-ticket labels** from Rust source (399) and
   rename ticket-named test modules by behavior.
 - [ ] **P2-6 — Keep one benchmark system (MT-09, FE-05).**
