@@ -424,10 +424,15 @@ Fix these after P0 and before the next feature.
   runs full `ensure_safe_write_entry` (truncating write). Reused the RT-01
   check instead of a new helper. RED `E0425`, removal mutant failed the
   guard, fmt/clippy clean, cargo 660/0.
-- [ ] **P1-25 — DL-01: revalidate override rows at read time.** `user_override_file`
-  trusts SQLite content validated only at write time; a direct DB edit can swap the
-  digest and authorize malicious bytes. Add read-time integrity (e.g., a MAC with a
-  Credential Manager key) with a RED tampered-row test.
+- [x] **P1-25 — DL-01: revalidate override rows at read time.** Done 2026-09-25:
+  new `row_mac` column (schema v2, in-place `ALTER` for v1, no backfill —
+  backfilling would launder a swapped digest) + HMAC-SHA256 tag over every
+  authorization field, key in Credential Manager (`Localmotive /
+  catalog-override-mac`, get-or-create; `hmac 0.12` dep justified as the
+  audit fix). `user_override_file` rechecks the tag each read (constant-time
+  `verify_slice`); legacy rows refused until re-saved. RED tamper test,
+  bypass mutant failed (2 tests), round-trip + legacy + migration tests,
+  fmt/clippy clean, cargo 664/0.
 - [ ] **P1-26 — DL-03: verify the handle, not the path, on reads.** `validate_regular_non_reparse_file`
   then `File::open` (e.g., `gguf.rs:649-657`) leaves a plant-between-check-and-open
   window. Open first, then verify the handle (one link, no reparse, final-path

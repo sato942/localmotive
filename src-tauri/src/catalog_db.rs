@@ -15,11 +15,14 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::{Path, PathBuf};
 
+use hmac::Mac;
+
 use super::catalog::{Catalog, CatalogFile, CatalogModel};
 
 /// Current local database schema. Bumped only with a migration in
-/// [`migrate_catalog_db`]; old files rebuild rather than partially upgrade.
-pub const CATALOG_DB_SCHEMA_VERSION: u32 = 1;
+/// [`migrate_catalog_db`]: version 1 gains the override integrity column in
+/// place, older files rebuild.
+pub const CATALOG_DB_SCHEMA_VERSION: u32 = 2;
 
 /// Local user-added catalog entries live in the same SQLite mirror with
 /// `user_sourced = 1`. They are never written to the signed artifact, never
@@ -70,6 +73,21 @@ pub fn migrate_catalog_db(connection: &Connection) -> Result<(), String> {
             "The local catalog database is newer (version {version}) than this build understands (version {CATALOG_DB_SCHEMA_VERSION}). Delete it to rebuild."
         ));
     }
+    if version == 1 {
+        // Version 2 adds integrity tags on user override file rows (audit
+        // DL-01). Existing rows keep their bytes with an empty tag, so reads
+        // refuse them until they are re-saved; tags are never backfilled,
+        // because backfilling would launder a swapped digest.
+        connection
+            .execute_batch(
+                "BEGIN;
+                 ALTER TABLE catalog_file ADD COLUMN row_mac TEXT NOT NULL DEFAULT '';
+                 PRAGMA user_version = 2;
+                 COMMIT;",
+            )
+            .map_err(|error| format!("Could not migrate the local catalog database: {error}"))?;
+        return Ok(());
+    }
     connection
         .execute_batch(
             "BEGIN;
@@ -105,10 +123,11 @@ pub fn migrate_catalog_db(connection: &Connection) -> Result<(), String> {
                  revision TEXT NOT NULL DEFAULT 'main',
                  last_modified TEXT NOT NULL DEFAULT '',
                  created_at TEXT NOT NULL DEFAULT '',
-                 user_sourced INTEGER NOT NULL DEFAULT 0
+                 user_sourced INTEGER NOT NULL DEFAULT 0,
+                 row_mac TEXT NOT NULL DEFAULT ''
              );
              CREATE INDEX catalog_file_model_idx ON catalog_file(model_id);
-             PRAGMA user_version = 1;
+             PRAGMA user_version = 2;
              COMMIT;",
         )
         .map_err(|error| format!("Could not migrate the local catalog database: {error}"))?;
@@ -233,20 +252,30 @@ fn insert_model_with_ownership_guard(
                 file.filename
             )
         })?;
+        // DL-01: user rows carry an integrity tag over every authorization
+        // field so a later database edit cannot swap the digest; curated
+        // rows carry none (their authority is the signed snapshot).
+        let row_mac = if user_sourced {
+            let key = override_integrity_key()?;
+            mac_override_file(&key, &model.id, &model.repo, file)?
+        } else {
+            String::new()
+        };
         connection
             .execute(
                 &format!(
                     "INSERT INTO catalog_file
                  (filename_lower, model_id, quant, filename, size_bytes, sha256,
-                  revision, last_modified, created_at, user_sourced)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                  revision, last_modified, created_at, user_sourced, row_mac)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                  ON CONFLICT(filename_lower) DO UPDATE SET
                   model_id = excluded.model_id, quant = excluded.quant,
                   filename = excluded.filename, size_bytes = excluded.size_bytes,
                   sha256 = excluded.sha256, revision = excluded.revision,
                   last_modified = excluded.last_modified,
                   created_at = excluded.created_at,
-                  user_sourced = excluded.user_sourced{file_guard}",
+                  user_sourced = excluded.user_sourced,
+                  row_mac = excluded.row_mac{file_guard}",
                 ),
                 params![
                     file.filename.to_ascii_lowercase(),
@@ -259,6 +288,7 @@ fn insert_model_with_ownership_guard(
                     file.last_modified,
                     file.created_at,
                     flag,
+                    row_mac,
                 ],
             )
             .map_err(|error| format!("Could not mirror catalog file {}: {error}", file.filename))?;
@@ -471,6 +501,107 @@ fn quarantine_catalog_db(root: &Path) -> Result<Option<PathBuf>, String> {
         )
     })?;
     Ok(Some(destination))
+}
+
+/// Credential Manager slot for the override integrity key (audit DL-01). The
+/// MAC key lives outside the database, so a direct database edit cannot
+/// recompute row tags after swapping a digest.
+pub const OVERRIDE_MAC_SERVICE: &str = "Localmotive";
+const OVERRIDE_MAC_ACCOUNT: &str = "catalog-override-mac";
+
+/// Load the override integrity key, creating and storing it on first use.
+///
+/// Tests set `LOCALMOTIVE_TEST_OVERRIDE_MAC` (64 hex chars) to avoid touching
+/// Credential Manager; production builds never read that variable.
+fn override_integrity_key() -> Result<Vec<u8>, String> {
+    #[cfg(test)]
+    if let Ok(hex_key) = std::env::var("LOCALMOTIVE_TEST_OVERRIDE_MAC") {
+        return hex::decode(hex_key.trim())
+            .map_err(|error| format!("The test override key is not hex: {error}"));
+    }
+    let entry = keyring::Entry::new(OVERRIDE_MAC_SERVICE, OVERRIDE_MAC_ACCOUNT)
+        .map_err(|error| format!("Could not open Credential Manager: {error}"))?;
+    match entry.get_password() {
+        Ok(secret) if !secret.trim().is_empty() => hex::decode(secret.trim())
+            .map_err(|error| format!("The stored override key is not valid: {error}")),
+        _ => {
+            let key: [u8; 32] = rand::random();
+            entry
+                .set_password(&hex::encode(key))
+                .map_err(|error| format!("Could not store the override key: {error}"))?;
+            Ok(key.to_vec())
+        }
+    }
+}
+
+/// Tag one user override file row: HMAC-SHA256 over a canonical encoding of
+/// every authorization field. Length-prefixing keeps concatenations
+/// unambiguous across field boundaries.
+fn mac_override_file(
+    key: &[u8],
+    model_id: &str,
+    repo: &str,
+    file: &CatalogFile,
+) -> Result<String, String> {
+    use hmac::{Hmac, Mac};
+    let mut mac = Hmac::<sha2::Sha256>::new_from_slice(key)
+        .map_err(|error| format!("Could not start the override tag: {error}"))?;
+    feed_override_mac(&mut mac, model_id, repo, file);
+    Ok(hex::encode(mac.finalize().into_bytes()))
+}
+
+fn feed_override_mac(
+    mac: &mut hmac::Hmac<sha2::Sha256>,
+    model_id: &str,
+    repo: &str,
+    file: &CatalogFile,
+) {
+    for field in [
+        model_id,
+        repo,
+        &file.filename.to_ascii_lowercase(),
+        &file.quant,
+        &file.sha256,
+        &file.revision,
+    ] {
+        mac.update(&(field.len() as u64).to_be_bytes());
+        mac.update(field.as_bytes());
+    }
+    mac.update(&file.size_bytes.to_be_bytes());
+}
+
+/// Recompute the row tag and compare it in constant time. A missing tag means
+/// the row predates integrity protection; a mismatch means the row changed
+/// outside the application. Both refuse the row as download authorization.
+fn verify_override_file(
+    key: &[u8],
+    model_id: &str,
+    repo: &str,
+    file: &CatalogFile,
+    row_mac: &str,
+) -> Result<(), String> {
+    use hmac::{Hmac, Mac};
+    if row_mac.is_empty() {
+        return Err(format!(
+            "Override file {} was saved before integrity protection and must be removed and re-added.",
+            file.filename
+        ));
+    }
+    let mut mac = Hmac::<sha2::Sha256>::new_from_slice(key)
+        .map_err(|error| format!("Could not check the override tag: {error}"))?;
+    feed_override_mac(&mut mac, model_id, repo, file);
+    let stored = hex::decode(row_mac.trim()).map_err(|_| {
+        format!(
+            "Override file {} has been modified outside the application.",
+            file.filename
+        )
+    })?;
+    mac.verify_slice(&stored).map_err(|_| {
+        format!(
+            "Override file {} has been modified outside the application.",
+            file.filename
+        )
+    })
 }
 
 /// Validate one user-supplied override before it touches the mirror. The same
@@ -724,6 +855,21 @@ pub fn remove_user_catalog_override(connection: &mut Connection, id: &str) -> Re
         .map_err(|error| format!("Could not publish the local removal: {error}"))
 }
 
+/// One user override file row as read back for authorization: the model
+/// identity, every authorization field, and the integrity tag.
+type OverrideFileRow = (
+    String,
+    String,
+    String,
+    String,
+    i64,
+    String,
+    String,
+    String,
+    String,
+    String,
+);
+
 /// Resolve one user-owned file row for download authorization. Only rows
 /// explicitly marked `user_sourced = 1` (on both the file and its model) are
 /// returned; the exact stored SHA-256 and size are the authorization. Mutable
@@ -735,10 +881,10 @@ pub fn user_override_file(
     filename: &str,
     revision: &str,
 ) -> Result<Option<CatalogFile>, String> {
-    let row: Option<(String, String, i64, String, String, String, String)> = connection
+    let row: Option<OverrideFileRow> = connection
         .query_row(
-            "SELECT f.quant, f.filename, f.size_bytes, f.sha256, f.revision,
-                    f.last_modified, f.created_at
+            "SELECT m.id, m.repo, f.quant, f.filename, f.size_bytes, f.sha256, f.revision,
+                    f.last_modified, f.created_at, f.row_mac
              FROM catalog_file f
              JOIN catalog_model m ON m.id = f.model_id
              WHERE m.repo = ?1 AND f.filename_lower = ?2 AND f.revision = ?3
@@ -753,19 +899,33 @@ pub fn user_override_file(
                     row.get(4)?,
                     row.get(5)?,
                     row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                    row.get(9)?,
                 ))
             },
         )
         .optional()
         .map_err(|error| format!("Could not read the local override store: {error}"))?;
-    let Some((quant, filename, size_bytes, sha256, revision, last_modified, created_at)) = row
+    let Some((
+        model_id,
+        model_repo,
+        quant,
+        filename,
+        size_bytes,
+        sha256,
+        revision,
+        last_modified,
+        created_at,
+        row_mac,
+    )) = row
     else {
         return Ok(None);
     };
     let size_bytes = u64::try_from(size_bytes).map_err(|_| {
         format!("Override file {filename} has an out-of-range size in the local database.")
     })?;
-    Ok(Some(CatalogFile {
+    let file = CatalogFile {
         quant,
         filename,
         size_bytes,
@@ -774,7 +934,13 @@ pub fn user_override_file(
         last_modified,
         created_at,
         user_sourced: true,
-    }))
+    };
+    // DL-01: the stored digest is authorization, so the row tag is
+    // rechecked on every read. A swapped digest fails here even though it
+    // would still pass write-time shape validation.
+    let key = override_integrity_key()?;
+    verify_override_file(&key, &model_id, &model_repo, &file, &row_mac)?;
+    Ok(Some(file))
 }
 
 #[cfg(test)]
@@ -955,6 +1121,131 @@ mod tests {
         assert!(rows
             .iter()
             .any(|model| model.id == "mine" && model.user_sourced));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn proc09_override_file_with_a_swapped_digest_is_refused_at_read() {
+        // P1-25 (DL-01): the override read trusts the stored digest, which a
+        // direct database edit can swap to authorize malicious bytes. A
+        // tampered row must be refused at read time, never returned.
+        std::env::set_var(
+            "LOCALMOTIVE_TEST_OVERRIDE_MAC",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        );
+        let root = unique_test_dir("localmotive-catalog-db-proc09");
+        let verified = sample_catalog();
+        seed_mirror(&root, &verified);
+        let mut connection = open_catalog_db(&root).unwrap();
+        migrate_catalog_db(&connection).unwrap();
+        save_user_catalog_override(&mut connection, &sample_override("mine")).unwrap();
+        connection
+            .execute(
+                "UPDATE catalog_file SET sha256 = ?1 WHERE user_sourced = 1",
+                [&"f".repeat(64)],
+            )
+            .unwrap();
+        let error = user_override_file(&connection, "local/Handmade-GGUF", "mine.gguf", "main")
+            .unwrap_err();
+        assert!(
+            error.contains("modified") || error.contains("integrity"),
+            "a swapped digest must be refused, got: {error}"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn proc09_untampered_override_rows_still_authorize() {
+        // DL-01 companion: an honestly saved override reads back with its
+        // exact digest (the tag is transparent on the good path).
+        std::env::set_var(
+            "LOCALMOTIVE_TEST_OVERRIDE_MAC",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        );
+        let root = unique_test_dir("localmotive-catalog-db-proc09b");
+        let verified = sample_catalog();
+        seed_mirror(&root, &verified);
+        let mut connection = open_catalog_db(&root).unwrap();
+        migrate_catalog_db(&connection).unwrap();
+        save_user_catalog_override(&mut connection, &sample_override("mine")).unwrap();
+        let file = user_override_file(&connection, "local/Handmade-GGUF", "mine.gguf", "main")
+            .unwrap()
+            .expect("the saved override authorizes");
+        assert_eq!(file.sha256, "c".repeat(64));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn proc09_legacy_override_rows_are_refused_until_resaved() {
+        // DL-01 companion: rows saved before integrity protection carry no
+        // tag and are refused (never backfilled: backfilling would launder a
+        // swapped digest). Re-saving the same override authorizes again.
+        std::env::set_var(
+            "LOCALMOTIVE_TEST_OVERRIDE_MAC",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        );
+        let root = unique_test_dir("localmotive-catalog-db-proc09c");
+        let verified = sample_catalog();
+        seed_mirror(&root, &verified);
+        let mut connection = open_catalog_db(&root).unwrap();
+        migrate_catalog_db(&connection).unwrap();
+        let model = sample_override("mine");
+        connection
+            .execute(
+                "INSERT INTO catalog_model (id, repo, user_sourced) VALUES (?1, ?2, 1)",
+                [&model.id, &model.repo],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO catalog_file
+                 (filename_lower, model_id, quant, filename, size_bytes, sha256,
+                  revision, user_sourced, row_mac)
+                 VALUES (?1, ?2, '', ?3, 10, ?4, 'main', 1, '')",
+                ["mine.gguf", "mine", "mine.gguf", &"c".repeat(64)],
+            )
+            .unwrap();
+        let error = user_override_file(&connection, "local/Handmade-GGUF", "mine.gguf", "main")
+            .unwrap_err();
+        assert!(
+            error.contains("before integrity protection"),
+            "legacy rows must be refused, got: {error}"
+        );
+        save_user_catalog_override(&mut connection, &model).unwrap();
+        user_override_file(&connection, "local/Handmade-GGUF", "mine.gguf", "main")
+            .unwrap()
+            .expect("the re-saved override authorizes");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn proc09_migration_adds_row_tags_without_touching_rows() {
+        // DL-01 companion: a version-1 database gains the tag column in
+        // place with its rows intact; old rows read as legacy (refused until
+        // re-saved), and the version stamp advances.
+        let root = unique_test_dir("localmotive-catalog-db-proc09d");
+        let connection = open_catalog_db(&root).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE catalog_model (id TEXT PRIMARY KEY, repo TEXT NOT NULL, user_sourced INTEGER NOT NULL DEFAULT 0);
+                 CREATE TABLE catalog_file (filename_lower TEXT PRIMARY KEY, model_id TEXT NOT NULL, quant TEXT NOT NULL DEFAULT '', filename TEXT NOT NULL, size_bytes INTEGER NOT NULL, sha256 TEXT NOT NULL, revision TEXT NOT NULL DEFAULT 'main', last_modified TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT '', user_sourced INTEGER NOT NULL DEFAULT 0);
+                 INSERT INTO catalog_model (id, repo, user_sourced) VALUES ('mine', 'local/Handmade-GGUF', 1);
+                 PRAGMA user_version = 1;",
+            )
+            .unwrap();
+        migrate_catalog_db(&connection).unwrap();
+        let version: u32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 2);
+        let kept: String = connection
+            .query_row(
+                "SELECT repo FROM catalog_model WHERE id = 'mine'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(kept, "local/Handmade-GGUF");
         let _ = std::fs::remove_dir_all(root);
     }
 
