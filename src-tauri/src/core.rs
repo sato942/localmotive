@@ -1733,12 +1733,18 @@ const RUNTIME_PROBE_STREAM_LIMIT: usize = 2 * 1024 * 1024;
 /// bypass compiled-content authorization (audit RT-02: tuning preparation and
 /// the older runtime-health command previously executed managed binaries
 /// without the protected launch path's trust check).
-fn run_runtime_probe_with<G: Fn(&Path) -> Result<(), String>>(
+fn run_runtime_probe_with<
+    G: Fn(&Path) -> Result<Option<crate::runtime::ManagedExecutionLease>, String>,
+>(
     path: &Path,
     arg: &str,
     guard: G,
 ) -> Result<String, String> {
-    guard(path)?;
+    // RT-03: the guard returns the execution lease and the probe holds it
+    // across spawn and output collection. The lease pins the verified bytes
+    // with deny-write/delete sharing, so a same-user replacement between
+    // verification and execution fails at the OS instead of racing the spawn.
+    let _lease = guard(path)?;
     let mut command = crate::proc::hidden_command(path);
     command.arg(arg).stdin(std::process::Stdio::null());
     let output = crate::proc::output_with_timeout_and_cancel(
@@ -1770,7 +1776,7 @@ fn run_runtime_probe_with<G: Fn(&Path) -> Result<(), String>>(
 }
 
 pub fn inspect_runtime(path: &Path) -> Result<RuntimeCapabilities, String> {
-    inspect_runtime_with(path, crate::runtime::authorize_managed_execution)
+    inspect_runtime_with(path, crate::runtime::authorize_managed_execution_lease)
 }
 
 /// Runtime inspection with an explicit managed-execution guard.
@@ -1778,7 +1784,9 @@ pub fn inspect_runtime(path: &Path) -> Result<RuntimeCapabilities, String> {
 /// Tuning preparation and the public inspect command both reach managed probes
 /// through this function, so the guard is part of the probe path itself and
 /// cannot be skipped by calling runtime inspection directly (audit RT-02).
-fn inspect_runtime_with<G: Fn(&Path) -> Result<(), String>>(
+fn inspect_runtime_with<
+    G: Fn(&Path) -> Result<Option<crate::runtime::ManagedExecutionLease>, String>,
+>(
     path: &Path,
     guard: G,
 ) -> Result<RuntimeCapabilities, String> {
@@ -2192,15 +2200,17 @@ pub fn check_runtime_health(
         expected_adapters,
         expected_backend,
         expected_model,
-        crate::runtime::authorize_managed_execution,
+        crate::runtime::authorize_managed_execution_lease,
     )
 }
 
 /// Device health with an explicit managed-execution guard.
 ///
-/// The older public runtime-health command and managed health preparation both
-/// funnel their `llama-cli.exe` probe through this function (audit RT-02).
-fn check_runtime_health_with<G: Fn(&Path) -> Result<(), String>>(
+/// The guard returns the execution lease so the `--list-devices` probe below
+/// runs while the verified bytes are pinned (audit RT-03).
+fn check_runtime_health_with<
+    G: Fn(&Path) -> Result<Option<crate::runtime::ManagedExecutionLease>, String>,
+>(
     server_path: &Path,
     expected_adapters: &[String],
     expected_backend: &str,
@@ -2974,6 +2984,12 @@ mod tests {
             guard < runner,
             "the guard must run before the process starts"
         );
+        // The guard's execution lease must stay alive across the spawn
+        // (audit RT-03): the probe binds it past the contained runner.
+        assert!(
+            probe.contains("_lease"),
+            "the probe must hold the execution lease across the child"
+        );
     }
 
     #[cfg(windows)]
@@ -3108,7 +3124,7 @@ fn main() {
         // The older runtime-health workflow must reject the replaced managed CLI
         // before the --list-devices probe executes it (audit RT-02).
         let guard = |path: &Path| {
-            crate::runtime::authorize_managed_execution_with(
+            crate::runtime::authorize_managed_execution_lease_with(
                 path,
                 &primary,
                 &legacy,
@@ -3120,7 +3136,7 @@ fn main() {
             !marker.exists(),
             "the tampered managed CLI executed before rejection: {error}"
         );
-        assert!(error.contains("content verification"), "{error}");
+        assert!(error.contains("execution-identity"), "{error}");
         fs::remove_dir_all(base).unwrap();
     }
 
@@ -3142,7 +3158,7 @@ fn main() {
         // managed probes through inspect_runtime; the replaced server must be
         // rejected before --version runs it (audit RT-02).
         let guard = |path: &Path| {
-            crate::runtime::authorize_managed_execution_with(
+            crate::runtime::authorize_managed_execution_lease_with(
                 path,
                 &primary,
                 &legacy,
@@ -3154,7 +3170,112 @@ fn main() {
             !marker.exists(),
             "the tampered managed server executed before rejection: {error}"
         );
-        assert!(error.contains("content verification"), "{error}");
+        assert!(error.contains("execution-identity"), "{error}");
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    /// Compile a fixture executable that sleeps past the test probe timeout
+    /// before writing `marker`. The timeout kills the child; the marker only
+    /// matters if the child ever runs to completion.
+    fn build_slow_sentinel_probe(root: &Path, marker: &Path) -> PathBuf {
+        let source = root.join("slow_sentinel.rs");
+        let executable = root.join("slow_sentinel.exe");
+        fs::write(
+            &source,
+            format!(
+                "fn main() {{ std::thread::sleep(std::time::Duration::from_secs(5)); std::fs::write({:?}, b\"ran\").unwrap(); }}",
+                marker
+            ),
+        )
+        .unwrap();
+        let status = crate::proc::hidden_command("rustc")
+            .arg(&source)
+            .arg("-o")
+            .arg(&executable)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        executable
+    }
+
+    #[test]
+    fn rt03_probe_holds_the_execution_lease_across_the_child() {
+        let base =
+            std::env::temp_dir().join(format!("localmotive-rt03-held-{0}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        let primary = base.join("Localmotive").join("runtimes");
+        let legacy = base.join("GGUF Pilot").join("runtimes");
+        let (server, _cli) = crate::runtime::test_fixtures::place_fixture_install(&primary);
+        let marker = base.join("slow-ran.txt");
+        let slow = build_slow_sentinel_probe(&base, &marker);
+
+        // The probe guard leases the fixture install while the probe target
+        // itself is an unrelated slow executable: any replacement of the
+        // leased bytes must fail for as long as the probe child runs, and
+        // succeed once the probe returns (audit RT-03).
+        let guard_server = server.clone();
+        let guard_primary = primary.clone();
+        let guard_legacy = legacy.clone();
+        let (held_tx, held_rx) = std::sync::mpsc::channel();
+        let guard = move |_: &Path| {
+            let lease = crate::runtime::authorize_managed_execution_lease_with(
+                &guard_server,
+                &guard_primary,
+                &guard_legacy,
+                crate::runtime::test_fixtures::fixture_source(),
+            )?;
+            // The lease is held from this point until the probe returns, so
+            // the main thread may only start replacing after this signal.
+            held_tx.send(()).expect("hold signal receiver hung up");
+            Ok(lease)
+        };
+        let probe = std::thread::spawn(move || run_runtime_probe_with(&slow, "--version", guard));
+        held_rx
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .expect("the probe guard never acquired the lease");
+        let mut refused_during_probe = false;
+        for _ in 0..20 {
+            if fs::write(&server, b"replaced executable").is_err() {
+                refused_during_probe = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let outcome = probe.join().expect("probe thread panicked").unwrap_err();
+        assert!(
+            refused_during_probe,
+            "the leased server was replaceable while the probe child ran: {outcome}"
+        );
+        fs::write(&server, b"replaced executable").unwrap();
+        assert_eq!(fs::read(&server).unwrap(), b"replaced executable");
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn rt03_tampered_managed_server_fails_execution_identity_before_probe() {
+        let base =
+            std::env::temp_dir().join(format!("localmotive-rt03-tamper-{0}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        let primary = base.join("Localmotive").join("runtimes");
+        let legacy = base.join("GGUF Pilot").join("runtimes");
+        let (server, _cli) = crate::runtime::test_fixtures::place_fixture_install(&primary);
+        fs::write(&server, b"attacker bytes").unwrap();
+
+        // The lease guard verifies content hashes, so a replaced server is
+        // rejected with an execution-identity error before any probe child
+        // starts (audit RT-03).
+        let guard = |path: &Path| {
+            crate::runtime::authorize_managed_execution_lease_with(
+                path,
+                &primary,
+                &legacy,
+                crate::runtime::test_fixtures::fixture_source(),
+            )
+        };
+        let error = run_runtime_probe_with(&server, "--version", guard).unwrap_err();
+        assert!(error.contains("execution-identity"), "{error}");
         fs::remove_dir_all(base).unwrap();
     }
 

@@ -4043,6 +4043,7 @@ fn verified_installation_in_with(
 /// replaced, so a process created from this installation loads exactly the
 /// content the lease verified (audit RT-04). Drop the lease when the launched
 /// process no longer loads from the installation.
+#[derive(Debug)]
 pub(crate) struct ManagedExecutionLease {
     // Never read: the handles exist purely to keep the content pinned.
     #[allow(dead_code)]
@@ -4084,9 +4085,14 @@ fn lease_verified_installation(
 
 /// Verify a managed installation and retain an execution-identity lease.
 ///
+/// Every code path that starts a managed llama binary -- `--version`, `--help`,
+/// `--list-devices`, health, benchmarks, or the server -- must pass this
+/// boundary first. The complete compiled installation inventory (including
+/// llama-cli.exe and approved DLLs) is verified before any byte executes.
+///
 /// Returns `Ok(None)` for a deliberately selected external runtime, which
 /// keeps the separate external-runtime policy and no compiled-content lease.
-fn authorize_managed_execution_lease_with(
+pub(crate) fn authorize_managed_execution_lease_with(
     executable: &Path,
     primary: &Path,
     legacy: &Path,
@@ -4149,39 +4155,6 @@ fn managed_runtime_verified_in_with(
 
 fn managed_runtime_verified_in(runtime_path: &Path, root: &Path) -> Result<bool, String> {
     managed_runtime_verified_in_with(runtime_path, root, ManagedApprovalSource::compiled())
-}
-
-/// Authorize executing a managed binary for any probe or launch.
-///
-/// Every code path that starts a managed llama binary -- `--version`, `--help`,
-/// `--list-devices`, health, benchmarks, or the server -- must pass this
-/// boundary first. The complete compiled installation inventory (including
-/// llama-cli.exe and approved DLLs) is verified before any byte executes, and
-/// no caller can bypass it by invoking runtime inspection directly (audit
-/// RT-02). Paths outside both managed roots are deliberately selected external
-/// runtimes: they stay governed by the caller's explicit regular-file checks
-/// and are not covered by compiled-content approval.
-pub(crate) fn authorize_managed_execution(executable: &Path) -> Result<(), String> {
-    authorize_managed_execution_with(
-        executable,
-        &runtime_data_dir("Localmotive"),
-        &runtime_data_dir("GGUF Pilot"),
-        ManagedApprovalSource::compiled(),
-    )
-}
-
-pub(crate) fn authorize_managed_execution_with(
-    executable: &Path,
-    primary: &Path,
-    legacy: &Path,
-    approval: ManagedApprovalSource<'_>,
-) -> Result<(), String> {
-    for root in [primary, legacy] {
-        if verified_installation_in_with(executable, root, approval)?.is_some() {
-            return Ok(());
-        }
-    }
-    Ok(())
 }
 
 pub fn managed_runtime_verified(runtime_path: &Path) -> Result<bool, String> {
@@ -6914,6 +6887,7 @@ Connection: close
             &trusted_digest
         )
         .is_err());
+        drop(staging);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -8130,37 +8104,62 @@ Connection: close
         let (server, cli) = test_fixtures::place_fixture_install(&primary);
 
         // A verified installation authorizes the server and its approved
-        // companion CLI, because probes execute both.
-        authorize_managed_execution_with(&server, &primary, &legacy, source).unwrap();
-        authorize_managed_execution_with(&cli, &primary, &legacy, source).unwrap();
+        // companion CLI, because probes execute both. The lease guard is the
+        // same check the probe path holds across the child (audit RT-03).
+        assert!(
+            authorize_managed_execution_lease_with(&server, &primary, &legacy, source)
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            authorize_managed_execution_lease_with(&cli, &primary, &legacy, source)
+                .unwrap()
+                .is_some()
+        );
 
         // A tampered DLL is rejected even though the server EXE is unchanged.
         let dll = server.parent().unwrap().join("ggml-cpu.dll");
         std::fs::write(&dll, b"hostile backend").unwrap();
         let error =
-            authorize_managed_execution_with(&server, &primary, &legacy, source).unwrap_err();
-        assert!(error.contains("content verification"), "{error}");
+            authorize_managed_execution_lease_with(&server, &primary, &legacy, source).unwrap_err();
+        assert!(error.contains("execution-identity"), "{error}");
         std::fs::write(&dll, b"trusted backend").unwrap();
 
         // A replaced server EXE is rejected, and approved bytes restore access.
         std::fs::write(&server, b"hostile executable").unwrap();
-        assert!(authorize_managed_execution_with(&server, &primary, &legacy, source).is_err());
+        assert!(
+            authorize_managed_execution_lease_with(&server, &primary, &legacy, source).is_err()
+        );
         std::fs::write(&server, b"trusted executable").unwrap();
-        authorize_managed_execution_with(&server, &primary, &legacy, source).unwrap();
+        assert!(
+            authorize_managed_execution_lease_with(&server, &primary, &legacy, source)
+                .unwrap()
+                .is_some()
+        );
 
         // An extra unapproved file changes the inventory and is rejected.
         let extra = server.parent().unwrap().join("extra.dll");
         std::fs::write(&extra, b"x").unwrap();
-        assert!(authorize_managed_execution_with(&server, &primary, &legacy, source).is_err());
+        assert!(
+            authorize_managed_execution_lease_with(&server, &primary, &legacy, source).is_err()
+        );
         std::fs::remove_file(&extra).unwrap();
-        authorize_managed_execution_with(&server, &primary, &legacy, source).unwrap();
+        assert!(
+            authorize_managed_execution_lease_with(&server, &primary, &legacy, source)
+                .unwrap()
+                .is_some()
+        );
 
         // Paths outside both managed roots keep the deliberate external-runtime
-        // policy: compiled-content approval does not apply.
+        // policy: compiled-content approval does not apply, so no lease.
         let external = base.join("external").join("llama-server.exe");
         std::fs::create_dir_all(external.parent().unwrap()).unwrap();
         std::fs::write(&external, b"external runtime").unwrap();
-        authorize_managed_execution_with(&external, &primary, &legacy, source).unwrap();
+        assert!(
+            authorize_managed_execution_lease_with(&external, &primary, &legacy, source)
+                .unwrap()
+                .is_none()
+        );
 
         // A legacy path without compiled approval stays rejected.
         let legacy_dir = legacy.join("b00000").join("cpu");
@@ -8173,7 +8172,8 @@ Connection: close
         let legacy_server = legacy_dir.join("llama-server.exe");
         std::fs::write(&legacy_server, b"legacy runtime").unwrap();
         assert!(
-            authorize_managed_execution_with(&legacy_server, &primary, &legacy, source).is_err()
+            authorize_managed_execution_lease_with(&legacy_server, &primary, &legacy, source)
+                .is_err()
         );
 
         let _ = std::fs::remove_dir_all(&base);

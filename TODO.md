@@ -305,8 +305,21 @@ Fix these after P0 and before the next feature.
   Done 2026-09-25: root-binding already held (existing tests); added the
   read-only `verification_mode` command plus banner (`warning-band`,
   role=status) and the SECURITY.md section. Rust 638/638, Vitest 290/290.
-- [ ] **P1-10 — RT-01, RT-03:** Close the same-user races with handle-based
-  opens and the existing execution lease.
+- [x] **P1-10 — RT-01, RT-03:** Close the same-user races with handle-based
+  opens and the existing execution lease. (2026-09-25: RT-01 — new
+  `download::write_trusted_record` writes `runtime.json` through the retained
+  staging capability: path-level refusal, open without truncate, handle check
+  (one link, no reparse, final-path parent), truncate+write through the
+  verified handle; staging guard now drops after `finalize`, not before
+  publication; deleted `fs::write` path. RT-03 — probe guards return
+  `Option<ManagedExecutionLease>` and `run_runtime_probe_with` holds it
+  across spawn+output; `inspect`+`health` use `authorize_managed_execution_lease`;
+  deleted the orphaned `()` guards and migrated the RT-02 authorization test
+  to the lease. RED: hard-link victim clobbered under old `fs::write`;
+  compile-RED on new guard type. Mutation: path-check skip still refused
+  (handle layer independent; also caught truncate-before-verify flaw, fixed to
+  verify-then-set_len); lease-drop mutant failed the holding test. Rust
+  642/0, clippy clean, node 290/290.)
 - [ ] **P1-11 — Check the 31 unverified High findings in `REVIEW.md`.**
   For each finding, reproduce or refute it. Record VERIFIED or REFUTED in the
   ledger. Add a P1 item for each verified defect.
