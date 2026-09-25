@@ -31,14 +31,25 @@ pub(crate) fn benchmark_drain_ceiling(workload: &evidence::Workload) -> Duration
 /// the request deadline. The run - and the command that owns it - must not
 /// finalize a record, clear its slot, or release the operations reservation
 /// while such a worker can still be inferring: replacement work would overlap
-/// it (R04/R16). The ceiling is the expected bound; if it is exceeded, the
-/// worker outlived its own request deadline - an unexpected state - and the
-/// wait still continues rather than releasing ownership while work continues.
-pub(crate) fn drain_owned_workers(client: &LocalHttpClient, ceiling: Duration) {
+/// it (R04/R16). The ceiling derives from the workload's own request deadline
+/// plus teardown slack; a worker owned past it is anomalous, so the wait is
+/// bounded there and the outcome is reported as [`DrainOutcome::Unresolved`]
+/// instead of holding the slot permanently (audit MT-06).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DrainOutcome {
+    /// Every owned worker exited within the ceiling.
+    Drained,
+    /// A worker was still owned past the ceiling. The caller records the
+    /// unresolved state so replacement work is informed.
+    Unresolved,
+}
+
+pub(crate) fn drain_owned_workers(client: &LocalHttpClient, ceiling: Duration) -> DrainOutcome {
     if client.wait_for_worker_drain(ceiling) {
-        return;
+        DrainOutcome::Drained
+    } else {
+        DrainOutcome::Unresolved
     }
-    while !client.wait_for_worker_drain(Duration::from_secs(1)) {}
 }
 
 use serde::Serialize;
@@ -113,14 +124,29 @@ async fn run_legacy_benchmark(
     .map_err(|error| format!("Benchmark task failed: {error}"));
     // Keep both ownership slots until every request exits, including when
     // the measurement task fails. Cancellation alone does not end its worker.
-    tauri::async_runtime::spawn_blocking(move || {
+    // MT-06: the drain is bounded by the workload deadline; an unresolved
+    // drain discards the legacy result instead of holding the slot forever.
+    // The slot is cleared before the discard so the stuck worker cannot hold
+    // the machine permanently.
+    let legacy_drain = tauri::async_runtime::spawn_blocking(move || {
         drain_owned_workers(
             &client,
             core::LEGACY_BENCH_TIMEOUT.saturating_add(WORKER_TEARDOWN_SLACK),
-        );
+        )
     })
     .await
     .map_err(|error| format!("Benchmark drain task failed: {error}"))?;
+    if legacy_drain == DrainOutcome::Unresolved {
+        *state
+            .benchmark
+            .lock()
+            .map_err(|_| "Benchmark state is unavailable".to_string())? = None;
+        return Err(
+            "Benchmark workers did not drain within the workload deadline; \
+            the result was discarded because a worker may still be inferring"
+                .to_string(),
+        );
+    }
     *state
         .benchmark
         .lock()
@@ -520,10 +546,10 @@ pub(crate) fn run_benchmark_snapshot(
     };
     // R04/R16: a cancelled attempt abandons its worker, which keeps its
     // request until the operation deadline. The run holds ownership until
-    // every such worker has exited: the ceiling derives from THIS workload's
-    // request deadline, and a worker that outlives even that keeps being
-    // waited for instead of being discarded under unknown ownership.
-    drain_owned_workers(&client, benchmark_drain_ceiling(&workload));
+    // the ceiling derives from THIS workload's request deadline; a worker
+    // still owned past it is reported Unresolved (MT-06) instead of holding
+    // the slot forever.
+    let drain = drain_owned_workers(&client, benchmark_drain_ceiling(&workload));
     let mut manifest = evidence::BenchmarkManifest {
         schema: evidence::BENCHMARK_SCHEMA_VERSION,
         harness_version,
@@ -566,6 +592,23 @@ pub(crate) fn run_benchmark_snapshot(
             Some(format!("Benchmark terminated with {outcome:?}")),
         ),
         (Err(error), _) => (None, evidence::FitClass::Failed, Some(error)),
+    };
+    // MT-06: an unresolved drain means a worker may still be inferring. The
+    // record keeps its observations, but the run is Failed so unsettled work
+    // never feeds fit as Measured, and the note tells replacement work why.
+    let (result_class, failure) = match drain {
+        DrainOutcome::Drained => (result_class, failure),
+        DrainOutcome::Unresolved => (
+            evidence::FitClass::Failed,
+            Some(match failure {
+                Some(note) => {
+                    format!("Benchmark workers did not drain within the workload deadline; {note}")
+                }
+                None => "Benchmark workers did not drain within the workload deadline; \
+                    a worker may still be inferring"
+                    .into(),
+            }),
+        ),
     };
     let manifest_path = measurement::persist_manifest(directory, &manifest)?;
     Ok(BenchmarkRunResult {
@@ -743,8 +786,9 @@ pub(crate) async fn benchmark_v2(
     // own request deadline. The slot and the operations reservation stay held
     // for the whole wait, so replacement work is refused while the abandoned
     // request can still be inferring; a discarded result never releases
-    // ownership early. The ceiling derives from this workload's deadline.
-    drain_owned_workers(&client, drain_ceiling);
+    // ownership early. The ceiling derives from this workload's deadline; a
+    // worker still owned past it is reported Unresolved (MT-06).
+    let command_drain = drain_owned_workers(&client, drain_ceiling);
     {
         let mut active = state
             .benchmark
@@ -762,11 +806,32 @@ pub(crate) async fn benchmark_v2(
                 .into(),
         );
     }
+    // MT-06: an unresolved command drain means a worker may still be
+    // inferring. Mark the run Failed so unsettled work never feeds fit as
+    // Measured, and skip the server relaunch: starting replacement work over
+    // a still-inferring worker is the overlap R04 guards against.
+    if command_drain == DrainOutcome::Unresolved {
+        result.result_class = evidence::FitClass::Failed;
+        let note = "Benchmark workers did not drain within the workload deadline; \
+            a worker may still be inferring";
+        result.failure = Some(match result.failure.take() {
+            Some(previous) => format!("{note}; {previous}"),
+            None => note.into(),
+        });
+        if cold_profile.is_some() {
+            result.server_restored = false;
+            result.server_restore_error = Some(
+                "Server restore skipped: benchmark workers did not drain, so the \
+                relaunched server could overlap a still-inferring worker"
+                    .into(),
+            );
+        }
+    }
     // MT-05: the record above is finalized; now give the user their server
     // back. The benchmark reservation is released first so the relaunch can
     // own the machine through the normal start path. A relaunch failure is
     // recorded on the result, never substituted for the benchmark outcome.
-    if let Some(profile) = cold_profile {
+    if let Some(profile) = cold_profile.filter(|_| command_drain == DrainOutcome::Drained) {
         drop(reservation);
         let outcome = start_server(app.clone(), profile, state).await.map(|_| ());
         let (restored, error) = cold_restore_outcome(outcome);
@@ -1315,11 +1380,10 @@ mod r16_ownership_tests {
     }
 
     #[test]
-    fn r16_cancellation_during_preparation_leaves_an_owned_worker_the_drain_waits_for() {
-        // The cold path prepares the exact prompt before any measured trial.
-        // A cancellation during that preparation abandons the tokenize worker
-        // exactly like a cancelled trial; the run shares one client, so the
-        // command's drain must observe it and hold ownership until it exits.
+    fn proc14_bounded_drain_reports_an_unresolved_worker() {
+        // P1-31 (MT-06): the ownership drain is bounded by its ceiling. A
+        // worker still owned past the ceiling is reported Unresolved instead
+        // of holding the benchmark slot forever; a settled client drains.
         let fixture = serve_slow_body(Duration::from_millis(1_200), 12);
         let client = LocalHttpClient::plain("127.0.0.1", fixture.port).unwrap();
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -1345,28 +1409,40 @@ mod r16_ownership_tests {
             work.join().unwrap().is_err(),
             "the cancelled preparation reports the cancellation"
         );
-        assert!(
-            client.active_cancellable_workers() > 0,
-            "the abandoned preparation worker is still in flight after the cancellation"
-        );
-        // A ceiling below the worker's own deadline must not report the
-        // ownership resolved, and the drain must keep waiting past it instead
-        // of releasing ownership while the request is still running.
-        assert!(
-            !client.wait_for_worker_drain(Duration::from_millis(50)),
-            "the drain must report the worker still owned"
-        );
-        let started = Instant::now();
-        drain_owned_workers(&client, Duration::from_millis(50));
-        let waited = started.elapsed();
+        let outcome = drain_owned_workers(&client, Duration::from_millis(50));
         assert_eq!(
-            client.active_cancellable_workers(),
-            0,
-            "the drain returns only after the worker exited"
+            outcome,
+            DrainOutcome::Unresolved,
+            "a worker owned past the ceiling must not hold the slot forever"
         );
         assert!(
-            waited >= Duration::from_millis(500),
-            "the drain kept waiting past the exceeded ceiling ({waited:?})"
+            settle_until(
+                || client.active_cancellable_workers() == 0,
+                Duration::from_secs(30)
+            ),
+            "the abandoned worker winds down on its own"
+        );
+        assert_eq!(
+            drain_owned_workers(&client, Duration::from_millis(50)),
+            DrainOutcome::Drained
+        );
+    }
+
+    #[test]
+    fn r16_cancellation_during_preparation_leaves_an_owned_worker_the_drain_waits_for() {
+        // MT-06 supersedes the infinite wait this test once pinned: the
+        // abandoned-worker scenario now lives in
+        // proc14_bounded_drain_reports_an_unresolved_worker, which asserts the
+        // ceiling bounds the drain and the straggler is reported Unresolved.
+        // This test keeps the R16 derivation pin: the bound follows the
+        // workload's own request deadline.
+        let short = evidence::Workload {
+            timeout_ms: 5_000,
+            ..evidence::Workload::default()
+        };
+        assert_eq!(
+            benchmark_drain_ceiling(&short),
+            Duration::from_millis(35_000)
         );
     }
 }

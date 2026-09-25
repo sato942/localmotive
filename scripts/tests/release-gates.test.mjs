@@ -3028,13 +3028,19 @@ test("R04: the benchmark run owns its cancelled workers until they exit", async 
   assert.ok(v2Drain > 0, "the command drains its owned workers on every exit path");
   assert.ok(slotRelease > v2Drain, "the benchmark slot is held until the drain returns");
   assert.ok(resultRead > v2Drain, "a discarded result cannot release ownership before the drain");
-  // The drain never gives up and releases ownership while work continues: an
-  // exceeded bound continues waiting instead of dropping the worker.
+  // MT-06 supersedes the infinite wait: the drain is bounded by the ceiling
+  // and reports its outcome, so a stuck worker cannot hold the slot forever.
+  assert.match(service, /pub\(crate\) enum DrainOutcome/);
   assert.match(
     service,
-    /pub\(crate\) fn drain_owned_workers\(client: &LocalHttpClient, ceiling: Duration\) \{[\s\S]*?while !client\.wait_for_worker_drain\(Duration::from_secs\(1\)\) \{\}/,
-    "an expired drain bound keeps waiting instead of releasing ownership",
+    /pub\(crate\) fn drain_owned_workers\(client: &LocalHttpClient, ceiling: Duration\) -> DrainOutcome/,
+    "the drain must report whether its workers exited",
   );
+  assert.ok(
+    !service.includes("while !client.wait_for_worker_drain"),
+    "the unbounded drain loop must not return",
+  );
+  assert.match(service, /DrainOutcome::Unresolved/, "the exceeded bound must be reported");
   // The ownership accessor and the drain are production code, not test-only.
   const cfgTest = client.split("#[cfg(test)]");
   assert.match(client, /pub\(crate\) fn wait_for_worker_drain\(&self, ceiling: Duration\) -> bool/);

@@ -472,10 +472,16 @@ Fix these after P0 and before the next feature.
   relaunch failure keeps the record and names the error. RED merge test +
   discard-mutant failed; R04 gate updated for `let mut result` (drain-before-
   read invariant unchanged); `npm run check` EXIT 0 (291/291), cargo 672/0.
-- [ ] **P1-31 — MT-06: bound the worker drain.** `drain_owned_workers` loops
-  `while !wait_for_worker_drain(1s) {}` forever; a stuck worker holds the benchmark
-  slot and the operations reservation permanently. Bound the loop and report an
-  unresolved outcome.
+- [x] **P1-31 — MT-06: bound the worker drain.** Done 2026-09-25:
+  `drain_owned_workers` returns `DrainOutcome::{Drained, Unresolved}` after one
+  bounded ceiling wait; the infinite 1 s loop is gone. Snapshot folds
+  Unresolved into Failed + a drain note (observations stay in the manifest);
+  the v2 command marks Failed, appends the note, and skips the relaunch (R04
+  overlap) with a recorded skip reason; legacy discards with a drain error
+  after clearing its slot. Rule change per AGENTS.md (R04-as-tested blocked
+  every bounded path): infinite-hold pins replaced in release-gates + the old
+  r16 wait test (scenario now in proc14). RED proc14 + always-Drained mutant
+  failed; `npm run check` EXIT 0 (291/291), cargo 673/0, clippy clean.
 - [ ] **P1-32 — MT-08: make replay respect unknown execution identity.**
   The compatibility key embeds `"unknown"` for unobserved drivers, so two machines
   with unknown drivers produce equal keys and replay proceeds. Refuse replay while
