@@ -705,6 +705,7 @@ pub fn validate_replay_compatibility(
     logical_model_id: &str,
     current_raw_args: &[String],
     current_compatibility_key: &str,
+    current_unknown_identities: &[String],
 ) -> Result<(), String> {
     let model = manifest
         .model
@@ -712,6 +713,24 @@ pub fn validate_replay_compatibility(
         .ok_or("Replay manifest does not contain a model identity")?;
     if model.logical_id != logical_model_id {
         return Err("Replay model identity does not match the running server".into());
+    }
+    // MT-08: the compatibility key embeds "unknown" for unobserved drivers,
+    // so two machines with unknown drivers produce equal keys. Refuse replay
+    // while either side has unobserved execution identity instead of
+    // comparing the unknown-bearing keys; re-measure on the current machine.
+    let mut unknowns: Vec<&str> = manifest
+        .execution_snapshot_unknowns
+        .iter()
+        .map(String::as_str)
+        .collect();
+    unknowns.extend(current_unknown_identities.iter().map(String::as_str));
+    unknowns.sort_unstable();
+    unknowns.dedup();
+    if !unknowns.is_empty() {
+        return Err(format!(
+            "Replay refused: unobserved execution identity ({}); re-measure on this machine instead",
+            unknowns.join(", ")
+        ));
     }
     let launch = manifest
         .launch
@@ -1580,6 +1599,7 @@ mod tests {
             "fixture",
             &raw_args,
             loaded.compatibility_key.as_deref().unwrap(),
+            &[],
         )
         .unwrap();
         assert_eq!(fs::read(&path).unwrap(), before);
@@ -1613,28 +1633,33 @@ mod tests {
                 ..BenchmarkManifest::default()
             };
             let before = serde_json::to_vec(&manifest).unwrap();
-            let result = validate_replay_compatibility(&manifest, "model-a", &raw, &key);
+            let result = validate_replay_compatibility(&manifest, "model-a", &raw, &key, &[]);
             assert!(
                 result.is_ok(),
                 "same current arguments rejected: {result:?}"
             );
             assert_eq!(serde_json::to_vec(&manifest).unwrap(), before);
             assert!(
-                validate_replay_compatibility(&manifest, "other-model", &raw, &key)
+                validate_replay_compatibility(&manifest, "other-model", &raw, &key, &[])
                     .unwrap_err()
                     .contains("model identity")
             );
             for invalid in ["legacy".to_string(), format!("v2:{}", "b".repeat(64))] {
                 assert!(
-                    validate_replay_compatibility(&manifest, "model-a", &raw, &invalid).is_err()
+                    validate_replay_compatibility(&manifest, "model-a", &raw, &invalid, &[])
+                        .is_err()
                 );
                 let mut changed = manifest.clone();
                 changed.compatibility_key = Some(invalid);
-                assert!(validate_replay_compatibility(&changed, "model-a", &raw, &key).is_err());
+                assert!(
+                    validate_replay_compatibility(&changed, "model-a", &raw, &key, &[]).is_err()
+                );
             }
             let mut missing_key = manifest.clone();
             missing_key.compatibility_key = None;
-            assert!(validate_replay_compatibility(&missing_key, "model-a", &raw, &key).is_err());
+            assert!(
+                validate_replay_compatibility(&missing_key, "model-a", &raw, &key, &[]).is_err()
+            );
         }
     }
 
@@ -1661,10 +1686,67 @@ mod tests {
             "model-a",
             &["--ctx-size".into(), "8192".into()],
             &format!("v2:{}", "a".repeat(64)),
+            &[],
         )
         .unwrap_err();
 
         assert!(error.contains("launch arguments"));
+    }
+
+    #[test]
+    fn proc15_replay_refuses_unknown_execution_identity() {
+        // P1-32 (MT-08): the compatibility key embeds "unknown" for
+        // unobserved drivers, so two machines with unknown drivers produce
+        // equal keys. Replay must refuse while either side has unobserved
+        // identity instead of comparing the unknown-bearing keys.
+        let key = format!("v2:{}", "a".repeat(64));
+        let manifest = BenchmarkManifest {
+            compatibility_key: Some(key.clone()),
+            execution_snapshot_unknowns: vec!["driverVersion:unobserved-adapter".into()],
+            model: Some(ModelFact {
+                logical_id: "model-a".into(),
+                ..ModelFact::default()
+            }),
+            launch: Some(LaunchFact {
+                command_args: vec!["--ctx-size".into(), "4096".into()],
+                effective_context: observed_context(4_096),
+                batch: 512,
+                ubatch: 128,
+                ..LaunchFact::default()
+            }),
+            ..BenchmarkManifest::default()
+        };
+
+        let error = validate_replay_compatibility(
+            &manifest,
+            "model-a",
+            &["--ctx-size".into(), "4096".into()],
+            &key,
+            &[],
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("unobserved execution identity"),
+            "the recorded unknowns refuse replay, got: {error}"
+        );
+        assert!(error.contains("driverVersion:unobserved-adapter"));
+
+        let known_manifest = BenchmarkManifest {
+            execution_snapshot_unknowns: Vec::new(),
+            ..manifest.clone()
+        };
+        let error = validate_replay_compatibility(
+            &known_manifest,
+            "model-a",
+            &["--ctx-size".into(), "4096".into()],
+            &key,
+            &["hostCpuModel".to_string()],
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("unobserved execution identity"),
+            "the current-machine unknowns refuse replay, got: {error}"
+        );
     }
 
     #[test]
@@ -1690,6 +1772,7 @@ mod tests {
             "model-a",
             &["--ctx-size".into(), "4096".into()],
             &format!("v2:{}", "b".repeat(64)),
+            &[],
         )
         .unwrap_err();
 

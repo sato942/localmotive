@@ -897,7 +897,7 @@ pub(crate) fn replay_benchmark_manifest_worker(
     let runtime_identity = runtime::describe_runtime(Path::new(&server.profile.runtime));
     let executable_sha256 = artifact::sha256_path(Path::new(&server.profile.runtime))?;
     let hardware = runtime::detect_hardware();
-    let current_compatibility_key = benchmark_execution_snapshot_from_profile(
+    let current_snapshot = benchmark_execution_snapshot_from_profile(
         &server.profile,
         &server.validation,
         &artifacts,
@@ -905,13 +905,13 @@ pub(crate) fn replay_benchmark_manifest_worker(
         &executable_sha256,
         &hardware,
         Some(&manifest.workload),
-    )?
-    .compatibility_key;
+    )?;
     measurement::validate_replay_compatibility(
         &manifest,
         logical_id,
         &server.validation.arguments.effective_args,
-        &current_compatibility_key,
+        &current_snapshot.compatibility_key,
+        &current_snapshot.unknown_identities,
     )?;
     Ok(manifest.workload)
 }

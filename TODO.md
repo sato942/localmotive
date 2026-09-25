@@ -482,10 +482,13 @@ Fix these after P0 and before the next feature.
   every bounded path): infinite-hold pins replaced in release-gates + the old
   r16 wait test (scenario now in proc14). RED proc14 + always-Drained mutant
   failed; `npm run check` EXIT 0 (291/291), cargo 673/0, clippy clean.
-- [ ] **P1-32 — MT-08: make replay respect unknown execution identity.**
-  The compatibility key embeds `"unknown"` for unobserved drivers, so two machines
-  with unknown drivers produce equal keys and replay proceeds. Refuse replay while
-  `unknown_identities` is non-empty (or key the unknown-ness distinctly).
+- [x] **P1-32 — MT-08: make replay respect unknown execution identity.** Done
+  2026-09-25: `validate_replay_compatibility` takes the current machine's
+  unknowns and refuses while either side is non-empty, naming the unobserved
+  identities (`Replay refused: unobserved execution identity (...);
+  re-measure ...`). Worker passes the rebuilt snapshot's unknowns instead of
+  discarding them. RED proc15 (both sides) + key-only mutant failed; cargo
+  674/0, fmt/clippy clean.
 - [ ] **P1-33 — MT-09/FE-05: remove the legacy benchmark system.** `benchmark_server`
   + `BenchmarkScreen` duplicate `benchmark_v2` + `V03EvidencePanel`, and both commands
   are registered (`lib.rs:2293-2294`). Migrate remaining callers, then delete the
