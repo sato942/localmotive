@@ -563,20 +563,22 @@ Fix these after P0 and before the next feature.
   Rust 668/0, fmt/clippy clean, `npm run check` EXIT 0 15 files / 265 tests
   (`/tmp/check41.log`), audit 0, versions/pins/gates PASS. Scope: Rust source
   only; scripts/ evidence keys (`mt06_verdicts`, driver names) untouched.
-- [ ] **P2-6 — Keep one benchmark system (MT-09, FE-05).** RED written
-  2026-09-25 (legacy-gone gate extended to the tuner half; fails `the V1
-  cancellable runner must be gone` as required). GREEN plan: add a v2 trial
-  probe (build `evidence::Workload` per trial: short prompt, `generation_tokens
-  = tokens`, `trials = repeats`, 1 warmup; run the v2 warm workload runner
-  with `measurement::completion_request_cancellable`; `summarize_observations`
-  → `BenchmarkSummaryV2`), switch `tune::TrialMeasurement.summary` to V2 and
-  its consumers (evidence mapping, winner `decode_tps.mean`, fixtures), update
-  the lib.rs live-bench guard to the v2 call, then delete the V1 core block
-  (`BenchmarkSummary`, `summarize_benchmark`, `parse_tps`, V1
-  `completion_request_cancellable`, `validate_benchmark_options`,
-  `LEGACY_BENCH_TIMEOUT`, `benchmark_server_cancellable` + tests). Semantic
-  change to record: V1 aborts the trial on first error, V2 keeps partial
-  successes with `failed_trials` noted.
+- [x] **P2-6 — Keep one benchmark system (MT-09, FE-05).** Done 2026-09-25:
+  tuner migrated to the v2 contract via new `measure_trial_summary` probe
+  (`measurement_service.rs`: per-trial `evidence::Workload`, v2 warm workload
+  runner + `completion_request_cancellable`, `summarize_observations` →
+  `BenchmarkSummaryV2`); `TrialMeasurement.summary` + consumers (evidence
+  mapping, winner `decode_tps.mean`, fixtures via new `summarize_fixture_tps`)
+  on V2; V1 core block deleted (`BenchmarkSummary`, `summarize_benchmark`,
+  `parse_tps`, V1 completion path, `validate_benchmark_options`,
+  `LEGACY_BENCH_TIMEOUT`, `benchmark_server_cancellable`, 8 tests); lib.rs
+  live-bench guard repointed to the probe. One cut-script range swallowed an
+  unrelated test (`raw_file_arguments...`); restored byte-identical to HEAD.
+  Semantic changes: trial spread is population std (0.5 for [130,131], was
+  sqrt(0.5)); trials keep partial successes with `failed_trials` noted (V1
+  aborted on first error). Mutant `.skip(1)` in fixture helper failed 6 tune
+  tests, green after restore. Rust FMT_CLEAN, clippy 0, 660/0 exact;
+  `npm run check` EXIT 0 15 files / 265 tests (`/tmp/check42.log`).
 - [ ] **P2-7 — Keep one catalog schema source (LAB-06).**
 - [ ] **P2-8 — Split `src/App.tsx` (FE-04)** and keep IPC out of the screens
   (FE-06).

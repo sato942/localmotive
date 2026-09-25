@@ -119,6 +119,29 @@ pub fn metric_stats_for_test(values: impl Iterator<Item = f64>) -> Option<Metric
     metric_stats(values)
 }
 
+/// Test-only v2 summary over plain decode-throughput values: one succeeded
+/// observation per value, summarized through the same contract production
+/// trials use. Tuning fixtures build on this instead of the deleted legacy
+/// statistics builder.
+#[cfg(test)]
+pub(crate) fn summarize_fixture_tps(tps_values: &[f64]) -> BenchmarkSummaryV2 {
+    let observations = tps_values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| crate::evidence::BenchmarkObservation {
+            trial: index as u16 + 1,
+            started_at_ms: 42 + index as u64,
+            duration_ms: 100.0,
+            prompt_tokens: 32,
+            generated_tokens: 16,
+            decode_tps: Some(*value),
+            outcome: crate::evidence::AttemptOutcome::Succeeded,
+            ..Default::default()
+        })
+        .collect::<Vec<_>>();
+    summarize_observations(&observations).unwrap()
+}
+
 fn metric_stats(values: impl Iterator<Item = f64>) -> Option<MetricStats> {
     let mut values = values
         .filter(|value| value.is_finite() && *value > 0.0)

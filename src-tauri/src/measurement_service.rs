@@ -268,6 +268,35 @@ pub(crate) fn benchmark_execution_snapshot_from_profile(
     })
 }
 
+/// One tuning-trial measurement through the v2 evidence contract: a warmup
+/// plus `repeats` measured completions against the trial server, with prompt
+/// accounting and generated-token checks on every response. This replaces the
+/// legacy `benchmark_server_cancellable`, which accepted a positive
+/// server-reported rate without checking the generated token count. The trial
+/// workload keeps the established v2 default shape (deterministic
+/// server-prepared prompt, seed 42, 600 s request bound); only the generation
+/// length and trial count follow the tuning request.
+pub(crate) fn measure_trial_summary(
+    client: &LocalHttpClient,
+    tokens: u32,
+    repeats: u16,
+    cancelled: &AtomicBool,
+) -> Result<measurement::BenchmarkSummaryV2, String> {
+    let workload = evidence::Workload {
+        id: "tune-trial-v1".into(),
+        generation_tokens: tokens,
+        trials: repeats,
+        ..Default::default()
+    };
+    let run = measurement::run_workload_with(&workload, cancelled, || {
+        measurement::completion_request_cancellable(client, &workload, cancelled)
+    })?;
+    if run.terminal_outcome == Some(evidence::AttemptOutcome::Cancelled) {
+        return Err("The local request was cancelled".into());
+    }
+    measurement::summarize_observations(&run.observations)
+}
+
 /// Everything one measured attempt needs, grouped so the run signature stays
 /// readable as the ownership requirements grow.
 pub(crate) struct BenchmarkRunContext<'a> {

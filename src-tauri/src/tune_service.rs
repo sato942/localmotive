@@ -80,16 +80,21 @@ impl tune::Bench for LiveBench<'_> {
             if self.cancel.load(Ordering::Relaxed) {
                 return Err("Cancelled".into());
             }
-            // The cancellable completion path replaces the legacy benchmark so
-            // Stop cannot be ignored while a generation request is pending
-            //.
+            // The v2 trial probe replaces the legacy benchmark so Stop cannot
+            // be ignored while a generation request is pending, and every
+            // response carries prompt accounting and token-count checks.
             let client = crate::local_client::LocalHttpClient::from_profile(profile)?;
-            core::benchmark_server_cancellable(&client, self.tokens, self.repeats, &self.cancel)
-                .map(|summary| tune::TrialMeasurement {
-                    summary,
-                    command: String::new(),
-                    effective_context,
-                })
+            crate::measurement_service::measure_trial_summary(
+                &client,
+                self.tokens,
+                self.repeats,
+                &self.cancel,
+            )
+            .map(|summary| tune::TrialMeasurement {
+                summary,
+                command: String::new(),
+                effective_context,
+            })
         })();
         // Cleanup failures must be visible: a measured result may not be
         // reported as a clean success when the trial server could not be
@@ -131,8 +136,7 @@ mod combine_trial_outcome_tests {
 
     fn measurement() -> tune::TrialMeasurement {
         tune::TrialMeasurement {
-            summary: crate::core::summarize_benchmark(vec![100.0, 101.0], 256, 2)
-                .expect("fixture summarises"),
+            summary: crate::measurement::summarize_fixture_tps(&[100.0, 101.0]),
             command: String::new(),
             effective_context: Some(4096),
         }

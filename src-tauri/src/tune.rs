@@ -8,8 +8,9 @@
 //! application, and the measure-propose-measure loop. Networking and process
 //! supervision are injected so the loop is unit-testable without a GPU.
 
-use crate::core::{BenchmarkSummary, LaunchProfile, RuntimeCapabilities};
+use crate::core::{LaunchProfile, RuntimeCapabilities};
 use crate::gguf::GgufSummary;
+use crate::measurement::BenchmarkSummaryV2;
 use crate::runtime::HardwareInfo;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -94,7 +95,7 @@ pub const QUALITY_AFFECTING_FIELDS: &[&str] = &["cacheTypeK", "cacheTypeV", "spe
 ///.
 #[derive(Clone, Debug)]
 pub struct TrialMeasurement {
-    pub summary: BenchmarkSummary,
+    pub summary: BenchmarkSummaryV2,
     pub command: String,
     pub effective_context: Option<u32>,
 }
@@ -931,12 +932,12 @@ fn score_outcome(
     match outcome {
         Ok(measurement) => match measurement.effective_context {
             Some(observed) if observed >= required_context => ScoredOutcome {
-                mean_tps: Some(measurement.summary.mean_tps),
-                median_tps: Some(measurement.summary.median_tps),
+                mean_tps: Some(measurement.summary.decode_tps.mean),
+                median_tps: Some(measurement.summary.decode_tps.median),
                 error: None,
                 command: measurement.command.clone(),
                 effective_context: Some(observed),
-                std_dev: Some(sample_std_dev(&measurement.summary.samples)),
+                std_dev: Some(measurement.summary.decode_tps.standard_deviation),
                 outcome: TrialOutcome::Ok,
             },
             Some(observed) => ScoredOutcome {
@@ -1011,6 +1012,7 @@ fn objective_label(inputs: &TuningInputs) -> String {
 }
 
 /// Sample standard deviation of validated positive throughput; zero for fewer than two samples.
+#[cfg(test)]
 fn sample_std_dev(samples: &[f64]) -> f64 {
     if samples.len() < 2 {
         return 0.0;
@@ -1633,8 +1635,8 @@ pub fn run_tuning<B: Bench, A: Advisor>(
             );
             match (remeasure_baseline, remeasure_winner) {
                 (Ok(baseline_again), Ok(winner_again)) => {
-                    let b = baseline_again.summary.mean_tps;
-                    let w = winner_again.summary.mean_tps;
+                    let b = baseline_again.summary.decode_tps.mean;
+                    let w = winner_again.summary.decode_tps.mean;
                     let drift = if b.abs() > f64::EPSILON {
                         (b - baseline_tps.unwrap_or(b)).abs() / b.abs()
                     } else {
@@ -1705,7 +1707,7 @@ pub fn run_tuning<B: Bench, A: Advisor>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::summarize_benchmark;
+    use crate::measurement::summarize_fixture_tps;
 
     #[test]
     fn trial_std_dev_keeps_constant_extreme_samples_at_zero() {
@@ -1749,17 +1751,17 @@ mod tests {
             vec![f64::MAX, f64::MAX],
             vec![f64::from_bits(1), f64::from_bits(1)],
         ] {
-            let summary = summarize_benchmark(samples, 256, 2).unwrap();
+            let summary = crate::measurement::summarize_fixture_tps(&samples);
             let trial = TuningTrial {
                 index: 0,
                 changes: BTreeMap::new(),
                 rationale: "Numeric boundary fixture".into(),
-                mean_tps: Some(summary.mean_tps),
-                median_tps: Some(summary.median_tps),
+                mean_tps: Some(summary.decode_tps.mean),
+                median_tps: Some(summary.decode_tps.median),
                 error: None,
                 command: String::new(),
                 effective_context: Some(2048),
-                std_dev: Some(sample_std_dev(&summary.samples)),
+                std_dev: Some(summary.decode_tps.standard_deviation),
                 outcome: TrialOutcome::Ok,
                 chosen: TrialChoice::Baseline,
                 timestamp_ms: 0,
@@ -2021,7 +2023,7 @@ mod tests {
                 }
                 + if profile.draft_max == 5 { 15.0 } else { 0.0 };
             Ok(TrialMeasurement {
-                summary: summarize_benchmark(vec![tps, tps + 1.0], 256, 2).unwrap(),
+                summary: summarize_fixture_tps(&[tps, tps + 1.0]),
                 command: format!(
                     "cmd draft={} fa={}",
                     profile.draft_max, profile.flash_attention
@@ -2601,7 +2603,7 @@ mod tests {
                 return Err("server exited with code 1".into());
             }
             Ok(TrialMeasurement {
-                summary: summarize_benchmark(vec![100.0], 256, 1).unwrap(),
+                summary: summarize_fixture_tps(&[100.0]),
                 command: "cmd".into(),
                 effective_context: Some(4096),
             })
@@ -2627,7 +2629,7 @@ mod tests {
                 self.flag.store(true, std::sync::atomic::Ordering::Relaxed);
             }
             Ok(TrialMeasurement {
-                summary: summarize_benchmark(vec![tps, tps + 1.0], 256, 2).unwrap(),
+                summary: summarize_fixture_tps(&[tps, tps + 1.0]),
                 command: "cmd".into(),
                 effective_context: Some(4096),
             })
@@ -2646,7 +2648,7 @@ mod tests {
             self.calls.push(profile.clone());
             let (tps, ctx) = self.script[index];
             Ok(TrialMeasurement {
-                summary: summarize_benchmark(vec![tps, tps + 1.0], 256, 2).unwrap(),
+                summary: summarize_fixture_tps(&[tps, tps + 1.0]),
                 command: "cmd".into(),
                 effective_context: ctx,
             })
@@ -2854,9 +2856,9 @@ mod tests {
             serde_json::json!(["cacheTypeK"]),
             "Retiring the quality suite must not hide unmeasured tuning changes"
         );
-        // Sample standard deviation of [130, 131] is sqrt(1/2); compare
-        // against the computed value instead of a magic literal.
-        let expected = (0.5_f64).sqrt();
+        // Population standard deviation of [130, 131] is 0.5: the v2 contract
+        // divides by n, where the legacy builder divided by n-1.
+        let expected = 0.5;
         let std_dev = report.trials[1]
             .std_dev
             .expect("a scored trial records its spread");
@@ -3118,7 +3120,7 @@ mod tests {
                     0.0
                 };
             Ok(TrialMeasurement {
-                summary: summarize_benchmark(vec![tps, tps + 1.0], 256, 2).unwrap(),
+                summary: summarize_fixture_tps(&[tps, tps + 1.0]),
                 command: format!("cmd batch={} fa={}", profile.batch, profile.flash_attention),
                 effective_context: Some(4096),
             })

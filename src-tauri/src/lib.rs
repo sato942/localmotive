@@ -4270,8 +4270,8 @@ mod tuning_lifecycle_source_tests {
             "the live bench must not use the non-cancellable health wait"
         );
         assert!(
-            bench_block.contains("benchmark_server_cancellable("),
-            "the live bench must use the cancellable benchmark"
+            bench_block.contains("measure_trial_summary("),
+            "the live bench must use the v2 trial probe"
         );
         assert!(
             !bench_block.contains("core::benchmark_server("),
