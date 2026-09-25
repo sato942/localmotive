@@ -579,7 +579,15 @@ Fix these after P0 and before the next feature.
   aborted on first error). Mutant `.skip(1)` in fixture helper failed 6 tune
   tests, green after restore. Rust FMT_CLEAN, clippy 0, 660/0 exact;
   `npm run check` EXIT 0 15 files / 265 tests (`/tmp/check42.log`).
-- [ ] **P2-7 — Keep one catalog schema source (LAB-06).**
+- [x] **P2-7 — Keep one catalog schema source (LAB-06).** Closed 2026-09-25
+  as corroborated-refuted (no code change): the two-validator copy is
+  deliberate and pinned by `shared_fixture_cases_agree_with_the_javascript_
+  validator` (catalog.rs:1940, green in the 660/0 suite); the alleged shape
+  gap is benign by contract — `sequence`/`expires` are `Option<u64>`
+  (catalog.rs:255/259), enforced only when present (DC-10 replay protection
+  for served updates), so the checked-in catalog without them and
+  `validate_catalog.mjs` pinning only `schemaVersion: 2` are consistent, not
+  contradictory. P1-11 REFUTED stands.
 - [ ] **P2-8 — Split `src/App.tsx` (FE-04)** and keep IPC out of the screens
   (FE-06).
 - [ ] **P2-9 — Merge `docs/EVIDENCE-MATRIX.md` into
