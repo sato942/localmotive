@@ -369,10 +369,11 @@ Fix these after P0 and before the next feature.
   `spawn_server` (covers server-service + cold-bench launches), with the health
   context lease site also carrying the list. RED `E0599`, mutant always-Ok
   failed, source-order guards extended. fmt clean, clippy clean, cargo 643/0.
-- [ ] **P1-16 — RT-10: validate the runtime root before creating it.**
-  `install_runtime` runs `fs::create_dir_all(&root)` before
-  `validate_no_reparse_ancestors` + the symlink check. Move validation first with a
-  RED test that a hostile link ancestor is refused with no directory created.
+- [x] **P1-16 — RT-10: validate the runtime root before creating it.** Done
+  2026-09-25: new `validate_install_root_before_create` (ancestors first, then
+  existing-leaf `safe_directory`) runs before `create_dir_all` in
+  `install_runtime`. RED `E0425`, mutant call-site removal failed the order
+  guard, fmt/clippy clean, cargo 646/0.
 - [ ] **P1-17 — CORE-05: bound IPC vectors at the command boundary.**
   `inspect_model_artifact` (`companions: Vec<String>`), `PreflightRequest`
   (`selected_adapter_ids`, `manual_overrides`) and the other cited payloads take
