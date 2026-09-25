@@ -294,8 +294,11 @@ Fix these after P0 and before the next feature.
   including a failed save and an unmount. Done 2026-09-25: both saves clear
   the failed attempt (newer typing survives); both screens clear on unmount.
   4 App-level tests, RED plus mutation-proven. Vitest 288/288 (14 files).
-- [ ] **P1-8 — DL-02:** Use checked arithmetic for GGUF split metadata. RED
-  test with a split number of `u64::MAX`.
+- [x] **P1-8 — DL-02:** Use checked arithmetic for GGUF split metadata. RED
+  test with a split number of `u64::MAX`. Done 2026-09-25:
+  `split_metadata_verdict` uses `checked_add`; overflow is Mismatch with the
+  raw value kept. RED (debug panic) plus wrap-mutant proven. The release
+  `overflow-checks` profile flag stays untouched as out of scope.
 - [ ] **P1-9 — CORE-01, CORE-06:** Accept the verification overrides only with
   the isolated root. Show a verification-mode banner while an override is
   active. Document the WebView2 remote-debugging variable in `SECURITY.md`.

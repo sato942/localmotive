@@ -63,7 +63,17 @@ pub fn split_metadata_verdict(
     match (recorded_no, recorded_count) {
         (Some(no), Some(count)) => {
             let planned = (shard_index, shard_count);
-            let recorded = (no + 1, count);
+            // DL-02: `split.no` is hostile file metadata. A plain `no + 1`
+            // panics in debug and wraps in release (u64::MAX becomes shard 0,
+            // a false agreement). Reject the overflow as untrustworthy and
+            // keep the raw value for diagnosis.
+            let Some(recorded_no) = no.checked_add(1) else {
+                return SplitVerdict::Mismatch {
+                    recorded: (u64::MAX, count),
+                    planned,
+                };
+            };
+            let recorded = (recorded_no, count);
             if planned == recorded {
                 SplitVerdict::Agree { no, count }
             } else {
@@ -610,6 +620,21 @@ mod tests {
         assert_eq!(
             split_metadata_verdict(1, 4, None, Some(4)),
             SplitVerdict::Unknown
+        );
+    }
+
+    #[test]
+    fn s02_split_verdict_rejects_an_overflowing_split_number() {
+        // P1-8 (DL-02): a hostile header `split.no` of u64::MAX must not
+        // panic (debug) or wrap to 0 and agree (release). The set is not
+        // trustworthy, so the verdict is Mismatch and the raw value is kept
+        // for diagnosis.
+        assert_eq!(
+            split_metadata_verdict(0, 1, Some(u64::MAX), Some(1)),
+            SplitVerdict::Mismatch {
+                recorded: (u64::MAX, 1),
+                planned: (0, 1)
+            }
         );
     }
     use super::*;
