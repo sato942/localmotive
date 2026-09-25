@@ -1571,6 +1571,7 @@ async fn inspect_model_artifact(
     companions: Vec<String>,
     hash_files: bool,
 ) -> Result<artifact::ArtifactInspection, String> {
+    reject_oversized_ipc_vector("companions", companions.len(), MAX_IPC_COMPANIONS)?;
     tauri::async_runtime::spawn_blocking(move || {
         let companion_paths = companions
             .into_iter()
@@ -1580,6 +1581,23 @@ async fn inspect_model_artifact(
     })
     .await
     .map_err(|error| format!("Artifact inspection task failed: {error}"))?
+}
+
+/// Command-boundary caps for frontend-supplied vectors (audit CORE-05).
+/// The limits sit far above legitimate use (model sets hold single-digit
+/// shards, machines hold single-digit adapters) and are enforced before any
+/// allocation or file work.
+const MAX_IPC_COMPANIONS: usize = 64;
+const MAX_IPC_ADAPTER_IDS: usize = 16;
+const MAX_IPC_OVERRIDES: usize = 16;
+
+fn reject_oversized_ipc_vector(label: &str, len: usize, limit: usize) -> Result<(), String> {
+    if len > limit {
+        return Err(format!(
+            "{label} with {len} entries exceeds the {limit}-entry IPC limit"
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -1618,6 +1636,16 @@ fn unknown_memory(detail: &str, observed_at_ms: u64) -> evidence::Evidence<u64> 
 
 #[tauri::command]
 async fn preflight_model(request: PreflightRequest) -> Result<PreflightResult, String> {
+    reject_oversized_ipc_vector(
+        "selected_adapter_ids",
+        request.selected_adapter_ids.len(),
+        MAX_IPC_ADAPTER_IDS,
+    )?;
+    reject_oversized_ipc_vector(
+        "manual_overrides",
+        request.manual_overrides.len(),
+        MAX_IPC_OVERRIDES,
+    )?;
     // Preflight hashes files and probes hardware: run it on a blocking
     // worker so neither the Tauri main thread nor the async executor stalls
     // (audit IPC-01 I4).
@@ -3590,6 +3618,61 @@ mod release_security_tests {
 
         assert!(result.unwrap_err().contains("incomplete or inconsistent"));
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn inspect_model_artifact_refuses_an_oversized_companion_list() {
+        // P1-17 (CORE-05): frontend-supplied vectors are capped at the command
+        // boundary, before allocation and file work.
+        let companions = vec!["companion.gguf".to_string(); MAX_IPC_COMPANIONS + 1];
+        let error = tauri::async_runtime::block_on(inspect_model_artifact(
+            "model.gguf".into(),
+            companions,
+            false,
+        ))
+        .expect_err("an oversized companion list must be refused");
+        assert!(
+            error.contains("companions"),
+            "the refusal must name the payload: {error}"
+        );
+    }
+
+    #[test]
+    fn preflight_model_refuses_oversized_ipc_vectors() {
+        // Adapter IDs and manual overrides are capped before preflight hashes
+        // files or probes hardware.
+        let profile = LaunchProfile {
+            name: "fixture".into(),
+            ..LaunchProfile::default()
+        };
+        let error = tauri::async_runtime::block_on(preflight_model(PreflightRequest {
+            profile: profile.clone(),
+            selected_adapter_ids: vec!["gpu-0".to_string(); MAX_IPC_ADAPTER_IDS + 1],
+            manual_overrides: Vec::new(),
+            reserve_bytes: None,
+        }))
+        .expect_err("oversized adapter lists must be refused");
+        assert!(
+            error.contains("selected_adapter_ids"),
+            "the refusal must name the payload: {error}"
+        );
+        let override_row = runtime::HardwareOverride {
+            adapter_id: "gpu-0".into(),
+            dedicated_bytes: None,
+            shared_bytes: None,
+            note: String::new(),
+        };
+        let error = tauri::async_runtime::block_on(preflight_model(PreflightRequest {
+            profile,
+            selected_adapter_ids: Vec::new(),
+            manual_overrides: vec![override_row; MAX_IPC_OVERRIDES + 1],
+            reserve_bytes: None,
+        }))
+        .expect_err("oversized override lists must be refused");
+        assert!(
+            error.contains("manual_overrides"),
+            "the refusal must name the payload: {error}"
+        );
     }
 
     #[cfg(windows)]

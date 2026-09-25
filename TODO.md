@@ -374,11 +374,11 @@ Fix these after P0 and before the next feature.
   existing-leaf `safe_directory`) runs before `create_dir_all` in
   `install_runtime`. RED `E0425`, mutant call-site removal failed the order
   guard, fmt/clippy clean, cargo 646/0.
-- [ ] **P1-17 — CORE-05: bound IPC vectors at the command boundary.**
-  `inspect_model_artifact` (`companions: Vec<String>`), `PreflightRequest`
-  (`selected_adapter_ids`, `manual_overrides`) and the other cited payloads take
-  unbounded vectors before allocation and hashing work. Add length caps with RED
-  tests that oversized payloads are refused before any file work.
+- [x] **P1-17 — CORE-05: bound IPC vectors at the command boundary.** Done
+  2026-09-25: `MAX_IPC_COMPANIONS` 64 / `MAX_IPC_ADAPTER_IDS` 16 /
+  `MAX_IPC_OVERRIDES` 16 + `reject_oversized_ipc_vector`, enforced in
+  `inspect_model_artifact` + `preflight_model` before allocation/work. RED
+  `E0425`, cap-removal mutant failed, fmt/clippy clean, cargo 648/0.
 - [ ] **P1-18 — PROC-02: join pipe readers with a deadline after failed cleanup.**
   Every `output_with_timeout_and_cancel` cleanup path joins the reader threads
   unboundedly, including the `!terminate_and_wait` branch where the child is still
