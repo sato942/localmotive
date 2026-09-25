@@ -3024,7 +3024,7 @@ test("R04: the benchmark run owns its cancelled workers until they exit", async 
   const v2 = service.split("pub(crate) async fn benchmark_v2(")[1].split("#[cfg(test)]")[0];
   const v2Drain = v2.indexOf("drain_owned_workers(&client, drain_ceiling);");
   const slotRelease = v2.indexOf("*active = None;");
-  const resultRead = v2.indexOf("let result = benchmark_result?;");
+  const resultRead = v2.search(/let (mut )?result = benchmark_result\?;/);
   assert.ok(v2Drain > 0, "the command drains its owned workers on every exit path");
   assert.ok(slotRelease > v2Drain, "the benchmark slot is held until the drain returns");
   assert.ok(resultRead > v2Drain, "a discarded result cannot release ownership before the drain");

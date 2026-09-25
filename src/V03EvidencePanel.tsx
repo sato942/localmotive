@@ -642,6 +642,10 @@ export function V03EvidencePanel({
               {benchmark.manifest.terminalOutcome
                 ? ` · terminal ${benchmark.manifest.terminalOutcome}`
                 : ""}
+              {benchmark.serverRestored ? " · server restored after the cold run" : ""}
+              {benchmark.serverRestoreError
+                ? ` · server restore failed: ${benchmark.serverRestoreError}`
+                : ""}
               {" "}· CPU peak working set (process lifetime, excludes GPU): {formatBytes(
                 benchmark.manifest.observations
                   .map((item) => item.peakProcessRssBytes.value ?? null)

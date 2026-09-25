@@ -209,6 +209,8 @@ export type BenchmarkRunResult = {
   compatibilityKey: string;
   resultClass: FitClass;
   failure: string | null;
+  serverRestored: boolean;
+  serverRestoreError: string | null;
 };
 
 export type DisclosureSection = {

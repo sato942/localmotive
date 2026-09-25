@@ -463,10 +463,15 @@ Fix these after P0 and before the next feature.
   arm). Cancelled/None/Succeeded + empty still rejected (cancel leaves no
   record, as before). RED contract test + reject-mutant failed, fmt/clippy
   clean, cargo 671/0.
-- [ ] **P1-30 — MT-05: restore the server after a cold v2 benchmark.**
-  `benchmark_v2` takes the user's server (`slot.take()`), terminates it for cold
-  mode, and never relaunches it. Relaunch the same profile after the run (or refuse
-  cold while a server runs) with a RED state test.
+- [x] **P1-30 — MT-05: restore the server after a cold v2 benchmark.** Done
+  2026-09-25: relaunch chosen (refusing would make cold unreachable — cold
+  needs a live snapshot at start). `benchmark_v2` keeps the cold profile,
+  finalizes the record, drops the reservation, then relaunches through the
+  normal `start_server` path. New `serverRestored`/`serverRestoreError` on
+  `BenchmarkRunResult` (mirrored in `model.ts`, shown in the evidence panel);
+  relaunch failure keeps the record and names the error. RED merge test +
+  discard-mutant failed; R04 gate updated for `let mut result` (drain-before-
+  read invariant unchanged); `npm run check` EXIT 0 (291/291), cargo 672/0.
 - [ ] **P1-31 — MT-06: bound the worker drain.** `drain_owned_workers` loops
   `while !wait_for_worker_drain(1s) {}` forever; a stuck worker holds the benchmark
   slot and the operations reservation permanently. Bound the loop and report an

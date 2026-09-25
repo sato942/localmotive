@@ -3,7 +3,7 @@
 //! their modules and are consumed here.
 use crate::core::{BenchmarkSummary, LaunchProfile};
 use crate::local_client::LocalHttpClient;
-use crate::server_service::{validated_server_snapshot, ValidatedServerSnapshot};
+use crate::server_service::{start_server, validated_server_snapshot, ValidatedServerSnapshot};
 use crate::LaunchValidation;
 use crate::{
     artifact, calibration, core, evidence, local_client, measurement, reserve_operation, runtime,
@@ -138,6 +138,26 @@ pub(crate) struct BenchmarkRunResult {
     compatibility_key: String,
     result_class: evidence::FitClass,
     failure: Option<String>,
+    /// Cold runs take the user's server for a quiet machine (audit MT-05).
+    /// True when the same profile was relaunched after the run; false when
+    /// this run never took a server or the relaunch failed (see
+    /// `server_restore_error`).
+    #[serde(default)]
+    server_restored: bool,
+    /// The relaunch failure, when the benchmark record survived but the
+    /// server did not come back. Never replaces the benchmark result.
+    #[serde(default)]
+    server_restore_error: Option<String>,
+}
+
+/// Record a cold-run server relaunch without touching the measurements:
+/// success marks the server restored, failure keeps the benchmark record
+/// and names the restore error instead of discarding the run.
+fn cold_restore_outcome(outcome: Result<(), String>) -> (bool, Option<String>) {
+    match outcome {
+        Ok(()) => (true, None),
+        Err(error) => (false, Some(error)),
+    }
 }
 
 pub(crate) fn benchmark_file_fact(file: &artifact::ArtifactFileFact) -> evidence::FileFact {
@@ -555,6 +575,8 @@ pub(crate) fn run_benchmark_snapshot(
         compatibility_key,
         result_class,
         failure,
+        server_restored: false,
+        server_restore_error: None,
     })
 }
 
@@ -627,6 +649,14 @@ pub(crate) async fn benchmark_v2(
             .lock()
             .map_err(|_| "Server state is unavailable")?;
         validated_server_snapshot(&mut slot, "benchmarking")?
+    };
+    // MT-05: a cold run takes the user's server for a quiet machine. Keep
+    // the profile aside so the same server is relaunched after the finalized
+    // record below.
+    let cold_profile = if workload.cache_mode == evidence::CacheMode::Cold {
+        Some(server.profile.clone())
+    } else {
+        None
     };
     let cancelled = Arc::new(AtomicBool::new(false));
     // F9-02: the fallible client is built BEFORE the active slot is published.
@@ -715,12 +745,14 @@ pub(crate) async fn benchmark_v2(
     // request can still be inferring; a discarded result never releases
     // ownership early. The ceiling derives from this workload's deadline.
     drain_owned_workers(&client, drain_ceiling);
-    let mut active = state
-        .benchmark
-        .lock()
-        .map_err(|_| "Benchmark state is unavailable")?;
-    *active = None;
-    let result = benchmark_result?;
+    {
+        let mut active = state
+            .benchmark
+            .lock()
+            .map_err(|_| "Benchmark state is unavailable")?;
+        *active = None;
+    }
+    let mut result = benchmark_result?;
     // A replaced or stopped server invalidates the whole record: results must
     // never be finalized under an identity that no longer exists
     // (audit MT-05 I3).
@@ -729,6 +761,17 @@ pub(crate) async fn benchmark_v2(
             "The managed server was stopped or replaced during the benchmark; the record was discarded."
                 .into(),
         );
+    }
+    // MT-05: the record above is finalized; now give the user their server
+    // back. The benchmark reservation is released first so the relaunch can
+    // own the machine through the normal start path. A relaunch failure is
+    // recorded on the result, never substituted for the benchmark outcome.
+    if let Some(profile) = cold_profile {
+        drop(reservation);
+        let outcome = start_server(app.clone(), profile, state).await.map(|_| ());
+        let (restored, error) = cold_restore_outcome(outcome);
+        result.server_restored = restored;
+        result.server_restore_error = error;
     }
     Ok(result)
 }
@@ -915,6 +958,21 @@ mod lora_identity_tests {
             None,
         )
         .map(|outcome| outcome.compatibility_key)
+    }
+
+    #[test]
+    fn proc13_cold_restore_outcome_lands_in_the_record() {
+        // P1-30 (MT-05): the cold benchmark relaunches the profile it took,
+        // and the relaunch outcome is recorded without touching the
+        // measurements. Success marks the server restored; a relaunch
+        // failure keeps the benchmark record and names the restore error
+        // instead of discarding the run.
+        let (restored, error) = super::cold_restore_outcome(Ok(()));
+        assert!(restored);
+        assert_eq!(error, None);
+        let (restored, error) = super::cold_restore_outcome(Err("the port was taken".to_string()));
+        assert!(!restored);
+        assert_eq!(error.as_deref(), Some("the port was taken"));
     }
 
     #[test]
