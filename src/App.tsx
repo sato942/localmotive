@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Activity, Cpu, Database, Download, Gauge, Info, MonitorCog, Settings2, Sparkles, TestTube2 } from "lucide-react";
+import { Activity, Cpu, Database, Download, Gauge, Info, MonitorCog, Settings2, Sparkles, TestTube2, TriangleAlert } from "lucide-react";
 import "./App.css";
 import {
   managedHealthOutcome,
@@ -278,6 +278,8 @@ function App() {
   const [cloudCheck, setCloudCheck] = useState("");
   const [gguf, setGguf] = useState<GgufSummary | null>(null);
   const [about, setAbout] = useState<AboutInfo | null>(null);
+  // CORE-01: true while a verifier-only authority override is active.
+  const [verificationMode, setVerificationMode] = useState(false);
   const [catalogSnapshot, setCatalogSnapshot] = useState<CatalogSnapshot | null>(null);
   const [catalogRows, setCatalogRows] = useState<CatalogModel[]>([]);
   // One merged browse collection: verified curated rows plus user rows.
@@ -1430,6 +1432,7 @@ function App() {
     loadRuntimeSetup();
     loadCloud();
     invoke<AboutInfo>("about_info").then(setAbout).catch(() => setAbout(null));
+    invoke<boolean>("verification_mode").then((mode) => setVerificationMode(mode === true)).catch(() => setVerificationMode(false));
     if (modelRoot) scan();
     if (runtimePath) inspect();
     return () => {
@@ -1589,6 +1592,9 @@ function App() {
           </div>
         </header>
 
+        {verificationMode && (
+          <div className="warning-band" role="status"><TriangleAlert size={17} /><strong>VERIFICATION MODE</strong><span>Catalog or download authority is overridden for testing. Do not use for real models.</span></div>
+        )}
         <div className="notice-line" role="status">
           <span className="notice-code">SYS</span>
           <span>{notice}</span>

@@ -348,8 +348,17 @@ pub(crate) fn rebase_download_url_with(
 /// against controlled bytes. Outside that profile - or for any value that is
 /// not plain-HTTP loopback - the canonical host wins, so the seam can never
 /// redirect an authenticated download at a remote host.
+const CANONICAL_DOWNLOAD_BASE: &str = "https://huggingface.co";
+
+/// True when the verification profile redirects downloads at a loopback
+/// fixture (audit CORE-01). This is the verification-mode banner signal for
+/// the download half of the authority override.
+pub fn download_base_overridden_with(lookup: impl Fn(&str) -> Option<String>) -> bool {
+    resolve_download_base(lookup) != CANONICAL_DOWNLOAD_BASE
+}
+
 fn resolve_download_base(lookup: impl Fn(&str) -> Option<String>) -> String {
-    const CANONICAL: &str = "https://huggingface.co";
+    const CANONICAL: &str = CANONICAL_DOWNLOAD_BASE;
     if lookup("LOCALMOTIVE_VERIFY_ISOLATED_ROOT").is_none() {
         return CANONICAL.to_string();
     }

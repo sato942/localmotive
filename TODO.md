@@ -299,9 +299,12 @@ Fix these after P0 and before the next feature.
   `split_metadata_verdict` uses `checked_add`; overflow is Mismatch with the
   raw value kept. RED (debug panic) plus wrap-mutant proven. The release
   `overflow-checks` profile flag stays untouched as out of scope.
-- [ ] **P1-9 — CORE-01, CORE-06:** Accept the verification overrides only with
+- [x] **P1-9 — CORE-01, CORE-06:** Accept the verification overrides only with
   the isolated root. Show a verification-mode banner while an override is
   active. Document the WebView2 remote-debugging variable in `SECURITY.md`.
+  Done 2026-09-25: root-binding already held (existing tests); added the
+  read-only `verification_mode` command plus banner (`warning-band`,
+  role=status) and the SECURITY.md section. Rust 638/638, Vitest 290/290.
 - [ ] **P1-10 — RT-01, RT-03:** Close the same-user races with handle-based
   opens and the existing execution lease.
 - [ ] **P1-11 — Check the 31 unverified High findings in `REVIEW.md`.**

@@ -92,6 +92,19 @@ fn verify_source() -> &'static VerifySource {
     VERIFY_SOURCE.get_or_init(VerifySource::default)
 }
 
+/// True when any verifier-only authority override takes effect in this
+/// process (audit CORE-01): a catalog source override, or a loopback
+/// download base, inside the isolated verifier profile. The frontend shows
+/// a verification-mode banner while this is true. The lookup is injectable
+/// so tests never touch the process environment.
+pub fn verification_overrides_active(env: &dyn Fn(&str) -> Option<String>) -> bool {
+    let source = parse_verify_source(env);
+    if source.url.is_some() || source.pubkey.is_some() || source.catalog_root.is_some() {
+        return true;
+    }
+    crate::download::download_base_overridden_with(env)
+}
+
 /// The catalog endpoint for this process: the shipped default, or the
 /// verifier fixture endpoint inside a verifier-owned profile.
 pub fn effective_catalog_url() -> String {
@@ -1984,6 +1997,50 @@ mod tests {
                 other => panic!("{name}: unknown expectation {other}"),
             }
         }
+    }
+
+    #[test]
+    fn p19_verification_mode_is_active_only_with_an_effective_override() {
+        // P1-9 (CORE-01): the banner signal is true exactly when the process
+        // runs under the isolated verifier root AND at least one authority
+        // override takes effect. An empty environment is production.
+        let none = |_: &str| -> Option<String> { None };
+        assert!(!verification_overrides_active(&none));
+        // Isolated root alone changes nothing: no override is active.
+        let root_only = |name: &str| -> Option<String> {
+            match name {
+                "LOCALMOTIVE_VERIFY_ISOLATED_ROOT" => Some("C:/tmp/verify".into()),
+                _ => None,
+            }
+        };
+        assert!(!verification_overrides_active(&root_only));
+        // A loopback catalog fixture activates verification mode.
+        let catalog_fixture = |name: &str| -> Option<String> {
+            match name {
+                "LOCALMOTIVE_VERIFY_ISOLATED_ROOT" => Some("C:/tmp/verify".into()),
+                "LOCALMOTIVE_CATALOG_URL" => Some("http://127.0.0.1:18080/catalog.json".into()),
+                _ => None,
+            }
+        };
+        assert!(verification_overrides_active(&catalog_fixture));
+        // So does a loopback download base with no catalog override.
+        let download_fixture = |name: &str| -> Option<String> {
+            match name {
+                "LOCALMOTIVE_VERIFY_ISOLATED_ROOT" => Some("C:/tmp/verify".into()),
+                "LOCALMOTIVE_HF_BASE" => Some("http://127.0.0.1:18081".into()),
+                _ => None,
+            }
+        };
+        assert!(verification_overrides_active(&download_fixture));
+        // Override values without the isolated root stay inert.
+        let unrooted = |name: &str| -> Option<String> {
+            match name {
+                "LOCALMOTIVE_CATALOG_URL" => Some("http://127.0.0.1:18080/catalog.json".into()),
+                "LOCALMOTIVE_HF_BASE" => Some("http://127.0.0.1:18081".into()),
+                _ => None,
+            }
+        };
+        assert!(!verification_overrides_active(&unrooted));
     }
 
     #[test]

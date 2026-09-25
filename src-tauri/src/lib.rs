@@ -2220,6 +2220,15 @@ fn download_eta(downloaded: u64, total: u64, bytes_per_second: u64) -> Option<u6
     download::eta_seconds(downloaded, total, bytes_per_second)
 }
 
+/// Whether the process runs with verifier-only authority overrides (audit
+/// CORE-01). The frontend shows a verification-mode banner while this is
+/// true. Read-only: it reports the recorded source overrides and the
+/// effective download base, and changes nothing.
+#[tauri::command]
+fn verification_mode() -> bool {
+    catalog::verification_overrides_active(&|name| std::env::var(name).ok())
+}
+
 #[tauri::command]
 fn about_info(app: tauri::AppHandle) -> AboutInfo {
     let package = app.package_info();
@@ -2310,6 +2319,7 @@ pub fn run() {
             tune_service::cancel_tuning,
             tune_service::apply_tuning_trial_changes,
             suggest_port,
+            verification_mode,
             about_info,
             catalog_service::load_model_catalog,
             catalog_service::fetch_model_catalog,
