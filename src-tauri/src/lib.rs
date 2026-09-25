@@ -3783,6 +3783,39 @@ mod ipc01_startup_tests {
     }
 
     #[test]
+    fn proc04_startup_builds_the_client_before_spawning() {
+        // P1-20 (PROC-04): `&local_client(&profile)?` used to sit between the
+        // spawn and the health wait, so a client failure returned without
+        // `clear_starting` and without reaping the child. The client must be
+        // built before the spawn, while there is still nothing to clean up.
+        let source = include_str!("server_service.rs");
+        let worker = source
+            .split("fn start_server_worker(")
+            .nth(1)
+            .unwrap()
+            .split("#[tauri::command]")
+            .next()
+            .unwrap();
+        let client = worker
+            .find("local_client(&profile)")
+            .expect("the worker must build the readiness client");
+        let spawn = worker
+            .find("spawn_server(&profile")
+            .expect("the worker must spawn the server");
+        assert!(
+            client < spawn,
+            "the client must be built before the child is spawned"
+        );
+        let wait = worker
+            .find("wait_until_healthy_cancellable")
+            .expect("the worker must wait cancellably");
+        assert!(
+            worker[wait..].contains("&client,"),
+            "the readiness wait must reuse the prebuilt client"
+        );
+    }
+
+    #[test]
     fn ipc01_startup_never_holds_the_server_lock_across_the_readiness_wait() {
         // The audited defect: the server mutex was held for the whole 600 s
         // health wait, freezing every other command (audit IPC-01). The

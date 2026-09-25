@@ -391,10 +391,14 @@ Fix these after P0 and before the next feature.
   `HealthFailureReason::Unresolved` + TS mirror `"unresolved"`. RED
   `E0425/E0599`, ignore-flag mutant failed, `npm run check` EXIT 0, cargo
   653/0, clippy clean.
-- [ ] **P1-20 — PROC-04: clear the starting slot when `local_client` fails.**
-  `start_server_worker` uses `&local_client(&profile)?` between spawn and the health
-  wait: the `?` returns without `clear_starting` and without terminating the child.
-  Restructure with a RED test that this path clears the slot and reaps the child.
+- [x] **P1-20 — PROC-04: clear the starting slot when `local_client` fails.** Done
+  2026-09-25: `local_client(&profile)?` hoisted above `spawn_server` in
+  `start_server_worker`; the wait reuses `&client`. A client failure now
+  returns while no child/slot exists. RED guard failed pre-fix, move-back
+  mutant failed, fmt/clippy clean, cargo 654/0. Note: one full-suite run
+  showed an unrelated parallel-load flake
+  (`health_from_an_unrelated_process...`, isolated green, rerun green);
+  not hidden, not caused by this diff.
 - [ ] **P1-21 — PROC-05: stop following redirects on the health readiness client.**
   `health.rs:1082` builds a reqwest client with no redirect policy (default follows),
   while `local_client.rs:516` sets `Policy::none` (R15). Set `Policy::none` + port the

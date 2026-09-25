@@ -101,6 +101,10 @@ pub(crate) fn start_server_worker(
             }
         }
     };
+    // PROC-04: the readiness client is built before the spawn, so a client
+    // failure returns while there is still no child to reap and no slot to
+    // clear. It must not be constructed between spawn and the health wait.
+    let client = local_client(&profile)?;
     let (mut child, mut validation, log_path, execution_lease, mut log_drains) =
         match spawn_server(&profile, &format!("server-{}", profile.port)) {
             Ok(spawned) => spawned,
@@ -111,7 +115,7 @@ pub(crate) fn start_server_worker(
         };
     let health = wait_until_healthy_cancellable(
         &mut child,
-        &local_client(&profile)?,
+        &client,
         &log_path,
         Duration::from_secs(600),
         &cancel,
