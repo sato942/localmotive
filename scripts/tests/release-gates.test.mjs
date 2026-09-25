@@ -2050,6 +2050,29 @@ test("the cancellable local client never re-issues a slow-but-healthy response (
   assert.match(source, /fn run_local_request\(/);
 });
 
+test("no harness script stops processes by name or by port", async () => {
+  // P1-4 (LAB-04): scripts/g05_vitems_c.mjs swept every llama-server and
+  // localmotive process by name. Dead and dangerous, so it is deleted; the
+  // survivors stop only PIDs they own (taskkill /PID, Stop-Process -Id).
+  assert.ok(
+    await stat(join(process.cwd(), "scripts", "g05_vitems_c.mjs")).then(
+      () => false,
+      () => true,
+    ),
+    "scripts/g05_vitems_c.mjs still stops processes by name",
+  );
+  const nameKill =
+    /Get-Process\s+[A-Za-z][\w.-]*(?:\s*,\s*[A-Za-z][\w.-]*)*\s*[^|\n]*\|\s*Stop-Process|Stop-Process\s+-Name|taskkill\s+(?:\/F\s+)?\/IM/i;
+  const roots = ["scripts", join("scripts", "sandbox")];
+  for (const root of roots) {
+    for (const name of await readdir(join(process.cwd(), root))) {
+      if (!name.endsWith(".mjs") && !name.endsWith(".ps1")) continue;
+      const source = await readFile(join(process.cwd(), root, name), "utf8");
+      assert.doesNotMatch(source, nameKill, `${root}/${name} stops a process by name`);
+    }
+  }
+});
+
 test("FE-16 and FE-05.V3 packaged walks drive the real routes", async () => {
   const fe16 = await readFile(join(process.cwd(), "scripts", "g05_fe16.mjs"), "utf8");
   assert.match(fe16, /fe16\.v1\.v2-survives-overlap/);

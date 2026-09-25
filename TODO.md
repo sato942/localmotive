@@ -277,9 +277,10 @@ Fix these after P0 and before the next feature.
   verification passes. Done 2026-09-25: `replace_verified_runtime_directory`
   returns the backup; `finalize_runtime_replacement` removes it on verify
   success and restores it on verify failure. RED plus mutation-proven test.
-- [ ] **P1-4 — LAB-04:** Delete `scripts/g05_vitems_c.mjs`, or make it stop
-  only the processes that it started, by PID. Search all scripts and
-  workflows for stops by name or by port, and remove each one.
+- [x] **P1-4 — LAB-04:** Delete `scripts/g05_vitems_c.mjs`, or make it stop
+  only the processes that it started, by PID. Done 2026-09-25: deleted the
+  dead name-killing script (no callers; REVIEW marked it DELETE). Repo sweep:
+  every surviving stop is PID-scoped. Guard test RED plus mutation-proven.
 - [ ] **P1-5 — REL-10:** Where a workflow stops the app, stop the whole
   process tree that the step started.
 - [ ] **P1-6 — PROC-01:** Put the child process in the job object before it
