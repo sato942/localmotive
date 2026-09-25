@@ -614,10 +614,16 @@ Fix these after P0 and before the next feature.
   merged via PR #60) — `release-evidence/0.6.0/history/` (85 files, 453K)
   deleted, tree now holds only attestations + inventory/manifest/SHA256SUMS;
   the stays-deleted guard rides in the full gate (green in `/tmp/check47.log`).
-- [ ] **P2-11 — Remove stale references to deleted files:** the
-  `HISTORICAL_FILES` entries in `scripts/verify_branding.mjs`, and the note in
-  `catalog/providers.json` that names `docs/history/TODO-0.5.md` (change it
-  at the next catalog change).
+- [x] **P2-11 — Remove stale references to deleted files.** Done 2026-09-25:
+  pruned 10 dead entries from `HISTORICAL_FILES` (`TODO-0.6.md`,
+  `Future_branding.md`, `docs/history/*` ×5, `TODO-0.4.md`, `TODO-0.4.1.md` —
+  none exist in the tree; closed trackers live in git history `9b09857`);
+  kept `CHANGELOG.md`, `TODO.md`, `research-freeze-manifest.json`. Replaced
+  the obsolete `covers the archived docs layout` gate with
+  `names only files present in the tree` (RED failed, GREEN passes; re-adding
+  one dead entry fails it again). The `catalog/providers.json` note stays
+  until the next catalog change, per the row. `npm run check` EXIT 0
+  (`/tmp/check48.log`).
 - [ ] **P2-12 — Triage the 72 Medium and 9 Low findings** in `REVIEW.md`, one
   part at a time.
 

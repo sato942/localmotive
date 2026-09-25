@@ -9,17 +9,7 @@ const LEGACY_NAMES = [
 
 const HISTORICAL_FILES = new Set([
   "CHANGELOG.md",
-  "TODO-0.6.md",
-  "docs/Future_branding.md",
-  "docs/history/TODO.md",
-  "docs/history/TODO-0.4.md",
-  "docs/history/TODO-0.4.1.md",
-  "docs/history/TODO-0.6.md",
-  "docs/history/localmotive-comprehensive-audit.md",
-  "Future_branding.md",
   "TODO.md",
-  "TODO-0.4.md",
-  "TODO-0.4.1.md",
   "release-evidence/0.4.1/research-freeze-manifest.json",
 ]);
 

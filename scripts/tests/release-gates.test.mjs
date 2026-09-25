@@ -1727,17 +1727,27 @@ test("a tag push verifies without publishing and publication needs explicit auth
   assert.doesNotMatch(promote, /tauri build|npm run build/, "promotion never rebuilds the candidate");
 });
 
-test("branding history set covers the archived docs layout", async () => {
+test("branding history set names only files present in the tree (P2-11)", async () => {
+  // P2-11: closed trackers live in git history, not in the working tree.
+  // Allowlist entries for absent files are dead weight, so every history
+  // entry must resolve to a file that exists.
+  // RED: ten entries name files that do not exist.
   const source = await readFile(join(process.cwd(), "scripts", "verify_branding.mjs"), "utf8");
-  // Docs cleanup moves design/product/branding/llama-server notes under
-  // docs/ and completed TODOs under docs/history/. The branding gate
-  // must keep covering those paths after the move.
-  // RED: HISTORICAL_FILES pins root paths that will no longer exist.
-  assert.match(source, /docs\/history\/TODO-0\.4\.1\.md/);
-  // The universal 0.6 tracker lives at the repository root; the gate must
-  // cover it too, since it imports the RT-01 legacy-migration criterion text.
-  assert.match(source, /"TODO-0\.6\.md"/);
+  const setBody = source.slice(source.indexOf("HISTORICAL_FILES = new Set([") + 1, source.indexOf("]);"));
+  const entries = [...setBody.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(entries.length > 0, "the history set must be non-empty");
+  for (const path of entries) {
+    let exists = false;
+    try {
+      await readFile(join(process.cwd(), path), "utf8");
+      exists = true;
+    } catch {
+      exists = false;
+    }
+    assert.ok(exists, `${path} is allowlisted but absent from the tree`);
+  }
 });
+
 
 test("local catalog SQLite mirror stores verified models with migrations and controlled recovery", async () => {
   const mirror = await readFile(join(process.cwd(), "src-tauri", "src", "catalog_db.rs"), "utf8");
