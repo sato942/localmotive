@@ -399,10 +399,11 @@ Fix these after P0 and before the next feature.
   showed an unrelated parallel-load flake
   (`health_from_an_unrelated_process...`, isolated green, rerun green);
   not hidden, not caused by this diff.
-- [ ] **P1-21 — PROC-05: stop following redirects on the health readiness client.**
-  `health.rs:1082` builds a reqwest client with no redirect policy (default follows),
-  while `local_client.rs:516` sets `Policy::none` (R15). Set `Policy::none` + port the
-  R15 redirect test.
+- [x] **P1-21 — PROC-05: stop following redirects on the health readiness client.**
+  Done 2026-09-25: extracted `loopback_readiness_client` (`Policy::none` +
+  `no_proxy`, same timeouts) used by the loopback stage; ported R15 redirect
+  test fails without the policy. RED `E0425/E0433`, policy-removal mutant
+  failed, fmt/clippy clean, cargo 655/0.
 - [ ] **P1-22 — PROC-06: track and join the nested completion worker.**
   `completion_request_supervised` (and the 715-747 sibling) spawns a detached thread
   and relies on `terminate()` to unblock it. Join the worker with a deadline and

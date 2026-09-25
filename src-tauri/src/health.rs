@@ -774,6 +774,22 @@ fn fail_stage(
     finish_run(context, started_at, stages)
 }
 
+/// Build the loopback readiness client: no redirects, no proxy.
+///
+/// The readiness probe speaks to exactly one loopback server. Redirects are
+/// never followed - a 3xx is a failure, not a hop - matching the `local_client`
+/// loopback policy (R15). The probe runs before the server is trusted, so a
+/// redirect must not reroute it.
+fn loopback_readiness_client() -> Result<reqwest::blocking::Client, String> {
+    reqwest::blocking::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(Duration::from_millis(250))
+        .timeout(Duration::from_secs(2))
+        .build()
+        .map_err(|error| error.to_string())
+}
+
 pub(crate) fn run_managed_health(
     context: ManagedHealthContext,
     cancel: &AtomicBool,
@@ -1081,12 +1097,7 @@ pub(crate) fn run_managed_health(
             );
         }
     };
-    let readiness_client = match reqwest::blocking::Client::builder()
-        .no_proxy()
-        .connect_timeout(Duration::from_millis(250))
-        .timeout(Duration::from_secs(2))
-        .build()
-    {
+    let readiness_client = match loopback_readiness_client() {
         Ok(client) => client,
         Err(_) => {
             child.terminate_and_wait();
@@ -1355,6 +1366,51 @@ pub(crate) fn run_managed_health(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn proc05_the_loopback_readiness_client_never_follows_redirects() {
+        // P1-21 (PROC-05): port of the R15 redirect test for the health
+        // readiness client. A 3xx is a failure, never a hop: the redirect
+        // target must never receive the request.
+        use std::io::{Read, Write};
+        use std::sync::Arc;
+        let reached = Arc::new(AtomicBool::new(false));
+        let second = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let second_port = second.local_addr().unwrap().port();
+        let hit = Arc::clone(&reached);
+        std::thread::spawn(move || {
+            if let Ok((_stream, _)) = second.accept() {
+                hit.store(true, Ordering::SeqCst);
+            }
+        });
+        let first = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let first_port = first.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = first.accept() {
+                let mut buffer = [0_u8; 8192];
+                let _ = stream.read(&mut buffer);
+                let redirect = format!(
+                    "HTTP/1.1 302 Found\nlocation: http://127.0.0.1:{second_port}/steal\ncontent-length: 0\nconnection: close\n\n"
+                );
+                let _ = stream.write_all(redirect.as_bytes());
+            }
+        });
+        let client = loopback_readiness_client().expect("the readiness client builds");
+        let response = client
+            .get(format!("http://127.0.0.1:{first_port}/health"))
+            .send()
+            .expect("the readiness call completes");
+        assert_eq!(
+            response.status().as_u16(),
+            302,
+            "the redirect status is returned, not followed"
+        );
+        std::thread::sleep(Duration::from_millis(250));
+        assert!(
+            !reached.load(Ordering::SeqCst),
+            "the redirect target must never receive the request"
+        );
+    }
 
     #[cfg(windows)]
     #[test]
