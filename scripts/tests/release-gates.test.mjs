@@ -35,6 +35,8 @@ async function versionFixture(overrides = {}) {
 /// The S-27.I2 extraction moves JSX into src/screens/*.tsx; guards that read
 /// App.tsx alone silently stop matching. Splits find real component bodies
 /// before any test-text mention because the screens come first.
+/// App-side hook extractions (FE-04) must register here too so the FE-03 and
+/// FE-06 pins keep seeing the moved acquisition code.
 /// Line endings are normalized to LF first: a CRLF checkout (for example the
 /// default GitHub-hosted windows-latest image) must not change what the
 /// LF-anchored guard regexes match (GH-01.V1 follow-up: pr-check failed on
@@ -60,6 +62,13 @@ async function frontendSources() {
     }
   }
   parts.push((await readFile(join(process.cwd(), "src", "App.tsx"), "utf8")).replace(/\r\n/g, "\n"));
+  for (const name of ["useCloudCredentials.ts"]) {
+    try {
+      parts.push((await readFile(join(process.cwd(), "src", name), "utf8")).replace(/\r\n/g, "\n"));
+    } catch {
+      // A hook module that does not exist yet contributes nothing.
+    }
+  }
   return parts.join("\n");
 }
 

@@ -588,8 +588,18 @@ Fix these after P0 and before the next feature.
   for served updates), so the checked-in catalog without them and
   `validate_catalog.mjs` pinning only `schemaVersion: 2` are consistent, not
   contradictory. P1-11 REFUTED stands.
-- [ ] **P2-8 — Split `src/App.tsx` (FE-04)** and keep IPC out of the screens
-  (FE-06).
+- [x] **P2-8 — Split `src/App.tsx` (FE-04)** and keep IPC out of the screens
+  (FE-06). First increment done 2026-09-25: cloud-credential cluster
+  (~160 lines: providers, credential, key draft, model list, probe state +
+  all 8 acquisition fns) extracted to `src/useCloudCredentials.ts`;
+  `App.tsx` 1792→1638 lines, screens unchanged (same props). RED gate
+  `cloud credentials live in a hook` failed before, passes now. `frontend
+  Sources()` registers the hook so FE-03/FE-06 pins keep seeing moved code.
+  Mutant (drop FE-01 failure-clear) failed exactly
+  `clears the cloud key draft when the save fails`, green after restore.
+  `npm run check` EXIT 0, 15 files / 265 tests (`/tmp/check46.log`),
+  audit 0 vulns. Remaining App.tsx clusters (runtime, catalog, tuning) split
+  in later increments.
 - [ ] **P2-9 — Merge `docs/EVIDENCE-MATRIX.md` into
   `docs/SUPPORT-MATRIX.md`.**
 - [ ] **P2-10 — Prune superseded evidence (D5).**
