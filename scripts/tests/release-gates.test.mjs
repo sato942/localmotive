@@ -3077,6 +3077,14 @@ test("the legacy benchmark system is removed (MT-09/FE-05)", async () => {
   assert.ok(!screen.includes("BenchmarkSummary"), "the screen must not render the legacy result");
 });
 
+test("the inventory screen routes cancellation through props (FE-06)", async () => {
+  // RED for P1-35: acquisition stays in `App.tsx`; the screen reports through
+  // a callback prop instead of invoking the backend directly.
+  const screen = await readFile(join(process.cwd(), "src", "screens", "InventoryScreen.tsx"), "utf8");
+  assert.ok(!screen.includes("invoke("), "the screen must not invoke the backend directly");
+  assert.ok(screen.includes("cancelScan"), "the screen must offer a cancellation callback prop");
+});
+
 test("the stalled-fetch deadline stays injectable and bounded in tests (CI cancellation fix)", async () => {
   const retry = await readFile(join(process.cwd(), "scripts", "lib", "http_retry.mjs"), "utf8");
   assert.match(retry, /deadlineMs = REQUEST_TIMEOUT_MS/, "the deadline must stay injectable");

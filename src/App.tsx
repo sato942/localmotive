@@ -316,6 +316,12 @@ function App() {
   const provider = providers.find((entry) => entry.id === providerId) ?? null;
   const isManagedPath = runtimeIdentity?.managedVerified === true;
 
+  /// FE-06: scan acquisition (including cancellation) stays in `App.tsx`;
+  /// the inventory screen reports through the `cancelScan` prop.
+  function cancelScan() {
+    void invoke("cancel_scan");
+  }
+
   async function scan() {
     if (!modelRoot.trim()) {
       setNotice("Choose the folder that contains your GGUF models.");
@@ -1560,6 +1566,7 @@ function App() {
         {view === "models" && (
           <InventoryScreen
             busy={busy}
+            cancelScan={cancelScan}
             chooseModelFolder={chooseModelFolder}
             invalidCount={invalidCount}
             lastScan={lastScan}

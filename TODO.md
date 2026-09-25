@@ -508,9 +508,10 @@ Fix these after P0 and before the next feature.
   with the migrated lines. `npm run check` EXIT 0 (265/265). Next split
   recorded: the `useDebouncedValue` hook + `inTauri`/`idleStatus` module
   preamble, then one screen's coordination (tune or catalog).
-- [ ] **P1-35 — FE-06: route `cancel_scan` through props.** `InventoryScreen`
-  calls `invoke("cancel_scan")` directly although its contract keeps acquisition in
-  `App.tsx`. Pass a callback prop instead; keep the presentation-boundary test green.
+- [x] **P1-35 — FE-06: route `cancel_scan` through props.** Done 2026-09-25:
+  `InventoryScreen` takes `cancelScan: () => void` (no `invoke` import left);
+  `App.tsx` owns `cancelScan()` beside `scan()`. RED boundary test fails on the
+  old file (`invoke(` present, no `cancelScan`); `npm run check` EXIT 0 (265/265).
 
 ---
 
