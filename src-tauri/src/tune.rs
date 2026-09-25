@@ -348,11 +348,33 @@ pub struct TuningBrief<'a> {
 impl<'a> TuningBrief<'a> {
     /// Apply the disclosure to this brief and store the wire form.
     pub fn apply_disclosure(&mut self, disclosure: BriefDisclosure, home: Option<&str>) {
-        let raw = serde_json::to_value(&*self).unwrap_or(serde_json::Value::Null);
+        let mut raw = serde_json::to_value(&*self).unwrap_or(serde_json::Value::Null);
+        // P1-2 (MT-10): the disclosure never lists adapter identifiers, so
+        // they leave the machine in neither mode. Names, VRAM and driver
+        // versions stay: they carry the tuning signal.
+        strip_adapter_identifiers(&mut raw);
         self.wire = match disclosure {
             BriefDisclosure::Full => raw,
             BriefDisclosure::Minimal => redact_for_cloud(&raw, home),
         };
+    }
+}
+
+/// Remove machine-stable adapter identifiers from a serialised brief.
+/// Keeps the wire shape identical in both disclosure modes.
+fn strip_adapter_identifiers(wire: &mut serde_json::Value) {
+    if let Some(adapters) = wire
+        .get_mut("hardware")
+        .and_then(|hardware| hardware.get_mut("adapters"))
+        .and_then(|adapters| adapters.as_array_mut())
+    {
+        for adapter in adapters {
+            if let Some(object) = adapter.as_object_mut() {
+                object.remove("adapterId");
+                object.remove("compatibilityId");
+                object.remove("physicalId");
+            }
+        }
     }
 }
 
@@ -2192,6 +2214,75 @@ mod tests {
             advisor.briefs_seen.is_empty(),
             "advisor is never consulted without a baseline"
         );
+    }
+
+    #[test]
+    fn wire_brief_omits_adapter_identifiers_in_both_modes() {
+        // P1-2 (MT-10): the disclosure lists hardware names, VRAM and driver
+        // versions, never adapter IDs. Before the fix the wire payload sent
+        // adapterId, compatibilityId and physicalId in both modes.
+        use crate::evidence::{Evidence, EvidenceLevel, EvidenceSource, EvidenceSourceKind};
+        let src = || EvidenceSource {
+            kind: EvidenceSourceKind::WindowsApi,
+            detail: "test".into(),
+        };
+        let id = |value: &str| {
+            Evidence::known(
+                value.to_string(),
+                EvidenceLevel::Observed,
+                src(),
+                1,
+                Vec::new(),
+            )
+            .unwrap()
+        };
+        let num = |value: u64| {
+            Evidence::known(value, EvidenceLevel::Observed, src(), 1, Vec::new()).unwrap()
+        };
+        let mut hw = hardware();
+        hw.adapters.push(crate::runtime::GpuAdapterInfo {
+            adapter_id: "luid:aaaa".into(),
+            compatibility_id: "compat:bbbb".into(),
+            name: "Test GPU".into(),
+            vendor: "nvidia".into(),
+            driver: id("1"),
+            backend: id("cuda"),
+            dedicated_bytes: num(8 << 30),
+            shared_bytes: num(0),
+            budget_bytes: num(8 << 30),
+            current_usage_bytes: num(0),
+            available_budget_bytes: num(8 << 30),
+            available_for_reservation_bytes: num(8 << 30),
+            capacity_observations: Vec::new(),
+            physical_id: Some(id("GPU-uuid-cccc")),
+        });
+        let caps = caps();
+        for disclosure in [BriefDisclosure::Full, BriefDisclosure::Minimal] {
+            let mut brief = TuningBrief {
+                objective: "o",
+                target_context: 8192,
+                hardware: &hw,
+                system_ram_bytes: None,
+                gguf: None,
+                runtime_build: &caps.build,
+                spec_types: &caps.spec_types,
+                companions: &[],
+                tunable_fields: tunable_fields(),
+                baseline_profile: serde_json::json!({}),
+                trials: &[],
+                remaining_trials: 4,
+                wire: serde_json::Value::Null,
+            };
+            brief.apply_disclosure(disclosure, None);
+            let adapter = &brief.wire["hardware"]["adapters"][0];
+            assert!(
+                adapter.get("adapterId").is_none()
+                    && adapter.get("compatibilityId").is_none()
+                    && adapter.get("physicalId").is_none(),
+                "wire still carries adapter identifiers in {disclosure:?}: {adapter}"
+            );
+            assert_eq!(adapter["name"], "Test GPU");
+        }
     }
 
     #[test]

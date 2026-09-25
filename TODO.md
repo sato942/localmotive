@@ -269,10 +269,10 @@ Fix these after P0 and before the next feature.
   first shard of its set. Done 2026-09-25: `artifact::first_shard_for_model`
   plus `reject_non_first_shard_model` in launch-path validation; shard 2 of 3
   fails naming shard 1. Non-shard names pass through (no extension rule).
-- [ ] **P1-2 — MT-10:** The cloud brief sends only the fields that the
-  disclosure lists. Remove `adapterId`, `compatibilityId`, and `physicalId`
-  from the payload, or add them to the disclosure. RED test on the serialized
-  brief in minimal mode and in full mode.
+- [x] **P1-2 — MT-10:** The cloud brief sends only the fields that the
+  disclosure lists. Done 2026-09-25: `apply_disclosure` strips `adapterId`,
+  `compatibilityId`, `physicalId` from every adapter in both modes; names,
+  VRAM and driver versions stay. RED plus mutation-proven test on the wire.
 - [ ] **P1-3 — RT-02:** Install keeps the rollback copy until the final
   verification passes. RED test: make the final verification fail and expect
   the previous runtime back in place.
