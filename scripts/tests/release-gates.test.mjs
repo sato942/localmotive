@@ -3168,6 +3168,21 @@ test("the legacy benchmark system is removed (MT-09/FE-05)", async () => {
   assert.ok(tune.includes("pub summary: BenchmarkSummaryV2"), "trial measurements must carry the v2 summary");
 });
 
+test("cloud credentials live in a hook, not in App state (FE-04)", async () => {
+  // RED for P2-8: the cloud-credential cluster (provider list, credential
+  // status, key draft, model list, probe state) moves to
+  // `src/useCloudCredentials.ts`; App.tsx keeps only the hook call and the
+  // values the screens render.
+  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  assert.ok(!app.includes("const [keyDraft, setKeyDraft]"), "the key draft must not live in App state");
+  assert.ok(!app.includes("const [cloudCheck, setCloudCheck]"), "the probe state must not live in App state");
+  assert.ok(app.includes("useCloudCredentials("), "App must consume the credentials hook");
+  const hook = await readFile(join(process.cwd(), "src", "useCloudCredentials.ts"), "utf8");
+  assert.match(hook, /cloud_save_credential/, "the hook must own the save command");
+  assert.match(hook, /cloud_clear_credential/, "the hook must own the clear command");
+  assert.match(hook, /cloud_credential_status/, "the hook must own the status command");
+});
+
 test("the inventory screen routes cancellation through props (FE-06)", async () => {
   // RED for P1-35: acquisition stays in `App.tsx`; the screen reports through
   // a callback prop instead of invoking the backend directly.
