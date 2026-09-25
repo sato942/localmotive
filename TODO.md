@@ -265,9 +265,10 @@ not wait for D1.
 
 Fix these after P0 and before the next feature.
 
-- [ ] **P1-1 — CORE-04:** Rust rejects a launch profile whose model is not the
-  first shard of its set. RED test: a profile that points at shard 2 of a
-  3-shard set gets a validation error that names the first shard.
+- [x] **P1-1 — CORE-04:** Rust rejects a launch profile whose model is not the
+  first shard of its set. Done 2026-09-25: `artifact::first_shard_for_model`
+  plus `reject_non_first_shard_model` in launch-path validation; shard 2 of 3
+  fails naming shard 1. Non-shard names pass through (no extension rule).
 - [ ] **P1-2 — MT-10:** The cloud brief sends only the fields that the
   disclosure lists. Remove `adapterId`, `compatibilityId`, and `physicalId`
   from the payload, or add them to the disclosure. RED test on the serialized

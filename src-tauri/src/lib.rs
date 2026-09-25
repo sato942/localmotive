@@ -693,6 +693,29 @@ fn lora_references(profile: &LaunchProfile) -> Result<Vec<(String, PathBuf, f32)
     Ok(references)
 }
 
+/// P1-1 (CORE-04): the profile model must be the first shard of its set.
+/// Only `-m` receives the model path, and the runtime assembles the rest.
+fn reject_non_first_shard_model(profile: &LaunchProfile) -> Result<(), String> {
+    let model = Path::new(&profile.model);
+    let Some((first, selected)) = artifact::first_shard_for_model(model)? else {
+        return Ok(());
+    };
+    if selected.split {
+        let same = fs::canonicalize(model)
+            .ok()
+            .zip(fs::canonicalize(&first).ok())
+            .is_some_and(|(model_path, first_path)| model_path == first_path);
+        if !same {
+            return Err(format!(
+                "The profile model is shard {} of its set; use the first shard: {}",
+                selected.index,
+                first.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_lora_paths(profile: &LaunchProfile) -> Result<(), String> {
     for (label, path, _) in lora_references(profile)? {
         require_regular_non_reparse_file(&label, &path)?;
@@ -703,6 +726,7 @@ fn validate_lora_paths(profile: &LaunchProfile) -> Result<(), String> {
 fn validate_profile_paths(profile: &LaunchProfile) -> Result<(), String> {
     require_regular_non_reparse_file("Runtime", Path::new(&profile.runtime))?;
     require_regular_non_reparse_file("Model", Path::new(&profile.model))?;
+    reject_non_first_shard_model(profile)?;
     if let Some(path) = profile.draft_model.as_ref().filter(|path| !path.is_empty()) {
         require_regular_non_reparse_file("Draft model", Path::new(path))?;
     }
@@ -3146,6 +3170,50 @@ mod release_security_tests {
             execution_path_for(&profile, &[]),
             evidence::ExecutionPath::Unknown
         );
+    }
+
+    #[test]
+    fn profile_model_must_be_the_first_shard_of_its_set() {
+        // P1-1 (CORE-04): a profile that points at shard 2 of a 3-shard set
+        // gets a validation error that names the first shard. Before the
+        // fix, validation accepted any shard and the launch failed late
+        // inside the runtime with no pointer at the profile.
+        let dir = std::env::temp_dir().join(format!(
+            "localmotive-first-shard-fixture-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        for index in 1..=3 {
+            std::fs::write(
+                dir.join(format!("model-{index:05}-of-00003.gguf")),
+                b"shard",
+            )
+            .unwrap();
+        }
+        let runtime = dir.join("llama-server.exe");
+        std::fs::write(&runtime, b"runtime").unwrap();
+        let second = dir.join("model-00002-of-00003.gguf");
+        let profile = LaunchProfile {
+            runtime: runtime.to_string_lossy().to_string(),
+            model: second.to_string_lossy().to_string(),
+            ..LaunchProfile::default()
+        };
+        let error = validate_profile_paths(&profile).unwrap_err();
+        assert!(
+            error.contains("shard 2")
+                && error.contains("first shard")
+                && error.contains("model-00001-of-00003.gguf"),
+            "unexpected error: {error}"
+        );
+        let first_profile = LaunchProfile {
+            model: dir
+                .join("model-00001-of-00003.gguf")
+                .to_string_lossy()
+                .to_string(),
+            ..profile
+        };
+        assert!(validate_profile_paths(&first_profile).is_ok());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

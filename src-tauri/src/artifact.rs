@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const HASH_BUFFER_BYTES: usize = 1024 * 1024;
 
@@ -411,6 +411,54 @@ fn content_id(shards: &[ArtifactFileFact], companions: &[ArtifactFileFact]) -> O
         hasher.update(digest.as_bytes());
     }
     Some(hex::encode(hasher.finalize()))
+}
+
+/// First shard of the set that contains `path`, plus the set's own name
+/// record. Launch profiles must point at the first shard: only `-m` receives
+/// the model path, and the runtime assembles the remaining shards from it.
+/// Names that do not parse as shards have no set, so they yield `None` and
+/// pass: the model path itself carries no extension requirement.
+pub fn first_shard_for_model(path: &Path) -> Result<Option<(PathBuf, ShardName)>, String> {
+    let name = path
+        .file_name()
+        .ok_or_else(|| format!("Artifact has no file name: {}", path.display()))?
+        .to_string_lossy()
+        .to_string();
+    let Ok(selected) = parse_shard_name(&name) else {
+        return Ok(None);
+    };
+    if !selected.split {
+        return Ok(Some((path.to_path_buf(), selected)));
+    }
+    let directory = path
+        .parent()
+        .ok_or_else(|| format!("Artifact has no parent: {}", path.display()))?;
+    let mut first: Option<(usize, PathBuf)> = None;
+    for entry in fs::read_dir(directory)
+        .map_err(|error| format!("Could not read {}: {error}", directory.display()))?
+    {
+        let sibling = entry.map_err(|error| error.to_string())?.path();
+        let Some(sibling_name) = sibling
+            .file_name()
+            .map(|value| value.to_string_lossy().to_string())
+        else {
+            continue;
+        };
+        let Ok(candidate) = parse_shard_name(&sibling_name) else {
+            continue;
+        };
+        if candidate.logical_name == selected.logical_name
+            && first
+                .as_ref()
+                .is_none_or(|(index, _)| candidate.index < *index)
+        {
+            first = Some((candidate.index, sibling));
+        }
+    }
+    let first_path = first
+        .map(|(_, path)| path)
+        .unwrap_or_else(|| path.to_path_buf());
+    Ok(Some((first_path, selected)))
 }
 
 pub fn inspect_artifact(
