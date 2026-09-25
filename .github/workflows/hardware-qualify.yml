@@ -104,7 +104,7 @@ jobs:
           - CPU: $($env:CPU)
           - GPU: $($env:GPU)
           - Runner: self-hosted `DESKTOP-HPTF57N-zen5-blackwell`; the historical night-only window (01:00-06:00 Asia/Dubai) no longer gates CI or release jobs
-          - Main Release build/publish stays on GitHub-hosted windows-latest
+          - Main Release build/publish runs on the self-hosted `localmotive-release` runner (P1-12); this job only records host match, it never builds the candidate
           - This job records host match for Zen 5 + Blackwell; full packaged L4 PASS still needs the packaged verifier once artifacts exist
           "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8
 

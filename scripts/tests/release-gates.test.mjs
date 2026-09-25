@@ -1727,6 +1727,26 @@ test("a tag push verifies without publishing and publication needs explicit auth
   assert.doesNotMatch(promote, /tauri build|npm run build/, "promotion never rebuilds the candidate");
 });
 
+test("catalog builder sorts carry deterministic tie-breakers (LAB-12)", async () => {
+  // LAB-12: equal download/size keys must not inherit upstream order, or
+  // every publication rewrites the file with semantic-looking diffs.
+  // RED: the three sorts have no secondary key.
+  const builder = await readFile(join(process.cwd(), "scripts", "build_catalog.mjs"), "utf8");
+  assert.match(builder, /files\.sort\(\(a, b\) => a\.sizeBytes - b\.sizeBytes \|\|/);
+  assert.match(builder, /pending\.sort\(\(a, b\) => b\.downloads - a\.downloads \|\|/);
+  assert.match(builder, /entries\.sort\(\(a, b\) => b\.downloads - a\.downloads \|\|/);
+});
+
+test("hardware summary names the self-hosted release runner (REL-16)", async () => {
+  // REL-16: the job summary must state the actual runner class. P1-12 moved
+  // release jobs to [self-hosted, Windows, X64, localmotive-release]; the old
+  // hosted-runner sentence sent operators to the wrong runner class.
+  // RED: the summary still claims the hosted runner.
+  const hw = await readFile(join(process.cwd(), ".github", "workflows", "hardware-qualify.yml"), "utf8");
+  assert.doesNotMatch(hw, /Main Release build\/publish stays on GitHub-hosted/);
+  assert.match(hw, /localmotive-release/);
+});
+
 test("branding history set names only files present in the tree (P2-11)", async () => {
   // P2-11: closed trackers live in git history, not in the working tree.
   // Allowlist entries for absent files are dead weight, so every history

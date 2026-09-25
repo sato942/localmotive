@@ -625,7 +625,27 @@ Fix these after P0 and before the next feature.
   until the next catalog change, per the row. `npm run check` EXIT 0
   (`/tmp/check48.log`).
 - [ ] **P2-12 — Triage the 72 Medium and 9 Low findings** in `REVIEW.md`, one
-  part at a time.
+  part at a time. Part 1 done 2026-09-25 (REL-14..16, LAB-07..13, dispositions
+  + REL-16/LAB-12 fixes below; remaining parts: RT, CORE, PROC, DL, MT, FE):
+  - REL-14 (duplicate CI/release gates): ACCEPT — release re-runs source
+    checks on the tag peel by governance rule, not by accident.
+  - REL-15 (gate/workflow coupling): ACCEPT under the P2-4 policy (prune
+    twinned guards, keep trust-boundary pins); no blanket deletion.
+  - REL-16 (hardware summary names hosted runner): VERIFIED + fixed — summary
+    now names `localmotive-release`, gated by `hardware summary names...`.
+  - LAB-07 (fixed sleeps)/LAB-08 (text selectors): bulk SUPERSEDED by P1-14 +
+    P2-2 deletions; residual lab-only drivers run in the non-gating night
+    campaign → ACCEPT.
+  - LAB-09 (hard-coded ports): SUPERSEDED — cited files deleted, survivors
+    take `$labPort`/`$portable` args.
+  - LAB-10 (campaign names): SUPERSEDED — P1-14/P2-2 executed its delete list;
+    `verify_041`/`verify_060_catalog` names are frozen contract identities.
+  - LAB-11 (`dryrun_catalog`): SUPERSEDED — file deleted in P2-2.
+  - LAB-12 (catalog tie-ordering): VERIFIED + fixed — secondary keys
+    (`filename`, `repo`) on all three sorts, gated by `deterministic
+    tie-breakers` (RED→GREEN→mutant). Freshness bytes still change per build
+    by DC-10 design.
+  - LAB-13 (Low, error coercion): ACCEPT — cosmetic, lab-only survivors.
 
 ---
 
