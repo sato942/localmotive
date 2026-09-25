@@ -433,10 +433,15 @@ Fix these after P0 and before the next feature.
   `verify_slice`); legacy rows refused until re-saved. RED tamper test,
   bypass mutant failed (2 tests), round-trip + legacy + migration tests,
   fmt/clippy clean, cargo 664/0.
-- [ ] **P1-26 — DL-03: verify the handle, not the path, on reads.** `validate_regular_non_reparse_file`
-  then `File::open` (e.g., `gguf.rs:649-657`) leaves a plant-between-check-and-open
-  window. Open first, then verify the handle (one link, no reparse, final-path
-  parent) following the P1-10 `write_trusted_record` pattern.
+- [x] **P1-26 — DL-03: verify the handle, not the path, on reads.** Done 2026-09-25:
+  new `artifact::open_verified_read_file` (pre-check, then open, then
+  handle verify: link count 1, regular bit, final-path equals the requested
+  path; unix `nlink` variant). Migrated `sha256_path`, `sha256_prefix_path`,
+  `gguf read_summary`, `read_bounded_file` (reads the handle, no re-open),
+  health model hash. Execution sites (probes/spawns) stay under the
+  managed-execution lease, not this helper — pinned by the `proc10_readers`
+  source guard. RED `E0425`, skip-verify mutant failed the hard-link test,
+  fmt/clippy clean, cargo 668/0.
 - [ ] **P1-27 — DL-04: bound the OAuth key-exchange response.** `exchange_code_for_key`
   (`cloud.rs:596-616`) buffers `response.text()` unbounded before parsing. Read
   bounded (mirror `read_bounded`) with a RED oversized-body test.

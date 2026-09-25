@@ -6,7 +6,6 @@
 //! letting it guess from a filename.
 
 use serde::Serialize;
-use std::fs::File;
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
@@ -650,8 +649,7 @@ pub fn read_summary_cancellable(
     path: &Path,
     cancel: Option<&std::sync::atomic::AtomicBool>,
 ) -> Result<GgufSummary, String> {
-    crate::artifact::validate_regular_non_reparse_file("GGUF", path)?;
-    let mut file = File::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let mut file = crate::artifact::open_verified_read_file("GGUF", path)?;
     file.seek(SeekFrom::Start(0))
         .map_err(|error| error.to_string())?;
     parse_with(BufReader::new(file), cancel).map_err(|error| format!("{}: {error}", path.display()))
@@ -1068,7 +1066,7 @@ mod tests {
     fn reads_from_disk_without_touching_tensor_bytes() {
         let path =
             std::env::temp_dir().join(format!("localmotive-hdr-{}.gguf", std::process::id()));
-        let mut file = File::create(&path).unwrap();
+        let mut file = std::fs::File::create(&path).unwrap();
         file.write_all(&fixture()).unwrap();
         drop(file);
         let summary = read_summary(&path).unwrap();

@@ -852,19 +852,19 @@ fn error_chain(error: &dyn std::error::Error) -> String {
 }
 
 fn read_bounded_file(path: &str, limit: u64, label: &str) -> Result<Vec<u8>, String> {
-    // PROC-07: transport files (SSL keys/certs, API key files) must be
-    // regular files, never symlinks or reparse points. The check mirrors
-    // `require_regular_non_reparse_file` and runs before the open, so a
-    // planted link is refused instead of followed.
-    crate::artifact::validate_regular_non_reparse_file(label, std::path::Path::new(path))?;
+    // PROC-07 + DL-03: transport files (SSL keys/certs, API key files) must
+    // be regular files, never symlinks or reparse points, and the check
+    // verifies the opened handle so a planted link is refused instead of
+    // followed.
+    let file = crate::artifact::open_verified_read_file(label, std::path::Path::new(path))?;
     // R15 (follow-up review db548c8): the read itself is bounded by the
     // handle, not by a metadata pre-check. A file that grows between the
     // check and the read - or a non-regular file that lies about its size -
     // can never copy more than the limit plus one byte, and the overflow is
     // detected and refused.
     use std::io::Read as _;
-    let file = std::fs::File::open(path)
-        .map_err(|error| format!("The {label} could not be read ({path}): {error}"))?;
+    // DL-03: `file` is the verified handle from above; it is read directly,
+    // never re-opened by path.
     let metadata = file
         .metadata()
         .map_err(|error| format!("The {label} could not be read ({path}): {error}"))?;

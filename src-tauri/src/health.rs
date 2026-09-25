@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Output, Stdio};
@@ -396,12 +395,15 @@ pub(crate) fn verify_pinned_model(
             "The selected health model filename does not match the approved pin.".into(),
         ));
     }
-    crate::artifact::validate_regular_non_reparse_file("Health model", path).map_err(|_| {
-        (
-            HealthFailureReason::TrustFailure,
-            "The health model is not a regular non-reparse file.".into(),
-        )
-    })?;
+    // DL-03: the model bytes are read through the verified handle, so a
+    // link planted after the check is refused instead of hashed.
+    let mut file =
+        crate::artifact::open_verified_read_file("Health model", path).map_err(|error| {
+            (
+                HealthFailureReason::TrustFailure,
+                format!("The health model is not a regular non-reparse file: {error}"),
+            )
+        })?;
     let metadata = path.metadata().map_err(|_| {
         (
             HealthFailureReason::TrustFailure,
@@ -414,12 +416,8 @@ pub(crate) fn verify_pinned_model(
             "The health model size does not match the approved pin.".into(),
         ));
     }
-    let mut file = File::open(path).map_err(|_| {
-        (
-            HealthFailureReason::TrustFailure,
-            "The health model could not be opened.".into(),
-        )
-    })?;
+    // DL-03: `file` is the verified handle from above; the bytes are hashed
+    // from it directly, never re-opened by path.
     let mut hasher = Sha256::new();
     let mut buffer = vec![0_u8; 1024 * 1024];
     loop {
