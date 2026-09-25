@@ -628,6 +628,36 @@ fn entry_is_unsafe_for_writes(is_symlink: bool, file_attributes: u32) -> bool {
     is_symlink || file_attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
 }
 
+/// Refuse a planted symlink or reparse point without opening the path.
+///
+/// The full `ensure_safe_write_entry` check opens the file to count hard
+/// links, which fails on a file this process already holds open (sharing
+/// violation). A second handle to the same open log file cannot be diverted
+/// by an extra hard-link name — the inode is pinned — so the reopen path
+/// (`LogSink::second_writer`) needs only the link/reparse refusal, while
+/// truncating writes (`write_failure_evidence`, staging) keep the full check.
+pub(crate) fn ensure_no_link_or_reparse(path: &Path) -> Result<(), String> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("Could not inspect {}: {error}", path.display())),
+    };
+    #[cfg(windows)]
+    let file_attributes = {
+        use std::os::windows::fs::MetadataExt;
+        metadata.file_attributes()
+    };
+    #[cfg(not(windows))]
+    let file_attributes = 0;
+    if entry_is_unsafe_for_writes(metadata.file_type().is_symlink(), file_attributes) {
+        return Err(format!(
+            "Refusing to reopen through a symbolic link or reparse point: {}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(windows)]
 fn open_file_hard_link_count(file: &CapFile) -> Result<u32, String> {
     use std::mem::MaybeUninit;
@@ -678,7 +708,7 @@ fn hard_link_count(_path: &Path) -> Result<u32, String> {
     Ok(1)
 }
 
-fn ensure_safe_write_entry(path: &Path) -> Result<(), String> {
+pub(crate) fn ensure_safe_write_entry(path: &Path) -> Result<(), String> {
     let metadata = match std::fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),

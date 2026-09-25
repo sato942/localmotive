@@ -417,10 +417,13 @@ Fix these after P0 and before the next feature.
   read... Access is denied`, proving the link was followed); file symlinks
   need privilege this host lacks, so the test uses one when creatable and a
   privilege-free junction otherwise. fmt/clippy clean, cargo 657/0.
-- [ ] **P1-24 — PROC-08: stop following replaced log paths.** `LogWriter::second_writer`
-  re-opens `self.path` and `write_failure_evidence` uses `fs::write` through
-  replaceable paths. Open once and share the handle (or verify-then-write through a
-  retained directory handle per P1-10).
+- [x] **P1-24 — PROC-08: stop following replaced log paths.** Done 2026-09-25:
+  `second_writer` runs new `download::ensure_no_link_or_reparse` (no-open
+  variant: link-counting opens fail on the sink-held file with os error 32,
+  and extra hard-link names cannot divert a pinned handle), `write_failure_evidence`
+  runs full `ensure_safe_write_entry` (truncating write). Reused the RT-01
+  check instead of a new helper. RED `E0425`, removal mutant failed the
+  guard, fmt/clippy clean, cargo 660/0.
 - [ ] **P1-25 — DL-01: revalidate override rows at read time.** `user_override_file`
   trusts SQLite content validated only at write time; a direct DB edit can swap the
   digest and authorize malicious bytes. Add read-time integrity (e.g., a MAC with a

@@ -101,6 +101,15 @@ impl LogSink {
     /// its own file position, sharing the one quota with the primary writer
     /// so both streams stay inside the same budget (audit OPS-01 I2).
     pub fn second_writer(&self) -> Result<LogWriter, String> {
+        // PROC-08: the path is refused as a link/reparse point before the
+        // reopen, so a planted link is never followed. Append mode is kept:
+        // the second stream needs its own end-of-file position while sharing
+        // the quota. The no-open variant applies: the sink holds this file
+        // open (a second open for link-counting fails with a sharing
+        // violation), and an extra hard-link name cannot divert a pinned
+        // handle's bytes.
+        crate::download::ensure_no_link_or_reparse(&self.path)
+            .map_err(|error| format!("The launch log is not safe to reopen: {error}"))?;
         let file = OpenOptions::new()
             .append(true)
             .open(&self.path)
@@ -211,6 +220,9 @@ pub fn write_failure_evidence(log_path: &str, evidence_json: &str) -> Option<Pat
     }
     let file_name = path.file_name()?.to_string_lossy().to_string();
     let evidence_path = path.with_file_name(format!("{file_name}.failure.json"));
+    // PROC-08: refuse a planted link before the write: `fs::write` truncates,
+    // so following a link here would destroy another file's bytes.
+    crate::download::ensure_safe_write_entry(&evidence_path).ok()?;
     let bounded = evidence_json.as_bytes();
     let keep = bounded.len().min(64 * 1024);
     fs::write(&evidence_path, &bounded[..keep]).ok()?;
@@ -356,6 +368,92 @@ mod tests {
             "the failure evidence from the pruned run survives"
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn proc08_existing_links_are_refused_before_any_reopen() {
+        // P1-23b (PROC-08): the reopen checks refuse symlinks, reparse
+        // points, and (for truncating writes) extra hard links, while missing
+        // and regular paths pass. Both reopen sites go through them (see the
+        // guard below).
+        let root = scratch("proc08-guard");
+        let regular = root.join("regular.log");
+        fs::write(&regular, b"x").unwrap();
+        assert!(crate::download::ensure_no_link_or_reparse(&regular).is_ok());
+        assert!(crate::download::ensure_no_link_or_reparse(&root.join("missing.log")).is_ok());
+        assert!(crate::download::ensure_safe_write_entry(&regular).is_ok());
+        let victim = root.join("victim.log");
+        fs::write(&victim, b"victim").unwrap();
+        let hard = root.join("hard.log");
+        fs::hard_link(&victim, &hard).unwrap();
+        let error = crate::download::ensure_safe_write_entry(&hard).unwrap_err();
+        assert!(error.contains("hard link"), "{error}");
+        #[cfg(windows)]
+        {
+            let outside = root.join("outside");
+            fs::create_dir_all(&outside).unwrap();
+            let junction = root.join("junction.log");
+            let status = crate::proc::hidden_command("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(&junction)
+                .arg(&outside)
+                .status()
+                .unwrap();
+            assert!(status.success());
+            let error = crate::download::ensure_no_link_or_reparse(&junction).unwrap_err();
+            assert!(error.contains("reparse"), "{error}");
+            use std::os::windows::fs::symlink_file;
+            let target = root.join("target.log");
+            fs::write(&target, b"t").unwrap();
+            let link = root.join("link.log");
+            if symlink_file(&target, &link).is_ok() {
+                let error = crate::download::ensure_no_link_or_reparse(&link).unwrap_err();
+                assert!(error.contains("link"), "{error}");
+            }
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn proc08_failure_evidence_never_writes_through_a_planted_link() {
+        // P1-23b (PROC-08): a hard link planted at the evidence path must be
+        // refused: the victim keeps its bytes and no evidence path is
+        // reported. `fs::hard_link` needs no privilege, so this is
+        // deterministic on every machine.
+        let root = scratch("proc08-evidence");
+        let victim = root.join("victim.log");
+        fs::write(&victim, b"victim-bytes").unwrap();
+        let log = root.join("server-1.log");
+        fs::write(&log, b"log").unwrap();
+        let evidence = root.join("server-1.log.failure.json");
+        fs::hard_link(&victim, &evidence).unwrap();
+        let result = write_failure_evidence(&log.to_string_lossy(), "{\"schema\":1}");
+        assert!(result.is_none(), "a planted link must be refused");
+        assert_eq!(
+            fs::read(&victim).unwrap(),
+            b"victim-bytes",
+            "the victim file must keep its bytes"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn proc08_log_reopens_go_through_the_link_check() {
+        // Both reopen sites refuse planted links before any open or write:
+        // `second_writer` uses the no-open variant (the sink holds the file
+        // open), `write_failure_evidence` the full truncating-write check.
+        let source = include_str!("log_sink.rs");
+        for (site, check) in [
+            ("fn second_writer(&self)", "ensure_no_link_or_reparse"),
+            ("pub fn write_failure_evidence(", "ensure_safe_write_entry"),
+        ] {
+            let start = source.find(site).expect("the reopen site present");
+            let body = &source[start..(start + 1_200).min(source.len())];
+            assert!(
+                body.contains(check),
+                "{site} must refuse existing links before reopening"
+            );
+        }
     }
 
     #[test]
