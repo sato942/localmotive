@@ -517,8 +517,8 @@ pub fn output_with_timeout_and_cancel(
             Ok(Some(status)) => break status,
             Ok(None) if cancel.load(Ordering::Relaxed) => {
                 terminate_and_wait(&mut child);
-                let _ = stdout_reader.join();
-                let _ = stderr_reader.join();
+                let _ = join_reader_with_deadline(stdout_reader, READER_JOIN_GRACE);
+                let _ = join_reader_with_deadline(stderr_reader, READER_JOIN_GRACE);
                 return Err(ProcessFailure::new(
                     ProcessFailureKind::Cancelled,
                     "Child process was cancelled and terminated",
@@ -529,8 +529,8 @@ pub fn output_with_timeout_and_cancel(
             }
             Ok(None) => {
                 terminate_and_wait(&mut child);
-                let _ = stdout_reader.join();
-                let _ = stderr_reader.join();
+                let _ = join_reader_with_deadline(stdout_reader, READER_JOIN_GRACE);
+                let _ = join_reader_with_deadline(stderr_reader, READER_JOIN_GRACE);
                 return Err(ProcessFailure::new(
                     ProcessFailureKind::Timeout,
                     format!(
@@ -541,8 +541,8 @@ pub fn output_with_timeout_and_cancel(
             }
             Err(error) => {
                 terminate_and_wait(&mut child);
-                let _ = stdout_reader.join();
-                let _ = stderr_reader.join();
+                let _ = join_reader_with_deadline(stdout_reader, READER_JOIN_GRACE);
+                let _ = join_reader_with_deadline(stderr_reader, READER_JOIN_GRACE);
                 return Err(ProcessFailure::new(
                     ProcessFailureKind::Io,
                     format!("Child process status failed: {error}"),
@@ -551,20 +551,28 @@ pub fn output_with_timeout_and_cancel(
         }
     };
     if !terminate_and_wait(&mut child) {
-        let _ = stdout_reader.join();
-        let _ = stderr_reader.join();
+        let _ = join_reader_with_deadline(stdout_reader, READER_JOIN_GRACE);
+        let _ = join_reader_with_deadline(stderr_reader, READER_JOIN_GRACE);
         return Err(ProcessFailure::new(
             ProcessFailureKind::Io,
             "Child process tree did not stop within the cleanup limit",
         ));
     }
-    let (stdout, stdout_exceeded) = stdout_reader
-        .join()
-        .map_err(|_| ProcessFailure::new(ProcessFailureKind::Io, "Child stdout reader failed"))?
+    let (stdout, stdout_exceeded) = join_reader_with_deadline(stdout_reader, READER_JOIN_GRACE)
+        .ok_or_else(|| {
+            ProcessFailure::new(
+                ProcessFailureKind::Io,
+                "Child stdout reader did not finish within the grace period",
+            )
+        })?
         .map_err(|error| ProcessFailure::new(ProcessFailureKind::Io, error))?;
-    let (stderr, stderr_exceeded) = stderr_reader
-        .join()
-        .map_err(|_| ProcessFailure::new(ProcessFailureKind::Io, "Child stderr reader failed"))?
+    let (stderr, stderr_exceeded) = join_reader_with_deadline(stderr_reader, READER_JOIN_GRACE)
+        .ok_or_else(|| {
+            ProcessFailure::new(
+                ProcessFailureKind::Io,
+                "Child stderr reader did not finish within the grace period",
+            )
+        })?
         .map_err(|error| ProcessFailure::new(ProcessFailureKind::Io, error))?;
     if stdout_exceeded || stderr_exceeded {
         return Err(ProcessFailure::new(
@@ -579,6 +587,32 @@ pub fn output_with_timeout_and_cancel(
     })
 }
 
+/// Grace period for pipe-reader threads to observe EOF after the child is
+/// gone. A reader that is still blocked past the deadline belongs to a child
+/// that survived termination; its handle is detached instead of joined
+/// forever, so one unkillable child cannot hang a bounded operation
+/// (audit PROC-02). The detached thread exits on its own when the child
+/// finally releases the pipes.
+const READER_JOIN_GRACE: Duration = Duration::from_secs(5);
+
+/// Join a pipe-reader thread, giving up after `deadline`.
+///
+/// Returns `None` when the thread is still blocked past the deadline (its
+/// handle is detached) or when it panicked.
+fn join_reader_with_deadline<T>(
+    handle: std::thread::JoinHandle<T>,
+    deadline: Duration,
+) -> Option<T> {
+    let give_up = Instant::now() + deadline;
+    while !handle.is_finished() {
+        if Instant::now() >= give_up {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    handle.join().ok()
+}
+
 /// Run one child process with finite time and per-stream output limits.
 pub fn output_with_timeout(
     command: &mut Command,
@@ -591,6 +625,59 @@ pub fn output_with_timeout(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn reader_join_returns_finished_threads() {
+        // P1-18 (PROC-02): cleanup paths must not join pipe readers forever.
+        let handle = std::thread::spawn(|| 42);
+        let started = Instant::now();
+        let result = join_reader_with_deadline(handle, Duration::from_millis(100));
+        assert_eq!(result, Some(42));
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "a finished reader must join promptly"
+        );
+    }
+
+    #[test]
+    fn reader_join_gives_up_on_a_blocked_thread() {
+        // A thread parked forever (the analogue of a reader blocked on the
+        // pipes of a child that survived termination) detaches after the
+        // deadline instead of hanging the bounded operation.
+        let handle = std::thread::spawn(|| {
+            std::thread::park();
+            42
+        });
+        let started = Instant::now();
+        let result = join_reader_with_deadline(handle, Duration::from_millis(100));
+        assert_eq!(result, None);
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "a blocked reader must detach after the deadline"
+        );
+    }
+
+    #[test]
+    fn cleanup_paths_never_join_readers_without_a_deadline() {
+        // The bounded runner must not contain a bare reader join: every
+        // cleanup path (cancel, timeout, status error, failed termination)
+        // goes through the deadline helper (audit PROC-02).
+        let source = include_str!("proc.rs");
+        let runner = source
+            .find("pub fn output_with_timeout_and_cancel(")
+            .expect("the bounded runner present");
+        let body = &source[runner..runner + 6_000];
+        assert!(
+            !body.contains("stdout_reader.join()") && !body.contains("stderr_reader.join()"),
+            "reader joins must go through join_reader_with_deadline"
+        );
+        assert!(
+            body.contains("join_reader_with_deadline"),
+            "the bounded runner must join readers with a deadline"
+        );
+    }
+
     #[cfg(windows)]
     #[test]
     fn contained_children_are_members_of_the_kill_on_close_job() {
