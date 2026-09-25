@@ -852,6 +852,11 @@ fn error_chain(error: &dyn std::error::Error) -> String {
 }
 
 fn read_bounded_file(path: &str, limit: u64, label: &str) -> Result<Vec<u8>, String> {
+    // PROC-07: transport files (SSL keys/certs, API key files) must be
+    // regular files, never symlinks or reparse points. The check mirrors
+    // `require_regular_non_reparse_file` and runs before the open, so a
+    // planted link is refused instead of followed.
+    crate::artifact::validate_regular_non_reparse_file(label, std::path::Path::new(path))?;
     // R15 (follow-up review db548c8): the read itself is bounded by the
     // handle, not by a metadata pre-check. A file that grows between the
     // check and the read - or a non-regular file that lies about its size -
@@ -1944,6 +1949,46 @@ connection: close
             whole.write(b"12345").is_err(),
             "a single oversized write is refused whole, never truncated into a valid body"
         );
+    }
+
+    #[test]
+    fn proc07_transport_file_reads_refuse_a_symlink() {
+        // P1-23 (PROC-07): read_bounded_file reads SSL keys/certs and API key
+        // files. A symlink in that position must be refused, never followed:
+        // the secret bytes must not come back.
+        let dir = std::env::temp_dir().join(format!("localmotive-proc07-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("real-key.pem");
+        std::fs::write(&target, b"secret-bytes").unwrap();
+        let link = dir.join("link-key.pem");
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::symlink_file;
+            if symlink_file(&target, &link).is_err() {
+                // No symlink privilege in this environment: fall back to a
+                // directory junction, which needs none. Either link type in
+                // the file's position must be refused before the open.
+                let outside = dir.join("outside");
+                std::fs::create_dir_all(&outside).unwrap();
+                let status = crate::proc::hidden_command("cmd")
+                    .args(["/C", "mklink", "/J"])
+                    .arg(&link)
+                    .arg(&outside)
+                    .status()
+                    .unwrap();
+                assert!(status.success());
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+        }
+        let error = read_bounded_file(&link.to_string_lossy(), 64, "fixture").unwrap_err();
+        assert!(
+            error.contains("not a regular file"),
+            "a symlink must be refused, got: {error}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

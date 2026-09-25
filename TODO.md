@@ -411,10 +411,12 @@ Fix these after P0 and before the next feature.
   reports `HealthFailureReason::Unresolved`. RT-03 fixture updated so
   `terminate` models a real kill (releases the socket). RED failed pre-fix,
   abandon-mutant failed, RT-03 5/5 in 0.58 s, cargo 656/0, clippy clean.
-- [ ] **P1-23 — PROC-07: refuse links in transport-file reads.** `read_bounded_file`
-  (`local_client.rs:854`) follows symlinks and only checks `is_file()` — it reads SSL
-  keys/certs and API key files. Refuse reparse points/symlinks (mirror
-  `require_regular_non_reparse_file`) with a RED symlink test.
+- [x] **P1-23 — PROC-07: refuse links in transport-file reads.** Done 2026-09-25:
+  `read_bounded_file` runs `artifact::validate_regular_non_reparse_file`
+  before the open. RED via removal mutant (pre-fix error was `could not be
+  read... Access is denied`, proving the link was followed); file symlinks
+  need privilege this host lacks, so the test uses one when creatable and a
+  privilege-free junction otherwise. fmt/clippy clean, cargo 657/0.
 - [ ] **P1-24 — PROC-08: stop following replaced log paths.** `LogWriter::second_writer`
   re-opens `self.path` and `write_failure_evidence` uses `fs::write` through
   replaceable paths. Open once and share the handle (or verify-then-write through a
