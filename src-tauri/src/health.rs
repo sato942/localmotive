@@ -56,6 +56,7 @@ pub enum HealthFailureReason {
     Mismatch,
     Cancelled,
     TrustFailure,
+    Unresolved,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -311,6 +312,7 @@ fn process_failure_reason(kind: crate::proc::ProcessFailureKind) -> HealthFailur
         crate::proc::ProcessFailureKind::Cancelled => HealthFailureReason::Cancelled,
         crate::proc::ProcessFailureKind::OutputLimit => HealthFailureReason::OutputLimit,
         crate::proc::ProcessFailureKind::Io => HealthFailureReason::MalformedOutput,
+        crate::proc::ProcessFailureKind::Unresolved => HealthFailureReason::Unresolved,
     }
 }
 

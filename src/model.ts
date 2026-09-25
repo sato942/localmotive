@@ -922,7 +922,8 @@ export type HealthFailureReason =
   | "malformed_output"
   | "mismatch"
   | "cancelled"
-  | "trustFailure";
+  | "trustFailure"
+  | "unresolved";
 
 export type HealthStageResult = {
   stage: HealthStage;

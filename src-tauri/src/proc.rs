@@ -57,6 +57,10 @@ pub enum ProcessFailureKind {
     Cancelled,
     OutputLimit,
     Io,
+    /// The operation ended but the process tree survived termination: the
+    /// caller must not treat this like a finished Timeout/Cancelled run
+    /// (audit PROC-03).
+    Unresolved,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -516,27 +520,29 @@ pub fn output_with_timeout_and_cancel(
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if cancel.load(Ordering::Relaxed) => {
-                terminate_and_wait(&mut child);
+                let terminated = terminate_and_wait(&mut child);
                 let _ = join_reader_with_deadline(stdout_reader, READER_JOIN_GRACE);
                 let _ = join_reader_with_deadline(stderr_reader, READER_JOIN_GRACE);
-                return Err(ProcessFailure::new(
+                return Err(cleanup_outcome(
                     ProcessFailureKind::Cancelled,
                     "Child process was cancelled and terminated",
+                    terminated,
                 ));
             }
             Ok(None) if started.elapsed() < timeout => {
                 std::thread::sleep(Duration::from_millis(10));
             }
             Ok(None) => {
-                terminate_and_wait(&mut child);
+                let terminated = terminate_and_wait(&mut child);
                 let _ = join_reader_with_deadline(stdout_reader, READER_JOIN_GRACE);
                 let _ = join_reader_with_deadline(stderr_reader, READER_JOIN_GRACE);
-                return Err(ProcessFailure::new(
+                return Err(cleanup_outcome(
                     ProcessFailureKind::Timeout,
-                    format!(
+                    &format!(
                         "Child process timed out after {} milliseconds",
                         timeout.as_millis()
                     ),
+                    terminated,
                 ));
             }
             Err(error) => {
@@ -554,7 +560,7 @@ pub fn output_with_timeout_and_cancel(
         let _ = join_reader_with_deadline(stdout_reader, READER_JOIN_GRACE);
         let _ = join_reader_with_deadline(stderr_reader, READER_JOIN_GRACE);
         return Err(ProcessFailure::new(
-            ProcessFailureKind::Io,
+            ProcessFailureKind::Unresolved,
             "Child process tree did not stop within the cleanup limit",
         ));
     }
@@ -585,6 +591,23 @@ pub fn output_with_timeout_and_cancel(
         stdout,
         stderr,
     })
+}
+
+/// Classify a cleanup exit by whether termination actually stopped the tree.
+///
+/// A timeout or cancel whose tree survives `terminate_and_wait` returns
+/// `Unresolved` instead of the success-shaped Timeout/Cancelled kind, so
+/// callers can distinguish "the operation ended" from "the operation ended
+/// and its process is gone".
+fn cleanup_outcome(kind: ProcessFailureKind, detail: &str, terminated: bool) -> ProcessFailure {
+    if terminated {
+        ProcessFailure::new(kind, detail)
+    } else {
+        ProcessFailure::new(
+            ProcessFailureKind::Unresolved,
+            format!("{detail}, but the process tree survived cleanup and may still be running"),
+        )
+    }
 }
 
 /// Grace period for pipe-reader threads to observe EOF after the child is
@@ -655,6 +678,42 @@ mod tests {
         assert!(
             started.elapsed() < Duration::from_secs(5),
             "a blocked reader must detach after the deadline"
+        );
+    }
+
+    #[test]
+    fn cleanup_outcome_reports_unresolved_termination() {
+        // P1-19 (PROC-03): a timeout or cancel whose tree survives cleanup
+        // must not return the success-shaped Timeout/Cancelled kind.
+        let failure = cleanup_outcome(
+            ProcessFailureKind::Timeout,
+            "Child process timed out after 100 milliseconds",
+            false,
+        );
+        assert_eq!(failure.kind, ProcessFailureKind::Unresolved);
+        assert!(
+            failure.message.contains("survived"),
+            "the message must say the tree survived: {}",
+            failure.message
+        );
+        let finished = cleanup_outcome(ProcessFailureKind::Timeout, "detail", true);
+        assert_eq!(finished.kind, ProcessFailureKind::Timeout);
+        let cancelled = cleanup_outcome(ProcessFailureKind::Cancelled, "detail", true);
+        assert_eq!(cancelled.kind, ProcessFailureKind::Cancelled);
+    }
+
+    #[test]
+    fn failed_tree_cleanup_names_the_unresolved_kind() {
+        // The post-loop branch (the tree ignored termination) must surface
+        // Unresolved instead of the generic Io kind (audit PROC-03).
+        let source = include_str!("proc.rs");
+        let runner = source
+            .find("pub fn output_with_timeout_and_cancel(")
+            .expect("the bounded runner present");
+        let body = &source[runner..runner + 6_000];
+        assert!(
+            body.contains("ProcessFailureKind::Unresolved"),
+            "the bounded runner must surface unresolved termination"
         );
     }
 
