@@ -290,8 +290,10 @@ Fix these after P0 and before the next feature.
   `spawn_contained` sets `CREATE_SUSPENDED`, assigns, then releases via new
   `containment::resume_process` (ToolHelp; fail-closed). Behavioral test
   plus ordering guard, RED and mutation-proven.
-- [ ] **P1-7 — FE-01:** Clear each credential draft on every exit path,
-  including a failed save and an unmount.
+- [x] **P1-7 — FE-01:** Clear each credential draft on every exit path,
+  including a failed save and an unmount. Done 2026-09-25: both saves clear
+  the failed attempt (newer typing survives); both screens clear on unmount.
+  4 App-level tests, RED plus mutation-proven. Vitest 288/288 (14 files).
 - [ ] **P1-8 — DL-02:** Use checked arithmetic for GGUF split metadata. RED
   test with a split number of `u64::MAX`.
 - [ ] **P1-9 — CORE-01, CORE-06:** Accept the verification overrides only with

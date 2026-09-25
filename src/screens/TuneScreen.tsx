@@ -1,4 +1,5 @@
 import type { Dispatch, KeyboardEvent, RefObject, SetStateAction } from "react";
+import { useEffect } from "react";
 import {
   Activity, KeyRound, LogIn, RefreshCw, Save, Settings2, Sparkles, Square, SquareTerminal, Trophy, Unplug,
 } from "lucide-react";
@@ -170,6 +171,11 @@ export function TuneScreen(props: TuneScreenProps) {
     tuning,
     useAdvisor,
   } = props;
+  // FE-01: the typed key must not outlive this screen. Unmount (leaving
+  // the tune view) clears the draft; a failed save clears it in App.
+  useEffect(() => () => {
+    setKeyDraft("");
+  }, [setKeyDraft]);
   return (
     <section className="screen tune-screen">
       <div className="section-heading">

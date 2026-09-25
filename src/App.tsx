@@ -757,6 +757,7 @@ function App() {
 
   async function saveHfToken() {
     if (!hfTokenDraft.trim()) return;
+    const attempted = hfTokenDraft;
     setCatalogBusy(true);
     try {
       const status = await invoke<TokenStatus>("save_hf_token", { token: hfTokenDraft });
@@ -764,6 +765,9 @@ function App() {
       setHfToken(status);
       setNotice(`Hugging Face token ${status.masked} stored in Windows Credential Manager.`);
     } catch (error) {
+      // FE-01: a failed save must not leave the typed secret in frontend state.
+      // Only the failed attempt clears; newer typing survives.
+      setHfTokenDraft((current) => (current === attempted ? "" : current));
       setNotice(errorText(error));
     } finally {
       setCatalogBusy(false);
@@ -950,6 +954,7 @@ function App() {
   async function saveKey() {
     if (!keyDraft.trim()) return;
     const forProvider = providerId;
+    const attempted = keyDraft;
     const sequence = ++cloudSeq.current;
     setBusy("cloud");
     try {
@@ -960,7 +965,10 @@ function App() {
       setNotice(`${providers.find((entry) => entry.id === forProvider)?.label ?? forProvider} key stored in Windows Credential Manager.`);
       await loadCloud(forProvider);
     } catch (error) {
-      if (responseIsCurrent(sequence, cloudSeq.current, forProvider, providerIdRef.current)) setNotice(errorText(error));
+      if (!responseIsCurrent(sequence, cloudSeq.current, forProvider, providerIdRef.current)) return;
+      // FE-01: a failed save must not leave the typed secret in frontend state.
+      setKeyDraft((current) => (current === attempted ? "" : current));
+      setNotice(errorText(error));
     } finally {
       setBusy("");
     }

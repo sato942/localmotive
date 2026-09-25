@@ -1,4 +1,5 @@
 import type { Dispatch, SetStateAction } from "react";
+import { useEffect } from "react";
 import {
   BadgeCheck, CircleStop, Database, Download, ExternalLink, FolderOpen, HardDrive, KeyRound, RefreshCw,
 } from "lucide-react";
@@ -135,6 +136,11 @@ export function CatalogScreen(props: CatalogScreenProps) {
     setModelRoot,
     startCatalogDownload,
   } = props;
+  // FE-01: the typed token must not outlive this screen. Unmount (leaving
+  // the catalog view) clears the draft; a failed save clears it in App.
+  useEffect(() => () => {
+    setHfTokenDraft("");
+  }, [setHfTokenDraft]);
   return (
     <section className="screen catalog-screen">
       <div className="section-heading">
