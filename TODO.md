@@ -449,10 +449,13 @@ Fix these after P0 and before the next feature.
   the cap is unit-testable without network (gate forbids live calls).
   Behavioral oversized test + call-site source guard (self-comment-safe),
   cap-removal mutant failed, fmt/clippy clean, cargo 670/0.
-- [ ] **P1-28 — MT-01: stop presenting a same-prompt repeat as confirmation.**
-  Final verification re-measures on the fixed harness prompt and the UI says
-  "confirmed". Relabel as a re-measurement with the same-prompt limit stated, or add
-  a held-out prompt.
+- [x] **P1-28 — MT-01: stop presenting a same-prompt repeat as confirmation.** Done
+  2026-09-25: relabel (no held-out prompt; the fixed harness prompt is a design
+  constant). UI now says "reproduced / did not reproduce on the fixed harness
+  prompt (same-prompt re-measurement[, not independent confirmation])". Wire
+  field `confirmed` kept so old reports load (documented on the struct);
+  stopped_reason "stays unconfirmed" → "records no verdict". RED render test
+  + label mutant failed, `npm run check` EXIT 0 (291/291), cargo 670/0.
 - [ ] **P1-29 — MT-03: persist warmup-only failures as Failed manifests.**
   Warmup failure returns with empty `observations`, so `validate_attempt_consistency`
   rejects the manifest and nothing is saved. Persist the partial run (Failed class)

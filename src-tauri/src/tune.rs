@@ -107,6 +107,12 @@ pub struct FinalVerification {
     /// Relative improvement the winner had to beat (2x the baseline drift,
     /// floored at [`MIN_MATERIAL_IMPROVEMENT`]).
     pub required_improvement: f64,
+    /// True when the winner beat the re-measured baseline by the required
+    /// margin on the SAME fixed harness prompt (audit MT-01). This is a
+    /// same-prompt re-measurement, not an independent confirmation: it
+    /// re-checks the numbers, it does not test new work. The wire name stays
+    /// `confirmed` so reports stored by older builds still load; user-facing
+    /// text must say re-measured/reproduced, never confirmed.
     pub confirmed: bool,
 }
 
@@ -1604,7 +1610,7 @@ pub fn run_tuning<B: Bench, A: Advisor>(
                 bench.measure(&winner_profile)
             };
             // Both re-measurements are history-table rows, even when they
-            // fail: the table shows the confirmation attempt, not just its
+            // fail: the table shows the verification attempt, not just its
             // verdict.
             record_confirm(
                 &mut trials,
@@ -1651,7 +1657,7 @@ pub fn run_tuning<B: Bench, A: Advisor>(
                         confirmed_winner_tps = Some((index, w, winner_profile.clone()));
                     } else if cancelled_during_verification {
                         stopped_reason = format!(
-                            "{stopped_reason}; cancellation was requested during final verification, so the winner stays unconfirmed"
+                            "{stopped_reason}; cancellation was requested during final verification, so the check records no verdict"
                         );
                     } else {
                         stopped_reason = format!(
@@ -2735,7 +2741,7 @@ mod tests {
         assert!(!verification.confirmed);
         assert_eq!(
             report.best_index, None,
-            "an unconfirmed winner is not reported"
+            "an unverified winner is not reported"
         );
         assert!(
             report.stopped_reason.contains("material-improvement"),
@@ -2743,7 +2749,7 @@ mod tests {
             report.stopped_reason
         );
 
-        // A large, clear improvement is confirmed by the re-measurement.
+        // A large, clear improvement is reproduced by the re-measurement.
         let mut bench = ScriptedBench {
             calls: vec![],
             script: vec![
