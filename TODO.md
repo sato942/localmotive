@@ -346,10 +346,15 @@ Fix these after P0 and before the next feature.
     At least one runner that the team controls carries `localmotive-release`
     (A2).
   - Evidence: one green `release.yml` run on that runner.
-- [ ] **P1-13 — LAB-03: unify the three CDP clients.** `scripts/lib/cdp_client.mjs`,
-  `scripts/verify_041.mjs:218`, and `scripts/drive_console_check.mjs:22` each open
-  their own CDP WebSocket. Keep one client (the lib) and delete the copies.
-  RED: a conformance test that fails while two socket implementations exist.
+- [x] **P1-13 — LAB-03: unify the three CDP clients.** Done 2026-09-25:
+  `attach()` in `scripts/lib/cdp_client.mjs` gained `pageFilter` +
+  `trustedInput` options; `verify_041.mjs` (deleted 100-line `CdpClient` +
+  socket code, keeps its Localmotive page filter + trusted clicks),
+  `drive_console_check.mjs`, and `verify_installer_payloads.mjs` (preserves its
+  tolerated no-page/probe-error observations) attach through the lib. Only
+  `new WebSocket(` site left is the lib. RED: single-owner test failed with 4
+  sites; mutant re-add failed it again. `npm run check` 290/290, audit 0,
+  verifiers pass.
 - [ ] **P1-14 — LAB-05: delete or wire the 15 dead g05 drivers.** `g05_cancellation`,
   `g05_churn_repro`, `g05_dc01`, `g05_hardlink_drive`, `g05_health`,
   `g05_launch_benchmark`, `g05_mt01d`, `g05_partial_resume`, `g05_partial_retention`,

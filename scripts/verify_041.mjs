@@ -10,7 +10,6 @@ import { basename, dirname, resolve, sep } from "node:path";
 import os from "node:os";
 import process from "node:process";
 import Ajv from "ajv";
-import WebSocket from "ws";
 import { classifyHealthCancellation } from "./lib/health_cancel.mjs";
 import { serializeIpcError, formatIpcError } from "./lib/ipc_errors.mjs";
 
@@ -137,105 +136,20 @@ async function sha256File(path) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-class CdpClient {
-  constructor(socket, defaultTimeoutMs = 30_000) {
-    this.socket = socket;
-    this.defaultTimeoutMs = defaultTimeoutMs;
-    this.nextId = 1;
-    this.pending = new Map();
-    socket.addEventListener("message", (event) => {
-      const message = JSON.parse(event.data);
-      if (!message.id) return;
-      const pending = this.pending.get(message.id);
-      if (!pending) return;
-      this.pending.delete(message.id);
-      clearTimeout(pending.timer);
-      if (message.error) pending.reject(new Error(message.error.message));
-      else pending.resolve(message.result);
-    });
-    socket.addEventListener("close", () => {
-      for (const pending of this.pending.values()) {
-        clearTimeout(pending.timer);
-        pending.reject(new Error("The CDP connection closed"));
-      }
-      this.pending.clear();
-    });
-  }
-
-  send(method, params = {}, timeoutMs = this.defaultTimeoutMs) {
-    const id = this.nextId++;
-    return new Promise((resolvePromise, rejectPromise) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        rejectPromise(new Error(`CDP ${method} exceeded ${timeoutMs} ms`));
-      }, timeoutMs);
-      this.pending.set(id, { resolve: resolvePromise, reject: rejectPromise, timer });
-      this.socket.send(JSON.stringify({ id, method, params }));
-    });
-  }
-
-  async evaluate(expression, timeoutMs = this.defaultTimeoutMs) {
-    const response = await this.send(
-      "Runtime.evaluate",
-      {
-        expression,
-        awaitPromise: true,
-        returnByValue: true,
-        userGesture: true,
-      },
-      timeoutMs,
-    );
-    if (response.exceptionDetails) {
-      const description =
-        response.exceptionDetails.exception?.description ??
-        response.exceptionDetails.text ??
-        "Page evaluation failed";
-      throw new Error(description);
-    }
-    return response.result?.value;
-  }
-
-  close() {
-    this.socket.close();
-  }
-}
+// P1-13 (LAB-03): the inline CDP socket copy is gone; every packaged
+// driver attaches through scripts/lib/cdp_client.mjs. The Localmotive page
+// filter and trusted input preserve this verifier exact behavior.
+import { attach as attachCdp } from "./lib/cdp_client.mjs";
 
 async function connectToCandidate() {
-  const deadline = Date.now() + cdpConnectTimeoutMs;
-  let lastError = "No CDP page was found";
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${port}/json/list`);
-      requireCondition(response.ok, `CDP endpoint returned HTTP ${response.status}`);
-      const pages = await response.json();
-      const page = pages.find(
-        (entry) =>
-          entry.type === "page" &&
-          typeof entry.webSocketDebuggerUrl === "string" &&
-          (/tauri\.localhost/i.test(entry.url ?? "") || /Localmotive/i.test(entry.title ?? "")),
-      );
-      requireCondition(page, "The CDP endpoint did not list the Localmotive page");
-      const socket = new WebSocket(page.webSocketDebuggerUrl);
-      await new Promise((resolvePromise, rejectPromise) => {
-        const timer = setTimeout(() => rejectPromise(new Error("CDP WebSocket connection timed out")), 10_000);
-        socket.addEventListener("open", () => {
-          clearTimeout(timer);
-          resolvePromise();
-        }, { once: true });
-        socket.addEventListener("error", () => {
-          clearTimeout(timer);
-          rejectPromise(new Error("CDP WebSocket connection failed"));
-        }, { once: true });
-      });
-      const connected = new CdpClient(socket);
-      await connected.send("Runtime.enable");
-      return connected;
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : String(error);
-      await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
-    }
-  }
-  throw new Error(lastError);
+  return attachCdp(port, {
+    deadlineMs: cdpConnectTimeoutMs,
+    trustedInput: true,
+    pageFilter: (entry) =>
+      entry.type === "page" &&
+      typeof entry.webSocketDebuggerUrl === "string" &&
+      (/tauri\.localhost/i.test(entry.url ?? "") || /Localmotive/i.test(entry.title ?? "")),
+  });
 }
 
 async function waitFor(expression, message, timeoutMs = 30_000) {

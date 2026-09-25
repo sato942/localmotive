@@ -1,70 +1,23 @@
 // Drive the packaged Localmotive over CDP to exercise every child-process path
 // (hardware detection, runtime capability inspection, model scan, server start/stop)
 // while watch_console_windows.py polls for console windows.
+//
+// P1-13 (LAB-03): attach through the shared scripts/lib/cdp_client.mjs instead
+// of a third inline WebSocket copy.
+import { attach } from "./lib/cdp_client.mjs";
+
 const PORT = process.argv[2] || '10011';
-const RUNTIME = process.argv[3] || 'C:\\llama\\llama-server.exe';
-const MODEL_ROOT = process.argv[4] || 'C:\\models';
-
-async function target() {
-  for (let i = 0; i < 60; i += 1) {
-    try {
-      const pages = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
-      const page = pages.find((p) => p.type === 'page' && p.webSocketDebuggerUrl);
-      if (page) return page;
-    } catch {}
-    await new Promise((r) => setTimeout(r, 500));
-  }
-  throw new Error('no CDP page');
-}
-
-function connect(url) {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url);
-    let id = 0;
-    const pending = new Map();
-    ws.onmessage = (ev) => {
-      const msg = JSON.parse(ev.data);
-      if (msg.id && pending.has(msg.id)) {
-        const { resolve: res, reject: rej } = pending.get(msg.id);
-        pending.delete(msg.id);
-        if (msg.error) rej(new Error(JSON.stringify(msg.error)));
-        else res(msg.result);
-      }
-    };
-    ws.onerror = reject;
-    ws.onopen = () =>
-      resolve({
-        send(method, params) {
-          id += 1;
-          const mid = id;
-          return new Promise((res, rej) => {
-            pending.set(mid, { resolve: res, reject: rej });
-            ws.send(JSON.stringify({ id: mid, method, params }));
-          });
-        },
-        close: () => ws.close(),
-      });
-  });
-}
+const RUNTIME = process.argv[3] || 'C:\llama\llama-server.exe';
+const MODEL_ROOT = process.argv[4] || 'C:\models';
 
 async function evaluate(cdp, expression) {
-  const r = await cdp.send('Runtime.evaluate', {
-    expression,
-    awaitPromise: true,
-    returnByValue: true,
-  });
-  if (r.exceptionDetails) {
-    throw new Error(r.exceptionDetails.exception?.description || JSON.stringify(r.exceptionDetails));
-  }
-  return r.result.value;
-}
+  return cdp.evaluate(expression);
+};
 
 const results = {};
 
 (async () => {
-  const page = await target();
-  const cdp = await connect(page.webSocketDebuggerUrl);
-  await cdp.send('Runtime.enable');
+  const cdp = await attach(PORT, { deadlineMs: 30_000 });
 
   const invoke = (cmd, args) =>
     `window.__TAURI_INTERNALS__.invoke(${JSON.stringify(cmd)}, ${JSON.stringify(args || {})})`;

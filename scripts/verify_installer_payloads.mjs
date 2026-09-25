@@ -67,44 +67,25 @@ export async function probePayloadFunctionally(payloadBytes, label, port) {
     windowsHide: true,
   });
   const sleep = (ms) => new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
-  const deadline = Date.now() + 60_000;
-  let target = null;
-  while (Date.now() < deadline && !target) {
+  // P1-13 (LAB-03): probe through the shared scripts/lib/cdp_client.mjs
+  // instead of a fourth inline WebSocket copy. No-page and probe failures
+  // stay tolerated observations, exactly as before.
+  const probe = { label, port, executable: exePath, cdpTarget: false, navButtons: null, hasManagedControls: null, bodyChars: null };
+  try {
+    const { attach } = await import('./lib/cdp_client.mjs');
+    const cdp = await attach(port, { deadlineMs: 60_000 });
+    probe.cdpTarget = true;
     try {
-      const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
-      target = list.find((entry) => entry.type === "page" && entry.webSocketDebuggerUrl) ?? null;
-    } catch {
-      // the debugger endpoint is not up yet
-    }
-    if (!target) await sleep(500);
-  }
-  const probe = { label, port, executable: exePath, cdpTarget: Boolean(target), navButtons: null, hasManagedControls: null, bodyChars: null };
-  if (target) {
-    try {
-      const socket = new WebSocket(target.webSocketDebuggerUrl);
-      await new Promise((resolvePromise, rejectPromise) => {
-        socket.onopen = resolvePromise;
-        socket.onerror = rejectPromise;
-      });
       const expression =
         '(function(){const buttons=document.querySelectorAll("nav button");const text=(document.body&&document.body.innerText)||"";return JSON.stringify({navButtons:buttons.length,hasLocalmotive:/Localmotive/i.test(text),hasManagedControls:/Stop server|Start profile|HF catalog|Benchmark/i.test(text),bodyChars:text.length});})()';
-      const reply = await new Promise((resolvePromise) => {
-        socket.onmessage = (event) => {
-          try {
-            const message = JSON.parse(event.data);
-            if (message.id === 1) resolvePromise(message.result?.result?.value ?? null);
-          } catch {
-            // ignore frames we do not answer
-          }
-        };
-        socket.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression, returnByValue: true } }));
-        setTimeout(() => resolvePromise(null), 20_000);
-      });
-      socket.close();
+      const reply = await cdp.evaluate(expression, 20_000);
       if (reply) Object.assign(probe, JSON.parse(reply));
     } catch (error) {
       probe.probeError = String(error).slice(0, 200);
     }
+    cdp.close();
+  } catch (error) {
+    probe.probeError = String(error).slice(0, 200);
   }
   try {
     child.kill();

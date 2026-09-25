@@ -2050,6 +2050,23 @@ test("the cancellable local client never re-issues a slow-but-healthy response (
   assert.match(source, /fn run_local_request\(/);
 });
 
+test("the CDP WebSocket is constructed in exactly one place", async () => {
+  // P1-13 (LAB-03): verify_041, drive_console_check, and
+  // verify_installer_payloads each carried an inline CDP WebSocket client.
+  // All packaged driving goes through scripts/lib/cdp_client.mjs so protocol
+  // fixes land once.
+  const roots = ["scripts", join("scripts", "lib")];
+  const owners = [];
+  for (const root of roots) {
+    for (const name of await readdir(join(process.cwd(), root))) {
+      if (!name.endsWith(".mjs")) continue;
+      const source = await readFile(join(process.cwd(), root, name), "utf8");
+      if (/new WebSocket\(/.test(source)) owners.push(join(root, name));
+    }
+  }
+  assert.deepStrictEqual(owners, [join("scripts", "lib", "cdp_client.mjs")]);
+});
+
 test("no harness script stops processes by name or by port", async () => {
   // P1-4 (LAB-04): scripts/g05_vitems_c.mjs swept every llama-server and
   // localmotive process by name. Dead and dangerous, so it is deleted; the
