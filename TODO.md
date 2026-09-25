@@ -384,10 +384,13 @@ Fix these after P0 and before the next feature.
   detach past the deadline) replaces all six reader joins in
   `output_with_timeout_and_cancel`. RED `E0425`, bare-join mutant failed the
   source guard, fmt/clippy clean, cargo 651/0.
-- [ ] **P1-19 — PROC-03: surface unresolved termination distinctly.** Timeout/cancel
-  paths ignore `terminate_and_wait`'s boolean and return `Timeout`/`Cancelled` while
-  the tree may still run; no `ProcessFailureKind` names it. Add an `Unresolved`
-  kind (or equivalent) with a RED test that a surviving child is reported as such.
+- [x] **P1-19 — PROC-03: surface unresolved termination distinctly.** Done
+  2026-09-25: new `ProcessFailureKind::Unresolved` + `cleanup_outcome`
+  (timeout/cancel branches route `terminate_and_wait` through it; the
+  post-loop branch changed `Io` → `Unresolved`); mapped to new
+  `HealthFailureReason::Unresolved` + TS mirror `"unresolved"`. RED
+  `E0425/E0599`, ignore-flag mutant failed, `npm run check` EXIT 0, cargo
+  653/0, clippy clean.
 - [ ] **P1-20 — PROC-04: clear the starting slot when `local_client` fails.**
   `start_server_worker` uses `&local_client(&profile)?` between spawn and the health
   wait: the `?` returns without `clear_starting` and without terminating the child.
