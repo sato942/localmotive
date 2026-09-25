@@ -209,6 +209,86 @@ mod containment {
         }
     }
 
+    /// Resume every thread of a process that was created suspended.
+    /// P1-6 (PROC-01): children start suspended so the job assignment
+    /// happens before they run; this releases them afterwards. Returns
+    /// an error when no thread could be resumed, so the caller refuses
+    /// to leave a permanently suspended child behind.
+    pub fn resume_process(pid: u32) -> Result<(), String> {
+        use windows_sys::Win32::Foundation::{
+            CloseHandle, GetLastError, ERROR_NO_MORE_FILES, HANDLE, INVALID_HANDLE_VALUE,
+        };
+        use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
+        };
+        use windows_sys::Win32::System::Threading::{
+            OpenThread, ResumeThread, THREAD_SUSPEND_RESUME,
+        };
+        struct SnapshotGuard(HANDLE);
+        impl Drop for SnapshotGuard {
+            fn drop(&mut self) {
+                unsafe {
+                    let _ = CloseHandle(self.0);
+                }
+            }
+        }
+        unsafe {
+            let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+            if snapshot == INVALID_HANDLE_VALUE {
+                return Err(format!(
+                    "process containment could not list threads: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            let _guard = SnapshotGuard(snapshot);
+            let mut entry: THREADENTRY32 = std::mem::zeroed();
+            entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
+            if Thread32First(snapshot, &mut entry) == 0 {
+                return Err(format!(
+                    "process containment could not list threads: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            let mut resumed = false;
+            loop {
+                if entry.th32OwnerProcessID == pid {
+                    let thread = OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID);
+                    if thread.is_null() {
+                        return Err(format!(
+                            "process containment could not open a thread: {}",
+                            std::io::Error::last_os_error()
+                        ));
+                    }
+                    let previous = ResumeThread(thread);
+                    let _ = CloseHandle(thread);
+                    if previous == u32::MAX {
+                        return Err(format!(
+                            "process containment could not resume a thread: {}",
+                            std::io::Error::last_os_error()
+                        ));
+                    }
+                    if previous > 0 {
+                        resumed = true;
+                    }
+                }
+                if Thread32Next(snapshot, &mut entry) == 0 {
+                    if GetLastError() != ERROR_NO_MORE_FILES {
+                        return Err(format!(
+                            "process containment could not list threads: {}",
+                            std::io::Error::last_os_error()
+                        ));
+                    }
+                    break;
+                }
+            }
+            if resumed {
+                Ok(())
+            } else {
+                Err("process containment resumed no thread; refusing a suspended child".into())
+            }
+        }
+    }
+
     #[cfg(test)]
     pub fn process_in_job(process: std::os::windows::io::RawHandle, job: HANDLE) -> bool {
         use windows_sys::Win32::System::JobObjects::IsProcessInJob;
@@ -283,23 +363,24 @@ impl ContainedChild {
 #[cfg(windows)]
 fn spawn_contained(command: &mut Command) -> Result<ContainedChild, ProcessFailure> {
     use process_wrap::std::{CommandWrap, CreationFlags};
-    use windows::Win32::System::Threading::CREATE_NO_WINDOW as WINDOWS_CREATE_NO_WINDOW;
+    use windows::Win32::System::Threading::{
+        CREATE_NO_WINDOW as WINDOWS_CREATE_NO_WINDOW, CREATE_SUSPENDED,
+    };
 
     let job = containment::JobHandle::create()
         .map_err(|message| ProcessFailure::new(ProcessFailureKind::Spawn, message))?;
     let command = std::mem::replace(command, Command::new(""));
     let mut wrapped = CommandWrap::from(command);
-    wrapped.wrap(CreationFlags(WINDOWS_CREATE_NO_WINDOW));
+    // P1-6 (PROC-01): the child starts suspended, so the job assignment
+    // below happens before it runs. A child that spawns descendants before
+    // the assignment would strand them outside the job.
+    wrapped.wrap(CreationFlags(WINDOWS_CREATE_NO_WINDOW | CREATE_SUSPENDED));
     let mut child = wrapped.spawn().map_err(|error| {
         ProcessFailure::new(
             ProcessFailureKind::Spawn,
             format!("Contained child process could not start: {error}"),
         )
     })?;
-    // Assign immediately after spawn; the job is fresh for this child and the
-    // crate's non-kill-on-close job wrapper is not used, so no nested-job
-    // conflict arises. A child we cannot contain is terminated, not leaked
-    // (G-05 packaged finding).
     match child.process_handle() {
         Some(handle) => {
             if let Err(message) = job.assign(&handle) {
@@ -316,6 +397,13 @@ fn spawn_contained(command: &mut Command) -> Result<ContainedChild, ProcessFailu
                 "Child process handle was unavailable; refusing an uncontained child",
             ));
         }
+    }
+    // Assigned while suspended: release it now. A child we cannot resume is
+    // terminated, not left suspended (fail closed).
+    if let Err(message) = containment::resume_process(child.id()) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(ProcessFailure::new(ProcessFailureKind::Spawn, message));
     }
     Ok(ContainedChild { inner: child, job })
 }
@@ -532,6 +620,35 @@ mod tests {
         assert!(process.terminate_and_wait(), "cleanup must succeed");
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn suspended_children_are_assigned_before_they_run() {
+        // P1-6 (PROC-01): the spawn-assign gap let a fast child spawn
+        // descendants outside the job. The child starts suspended (it must
+        // not exit while held), joins the job, then resumes to its exit.
+        use std::os::windows::io::{AsRawHandle, BorrowedHandle};
+        use std::os::windows::process::CommandExt;
+        use windows::Win32::System::Threading::{CREATE_NO_WINDOW, CREATE_SUSPENDED};
+        let mut command = super::hidden_command("cmd.exe");
+        command.args(["/C", "exit 42"]);
+        command.creation_flags((CREATE_NO_WINDOW | CREATE_SUSPENDED).0);
+        let mut child = command.spawn().expect("suspended spawn");
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(
+            child.try_wait().expect("poll").is_none(),
+            "a suspended child must not run before assignment"
+        );
+        let job = super::containment::JobHandle::create().expect("job");
+        let borrowed = unsafe { BorrowedHandle::borrow_raw(child.as_raw_handle()) };
+        job.assign(&borrowed).expect("assign while suspended");
+        assert!(
+            super::containment::process_in_job(child.as_raw_handle(), job.handle()),
+            "assigned-while-suspended child must belong to the job"
+        );
+        super::containment::resume_process(child.id()).expect("resume");
+        assert_eq!(child.wait().expect("wait").code(), Some(42));
+    }
+
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
@@ -610,6 +727,27 @@ mod tests {
         assert!(source.contains("containment::JobHandle::create()"));
         assert!(source.contains("JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE"));
         assert_eq!(source.matches("ProcessTree::assign").count(), 1);
+        // P1-6 (PROC-01): assignment after a running start still leaves a
+        // gap where the child spawns descendants outside the job. The spawn
+        // must order suspended create, job assignment, then resume.
+        let start = source
+            .find("fn spawn_contained(command: &mut Command)")
+            .expect("spawn_contained");
+        let after = &source[start..];
+        let body = &after[..after
+            .find("#[cfg(not(windows))]")
+            .expect("windows spawn end")];
+        let suspended = body
+            .find("WINDOWS_CREATE_NO_WINDOW | CREATE_SUSPENDED")
+            .expect("suspended create");
+        let assigned = body.find("job.assign").expect("job assignment");
+        let resumed = body
+            .find("resume_process")
+            .expect("resume after assignment");
+        assert!(
+            suspended < assigned && assigned < resumed,
+            "spawn must order suspended create, job assignment, then resume"
+        );
     }
 
     #[cfg(windows)]

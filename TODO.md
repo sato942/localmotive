@@ -285,8 +285,11 @@ Fix these after P0 and before the next feature.
   process tree that the step started. Done 2026-09-25: `ci.yml` smoke stop
   plus lab watchdog and `Stop-LabApp` use `taskkill /T` on the owned PID
   with immediate exit-code checks. RED plus mutation-proven workflow test.
-- [ ] **P1-6 — PROC-01:** Put the child process in the job object before it
-  runs: create it suspended, assign it, then resume it.
+- [x] **P1-6 — PROC-01:** Put the child process in the job object before it
+  runs: create it suspended, assign it, then resume it. Done 2026-09-25:
+  `spawn_contained` sets `CREATE_SUSPENDED`, assigns, then releases via new
+  `containment::resume_process` (ToolHelp; fail-closed). Behavioral test
+  plus ordering guard, RED and mutation-proven.
 - [ ] **P1-7 — FE-01:** Clear each credential draft on every exit path,
   including a failed save and an unmount.
 - [ ] **P1-8 — DL-02:** Use checked arithmetic for GGUF split metadata. RED
