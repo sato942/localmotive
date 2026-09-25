@@ -2089,9 +2089,58 @@ test("every g05 lab driver is referenced or deleted", async () => {
   assert.deepStrictEqual(dead, []);
 });
 
+test("every automation script is referenced or deleted", async () => {
+  // P2-2 (LAB-05): beyond the g05 drivers, any script that no package.json
+  // script, workflow, kept test, or sibling script names is dead weight and
+  // is deleted. A live script is named by at least one other file.
+  const scriptsDir = join(process.cwd(), "scripts");
+  async function collect(dir) {
+    const out = [];
+    for (const name of await readdir(dir)) {
+      const full = join(dir, name);
+      const rel = full.slice(process.cwd().length + 1).replace(/\\/g, "/");
+      if ((await stat(full)).isDirectory()) {
+        if (name === "tests") continue;
+        out.push(...(await collect(full)));
+      } else if (/\.(mjs|ps1|py)$/.test(name)) {
+        out.push(rel);
+      }
+    }
+    return out;
+  }
+  const names = await collect(scriptsDir);
+  assert.ok(names.length > 0, "expected automation scripts to exist");
+  const roots = [".github/workflows", "scripts/tests"];
+  const dead = [];
+  for (const rel of names) {
+    const stem = rel.split("/").pop().replace(/\.(mjs|ps1|py)$/, "");
+    let external = 0;
+    const haystacks = [];
+    for (const root of roots) {
+      for (const other of await readdir(join(process.cwd(), root))) {
+        if (!other.endsWith(".yml") && !other.endsWith(".mjs")) continue;
+        haystacks.push(join(process.cwd(), root, other));
+      }
+    }
+    haystacks.push(join(process.cwd(), "package.json"));
+    for (const other of names) {
+      if (other === rel) continue;
+      haystacks.push(join(process.cwd(), other));
+    }
+    for (const hay of haystacks) {
+      if ((await readFile(hay, "utf8")).includes(stem)) {
+        external += 1;
+        break;
+      }
+    }
+    if (external === 0) dead.push(rel);
+  }
+  assert.deepStrictEqual(dead, []);
+});
+
 test("the CDP WebSocket is constructed in exactly one place", async () => {
-  // P1-13 (LAB-03): verify_041, drive_console_check, and
-  // verify_installer_payloads each carried an inline CDP WebSocket client.
+  // P1-13 (LAB-03): the packaged drivers each carried an inline CDP
+  // WebSocket client (the third inline client was deleted in P2-2).
   // All packaged driving goes through scripts/lib/cdp_client.mjs so protocol
   // fixes land once.
   const roots = ["scripts", join("scripts", "lib")];

@@ -529,9 +529,11 @@ Fix these after P0 and before the next feature.
   removed. The one test that read tracked `artifacts/*.json` fixtures now
   reads the byte-identical `release-evidence/0.6.1/` copies; all other
   `artifacts/` references are runtime workspace paths or fixture-temp labels.
-- [ ] **P2-2 — Delete dead scripts (LAB-05).** List each script in `scripts/`
-  with its callers. Delete each script that no `package.json` script,
-  workflow, or kept test calls. `scripts/g05_dc01.mjs` is one (FE-03).
+- [x] **P2-2 — Delete dead scripts (LAB-05).** Done 2026-09-25: new generic
+  sweep test (`every automation script is referenced or deleted`) was RED with
+  11 dead files, then caught a 12th (`watch_console_windows.py`, REVIEW-only
+  mention) the manual pass missed; deleted all 12 via `git rm`. `npm run check`
+  EXIT 0 (265/265).
 - [ ] **P2-3 — Keep one CDP client (LAB-03):** `scripts/lib/cdp_client.mjs`.
 - [ ] **P2-4 — Replace source-text tests with behavior tests.** Delete the
   test-only `ALL_SOURCES` (`src-tauri/src/lib.rs:17-37`). Delete the prose
