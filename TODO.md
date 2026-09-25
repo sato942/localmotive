@@ -355,12 +355,14 @@ Fix these after P0 and before the next feature.
   `new WebSocket(` site left is the lib. RED: single-owner test failed with 4
   sites; mutant re-add failed it again. `npm run check` 290/290, audit 0,
   verifiers pass.
-- [ ] **P1-14 — LAB-05: delete or wire the 15 dead g05 drivers.** `g05_cancellation`,
-  `g05_churn_repro`, `g05_dc01`, `g05_hardlink_drive`, `g05_health`,
-  `g05_launch_benchmark`, `g05_mt01d`, `g05_partial_resume`, `g05_partial_retention`,
-  `g05_run_cancel`, `g05_state`, `g05_stop_supervision`, `g05_tamper_dll`, `g05_v2_cancel`,
-  `g05_vitems_d` have zero references (same family as P1-4). Delete them or reference
-  them from a workflow/test; keep the P1-4 no-name-kill sweep green.
+- [x] **P1-14 — LAB-05: delete or wire the 15 dead g05 drivers.** Done 2026-09-25:
+  deleted via `git rm` (`g05_cancellation`, `g05_churn_repro`, `g05_dc01`,
+  `g05_hardlink_drive`, `g05_health`, `g05_launch_benchmark`, `g05_mt01d`,
+  `g05_partial_resume`, `g05_partial_retention`, `g05_run_cancel`, `g05_state`,
+  `g05_stop_supervision`, `g05_tamper_dll`, `g05_v2_cancel`, `g05_vitems_d`).
+  Six referenced drivers stay (workflows + tests name them). RED: new
+  external-reference test; mutant unreferenced file failed it. `npm run check`
+ CHECK_EXIT:0, release-gates 171/0.
 - [ ] **P1-15 — RT-04: pin the directory inventory for the lease lifetime.** Lease
   acquisition checks `actual == expected` files, but a file planted after acquisition
   is not detected while the lease is held. Re-check the inventory (or pin the

@@ -2050,6 +2050,34 @@ test("the cancellable local client never re-issues a slow-but-healthy response (
   assert.match(source, /fn run_local_request\(/);
 });
 
+test("every g05 lab driver is referenced or deleted", async () => {
+  // P1-14 (LAB-05): fifteen one-off g05 drivers had zero references from any
+  // workflow, test, or script. A driver nobody runs is deleted; the survivors
+  // are named by the automation that runs them.
+  const scriptsDir = join(process.cwd(), "scripts");
+  const names = (await readdir(scriptsDir)).filter((name) => name.startsWith("g05_") && name.endsWith(".mjs"));
+  assert.ok(names.length > 0, "expected g05 drivers to exist");
+  const dead = [];
+  for (const name of names) {
+    const stem = name.replace(/\.mjs$/, "");
+    // The driver's own file mentions its own stem; a live driver is named by
+    // at least one other file (workflow, test, or sibling script).
+    let external = 0;
+    for (const root of [".github/workflows", "scripts/tests"]) {
+      for (const other of await readdir(join(process.cwd(), root))) {
+        if (!other.endsWith(".yml") && !other.endsWith(".mjs")) continue;
+        if ((await readFile(join(process.cwd(), root, other), "utf8")).includes(stem)) external += 1;
+      }
+    }
+    for (const other of await readdir(scriptsDir)) {
+      if (!other.endsWith(".mjs") || other === name) continue;
+      if ((await readFile(join(scriptsDir, other), "utf8")).includes(stem)) external += 1;
+    }
+    if (external === 0) dead.push(name);
+  }
+  assert.deepStrictEqual(dead, []);
+});
+
 test("the CDP WebSocket is constructed in exactly one place", async () => {
   // P1-13 (LAB-03): verify_041, drive_console_check, and
   // verify_installer_payloads each carried an inline CDP WebSocket client.
