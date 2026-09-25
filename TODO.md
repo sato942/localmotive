@@ -281,8 +281,10 @@ Fix these after P0 and before the next feature.
   only the processes that it started, by PID. Done 2026-09-25: deleted the
   dead name-killing script (no callers; REVIEW marked it DELETE). Repo sweep:
   every surviving stop is PID-scoped. Guard test RED plus mutation-proven.
-- [ ] **P1-5 — REL-10:** Where a workflow stops the app, stop the whole
-  process tree that the step started.
+- [x] **P1-5 — REL-10:** Where a workflow stops the app, stop the whole
+  process tree that the step started. Done 2026-09-25: `ci.yml` smoke stop
+  plus lab watchdog and `Stop-LabApp` use `taskkill /T` on the owned PID
+  with immediate exit-code checks. RED plus mutation-proven workflow test.
 - [ ] **P1-6 — PROC-01:** Put the child process in the job object before it
   runs: create it suspended, assign it, then resume it.
 - [ ] **P1-7 — FE-01:** Clear each credential draft on every exit path,

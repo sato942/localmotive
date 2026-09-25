@@ -138,7 +138,8 @@ jobs:
           $process = Start-Process $portable -PassThru
           Start-Sleep -Seconds 8
           if ($process.HasExited) { throw "Packaged app exited during startup with code $($process.ExitCode)" }
-          Stop-Process -Id $process.Id -Force
+          & taskkill /PID $process.Id /T /F | Out-Null
+          if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 128) { throw "Packaged app tree stop failed with code $LASTEXITCODE" }
 
   # Required pull-request checks: stable name, ephemeral isolated host, no
   # secrets, read-only permissions. This is the only job a pull request may
