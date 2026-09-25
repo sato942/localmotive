@@ -998,6 +998,20 @@ fn safe_directory(path: &Path) -> bool {
     })
 }
 
+/// Validate the managed install root before the first write.
+///
+/// Ancestor validation runs before creation (missing components are skipped
+/// by `validate_no_reparse_ancestors`), and an already-existing root must be
+/// a safe directory: otherwise creation would write through a planted link
+/// before the post-creation check could reject it (audit RT-10).
+fn validate_install_root_before_create(root: &Path) -> Result<(), String> {
+    validate_no_reparse_ancestors("Managed runtime root", root)?;
+    if fs::symlink_metadata(root).is_ok() && !safe_directory(root) {
+        return Err("Managed runtime root is a link or reparse point".into());
+    }
+    Ok(())
+}
+
 fn manifest_runtime_path(dir: &Path, runtime: &str) -> Option<PathBuf> {
     use std::path::Component;
 
@@ -4494,6 +4508,9 @@ pub fn install_runtime(
     {
         return Ok(reused);
     }
+    // RT-10: the root is validated before the first write, so a planted link
+    // is refused before creation can write through it.
+    validate_install_root_before_create(&root)?;
     fs::create_dir_all(&root).map_err(|error| error.to_string())?;
     validate_no_reparse_ancestors("Managed runtime root", &root)?;
     let root_metadata = fs::symlink_metadata(&root)
@@ -8786,6 +8803,67 @@ Connection: close
         );
         drop(lease);
         fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn install_root_precheck_rejects_an_existing_file() {
+        // P1-16 (RT-10): validation must run before the first write. A root
+        // that already exists as a file (or link) is refused instead of
+        // reaching creation.
+        let base = std::env::temp_dir().join(format!(
+            "localmotive-install-root-{}-{}",
+            std::process::id(),
+            observed_at_ms()
+        ));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        let file = base.join("root");
+        fs::write(&file, b"not a directory").unwrap();
+        let error = validate_install_root_before_create(&file)
+            .expect_err("an existing file is not a safe install root");
+        assert!(
+            error.contains("link or reparse point"),
+            "the precheck must name the hazard: {error}"
+        );
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn install_root_precheck_allows_a_clean_missing_destination() {
+        // A missing root under clean ancestors passes: creation may proceed.
+        let base = std::env::temp_dir().join(format!(
+            "localmotive-install-root-clean-{}-{}",
+            std::process::id(),
+            observed_at_ms()
+        ));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        validate_install_root_before_create(&base.join("runtimes"))
+            .expect("a clean missing root must pass the precheck");
+        validate_install_root_before_create(&base)
+            .expect("a clean existing directory must pass the precheck");
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn install_runtime_validates_the_root_before_creating_it() {
+        // The creation call must come after the precheck in the source: a
+        // planted link must be refused before the first write (audit RT-10).
+        let source = include_str!("runtime.rs");
+        let install_fn = source
+            .find("pub fn install_runtime(")
+            .expect("install_runtime present");
+        let body = &source[install_fn..install_fn + 3_000];
+        let precheck = body
+            .find("validate_install_root_before_create(&root)")
+            .expect("install_runtime must pre-validate the root");
+        let create = body
+            .find("fs::create_dir_all(&root)")
+            .expect("install_runtime creates the root");
+        assert!(
+            precheck < create,
+            "root validation must run before the first write"
+        );
     }
 
     #[cfg(windows)]
