@@ -320,18 +320,24 @@ Fix these after P0 and before the next feature.
   (handle layer independent; also caught truncate-before-verify flaw, fixed to
   verify-then-set_len); lease-drop mutant failed the holding test. Rust
   642/0, clippy clean, node 290/290.)
-- [ ] **P1-11 — Check the 31 unverified High findings in `REVIEW.md`.**
-  For each finding, reproduce or refute it. Record VERIFIED or REFUTED in the
-  ledger. Add a P1 item for each verified defect.
-  - Release and lab: REL-11, LAB-03, LAB-05, LAB-06.
-  - Documentation: DOC-05, DOC-07.
-  - Runtime: RT-04, RT-07, RT-10.
-  - Core: CORE-03, CORE-05.
-  - Process and health: PROC-02, PROC-03, PROC-04, PROC-05, PROC-06,
-    PROC-07, PROC-08.
-  - Downloads and cloud: DL-01, DL-03, DL-04.
-  - Measurement: MT-01, MT-03, MT-05, MT-06, MT-07, MT-08, MT-09.
-  - Frontend: FE-04, FE-05, FE-06.
+- [x] **P1-11 — Check the 31 unverified High findings in `REVIEW.md`.**
+  Done 2026-09-25: all 31 checked against current code (tracker + code +
+  tests). REVIEW.md statuses updated to `VERIFIED 2026-09-25 (P1-11)` (24)
+  or `REFUTED 2026-09-25 (P1-11)` (7). New P1 items below for the verified
+  defects.
+  - REFUTED (7): REL-11 (release.yml is 309 lines, no inline lab JS — cut by
+    P0-7); LAB-06 (shared `catalog-schema-cases.json` conformance both
+    sides + DC-10 envelope checks); DOC-05 (README/matrices agree on 0.6.5;
+    fixed one stale "no 0.6.x release" sentence in SUPPORT-MATRIX.md);
+    DOC-07 (single 43-checkbox TODO.md; cited history files not in tree);
+    RT-07 (`ScanLimits` depth 12/entries 100k + `safe_directory`
+    no-follow discovery); CORE-03 (tuning holds slot + RAII reservation to
+    completion; cancel sets a flag without releasing); MT-07 (tuning uses
+    the cancellable MT-04 path, not the legacy worker).
+  - VERIFIED (24): LAB-03, LAB-05, RT-04, RT-10, CORE-05, PROC-02, PROC-03,
+    PROC-04, PROC-05, PROC-06, PROC-07, PROC-08, DL-01, DL-03, DL-04, MT-01,
+    MT-03, MT-05, MT-06, MT-08, MT-09 + FE-05 (one defect), FE-04, FE-06.
+    Evidence per item below.
 - [ ] **P1-12 — Decouple the release jobs from the hardware host.** Today
   `release.yml` and `release-promote.yml` need all six labels of the one
   runner on the owner's PC.
@@ -340,6 +346,100 @@ Fix these after P0 and before the next feature.
     At least one runner that the team controls carries `localmotive-release`
     (A2).
   - Evidence: one green `release.yml` run on that runner.
+- [ ] **P1-13 — LAB-03: unify the three CDP clients.** `scripts/lib/cdp_client.mjs`,
+  `scripts/verify_041.mjs:218`, and `scripts/drive_console_check.mjs:22` each open
+  their own CDP WebSocket. Keep one client (the lib) and delete the copies.
+  RED: a conformance test that fails while two socket implementations exist.
+- [ ] **P1-14 — LAB-05: delete or wire the 15 dead g05 drivers.** `g05_cancellation`,
+  `g05_churn_repro`, `g05_dc01`, `g05_hardlink_drive`, `g05_health`,
+  `g05_launch_benchmark`, `g05_mt01d`, `g05_partial_resume`, `g05_partial_retention`,
+  `g05_run_cancel`, `g05_state`, `g05_stop_supervision`, `g05_tamper_dll`, `g05_v2_cancel`,
+  `g05_vitems_d` have zero references (same family as P1-4). Delete them or reference
+  them from a workflow/test; keep the P1-4 no-name-kill sweep green.
+- [ ] **P1-15 — RT-04: pin the directory inventory for the lease lifetime.** Lease
+  acquisition checks `actual == expected` files, but a file planted after acquisition
+  is not detected while the lease is held. Re-check the inventory (or pin the
+  directory handle) before each execution, following the P1-10 handle pattern.
+- [ ] **P1-16 — RT-10: validate the runtime root before creating it.**
+  `install_runtime` runs `fs::create_dir_all(&root)` before
+  `validate_no_reparse_ancestors` + the symlink check. Move validation first with a
+  RED test that a hostile link ancestor is refused with no directory created.
+- [ ] **P1-17 — CORE-05: bound IPC vectors at the command boundary.**
+  `inspect_model_artifact` (`companions: Vec<String>`), `PreflightRequest`
+  (`selected_adapter_ids`, `manual_overrides`) and the other cited payloads take
+  unbounded vectors before allocation and hashing work. Add length caps with RED
+  tests that oversized payloads are refused before any file work.
+- [ ] **P1-18 — PROC-02: join pipe readers with a deadline after failed cleanup.**
+  Every `output_with_timeout_and_cancel` cleanup path joins the reader threads
+  unboundedly, including the `!terminate_and_wait` branch where the child is still
+  alive and the pipes never close. Bound the joins (or drop the pipes first) with a
+  RED test using an unkillable child.
+- [ ] **P1-19 — PROC-03: surface unresolved termination distinctly.** Timeout/cancel
+  paths ignore `terminate_and_wait`'s boolean and return `Timeout`/`Cancelled` while
+  the tree may still run; no `ProcessFailureKind` names it. Add an `Unresolved`
+  kind (or equivalent) with a RED test that a surviving child is reported as such.
+- [ ] **P1-20 — PROC-04: clear the starting slot when `local_client` fails.**
+  `start_server_worker` uses `&local_client(&profile)?` between spawn and the health
+  wait: the `?` returns without `clear_starting` and without terminating the child.
+  Restructure with a RED test that this path clears the slot and reaps the child.
+- [ ] **P1-21 — PROC-05: stop following redirects on the health readiness client.**
+  `health.rs:1082` builds a reqwest client with no redirect policy (default follows),
+  while `local_client.rs:516` sets `Policy::none` (R15). Set `Policy::none` + port the
+  R15 redirect test.
+- [ ] **P1-22 — PROC-06: track and join the nested completion worker.**
+  `completion_request_supervised` (and the 715-747 sibling) spawns a detached thread
+  and relies on `terminate()` to unblock it. Join the worker with a deadline and
+  report an unresolved outcome instead of abandoning it.
+- [ ] **P1-23 — PROC-07: refuse links in transport-file reads.** `read_bounded_file`
+  (`local_client.rs:854`) follows symlinks and only checks `is_file()` — it reads SSL
+  keys/certs and API key files. Refuse reparse points/symlinks (mirror
+  `require_regular_non_reparse_file`) with a RED symlink test.
+- [ ] **P1-24 — PROC-08: stop following replaced log paths.** `LogWriter::second_writer`
+  re-opens `self.path` and `write_failure_evidence` uses `fs::write` through
+  replaceable paths. Open once and share the handle (or verify-then-write through a
+  retained directory handle per P1-10).
+- [ ] **P1-25 — DL-01: revalidate override rows at read time.** `user_override_file`
+  trusts SQLite content validated only at write time; a direct DB edit can swap the
+  digest and authorize malicious bytes. Add read-time integrity (e.g., a MAC with a
+  Credential Manager key) with a RED tampered-row test.
+- [ ] **P1-26 — DL-03: verify the handle, not the path, on reads.** `validate_regular_non_reparse_file`
+  then `File::open` (e.g., `gguf.rs:649-657`) leaves a plant-between-check-and-open
+  window. Open first, then verify the handle (one link, no reparse, final-path
+  parent) following the P1-10 `write_trusted_record` pattern.
+- [ ] **P1-27 — DL-04: bound the OAuth key-exchange response.** `exchange_code_for_key`
+  (`cloud.rs:596-616`) buffers `response.text()` unbounded before parsing. Read
+  bounded (mirror `read_bounded`) with a RED oversized-body test.
+- [ ] **P1-28 — MT-01: stop presenting a same-prompt repeat as confirmation.**
+  Final verification re-measures on the fixed harness prompt and the UI says
+  "confirmed". Relabel as a re-measurement with the same-prompt limit stated, or add
+  a held-out prompt.
+- [ ] **P1-29 — MT-03: persist warmup-only failures as Failed manifests.**
+  Warmup failure returns with empty `observations`, so `validate_attempt_consistency`
+  rejects the manifest and nothing is saved. Persist the partial run (Failed class)
+  with a RED warmup-failure test.
+- [ ] **P1-30 — MT-05: restore the server after a cold v2 benchmark.**
+  `benchmark_v2` takes the user's server (`slot.take()`), terminates it for cold
+  mode, and never relaunches it. Relaunch the same profile after the run (or refuse
+  cold while a server runs) with a RED state test.
+- [ ] **P1-31 — MT-06: bound the worker drain.** `drain_owned_workers` loops
+  `while !wait_for_worker_drain(1s) {}` forever; a stuck worker holds the benchmark
+  slot and the operations reservation permanently. Bound the loop and report an
+  unresolved outcome.
+- [ ] **P1-32 — MT-08: make replay respect unknown execution identity.**
+  The compatibility key embeds `"unknown"` for unobserved drivers, so two machines
+  with unknown drivers produce equal keys and replay proceeds. Refuse replay while
+  `unknown_identities` is non-empty (or key the unknown-ness distinctly).
+- [ ] **P1-33 — MT-09/FE-05: remove the legacy benchmark system.** `benchmark_server`
+  + `BenchmarkScreen` duplicate `benchmark_v2` + `V03EvidencePanel`, and both commands
+  are registered (`lib.rs:2293-2294`). Migrate remaining callers, then delete the
+  legacy command, screen, and service path.
+- [ ] **P1-34 — FE-04: split `App.tsx`.** One 1858-line component owns state,
+  persistence, async coordination, and shell rendering. Extract the first coherent
+  piece (e.g., persistence or one screen's coordination) with component tests kept
+  green; record the next split in the item.
+- [ ] **P1-35 — FE-06: route `cancel_scan` through props.** `InventoryScreen`
+  calls `invoke("cancel_scan")` directly although its contract keeps acquisition in
+  `App.tsx`. Pass a callback prop instead; keep the presentation-boundary test green.
 
 ---
 
