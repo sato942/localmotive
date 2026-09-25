@@ -273,9 +273,10 @@ Fix these after P0 and before the next feature.
   disclosure lists. Done 2026-09-25: `apply_disclosure` strips `adapterId`,
   `compatibilityId`, `physicalId` from every adapter in both modes; names,
   VRAM and driver versions stay. RED plus mutation-proven test on the wire.
-- [ ] **P1-3 — RT-02:** Install keeps the rollback copy until the final
-  verification passes. RED test: make the final verification fail and expect
-  the previous runtime back in place.
+- [x] **P1-3 — RT-02:** Install keeps the rollback copy until the final
+  verification passes. Done 2026-09-25: `replace_verified_runtime_directory`
+  returns the backup; `finalize_runtime_replacement` removes it on verify
+  success and restores it on verify failure. RED plus mutation-proven test.
 - [ ] **P1-4 — LAB-04:** Delete `scripts/g05_vitems_c.mjs`, or make it stop
   only the processes that it started, by PID. Search all scripts and
   workflows for stops by name or by port, and remove each one.

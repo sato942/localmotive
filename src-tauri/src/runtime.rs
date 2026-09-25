@@ -4357,7 +4357,15 @@ fn ensure_installation_replaceable(directory: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn replace_verified_runtime_directory(staging: &Path, destination: &Path) -> Result<(), String> {
+/// Publish verified staging over the destination and return the rollback
+/// copy, if a previous install existed. P1-3 (RT-02): the caller keeps the
+/// backup until the final verification of the PUBLISHED destination passes,
+/// then passes it to `finalize_runtime_replacement`. Deleting it here would
+/// strand a failed publish with no way back.
+fn replace_verified_runtime_directory(
+    staging: &Path,
+    destination: &Path,
+) -> Result<Option<PathBuf>, String> {
     let root = staging
         .parent()
         .ok_or_else(|| "Managed runtime staging directory has no parent".to_string())?;
@@ -4386,6 +4394,7 @@ fn replace_verified_runtime_directory(staging: &Path, destination: &Path) -> Res
     if directory.symlink_metadata(destination_relative).is_err() {
         return directory
             .rename(staging_relative, &directory, destination_relative)
+            .map(|_| None)
             .map_err(|error| error.to_string());
     }
 
@@ -4407,10 +4416,40 @@ fn replace_verified_runtime_directory(staging: &Path, destination: &Path) -> Res
             )),
         };
     }
-    directory
-        .remove_dir_all(&backup_relative)
-        .map_err(|error| format!("Could not remove the replaced runtime backup: {error}"))?;
-    Ok(())
+    Ok(Some(root.join(&backup_relative)))
+}
+
+/// Keep or restore the rollback copy around the final verification of a
+/// published runtime. On success the backup goes away; on failure the
+/// failed destination is replaced with the previous runtime and the
+/// verification error (plus any rollback error) comes back.
+fn finalize_runtime_replacement(
+    destination: &Path,
+    backup: Option<PathBuf>,
+    verified: Result<PathBuf, String>,
+) -> Result<PathBuf, String> {
+    match (verified, backup) {
+        (Ok(runtime), Some(backup)) => {
+            fs::remove_dir_all(&backup).map_err(|error| {
+                format!("Could not remove the replaced runtime backup: {error}")
+            })?;
+            Ok(runtime)
+        }
+        (Ok(runtime), None) => Ok(runtime),
+        (Err(error), Some(backup)) => {
+            if destination.exists() {
+                fs::remove_dir_all(destination)
+                    .map_err(|error| format!("Could not clear the failed runtime: {error}"))?;
+            }
+            match fs::rename(&backup, destination) {
+                Ok(()) => Err(error),
+                Err(rollback_error) => Err(format!(
+                    "{error}; rollback of the previous runtime also failed: {rollback_error}"
+                )),
+            }
+        }
+        (Err(error), None) => Err(error),
+    }
 }
 
 pub fn install_runtime(
@@ -4533,13 +4572,14 @@ pub fn install_runtime(
             &option.content_manifest_sha256,
         )?;
         drop(staging_guard);
-        replace_verified_runtime_directory(&staging, &final_dir)?;
-        let runtime = verify_installed_runtime(
+        let backup = replace_verified_runtime_directory(&staging, &final_dir)?;
+        let verified = verify_installed_runtime(
             &final_dir,
             &option,
             trusted_content,
             &option.content_manifest_sha256,
-        )?;
+        );
+        let runtime = finalize_runtime_replacement(&final_dir, backup, verified)?;
         Ok(InstalledRuntime {
             tag: tag.clone(),
             backend: option.backend.clone(),
@@ -6718,18 +6758,71 @@ Connection: close
         fs::write(destination.join("runtime.bin"), b"corrupt").unwrap();
         fs::write(staging.join("runtime.bin"), b"approved").unwrap();
 
-        replace_verified_runtime_directory(&staging, &destination).unwrap();
+        let backup = replace_verified_runtime_directory(&staging, &destination).unwrap();
 
         assert_eq!(
             fs::read(destination.join("runtime.bin")).unwrap(),
             b"approved"
         );
         assert!(!staging.exists());
+        // P1-3 (RT-02): the rollback copy survives the publish; only the
+        // final verification of the published destination may release it.
+        let backup = backup.expect("replacing an existing runtime keeps a backup");
+        assert!(backup.exists());
+        let runtime = finalize_runtime_replacement(
+            &destination,
+            Some(backup),
+            Ok(destination.join("runtime.bin")),
+        )
+        .unwrap();
+        assert_eq!(runtime, destination.join("runtime.bin"));
         let names = fs::read_dir(&root)
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
             .collect::<Vec<_>>();
         assert!(!names.iter().any(|name| name.starts_with(".replacing-")));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_final_verification_restores_the_previous_runtime() {
+        // P1-3 (RT-02): when the final verification of the published
+        // destination fails, the previous runtime comes back in place and
+        // the verification error surfaces. Before the fix the backup was
+        // deleted at publish time, so a failed verification stranded the
+        // broken destination with no way back.
+        let root = std::env::temp_dir().join(format!(
+            "localmotive-runtime-rollback-{}-{}",
+            std::process::id(),
+            observed_at_ms()
+        ));
+        let destination = root.join("b10816").join("cpu");
+        let staging = root.join(".installing-cpu");
+        fs::create_dir_all(&destination).unwrap();
+        fs::create_dir_all(&staging).unwrap();
+        fs::write(destination.join("runtime.bin"), b"previous").unwrap();
+        fs::write(staging.join("runtime.bin"), b"failed").unwrap();
+
+        let backup = replace_verified_runtime_directory(&staging, &destination)
+            .unwrap()
+            .expect("replacing an existing runtime keeps a backup");
+        let error = finalize_runtime_replacement(
+            &destination,
+            Some(backup),
+            Err("simulated final verification failure".to_string()),
+        )
+        .unwrap_err();
+        assert!(error.contains("simulated final verification failure"));
+
+        assert_eq!(
+            fs::read(destination.join("runtime.bin")).unwrap(),
+            b"previous"
+        );
+        assert!(!fs::read_dir(&root).unwrap().any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".replacing-")));
         fs::remove_dir_all(root).unwrap();
     }
 
