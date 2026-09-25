@@ -3153,6 +3153,19 @@ test("the legacy benchmark system is removed (MT-09/FE-05)", async () => {
   const screen = await readFile(join(process.cwd(), "src", "screens", "BenchmarkScreen.tsx"), "utf8");
   assert.ok(!screen.includes("runBenchmark"), "the screen must not offer the legacy run");
   assert.ok(!screen.includes("BenchmarkSummary"), "the screen must not render the legacy result");
+  // RED for P2-6: the tuner half of MT-09. The V1 core block
+  // (benchmark_server_cancellable and friends) must be gone and the tuner
+  // must measure through the v2 contract.
+  const core = await readFile(join(process.cwd(), "src-tauri", "src", "core.rs"), "utf8");
+  assert.ok(!core.includes("benchmark_server_cancellable"), "the V1 cancellable runner must be gone");
+  assert.ok(!core.includes("struct BenchmarkSummary {"), "the V1 summary struct must be gone");
+  assert.ok(!core.includes("fn parse_tps("), "the V1 throughput parser must be gone");
+  assert.ok(!core.includes("fn summarize_benchmark("), "the V1 statistics builder must be gone");
+  const tuneService = await readFile(join(process.cwd(), "src-tauri", "src", "tune_service.rs"), "utf8");
+  assert.ok(!tuneService.includes("benchmark_server_cancellable"), "tune trials must not use the V1 runner");
+  const tune = await readFile(join(process.cwd(), "src-tauri", "src", "tune.rs"), "utf8");
+  assert.ok(!tune.includes("summarize_benchmark("), "tune fixtures must not use the V1 statistics builder");
+  assert.ok(tune.includes("pub summary: BenchmarkSummaryV2"), "trial measurements must carry the v2 summary");
 });
 
 test("the inventory screen routes cancellation through props (FE-06)", async () => {
