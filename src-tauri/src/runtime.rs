@@ -3629,6 +3629,7 @@ fn collect_install_files(root: &Path) -> Result<Vec<String>, String> {
 }
 
 fn write_runtime_install_record(
+    staging: &CapDir,
     root: &Path,
     install: &ResolvedRuntimeInstall,
     runtime: &Path,
@@ -3652,8 +3653,9 @@ fn write_runtime_install_record(
     };
     let bytes = serde_json::to_vec_pretty(&record)
         .map_err(|error| format!("Could not encode runtime install record: {error}"))?;
-    fs::write(root.join("runtime.json"), bytes)
-        .map_err(|error| format!("Could not write runtime install record: {error}"))
+    // RT-01: the record goes through the retained staging capability with
+    // handle verification, never through a replaceable path write.
+    crate::download::write_trusted_record(staging, root, "runtime.json", &bytes)
 }
 
 fn validate_content_manifest_authority(
@@ -4560,6 +4562,7 @@ pub fn install_runtime(
             .map_err(|error| error.to_string())?
             .to_path_buf();
         write_runtime_install_record(
+            &staging_guard,
             &staging,
             &option,
             &relative_runtime,
@@ -4571,7 +4574,6 @@ pub fn install_runtime(
             trusted_content,
             &option.content_manifest_sha256,
         )?;
-        drop(staging_guard);
         let backup = replace_verified_runtime_directory(&staging, &final_dir)?;
         let verified = verify_installed_runtime(
             &final_dir,
@@ -4580,6 +4582,9 @@ pub fn install_runtime(
             &option.content_manifest_sha256,
         );
         let runtime = finalize_runtime_replacement(&final_dir, backup, verified)?;
+        // RT-01: the staging capability stays open through publication; only
+        // the finalized install releases it.
+        drop(staging_guard);
         Ok(InstalledRuntime {
             tag: tag.clone(),
             backend: option.backend.clone(),
@@ -4879,7 +4884,11 @@ pub(crate) mod test_fixtures {
         fs::write(bin.join("llama-cli.exe"), b"trusted cli").unwrap();
         fs::write(bin.join("ggml-cpu.dll"), b"trusted backend").unwrap();
         let install = fixture_install();
+        let staging =
+            open_verified_capability_directory(directory, "fixture installation directory")
+                .unwrap();
         write_runtime_install_record(
+            &staging,
             directory,
             &install,
             Path::new("bin/llama-server.exe"),
@@ -6866,7 +6875,10 @@ Connection: close
             companion_asset: None,
             content_manifest_sha256: trusted_digest.clone(),
         };
+        let staging =
+            open_verified_capability_directory(&root, "fixture staging directory").unwrap();
         write_runtime_install_record(
+            &staging,
             &root,
             &resolved,
             Path::new("bin/llama-server.exe"),
@@ -6888,6 +6900,7 @@ Connection: close
         );
         let forged_digest = hex::encode(Sha256::digest(forged_content.as_bytes()));
         write_runtime_install_record(
+            &staging,
             &root,
             &resolved,
             Path::new("bin/llama-server.exe"),
@@ -8699,6 +8712,80 @@ Connection: close
 
     #[cfg(windows)]
     #[test]
+    fn install_record_refuses_a_hard_linked_entry_and_keeps_the_victim() {
+        // P1-10 (RT-01): the install record must never be written through an
+        // attacker-planted link. A hard-linked `runtime.json` is refused and
+        // the linked victim keeps its bytes.
+        let root = std::env::temp_dir().join(format!(
+            "localmotive-record-hard-link-{}-{}",
+            std::process::id(),
+            observed_at_ms()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let victim = root.join("victim.txt");
+        fs::write(&victim, b"victim bytes").unwrap();
+        fs::hard_link(&victim, root.join("runtime.json")).unwrap();
+        let staging =
+            open_verified_capability_directory(&root, "fixture staging directory").unwrap();
+        let install = test_fixtures::fixture_install();
+
+        let result = write_runtime_install_record(
+            &staging,
+            &root,
+            &install,
+            Path::new("bin/llama-server.exe"),
+            &install.content_manifest_sha256,
+        );
+
+        assert!(result.is_err(), "linked record entry must be refused");
+        assert_eq!(fs::read(&victim).unwrap(), b"victim bytes");
+        drop(staging);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn install_record_overwrites_a_regular_entry_it_owns() {
+        // The legitimate rewrite path (record refresh with a new digest) keeps
+        // working: a regular `runtime.json` the installer owns is replaced.
+        let root = std::env::temp_dir().join(format!(
+            "localmotive-record-rewrite-{}-{}",
+            std::process::id(),
+            observed_at_ms()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let staging =
+            open_verified_capability_directory(&root, "fixture staging directory").unwrap();
+        let install = test_fixtures::fixture_install();
+
+        write_runtime_install_record(
+            &staging,
+            &root,
+            &install,
+            Path::new("bin/llama-server.exe"),
+            &install.content_manifest_sha256,
+        )
+        .unwrap();
+        write_runtime_install_record(
+            &staging,
+            &root,
+            &install,
+            Path::new("bin/llama-server.exe"),
+            &install.content_manifest_sha256,
+        )
+        .unwrap();
+
+        let record: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("runtime.json")).unwrap()).unwrap();
+        assert_eq!(record["installKey"], "rt-fixture");
+        drop(staging);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn managed_runtime_verification_rejects_hard_linked_files() {
         let root = std::env::temp_dir().join(format!(
             "localmotive-managed-hard-link-{}",
@@ -9260,6 +9347,7 @@ Connection: close
             fs::write(&full, &bytes).unwrap();
         }
         write_runtime_install_record(
+            &open_verified_capability_directory(&dir, "fixture discovery directory").unwrap(),
             &dir,
             &install,
             Path::new("llama-server.exe"),

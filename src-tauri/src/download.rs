@@ -712,6 +712,120 @@ fn ensure_safe_write_entry(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Write `bytes` to `name` inside an already-verified capability directory.
+///
+/// The path-level `ensure_safe_write_entry` check runs first so a planted
+/// symlink, reparse point, or multiply-linked entry is refused before any
+/// handle opens. The file is then opened through the retained directory
+/// handle (a relative open cannot escape it), and on Windows the open handle
+/// itself is verified: exactly one hard link, no reparse attribute, and a
+/// final path whose parent is the expected directory. Verifying the handle —
+/// not the path — closes the plant-between-check-and-open race (audit RT-01).
+pub(crate) fn write_trusted_record(
+    directory: &Dir,
+    expected_dir: &Path,
+    name: &str,
+    bytes: &[u8],
+) -> Result<(), String> {
+    if name.contains(['/', '\\']) {
+        return Err(format!(
+            "Refusing to write a trusted record with a path: {name}"
+        ));
+    }
+    ensure_safe_write_entry(&expected_dir.join(name))?;
+    let mut options = CapOpenOptions::new();
+    // No truncate here: the handle is verified before any byte changes, so a
+    // refused entry keeps its bytes (audit RT-01).
+    options.write(true).create(true);
+    let file = directory
+        .open_with(name, &options)
+        .map_err(|error| format!("Could not open trusted record {name}: {error}"))?;
+    verify_trusted_record_handle(&file, expected_dir, name)?;
+    // Truncate through the verified handle, then write.
+    file.set_len(0)
+        .map_err(|error| format!("Could not truncate trusted record {name}: {error}"))?;
+    let mut file = file;
+    file.write_all(bytes)
+        .map_err(|error| format!("Could not write trusted record {name}: {error}"))?;
+    file.sync_all()
+        .map_err(|error| format!("Could not flush trusted record {name}: {error}"))?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn verify_trusted_record_handle(
+    file: &CapFile,
+    expected_dir: &Path,
+    name: &str,
+) -> Result<(), String> {
+    use std::mem::MaybeUninit;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, GetFinalPathNameByHandleW, BY_HANDLE_FILE_INFORMATION,
+        FILE_ATTRIBUTE_REPARSE_POINT,
+    };
+
+    let mut information = MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+    // SAFETY: `file` owns a valid handle and `information` points to writable storage.
+    let result =
+        unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, information.as_mut_ptr()) };
+    if result == 0 {
+        return Err(format!("Could not inspect trusted record {name} handle"));
+    }
+    // SAFETY: the call succeeded and initialized the structure.
+    let information = unsafe { information.assume_init() };
+    if information.nNumberOfLinks != 1 {
+        return Err(format!(
+            "Refusing to write a trusted record with multiple hard links: {name}"
+        ));
+    }
+    if information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err(format!(
+            "Refusing to write a trusted record with a reparse attribute: {name}"
+        ));
+    }
+    let mut buffer = vec![0u16; 32_768];
+    // SAFETY: `file` owns a valid handle and `buffer` has the passed length.
+    let length = unsafe {
+        GetFinalPathNameByHandleW(
+            file.as_raw_handle() as _,
+            buffer.as_mut_ptr(),
+            buffer.len() as u32,
+            0,
+        )
+    };
+    if length == 0 || length as usize >= buffer.len() {
+        return Err(format!(
+            "Could not confirm the trusted record handle identity: {name}"
+        ));
+    }
+    let opened = PathBuf::from(String::from_utf16_lossy(&buffer[..length as usize]));
+    // `expected_dir` was validated before the directory capability was
+    // opened; canonicalize it for comparison only, never re-resolve the
+    // handle side. Compare case-insensitively: Windows preserves on-disk
+    // case, which may differ from the recorded form.
+    let expected = canonicalize_for_comparison(expected_dir)
+        .to_string_lossy()
+        .to_lowercase();
+    match opened.parent() {
+        Some(parent) if parent.to_string_lossy().to_lowercase() == expected => Ok(()),
+        _ => Err(format!(
+            "Trusted record handle escaped its directory: {name}"
+        )),
+    }
+}
+
+#[cfg(not(windows))]
+fn verify_trusted_record_handle(
+    _file: &CapFile,
+    _expected_dir: &Path,
+    _name: &str,
+) -> Result<(), String> {
+    // The product ships on Windows only; other targets keep the path-level
+    // check above. Mirror the existing non-Windows link-count convention.
+    Ok(())
+}
+
 #[cfg(test)]
 fn load_resume_state(target: &Path) -> Option<ResumeState> {
     let (_, meta) = part_paths(target);
