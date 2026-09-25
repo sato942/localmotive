@@ -379,11 +379,11 @@ Fix these after P0 and before the next feature.
   `MAX_IPC_OVERRIDES` 16 + `reject_oversized_ipc_vector`, enforced in
   `inspect_model_artifact` + `preflight_model` before allocation/work. RED
   `E0425`, cap-removal mutant failed, fmt/clippy clean, cargo 648/0.
-- [ ] **P1-18 — PROC-02: join pipe readers with a deadline after failed cleanup.**
-  Every `output_with_timeout_and_cancel` cleanup path joins the reader threads
-  unboundedly, including the `!terminate_and_wait` branch where the child is still
-  alive and the pipes never close. Bound the joins (or drop the pipes first) with a
-  RED test using an unkillable child.
+- [x] **P1-18 — PROC-02: join pipe readers with a deadline after failed cleanup.**
+  Done 2026-09-25: `join_reader_with_deadline` (5 s `READER_JOIN_GRACE`,
+  detach past the deadline) replaces all six reader joins in
+  `output_with_timeout_and_cancel`. RED `E0425`, bare-join mutant failed the
+  source guard, fmt/clippy clean, cargo 651/0.
 - [ ] **P1-19 — PROC-03: surface unresolved termination distinctly.** Timeout/cancel
   paths ignore `terminate_and_wait`'s boolean and return `Timeout`/`Cancelled` while
   the tree may still run; no `ProcessFailureKind` names it. Add an `Unresolved`
