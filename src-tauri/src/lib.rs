@@ -771,6 +771,12 @@ pub(crate) fn spawn_server(
     let execution_lease =
         runtime::authorize_managed_execution_lease(Path::new(&profile.runtime))
             .map_err(|message| launch_failure("validation", message, "", None, false))?;
+    // Re-check the inventory before the process starts: a file planted after
+    // acquisition is not stopped by the pinned handles alone (audit RT-04).
+    if let Some(held) = execution_lease.as_ref() {
+        held.revalidate_inventory()
+            .map_err(|message| launch_failure("validation", message, "", None, false))?;
+    }
 
     let log_dir = std::env::temp_dir().join("localmotive");
     fs::create_dir_all(&log_dir).map_err(|error| {
@@ -3044,6 +3050,15 @@ mod release_security_tests {
         assert!(
             body.contains("execution_lease"),
             "spawn_server must return the lease to its caller"
+        );
+        // The inventory is re-checked after acquisition and before the spawn
+        // (audit RT-04): pinned handles alone do not stop a planted file.
+        let revalidate = body
+            .find("revalidate_inventory")
+            .expect("spawn_server must re-check the lease inventory");
+        assert!(
+            lease < revalidate && revalidate < spawn,
+            "the inventory recheck must run after acquisition and before the process starts"
         );
     }
 

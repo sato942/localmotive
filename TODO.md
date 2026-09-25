@@ -363,10 +363,12 @@ Fix these after P0 and before the next feature.
   Six referenced drivers stay (workflows + tests name them). RED: new
   external-reference test; mutant unreferenced file failed it. `npm run check`
  CHECK_EXIT:0, release-gates 171/0.
-- [ ] **P1-15 — RT-04: pin the directory inventory for the lease lifetime.** Lease
-  acquisition checks `actual == expected` files, but a file planted after acquisition
-  is not detected while the lease is held. Re-check the inventory (or pin the
-  directory handle) before each execution, following the P1-10 handle pattern.
+- [x] **P1-15 — RT-04: pin the directory inventory for the lease lifetime.** Done
+  2026-09-25: `ManagedExecutionLease` carries `expected_files` +
+  `revalidate_inventory()`; called after acquisition in `run_runtime_probe_with`,
+  `spawn_server` (covers server-service + cold-bench launches), with the health
+  context lease site also carrying the list. RED `E0599`, mutant always-Ok
+  failed, source-order guards extended. fmt clean, clippy clean, cargo 643/0.
 - [ ] **P1-16 — RT-10: validate the runtime root before creating it.**
   `install_runtime` runs `fs::create_dir_all(&root)` before
   `validate_no_reparse_ancestors` + the symlink check. Move validation first with a

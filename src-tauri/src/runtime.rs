@@ -4050,6 +4050,27 @@ pub(crate) struct ManagedExecutionLease {
     files: Vec<File>,
     #[allow(dead_code)]
     install_dir: PathBuf,
+    expected_files: Vec<String>,
+}
+
+impl ManagedExecutionLease {
+    /// Re-check the directory inventory against the acquisition-time list.
+    ///
+    /// The open handles pin the approved files, but they cannot stop a new
+    /// file from appearing in the installation directory while the lease is
+    /// held. Every execution boundary calls this after acquiring (or while
+    /// holding) the lease, so a planted sibling (for example a hostile DLL
+    /// the launched server would load) refuses the execution instead of
+    /// running beside approved bytes (audit RT-04).
+    pub(crate) fn revalidate_inventory(&self) -> Result<(), String> {
+        let actual_files = collect_install_files(&self.install_dir)?;
+        if actual_files != self.expected_files {
+            return Err(
+                "Managed runtime file inventory changed under a held execution lease".into(),
+            );
+        }
+        Ok(())
+    }
 }
 
 /// Open the complete compiled inventory of a verified installation and hash
@@ -4057,10 +4078,26 @@ pub(crate) struct ManagedExecutionLease {
 ///
 /// The bytes that pass this check are the bytes the returned lease pins: there
 /// is no reopen between verification and protection.
+/// The acquisition-time file list a lease pins: the compiled content
+/// manifest's paths, in the same order `collect_install_files` produces.
+fn expected_inventory(
+    install: &ResolvedRuntimeInstall,
+    approval: ManagedApprovalSource<'_>,
+) -> Result<Vec<String>, String> {
+    let content = (approval.content_manifest)(&install.install_key)?;
+    let trusted = validate_content_manifest_authority(install, content)?;
+    Ok(trusted
+        .files
+        .iter()
+        .map(|file| file.path.clone())
+        .collect::<Vec<_>>())
+}
+
 fn lease_verified_installation(
     install: &ResolvedRuntimeInstall,
     install_dir: &Path,
     approval: ManagedApprovalSource<'_>,
+    expected_files: Vec<String>,
 ) -> Result<ManagedExecutionLease, String> {
     let content = (approval.content_manifest)(&install.install_key)?;
     let trusted = validate_content_manifest_authority(install, content)?;
@@ -4080,6 +4117,7 @@ fn lease_verified_installation(
     Ok(ManagedExecutionLease {
         files,
         install_dir: install_dir.to_path_buf(),
+        expected_files,
     })
 }
 
@@ -4102,23 +4140,24 @@ pub(crate) fn authorize_managed_execution_lease_with(
         let Some(located) = locate_installation_in_with(executable, root, approval)? else {
             continue;
         };
-        let content = (approval.content_manifest)(&located.install.install_key)?;
-        let trusted = validate_content_manifest_authority(&located.install, content)?;
+        // `expected_inventory` below re-loads and re-validates the compiled
+        // content manifest, so no separate copy is kept here.
         validate_record_identity(
             &located.record,
             &located.install,
             &located.install.content_manifest_sha256,
         )?;
         let actual_files = collect_install_files(&located.install_dir)?;
-        let expected_files = trusted
-            .files
-            .iter()
-            .map(|file| file.path.clone())
-            .collect::<Vec<_>>();
+        let expected_files = expected_inventory(&located.install, approval)?;
         if actual_files != expected_files {
             return Err("Managed runtime file inventory does not match compiled approval".into());
         }
-        let lease = lease_verified_installation(&located.install, &located.install_dir, approval)?;
+        let lease = lease_verified_installation(
+            &located.install,
+            &located.install_dir,
+            approval,
+            expected_files,
+        )?;
         return Ok(Some(lease));
     }
     Ok(None)
@@ -4758,9 +4797,15 @@ fn managed_health_context_with(
     // pinned-model download interval cannot reopen a modification window
     // before the CLI, benchmark, and server launches (audit RT-04).
     let execution_lease = Some(
-        lease_verified_installation(&install, &install_root, approval).map_err(|error| {
-            format!("Managed runtime health trust verification failed: {error}")
-        })?,
+        lease_verified_installation(
+            &install,
+            &install_root,
+            approval,
+            expected_inventory(&install, approval).map_err(|error| {
+                format!("Managed runtime health trust verification failed: {error}")
+            })?,
+        )
+        .map_err(|error| format!("Managed runtime health trust verification failed: {error}"))?,
     );
     let model_path = pinned_health_model_path()?;
     let pin = crate::core::pinned_model_load_pin();
@@ -8708,6 +8753,39 @@ Connection: close
             error.contains("malformed path"),
             "unexpected error: {error}"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn lease_revalidate_rejects_a_file_planted_after_acquisition() {
+        // P1-15 (RT-04): acquisition checks actual == expected, but a file
+        // planted while the lease is held must fail the pre-execution recheck.
+        let base = std::env::temp_dir().join(format!(
+            "localmotive-lease-plant-{}-{}",
+            std::process::id(),
+            observed_at_ms()
+        ));
+        let _ = fs::remove_dir_all(&base);
+        let primary = base.join("Localmotive").join("runtimes");
+        let legacy = base.join("GGUF Pilot").join("runtimes");
+        fs::create_dir_all(&primary).unwrap();
+        fs::create_dir_all(&legacy).unwrap();
+        let source = test_fixtures::fixture_source();
+        let (server, _cli) = test_fixtures::place_fixture_install(&primary);
+        let lease = authorize_managed_execution_lease_with(&server, &primary, &legacy, source)
+            .unwrap()
+            .expect("the fixture install authorizes");
+        let install_dir = server.parent().unwrap().parent().unwrap().to_path_buf();
+        fs::write(install_dir.join("evil.dll"), b"planted").unwrap();
+        let error = lease
+            .revalidate_inventory()
+            .expect_err("a file planted under a held lease must fail revalidation");
+        assert!(
+            error.contains("inventory"),
+            "the recheck must name the inventory: {error}"
+        );
+        drop(lease);
+        fs::remove_dir_all(&base).unwrap();
     }
 
     #[cfg(windows)]

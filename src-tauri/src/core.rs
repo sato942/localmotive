@@ -1744,7 +1744,14 @@ fn run_runtime_probe_with<
     // across spawn and output collection. The lease pins the verified bytes
     // with deny-write/delete sharing, so a same-user replacement between
     // verification and execution fails at the OS instead of racing the spawn.
-    let _lease = guard(path)?;
+    // RT-04: the inventory is re-checked here because a file planted after
+    // acquisition (for example a hostile DLL) is not stopped by the pinned
+    // handles alone.
+    let lease = guard(path)?;
+    if let Some(held) = lease.as_ref() {
+        held.revalidate_inventory()?;
+    }
+    let _lease = lease;
     let mut command = crate::proc::hidden_command(path);
     command.arg(arg).stdin(std::process::Stdio::null());
     let output = crate::proc::output_with_timeout_and_cancel(
@@ -2989,6 +2996,15 @@ mod tests {
         assert!(
             probe.contains("_lease"),
             "the probe must hold the execution lease across the child"
+        );
+        // The inventory is re-checked after acquisition and before the spawn
+        // (audit RT-04): pinned handles alone do not stop a planted file.
+        let revalidate = probe
+            .find("revalidate_inventory")
+            .expect("the probe boundary must re-check the lease inventory");
+        assert!(
+            guard < revalidate && revalidate < runner,
+            "the inventory recheck must run after the guard and before the process starts"
         );
     }
 
