@@ -341,7 +341,7 @@ Read the support matrix by evidence type, not by inference (audit GH-07):
   unclaimed. The full matrix, row by row with its evidence class, is
   `docs/SUPPORT-MATRIX.md`.
 - A support claim applies to one version only when release evidence is present
-  for that version. See `docs/EVIDENCE-MATRIX.md`.
+  for that version. See the version evidence in `docs/SUPPORT-MATRIX.md`.
 
 Night jobs run on the self-hosted runner `DESKTOP-HPTF57N-zen5-blackwell`.
 The 01:00–06:00 Asia/Dubai window describes the historical night-only

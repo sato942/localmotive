@@ -2480,12 +2480,12 @@ test("QD-06 local doc links resolve in every active document", async () => {
 
 test("public docs name v0.6.5 latest published; earlier 0.6.x stays unpublished", async () => {
   // P0-10: v0.6.5 is the first published 0.6 release. README, CHANGELOG,
-  // SUPPORT-MATRIX, and EVIDENCE-MATRIX must agree that v0.6.5 is latest
-  // and the earlier 0.6.x tags never shipped.
+  // SUPPORT-MATRIX, and the merged version evidence must agree that v0.6.5
+  // is latest and the earlier 0.6.x tags never shipped.
   const readme = await readFile(join(process.cwd(), "README.md"), "utf8");
   const changelog = await readFile(join(process.cwd(), "CHANGELOG.md"), "utf8");
   const support = await readFile(join(process.cwd(), "docs", "SUPPORT-MATRIX.md"), "utf8");
-  const evidence = await readFile(join(process.cwd(), "docs", "EVIDENCE-MATRIX.md"), "utf8");
+  const evidence = support;
   assert.match(readme, /the latest published release is v0\.6\.5/i);
   assert.doesNotMatch(readme, /0\.6\.[01] ships/);
   assert.doesNotMatch(readme, /In this 0\.6\.0 source build/);
@@ -2498,14 +2498,34 @@ test("public docs name v0.6.5 latest published; earlier 0.6.x stays unpublished"
   assert.match(evidence, /\| 0\.6\.5 \| Public release \|/);
 });
 
+test("EVIDENCE-MATRIX is merged into SUPPORT-MATRIX (P2-9)", async () => {
+  // RED for P2-9: one matrix only. The version table and the audit notes live
+  // in SUPPORT-MATRIX.md; the old file and its backlinks are gone.
+  let gone = false;
+  try {
+    await readFile(join(process.cwd(), "docs", "EVIDENCE-MATRIX.md"), "utf8");
+  } catch {
+    gone = true;
+  }
+  assert.ok(gone, "docs/EVIDENCE-MATRIX.md must be merged away");
+  const support = await readFile(join(process.cwd(), "docs", "SUPPORT-MATRIX.md"), "utf8");
+  assert.match(support, /\| 0\.6\.5 \| Public release \|/);
+  for (const doc of ["README.md", "CHANGELOG.md", "docs/SUPPORT-MATRIX.md"]) {
+    const text = await readFile(join(process.cwd(), doc), "utf8");
+    assert.ok(!text.includes("EVIDENCE-MATRIX"), doc + " must not reference the merged file");
+  }
+});
+
 test("GH-07 the evidence matrix exists and the README reads it", async () => {
-  const matrix = await readFile(join(process.cwd(), "docs", "EVIDENCE-MATRIX.md"), "utf8");
+  // P2-9: the version table merged into SUPPORT-MATRIX.md; the old file is
+  // gone and the README points at the surviving matrix.
+  const matrix = await readFile(join(process.cwd(), "docs", "SUPPORT-MATRIX.md"), "utf8");
   for (const cell of ["CPU packaged lifecycle", "Accelerator (CUDA) packaged", "Clean-account Sandbox"]) {
     assert.ok(matrix.includes(cell), `the matrix must define ${cell}`);
   }
   assert.ok(matrix.includes("assets"), "evidence assets must be named");
   const readme = await readFile(join(process.cwd(), "README.md"), "utf8");
-  assert.ok(readme.includes("docs/EVIDENCE-MATRIX.md"), "the README points at the matrix");
+  assert.ok(readme.includes("docs/SUPPORT-MATRIX.md"), "the README points at the matrix");
   // The README must state what 0.6.0 actually established and explicitly
   // refuse to generalize it; the accelerator caveat wording moved when the
   // support matrix was introduced, so accept either explicit phrasing.

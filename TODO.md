@@ -600,8 +600,15 @@ Fix these after P0 and before the next feature.
   `npm run check` EXIT 0, 15 files / 265 tests (`/tmp/check46.log`),
   audit 0 vulns. Remaining App.tsx clusters (runtime, catalog, tuning) split
   in later increments.
-- [ ] **P2-9 — Merge `docs/EVIDENCE-MATRIX.md` into
-  `docs/SUPPORT-MATRIX.md`.**
+- [x] **P2-9 — Merge `docs/EVIDENCE-MATRIX.md` into
+  `docs/SUPPORT-MATRIX.md`.** Done 2026-09-25: version table (hosts,
+  versions, column meanings, reading rules) plus the S-14/S-16/S-18/S-19
+  audit notes transplanted to a `Version evidence` section (78→193 lines);
+  `git rm` the old file; backlinks in README/CHANGELOG repointed; the two
+  gates that read the old file now read SUPPORT-MATRIX. RED gate
+  `EVIDENCE-MATRIX is merged` failed before, passes now; resurrecting the
+  old file fails it again (mutant). `npm run check` EXIT 0
+  (`/tmp/check47.log`).
 - [ ] **P2-10 — Prune superseded evidence (D5).**
 - [ ] **P2-11 — Remove stale references to deleted files:** the
   `HISTORICAL_FILES` entries in `scripts/verify_branding.mjs`, and the note in
