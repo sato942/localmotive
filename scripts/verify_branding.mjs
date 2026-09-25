@@ -24,7 +24,7 @@ const HISTORICAL_FILES = new Set([
 ]);
 
 const MIGRATION_LINES = new Map([
-  ["src/App.tsx", [
+  ["src/persistence.ts", [
     ["localStorage.getItem(`", LEGACY_NAMES[1], ":${key}`)"].join(""),
     ["localStorage.removeItem(`", LEGACY_NAMES[1], ":${key}`)"].join(""),
   ]],

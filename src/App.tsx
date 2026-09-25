@@ -80,52 +80,15 @@ import { ProfileScreen } from "./screens/ProfileScreen";
 import { BenchmarkScreen } from "./screens/BenchmarkScreen";
 import { tauriEvidenceAdapter } from "./evidence-adapter";
 import type { EvidenceRun } from "./screens/evidence-run";
+import {
+  persistenceFailureNote,
+  persistRecord,
+  quarantineRecord,
+  readRecord,
+  readSetting,
+} from "./persistence";
 
 type View = "dashboard" | "models" | "catalog" | "runtime" | "profile" | "tune" | "benchmark" | "about";
-
-const readRecord = (key: string): string | null => {
-  // Upgrades read records saved under the previous product prefix once.
-  // New writes use the current prefix; the old value stays for downgrade.
-  try {
-    const current = localStorage.getItem(`localmotive:${key}`);
-    if (current !== null) return current;
-    return localStorage.getItem(`gguf-pilot:${key}`);
-  } catch {
-    return null;
-  }
-};
-/// Move a record that cannot be parsed or validated out of the way
-/// (audit FE-09): the raw text is kept under a quarantine key, the live
-/// key is cleared, and the caller shows a notice instead of crashing.
-function quarantineRecord(key: string, raw: string) {
-  try {
-    localStorage.setItem(`localmotive:quarantine:${key}:${Date.now()}`, raw);
-    localStorage.removeItem(`localmotive:${key}`);
-    localStorage.removeItem(`gguf-pilot:${key}`);
-  } catch {
-    // Storage may be unavailable; the caller still falls back safely.
-  }
-}
-
-/// Persist a record without letting a storage failure masquerade as an
-/// operation failure (audit FE-09 I3): the operation's own result stays
-/// visible and the caller reports the persistence problem separately.
-function persistRecord(key: string, value: string): boolean {
-  try {
-    localStorage.setItem(`localmotive:${key}`, value);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/// The persistence-failure sentence a caller appends to its own notice so a
-/// completed operation is never relabelled as failed (audit FE-09 I3).
-function persistenceFailureNote(thing: string): string {
-  return `${thing} could not be saved to browser storage (unavailable or full) and will not survive a restart.`;
-}
-
-const readSetting = (key: string): string => readRecord(key) ?? "";
 
 const MODEL_ROOT = readSetting("model-root");
 const RUNTIME = readSetting("runtime");

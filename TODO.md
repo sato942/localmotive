@@ -498,11 +498,16 @@ Fix these after P0 and before the next feature.
   (storage save-failure, staleResponses legacy block, model input). Kept
   `cancel_benchmark` (v2 adapter) + the slot helper test (renamed). RED absence
   test + registration-restore mutant failed; `npm run check` EXIT 0 (265/265),
-  cargo 670/0, clippy clean.
-- [ ] **P1-34 — FE-04: split `App.tsx`.** One 1858-line component owns state,
-  persistence, async coordination, and shell rendering. Extract the first coherent
-  piece (e.g., persistence or one screen's coordination) with component tests kept
-  green; record the next split in the item.
+  cargo 670/0, clippy clean. Post-commit fix: python text-mode writes had
+  flipped LF to CRLF file-wide on the 5 script-edited files; converted back to
+  LF and amended (40+/807-).
+- [x] **P1-34 — FE-04: split `App.tsx`.** Done (first piece) 2026-09-25:
+  extracted the persistence cluster (`readRecord`, `quarantineRecord`,
+  `persistRecord`, `persistenceFailureNote`, `readSetting`) verbatim to
+  `src/persistence.ts`; `App.tsx` 1822→1781 lines. Branding allowlist moved
+  with the migrated lines. `npm run check` EXIT 0 (265/265). Next split
+  recorded: the `useDebouncedValue` hook + `inTauri`/`idleStatus` module
+  preamble, then one screen's coordination (tune or catalog).
 - [ ] **P1-35 — FE-06: route `cancel_scan` through props.** `InventoryScreen`
   calls `invoke("cancel_scan")` directly although its contract keeps acquisition in
   `App.tsx`. Pass a callback prop instead; keep the presentation-boundary test green.
