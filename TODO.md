@@ -442,9 +442,13 @@ Fix these after P0 and before the next feature.
   managed-execution lease, not this helper — pinned by the `proc10_readers`
   source guard. RED `E0425`, skip-verify mutant failed the hard-link test,
   fmt/clippy clean, cargo 668/0.
-- [ ] **P1-27 — DL-04: bound the OAuth key-exchange response.** `exchange_code_for_key`
-  (`cloud.rs:596-616`) buffers `response.text()` unbounded before parsing. Read
-  bounded (mirror `read_bounded`) with a RED oversized-body test.
+- [x] **P1-27 — DL-04: bound the OAuth key-exchange response.** Done 2026-09-25:
+  new `MAX_KEY_EXCHANGE_BYTES` (16 KiB; the answer is one short JSON object)
+  + `exchange_code_for_key` reads through `read_bounded_body` instead of
+  unbounded `response.text()`. `read_bounded_body` now takes `impl Read` so
+  the cap is unit-testable without network (gate forbids live calls).
+  Behavioral oversized test + call-site source guard (self-comment-safe),
+  cap-removal mutant failed, fmt/clippy clean, cargo 670/0.
 - [ ] **P1-28 — MT-01: stop presenting a same-prompt repeat as confirmation.**
   Final verification re-measures on the fixed harness prompt and the UI says
   "confirmed". Relabel as a re-measurement with the same-prompt limit stated, or add

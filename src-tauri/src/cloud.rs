@@ -9,8 +9,6 @@
 //! All traffic is OpenAI-compatible `chat/completions`, so Anthropic, Gemini,
 //! OpenAI, DeepSeek, xAI, and OpenRouter share one code path.
 
-use std::io::Read as _;
-
 use crate::tune::{Advisor, Proposal, TuningBrief};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -604,7 +602,8 @@ pub fn exchange_code_for_key(code: &str, verifier: &str) -> Result<String, Strin
         .send()
         .map_err(|error| format!("OpenRouter key exchange failed: {error}"))?;
     let status = response.status();
-    let text = response.text().map_err(|error| error.to_string())?;
+    // DL-04: the exchange answer is read bounded, never buffered unbounded.
+    let text = read_bounded_body(response, MAX_KEY_EXCHANGE_BYTES)?;
     if !status.is_success() {
         return Err(format!(
             "OpenRouter key exchange returned {status}: {}",
@@ -680,22 +679,21 @@ pub fn parse_models(body: &str) -> Result<Vec<CloudModel>, String> {
 /// long proposal, but not an unbounded body.
 pub const MAX_MODEL_LIST_BYTES: usize = 512 * 1024;
 pub const MAX_CHAT_BYTES: usize = 2 * 1024 * 1024;
+/// The key-exchange answer is one short JSON object (`{"key": "..."}`), so
+/// its cap is far below the model-list and chat caps (audit DL-04).
+pub const MAX_KEY_EXCHANGE_BYTES: usize = 16 * 1024;
 /// One bounded retry after a 429: at most this many seconds of waiting
 /// (audit S-21.I1 — visible, never an unlimited invisible retry loop).
 pub const MAX_RETRY_AFTER_SECS: u64 = 30;
 
 /// Read a response body with a hard byte cap. Exceeding the cap is an error
 /// naming the limit, not a silent truncation and not an unbounded buffer.
-fn read_bounded_body(
-    mut response: reqwest::blocking::Response,
-    cap: usize,
-) -> Result<String, String> {
+/// Takes any reader so the cap is unit-testable without network access.
+fn read_bounded_body(mut body: impl std::io::Read, cap: usize) -> Result<String, String> {
     let mut bytes: Vec<u8> = Vec::new();
     let mut chunk = [0_u8; 64 * 1024];
     loop {
-        let read = response
-            .read(&mut chunk)
-            .map_err(|error| error.to_string())?;
+        let read = body.read(&mut chunk).map_err(|error| error.to_string())?;
         if read == 0 {
             break;
         }
@@ -992,6 +990,42 @@ impl<S: SecretStore> Advisor for CloudAdvisor<'_, S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn proc11_bounded_body_refuses_an_oversized_response() {
+        // P1-27 (DL-04): response bodies are read with a hard cap, never
+        // buffered unbounded. A body one byte over the cap is an error
+        // naming the limit.
+        let big = vec![b'x'; 1024];
+        let body: &[u8] = &big;
+        let error = read_bounded_body(body, 64).unwrap_err();
+        assert!(
+            error.contains("exceeded the 64 byte limit"),
+            "oversized bodies must be refused, got: {error}"
+        );
+        let small: &[u8] = b"{\"key\":\"abc\"}";
+        assert_eq!(read_bounded_body(small, 64).unwrap(), "{\"key\":\"abc\"}");
+    }
+
+    #[test]
+    fn proc11_key_exchange_reads_bounded() {
+        // DL-04 ordering guard: the OAuth key exchange must read through
+        // the bounded helper with its own cap. The unbounded buffering call
+        // must not appear anywhere in this module (the gate forbids live
+        // network in tests, so the guard pins the call site). The guard
+        // spells the call below in two parts so this comment does not trip
+        // it.
+        let source = include_str!("cloud.rs");
+        let banned = ["response", ".text()"].concat();
+        assert!(
+            !source.contains(&banned),
+            "exchange_code_for_key must not buffer unbounded"
+        );
+        assert!(
+            source.contains("MAX_KEY_EXCHANGE_BYTES"),
+            "the key exchange needs its own byte cap"
+        );
+    }
     use std::cell::RefCell;
     use std::collections::HashMap;
 
