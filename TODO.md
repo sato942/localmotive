@@ -404,10 +404,13 @@ Fix these after P0 and before the next feature.
   `no_proxy`, same timeouts) used by the loopback stage; ported R15 redirect
   test fails without the policy. RED `E0425/E0433`, policy-removal mutant
   failed, fmt/clippy clean, cargo 655/0.
-- [ ] **P1-22 — PROC-06: track and join the nested completion worker.**
-  `completion_request_supervised` (and the 715-747 sibling) spawns a detached thread
-  and relies on `terminate()` to unblock it. Join the worker with a deadline and
-  report an unresolved outcome instead of abandoning it.
+- [x] **P1-22 — PROC-06: track and join the nested completion worker.** Done
+  2026-09-25: `completion_request_supervised` keeps the worker `JoinHandle`
+  and routes cancel/deadline exits through `join_completion_worker` (5 s
+  grace via `proc::join_reader_with_deadline`, now `pub(crate)`); a survivor
+  reports `HealthFailureReason::Unresolved`. RT-03 fixture updated so
+  `terminate` models a real kill (releases the socket). RED failed pre-fix,
+  abandon-mutant failed, RT-03 5/5 in 0.58 s, cargo 656/0, clippy clean.
 - [ ] **P1-23 — PROC-07: refuse links in transport-file reads.** `read_bounded_file`
   (`local_client.rs:854`) follows symlinks and only checks `is_file()` — it reads SSL
   keys/certs and API key files. Refuse reparse points/symlinks (mirror

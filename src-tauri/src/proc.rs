@@ -622,7 +622,7 @@ const READER_JOIN_GRACE: Duration = Duration::from_secs(5);
 ///
 /// Returns `None` when the thread is still blocked past the deadline (its
 /// handle is detached) or when it panicked.
-fn join_reader_with_deadline<T>(
+pub(crate) fn join_reader_with_deadline<T>(
     handle: std::thread::JoinHandle<T>,
     deadline: Duration,
 ) -> Option<T> {

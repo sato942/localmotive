@@ -671,23 +671,29 @@ fn completion_request_supervised(
     mut terminate: impl FnMut(),
 ) -> Result<(u16, Vec<u8>), (HealthFailureReason, String)> {
     let (sender, receiver) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
+    let worker = std::thread::spawn(move || {
         let _ = sender.send(completion_request(port));
     });
     loop {
         if cancel.load(Ordering::Relaxed) {
             terminate();
-            return Err((
-                HealthFailureReason::Cancelled,
-                "Deterministic completion was cancelled while its response was pending.".into(),
-            ));
+            return join_completion_worker(
+                worker,
+                Err((
+                    HealthFailureReason::Cancelled,
+                    "Deterministic completion was cancelled while its response was pending.".into(),
+                )),
+            );
         }
         if Instant::now() >= deadline {
             terminate();
-            return Err((
-                HealthFailureReason::Timeout,
-                "The bounded loopback completion request exceeded its deadline.".into(),
-            ));
+            return join_completion_worker(
+                worker,
+                Err((
+                    HealthFailureReason::Timeout,
+                    "The bounded loopback completion request exceeded its deadline.".into(),
+                )),
+            );
         }
         match receiver.recv_timeout(Duration::from_millis(25)) {
             Ok(result) => {
@@ -711,6 +717,28 @@ fn completion_request_supervised(
                 ));
             }
         }
+    }
+}
+
+/// Grace period for the nested completion worker to observe server
+/// termination after an early exit. A worker still blocked past the deadline
+/// outlived its server and is detached instead of joined forever; the caller
+/// reports it as unresolved (audit PROC-06).
+const COMPLETION_WORKER_JOIN_GRACE: Duration = Duration::from_secs(5);
+
+/// Join the nested completion worker after an early exit (cancel or
+/// deadline), returning the early outcome when the worker stopped and an
+/// `Unresolved` failure when it survived past the join deadline.
+fn join_completion_worker(
+    worker: std::thread::JoinHandle<()>,
+    early: Result<(u16, Vec<u8>), (HealthFailureReason, String)>,
+) -> Result<(u16, Vec<u8>), (HealthFailureReason, String)> {
+    match crate::proc::join_reader_with_deadline(worker, COMPLETION_WORKER_JOIN_GRACE) {
+        Some(_) => early,
+        None => Err((
+            HealthFailureReason::Unresolved,
+            "The completion worker did not stop after the server was terminated; its request may still be running.".into(),
+        )),
     }
 }
 
@@ -1912,6 +1940,44 @@ mod tests {
     }
 
     #[test]
+    fn proc06_a_completion_worker_that_survives_termination_is_unresolved() {
+        // P1-22 (PROC-06): the supervisor must join the nested worker with a
+        // deadline instead of abandoning it. A worker still blocked past the
+        // deadline - its server ignored termination - reports Unresolved, not
+        // the success-shaped Cancelled kind.
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buffer = [0_u8; 4096];
+                let _ = stream.read(&mut buffer);
+                let _ = stream.write_all(b""); // hold the connection open forever
+                std::thread::sleep(Duration::from_secs(120));
+            }
+        });
+        let cancel = AtomicBool::new(true);
+        let terminated = AtomicBool::new(false);
+        let started = Instant::now();
+        let error = completion_request_supervised(
+            port,
+            &cancel,
+            Instant::now() + Duration::from_secs(30),
+            || {
+                terminated.store(true, Ordering::Relaxed);
+            },
+        )
+        .expect_err("a surviving worker must report failure");
+        assert!(terminated.load(Ordering::Relaxed));
+        assert_eq!(error.0, HealthFailureReason::Unresolved);
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "the worker join must be bounded, took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
     fn rt03_cancel_terminates_a_pending_completion_within_the_bound() {
         // A server that accepts /completion and never answers must not hold a
         // cancelled health run for the 120-second request deadline: the
@@ -1927,6 +1993,7 @@ mod tests {
                 setter.store(true, Ordering::Relaxed);
             });
             let terminate_flag = std::sync::Arc::clone(&terminated);
+            let release_flag = std::sync::Arc::clone(&release);
             let started = Instant::now();
             let result = completion_request_supervised(
                 port,
@@ -1934,6 +2001,10 @@ mod tests {
                 Instant::now() + Duration::from_secs(30),
                 move || {
                     terminate_flag.store(true, Ordering::Relaxed);
+                    // PROC-06: a real termination closes the server socket, so
+                    // the worker's pending read ends. Release the fixture for
+                    // the same effect: its thread exits and drops the stream.
+                    release_flag.store(true, Ordering::Relaxed);
                 },
             );
             let error = result.expect_err("a withheld response must report failure");
