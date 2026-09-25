@@ -1454,6 +1454,8 @@ test("workflow gate policy covers the hardware qualify night path", async () => 
 });
 
 test("release ship gates default to the self-hosted runner, never windows-latest", async () => {
+  // P1-12: release jobs need only the release label, never the hardware host
+  // labels; hardware-qualify keeps the hardware labels.
   const verify = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
   assert.doesNotMatch(verify, /runs-on:\s*windows-latest/);
   for (const job of ["resolve", "rust-audit", "verify"]) {
@@ -1461,7 +1463,8 @@ test("release ship gates default to the self-hosted runner, never windows-latest
     const found = verify.match(pattern);
     assert.ok(found, `${job} runs-on is missing`);
     assert.match(found[1], /self-hosted/);
-    assert.match(found[1], /localmotive-hw/);
+    assert.match(found[1], /localmotive-release/);
+    assert.doesNotMatch(found[1], /zen5|blackwell|localmotive-hw/);
   }
   const promote = await readFile(join(process.cwd(), ".github", "workflows", "release-promote.yml"), "utf8");
   assert.doesNotMatch(promote, /runs-on:\s*windows-latest/);
@@ -1470,6 +1473,14 @@ test("release ship gates default to the self-hosted runner, never windows-latest
     const found = promote.match(pattern);
     assert.ok(found, `${job} runs-on is missing`);
     assert.match(found[1], /self-hosted/);
+    assert.match(found[1], /localmotive-release/);
+    assert.doesNotMatch(found[1], /zen5|blackwell|localmotive-hw/);
+  }
+  const qualify = await readFile(join(process.cwd(), ".github", "workflows", "hardware-qualify.yml"), "utf8");
+  for (const job of ["hardware-qualify", "runtime-probe", "lab-legs"]) {
+    const pattern = new RegExp(`^  ${job}:[\\s\\S]*?runs-on:\\s*(.+)$`, "m");
+    const found = qualify.match(pattern);
+    assert.ok(found, `${job} runs-on is missing`);
     assert.match(found[1], /localmotive-hw/);
   }
 });

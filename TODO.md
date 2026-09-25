@@ -338,7 +338,14 @@ Fix these after P0 and before the next feature.
     PROC-04, PROC-05, PROC-06, PROC-07, PROC-08, DL-01, DL-03, DL-04, MT-01,
     MT-03, MT-05, MT-06, MT-08, MT-09 + FE-05 (one defect), FE-04, FE-06.
     Evidence per item below.
-- [ ] **P1-12 — Decouple the release jobs from the hardware host.** Today
+- [ ] **P1-12 — Decouple the release jobs from the hardware host.** (In progress
+  2026-09-25: `release.yml`/`release-promote.yml` jobs now need only
+  `[self-hosted, Windows, X64, localmotive-release]`; `hardware-qualify.yml`
+  keeps the hardware labels; runner `DESKTOP-HPTF57N-zen5-blackwell`
+  re-registered (API dereg id 21 + fresh configure) with labels
+  `self-hosted,Windows,X64,zen5,blackwell,localmotive-hw,localmotive-release`,
+  online idle. Gate test updated+extended. Remaining: commit, pre-push gate,
+  push the lane, one green `release.yml` dispatch as evidence.) Today
   `release.yml` and `release-promote.yml` need all six labels of the one
   runner on the owner's PC.
   - Behavior: the release jobs use `[self-hosted, Windows, X64,
