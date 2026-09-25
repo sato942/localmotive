@@ -700,6 +700,60 @@ Fix these after P0 and before the next feature.
     `lock_recover` → FIXED half (661/0, fmt/clippy clean). Lesson: new Rust
     comments must not carry ticket labels (P2-5 gate caught three).
   `npm run check` EXIT 0, 15 files / 265 tests (`/tmp/check51.log`).
+  Part 4 done 2026-09-25 (PROC-09..22):
+  - PROC-09 (cleanup port-closed): REFUTED with measured evidence — this
+    host reports closed loopback ports (even never-bound ones) as `TimedOut`,
+    not `ConnectionRefused` (probe2). A refused-only predicate would fail
+    cleanup everywhere here. Kept `.is_err()` but extracted
+    `loopback_port_is_closed` with the platform note + a pin test; the port
+    leg stays corroborating (conjoins with `child_stopped`/`tree_stopped`).
+  - PROC-10 (health contract debug-only): FIXED the release half —
+    `finish_run` now fails closed on an invalid stage list in all builds
+    (was `debug_assert!` only), pinned by RED-then-GREEN test. No external
+    producers exist (all construction inside health.rs); typed observations
+    per stage would change the IPC wire — deferred.
+  - PROC-11 (CPU enumeration): FIXED — CPU branch requires the
+    `Available devices:` header (from the real fixture) and reports
+    CPU-specific detail (no more "exact adapter" claim). Mutant-proven.
+  - PROC-12 (completion mislabeled): FIXED — `completion_failure_reason`
+    maps cancelled/timeout/output-limit separately, preserves the client
+    string in the detail (was: always Timeout, string erased).
+    Mutant-proven. Fallback is MalformedOutput (matches the Io precedent);
+    no new IPC variant.
+  - PROC-13 (failed stages skip cleanup): FIXED — 10 failing exits now route
+    through `fail_health_stage`, reporting Unresolved when the tree survives
+    termination (was: bool discarded). Pinned by a wiring test (exactly one
+    bare call survives: the supervised-cleanup closure, owned downstream)
+    + a pure-outcome unit test. One repair detour: a mutant edit ate a
+    call's closer; repaired by hand, 670/0 after.
+  - PROC-14 (readiness bound): REFUTED — client carries 2s per-attempt
+    timeout + 250ms connect timeout (P1-21), loop bounded by the 120s budget
+    with cancel checks; 100ms sleep is a bounded poll.
+  - PROC-15 (DER walker): residual PINNED — pair/mismatch coverage existed;
+    mutant proved the DER-frame fail-closed paths untested (indefinite
+    length accepted silently). Added `der_frame_rejects...` unit test
+    (fails on mutant, passes restored).
+  - PROC-16 (detached drains): CLOSED — superseded by P1-31 (bounded drains
+    called in benchmark/command paths).
+  - PROC-17 (tuning port sleep): FIXED — `wait_for_port_release` polls
+    connect-until-refused with a 5s bound (was blind 600ms sleep).
+    Mutant-proven (sleep-600 fails the <500ms closed-port assert).
+  - PROC-18 (stop holds mutex): FIXED — take-out-terminate-commit; slot
+    restored on termination failure; reservation held across. Existing stop
+    tests (incl. real-process reap) green.
+  - PROC-19 (log retention): FIXED — NotFound → Ok(0), other read failures
+    → Err (was: all Ok(0)). RED-then-GREEN. Call site stays non-fatal by
+    decision (launch must not brick on diagnostic retention).
+  - PROC-20 (source-text tests): ACCEPT per P2-4 (trust-boundary policy
+    pins stay; behavior tests added everywhere else this part).
+  - PROC-21 (test flake): FIXED the PID-only dirs — new
+    `test_support::unique_temp_dir` (pid + nanos + counter) + migrated 4
+    local_client sites. `settle_until` already bounded; `temp_path` file
+    names stay per-test-distinct (residual noted).
+  - PROC-22 (ticket narration): CLOSED — superseded by P2-5.
+  Rust 671/0, fmt/clippy clean; `npm run check` EXIT 0 (`/tmp/check52.log`).
+  Watch: one unidentified 669/1 transient during the PROC-13 repair; three
+  subsequent full runs green (670/0 ×2, 671/0 ×1) + 12/12 new-test repeats.
 
 ---
 

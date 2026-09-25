@@ -251,12 +251,26 @@ fn stop_server_worker(state: &AppState, generation: u64) -> Result<ServerStatus,
         std::thread::sleep(Duration::from_millis(25));
     }
     let _reservation = reserve_stop(state, generation)?;
-    let mut slot = state
-        .server
-        .lock()
-        .map_err(|_| "Server state is unavailable".to_string())?;
-    if let Some(server) = slot.as_mut() {
+    // Take the server out of the slot under the lock, then terminate and
+    // join outside it: status reads and competing lifecycle calls keep the
+    // mutex while Stop resolves the child. The reservation stays held
+    // across the transition, so no other operation can claim the slot.
+    let taken = {
+        let mut slot = state
+            .server
+            .lock()
+            .map_err(|_| "Server state is unavailable".to_string())?;
+        slot.take()
+    };
+    if let Some(mut server) = taken {
         if !server.child.terminate_and_wait() {
+            // The child is still alive: restore the slot so the running
+            // server stays tracked, then report the failure.
+            let mut slot = state
+                .server
+                .lock()
+                .map_err(|_| "Server state is unavailable".to_string())?;
+            *slot = Some(server);
             return Err("The contained llama-server process tree did not stop".into());
         }
         // The child holds no more output: join the bounded-log drains so
@@ -272,7 +286,10 @@ fn stop_server_worker(state: &AppState, generation: u64) -> Result<ServerStatus,
             }
         }
     }
-    *slot = None;
+    let mut slot = state
+        .server
+        .lock()
+        .map_err(|_| "Server state is unavailable".to_string())?;
     Ok(status_from(&mut slot))
 }
 

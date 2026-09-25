@@ -243,7 +243,10 @@ fn is_failure_evidence(name: &str) -> bool {
 pub fn prune_log_directory(directory: &Path) -> Result<usize, String> {
     let entries = match fs::read_dir(directory) {
         Ok(entries) => entries,
-        Err(_) => return Ok(0),
+        // A missing directory holds nothing to prune. Any other read
+        // failure (denied, I/O) must surface, never read as a clean zero.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(format!("Could not read the log directory: {error}")),
     };
     let mut logs: Vec<(std::time::SystemTime, PathBuf, u64)> = Vec::new();
     let mut failures: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
@@ -306,6 +309,18 @@ mod tests {
         ));
         fs::create_dir_all(&root).unwrap();
         root
+    }
+
+    #[test]
+    fn prune_reports_an_unreadable_directory_instead_of_zero() {
+        // Retention failures must not read as a normal zero-removal result:
+        // a missing directory prunes nothing, but an unreadable one errors.
+        let root = scratch("unreadable");
+        assert_eq!(prune_log_directory(&root.join("absent")).unwrap(), 0);
+        let file = root.join("not-a-directory.log");
+        std::fs::write(&file, b"x").unwrap();
+        assert!(prune_log_directory(&file).is_err());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

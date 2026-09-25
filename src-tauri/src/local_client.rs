@@ -1667,12 +1667,30 @@ ab1VTmVlluUDakDfjhwCcnE=
     }
 
     #[test]
+    fn der_frame_rejects_truncated_and_indefinite_lengths() {
+        // The handwritten walker must fail closed on malformed length
+        // prefixes: indefinite form, over-long length counts, truncated
+        // length bytes, and value overruns are all refused.
+        assert!(der_frame(&[]).is_err());
+        assert!(der_frame(&[0x30]).is_err());
+        // SEQUENCE, indefinite length.
+        assert!(der_frame(&[0x30, 0x80, 0x02, 0x01, 0x00]).is_err());
+        // Length count 5 exceeds the 4-byte bound.
+        assert!(der_frame(&[0x30, 0x85, 0x00, 0x00, 0x00, 0x00, 0x01]).is_err());
+        // Declared length 4, only 1 value byte present.
+        assert!(der_frame(&[0x02, 0x04, 0x01]).is_err());
+        // Well-formed INTEGER 1 parses.
+        let frame = der_frame(&[0x02, 0x01, 0x01]).expect("short form parses");
+        assert_eq!(frame.tag, 0x02);
+        assert_eq!(frame.value, &[0x01]);
+    }
+
+    #[test]
     fn transport_validation_parses_real_x509_and_matches_the_pair() {
         // R10 (follow-up review db548c8): the validator decodes the real PEM
         // and DER. Marker-wrapped junk must fail; a mismatched pair must fail
         // with the pair message; a real matching pair passes.
-        let dir = std::env::temp_dir().join(format!("localmotive-r10-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::unique_temp_dir("r10");
         let write = |name: &str, content: &str| {
             let path = dir.join(name);
             std::fs::write(&path, content).unwrap();
@@ -1823,8 +1841,7 @@ MIIB
         // though rustls-pemfile decodes it. A complete, valid SEC1 structure
         // must validate against its certificate, and incomplete structures
         // must fail closed with a precise message.
-        let dir = std::env::temp_dir().join(format!("localmotive-r16-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::unique_temp_dir("r16");
         let write = |name: &str, content: &str| {
             let path = dir.join(name);
             std::fs::write(&path, content).unwrap();
@@ -1957,8 +1974,7 @@ connection: close
         // read_bounded_file reads SSL keys/certs and API key
         // files. A symlink in that position must be refused, never followed:
         // the secret bytes must not come back.
-        let dir = std::env::temp_dir().join(format!("localmotive-proc07-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::unique_temp_dir("proc07");
         let target = dir.join("real-key.pem");
         std::fs::write(&target, b"secret-bytes").unwrap();
         let link = dir.join("link-key.pem");
@@ -1997,8 +2013,7 @@ connection: close
         // R15: the read is bounded by the handle (take(limit + 1)), so a file
         // that lies about or grows past its size can never copy more than the
         // limit plus one byte.
-        let dir = std::env::temp_dir().join(format!("localmotive-r15-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::unique_temp_dir("r15");
         let at_limit = dir.join("at-limit.bin");
         std::fs::write(&at_limit, vec![7_u8; 64]).unwrap();
         let over = dir.join("over.bin");

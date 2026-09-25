@@ -100,9 +100,31 @@ impl tune::Bench for LiveBench<'_> {
         // reported as a clean success when the trial server could not be
         // stopped.
         let cleanup = child.terminate_and_wait();
-        // Give the OS a moment to release the port before the next launch.
-        std::thread::sleep(Duration::from_millis(600));
+        wait_for_port_release(&profile.host, profile.port, Duration::from_secs(5));
         combine_trial_outcome(result, cleanup, command)
+    }
+}
+
+/// Wait for the trial server's port to be released after termination: poll
+/// connect until refused or the deadline passes, instead of a fixed sleep.
+/// Slow machines get the time they need; fast machines do not wait the full
+/// bound. A port that never frees does not fail the trial here — the next
+/// launch surfaces a real bind error.
+fn wait_for_port_release(host: &str, port: u16, deadline: Duration) {
+    use std::net::ToSocketAddrs;
+    let address = match format!("{host}:{port}").to_socket_addrs() {
+        Ok(mut resolved) => match resolved.next() {
+            Some(address) => address,
+            None => return,
+        },
+        Err(_) => return,
+    };
+    let start = std::time::Instant::now();
+    while start.elapsed() < deadline {
+        if std::net::TcpStream::connect_timeout(&address, Duration::from_millis(50)).is_err() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
     }
 }
 
@@ -442,6 +464,28 @@ pub(crate) fn system_ram_bytes() -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn port_release_wait_returns_fast_on_a_closed_port_and_waits_out_a_held_one() {
+        // The trial loop must poll the port, not sleep blindly. A closed
+        // port returns at once; a held port waits out (nearly) the whole
+        // deadline so the next launch does not collide.
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let closed = probe.local_addr().unwrap().port();
+        drop(probe);
+        let start = std::time::Instant::now();
+        wait_for_port_release("127.0.0.1", closed, Duration::from_secs(5));
+        assert!(
+            start.elapsed() < Duration::from_millis(500),
+            "a refused port must return at once, not sleep out a bound"
+        );
+        let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = held.local_addr().unwrap().port();
+        let start = std::time::Instant::now();
+        wait_for_port_release("127.0.0.1", port, Duration::from_millis(500));
+        assert!(start.elapsed() >= Duration::from_millis(400));
+        drop(held);
+    }
 
     #[test]
     fn tuning_workload_rejects_values_that_would_describe_a_different_measurement() {
