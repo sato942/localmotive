@@ -25,7 +25,7 @@ pub fn selected_artifact_set_sha256(content_ids: &[String]) -> Result<String, St
     Ok(hex::encode(hasher.finalize()))
 }
 
-/// Schema tag for the canonical execution snapshot (audit MT-07). A
+/// Schema tag for the canonical execution snapshot. A
 /// compatibility key carries this prefix plus the SHA-256 of the canonical
 /// snapshot JSON, so legacy keys cannot silently masquerade as a current
 /// complete identity.
@@ -48,7 +48,7 @@ pub struct ExecutionSnapshotV2 {
     pub schema_version: String,
     /// What the snapshot scope covers: `launch` for launch-only identities
     /// or `launch+workload` for measured-run identities. The scope is part of
-    /// identity and a workload identity can never collide (audit MT-09).
+    /// identity and a workload identity can never collide.
     pub scope: String,
     /// The effective launch arguments after capability filtering, with secret
     /// values and volatile paths replaced by identity tokens.
@@ -132,7 +132,7 @@ pub fn execution_snapshot_key(snapshot: &ExecutionSnapshotV2) -> Result<String, 
 }
 
 /// Compatibility keys must carry the current schema prefix; a legacy key is
-/// explicitly insufficient evidence for reuse (audit MT-07 I4).
+/// explicitly insufficient evidence for reuse.
 pub fn validate_compatibility_key(value: &str) -> Result<(), String> {
     let trimmed = value.trim();
     let Some(hex_digest) = trimmed.strip_prefix(EXECUTION_KEY_PREFIX) else {
@@ -166,7 +166,7 @@ pub fn sanitize_effective_args(args: &[String]) -> Vec<String> {
             "--mmproj" => Some("[mmproj]"),
             "--lora" | "--lora-scaled" => Some("[lora]"),
             // The short draft flags carry local draft paths exactly like the
-            // long forms (audit S-14.I2).
+            // long forms.
             "-md" | "-mdl" | "--draft-model" | "--spec-draft-model" | "--model-draft" => {
                 Some("[draft-model]")
             }
@@ -240,7 +240,7 @@ mod tests {
     }
 
     #[test]
-    fn mt07_snapshot_key_changes_for_every_material_field() {
+    fn snapshot_key_changes_for_every_material_field() {
         let baseline = snapshot_fixture();
         assert!(baseline.reuse_supported());
         let baseline_key = execution_snapshot_key(&baseline).unwrap();
@@ -342,7 +342,7 @@ mod tests {
     }
 
     #[test]
-    fn mt07_cpu_only_and_hardware_changes_are_distinguished() {
+    fn cpu_only_and_hardware_changes_are_distinguished() {
         // CPU-only machine: no adapters, empty driver list, cpu backend.
         let mut cpu_only = snapshot_fixture();
         cpu_only.runtime_backend = "cpu".into();
@@ -397,7 +397,7 @@ mod tests {
     }
 
     #[test]
-    fn mt07_unknown_identity_blocks_reuse_and_legacy_keys_stay_out() {
+    fn unknown_identity_blocks_reuse_and_legacy_keys_stay_out() {
         let mut partial = snapshot_fixture();
         partial.unknown_identities = vec!["driverVersion:luid:0000:1111".into()];
         assert!(!partial.reuse_supported());
@@ -410,7 +410,7 @@ mod tests {
     }
 
     #[test]
-    fn mt07_effective_arguments_are_sanitized_of_secrets_and_paths() {
+    fn effective_arguments_are_sanitized_of_secrets_and_paths() {
         let args = vec![
             "-m".to_string(),
             "C:/models/model.gguf".to_string(),
@@ -459,9 +459,9 @@ mod tests {
     }
 
     #[test]
-    fn s14_sanitizer_covers_every_path_bearing_flag_with_canaries() {
+    fn sanitizer_covers_every_path_bearing_flag_with_canaries() {
         // One canary per path-bearing flag the launch builder can emit; none
-        // may survive sanitization (audit S-14.I2).
+        // may survive sanitization.
         let canary = |name: &str| format!("C:\\Users\\canary-user\\secret-{name}\\file.bin");
         let flags = [
             "-m",

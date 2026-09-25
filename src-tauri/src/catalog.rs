@@ -25,7 +25,7 @@ const MAX_CATALOG_BODY_BYTES: usize = 4 * 1024 * 1024;
 const MAX_CATALOG_SIGNATURE_BYTES: usize = 16 * 1024;
 const MAX_CATALOG_CACHE_BYTES: u64 = 5 * 1024 * 1024;
 
-/// Verifier-only catalog source overrides (audit GH-05). The packaged
+/// Verifier-only catalog source overrides. The packaged
 /// verifier needs a controlled, signed catalog fixture and a locally hosted
 /// endpoint to exercise first fill, cooldown, offline availability and
 /// corruption recovery without touching the production endpoint. The
@@ -93,7 +93,7 @@ fn verify_source() -> &'static VerifySource {
 }
 
 /// True when any verifier-only authority override takes effect in this
-/// process (audit CORE-01): a catalog source override, or a loopback
+/// process: a catalog source override, or a loopback
 /// download base, inside the isolated verifier profile. The frontend shows
 /// a verification-mode banner while this is true. The lookup is injectable
 /// so tests never touch the process environment.
@@ -147,7 +147,7 @@ const MIN_SUPPORTED_SCHEMA: u32 = 2;
 pub struct CatalogFile {
     /// Quantization label. Defaults to empty so an absent key becomes a
     /// visible row drop with the shared reason, not a whole-catalog error
-    /// (audit S-05: the same rule the JavaScript validator applies).
+    ///.
     #[serde(default)]
     pub quant: String,
     pub filename: String,
@@ -249,7 +249,7 @@ pub struct Catalog {
     pub schema_version: u32,
     #[serde(default)]
     pub updated: String,
-    /// Signed monotonic build sequence (audit DC-10): a served catalog older
+    /// Signed monotonic build sequence: a served catalog older
     /// than the cached one must not replace it (replay protection).
     #[serde(default)]
     pub sequence: Option<u64>,
@@ -263,13 +263,13 @@ pub struct Catalog {
     pub note: String,
     #[serde(default)]
     pub models: Vec<CatalogModel>,
-    /// Rows removed by validation, with user-visible reasons (audit S-05).
+    /// Rows removed by validation, with user-visible reasons.
     /// Never silent: the refresh snapshot surfaces the count and reasons.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dropped: Vec<CatalogDrop>,
 }
 
-/// One catalog row that validation removed, and why (audit S-05.I2).
+/// One catalog row that validation removed, and why.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct CatalogDrop {
@@ -290,7 +290,7 @@ pub enum Freshness {
 }
 
 /// Decide whether a signature-valid candidate may replace the cached copy
-/// (audit DC-10). An expired candidate or one whose signed sequence is older
+///. An expired candidate or one whose signed sequence is older
 /// than the cached sequence is refused so a compromised serving path cannot
 /// replay an old signed catalog; equal sequences are idempotent refreshes.
 pub fn catalog_freshness(
@@ -319,13 +319,13 @@ fn epoch_secs() -> u64 {
         .unwrap_or(0)
 }
 
-/// IPC payload bounds (audit S-06). The command arguments arrive as JSON and
+/// IPC payload bounds. The command arguments arrive as JSON and
 /// are deserialized by serde; `IpcCatalogModels` enforces the row count during
 /// deserialization, and `validate_catalog_payload` bounds every nested field
 /// before the value is cloned, aggregated or formatted further. Count-only
 /// checks are not a memory bound on their own.
 pub const MAX_IPC_CATALOG_MODELS: usize = 2000;
-/// Per-row nested bounds, shared with the JavaScript contract (audit S-05/S-06).
+/// Per-row nested bounds, shared with the JavaScript contract.
 pub const MAX_MODEL_FILES: usize = 64;
 pub const MAX_MODEL_TAGS: usize = 128;
 pub const MAX_TAG_TEXT_LEN: usize = 256;
@@ -381,7 +381,7 @@ pub fn parse_catalog(text: &str) -> Result<Catalog, String> {
             catalog.schema_version
         ));
     }
-    // Row-level validation with visible reasons (audit S-05), mirroring the
+    // Row-level validation with visible reasons, mirroring the
     // shared JavaScript contract in scripts/lib/catalog_schema.mjs.
     let mut kept = Vec::new();
     let mut dropped: Vec<CatalogDrop> = Vec::new();
@@ -470,7 +470,7 @@ fn catalog_row_problem(model: &CatalogModel) -> Option<String> {
         }
         if file.size_bytes == 0 || file.size_bytes > (1u64 << 53) {
             // Beyond 2^53 a JSON number is no longer exact in the JavaScript
-            // contract either, so both validators refuse it (audit S-05).
+            // contract either, so both validators refuse it.
             return Some(format!("invalid size for {}", file.filename));
         }
         if !is_safe_revision(&file.revision) {
@@ -491,7 +491,7 @@ fn catalog_row_problem(model: &CatalogModel) -> Option<String> {
     None
 }
 
-/// Validate a full interface-supplied catalog payload (audit S-06): every row
+/// Validate a full interface-supplied catalog payload: every row
 /// passes the shared row contract, and the aggregate nested counts stay
 /// bounded so no command clones, formats or aggregates unbounded input.
 pub fn validate_catalog_payload(models: &[CatalogModel]) -> Result<(), String> {
@@ -535,7 +535,7 @@ fn starts_with_iso_date(value: &str) -> bool {
 }
 
 /// Whether a received ETag may be stored and later replayed in an
-/// If-None-Match request (audit S-10). Weak validators (`W/...`) compare by
+/// If-None-Match request. Weak validators (`W/...`) compare by
 /// a server-defined equivalence we cannot verify, so they are observed but
 /// never replayed; malformed or oversized values are dropped the same way.
 /// Anything stored is compared with strict byte equality.
@@ -614,7 +614,7 @@ fn normalize_crlf(body: &[u8]) -> std::borrow::Cow<'_, [u8]> {
 }
 
 fn verify_catalog_signature(body: &[u8], encoded: &str) -> bool {
-    // Verifier-owned fixture runs (audit GH-05) verify against the fixture
+    // Verifier-owned fixture runs verify against the fixture
     // key recorded by `apply_env_verify_source`; every other run verifies
     // against the shipped key. Ed25519 signs exact bytes, so a CRLF
     // checkout would invalidate the shipped signature: both keys therefore
@@ -672,7 +672,7 @@ fn is_safe_filename(name: &str) -> bool {
         && !name.chars().any(|c| c.is_control())
     {
         // Windows reserved device names (also with extensions) are refused
-        // with the same policy as the JavaScript validator (audit S-05/S-06).
+        // with the same policy as the JavaScript validator.
         let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
         let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
             || (stem.len() == 4
@@ -947,7 +947,7 @@ pub fn facets(models: &[CatalogModel]) -> (Vec<String>, Vec<String>) {
         .collect();
     tags.sort();
     // Quant labels differ only by case after the builder normalises them
-    // (audit DC-09): group case-insensitively and keep the canonical
+    //: group case-insensitively and keep the canonical
     // upper-case spelling so the filter list cannot show duplicates.
     let mut seen = std::collections::BTreeSet::new();
     let mut quants: Vec<String> = Vec::new();
@@ -1027,7 +1027,7 @@ pub fn rich_facets(models: &[CatalogModel]) -> CatalogFacets {
 /// a load or a denied refresh happened inside the refresh cooldown.
 /// `refresh_error` is present only when a network refresh failed and local
 /// data was served instead; `persistence_notice` reports a local mirror
-/// problem the user should see (audit DC-01, DC-03, DC-07).
+/// problem the user should see.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CatalogSnapshot {
@@ -1126,7 +1126,7 @@ pub fn read_refresh_stamp(root: &Path) -> Option<String> {
 }
 
 /// Record the last successful refresh second. Failures are returned, never
-/// swallowed (audit S-09): the caller reports the stamp as not durable while
+/// swallowed: the caller reports the stamp as not durable while
 /// still serving the fresh in-memory catalog.
 pub(crate) fn write_refresh_stamp(root: &Path) -> Result<(), String> {
     let secs = std::time::SystemTime::now()
@@ -1185,7 +1185,7 @@ pub(crate) fn save_cache_record(
     // Parallel tests share one process id, so the temp name needs a random
     // suffix too: two threads publishing different bodies must not share one
     // temp file, or a reader can observe a mixed record. The exclusively
-    // created handle is kept through write, sync and rename (audit S-09):
+    // created handle is kept through write, sync and rename:
     // the name is never closed and reopened, so nothing can be swapped under
     // the writer between allocation and publication.
     let (temp, mut file) = (0..16)
@@ -1231,7 +1231,7 @@ pub fn fetch_catalog(url: &str, cache_root: &Path) -> Result<CatalogSnapshot, St
 
 /// [`fetch_catalog`] with an injectable signature check, so tests can serve a
 /// validly signed candidate whose schema this build does not support and
-/// prove it never replaces the supported cache (audit DC-07 V2). Production
+/// prove it never replaces the supported cache. Production
 /// always passes [`verify_catalog_signature`].
 fn fetch_catalog_verified(
     url: &str,
@@ -1272,7 +1272,7 @@ fn fetch_catalog_verified(
             if status == 304 {
                 let body = cached_body
                     .ok_or_else(|| "Catalog unchanged but no cached copy exists".to_string())?;
-                // Strict equality on the opaque validator (audit S-10): a 304
+                // Strict equality on the opaque validator: a 304
                 // that presents a different ETag than the one we sent is not
                 // a trustworthy unchanged response. The cached body is still
                 // served, but the refresh is not recorded as successful.
@@ -1325,7 +1325,7 @@ fn fetch_catalog_verified(
             // Every candidate-side read or parse failure routes through the
             // same fallback as a network failure: a chunked or interrupted
             // response must not suppress a usable last-good catalog
-            // (audit DC-07).
+            //.
             let body = match read_bounded_catalog_body(response, MAX_CATALOG_BODY_BYTES) {
                 Ok(bytes) => match String::from_utf8(bytes) {
                     Ok(body) => body,
@@ -1415,7 +1415,7 @@ fn fetch_catalog_verified(
             // A signature-valid but unsupported or malformed document also
             // falls back: the last supported cache must survive it, and no
             // cache write happens for a document that cannot be parsed
-            // (audit DC-07).
+            //.
             let catalog = match parse_catalog(&body) {
                 Ok(catalog) => catalog,
                 Err(error) => {
@@ -1427,7 +1427,7 @@ fn fetch_catalog_verified(
                     )
                 }
             };
-            // Signed freshness policy (audit DC-10): refuse an expired or
+            // Signed freshness policy: refuse an expired or
             // replayed older catalog; the cached copy stays active.
             let cached_sequence = cached_body
                 .and_then(|body| parse_catalog(body).ok())
@@ -1460,7 +1460,7 @@ fn fetch_catalog_verified(
             }
             // Only cache a signed document that parsed successfully. A
             // failed cache or stamp write never hides the fresh in-memory
-            // catalog, and it is never reported as durable (audit S-09).
+            // catalog, and it is never reported as durable.
             let cache_problem = save_cache_record(cache_root, &body, etag.as_deref(), &signature)
                 .err()
                 .map(|error| {
@@ -1506,7 +1506,7 @@ fn http_client() -> Result<reqwest::blocking::Client, String> {
 /// An unreachable catalog is not fatal if a previous copy is on disk: an
 /// offline user should still be able to browse what they saw last time. The
 /// error is preserved in `refresh_error` so the interface can distinguish a
-/// successful local load from a successful network refresh (audit DC-07).
+/// successful local load from a successful network refresh.
 fn fallback(
     cached_body: Option<String>,
     url: &str,
@@ -1548,7 +1548,7 @@ fn fallback(
 /// Order: signature-verified cache, then the bundled snapshot. A restart
 /// inside the refresh cooldown must still browse and authorize against the
 /// same data as before the restart, so this never applies the cooldown and
-/// never returns a refresh error (audit DC-01). The cooldown and the last
+/// never returns a refresh error. The cooldown and the last
 /// success are reported so the interface can present them beside the refresh
 /// control.
 pub fn load_catalog_snapshot(cache_root: &Path, url: &str) -> Result<CatalogSnapshot, String> {
@@ -1622,17 +1622,17 @@ pub struct TokenStatus {
     pub configured: bool,
     pub masked: String,
     /// Present when a previous-version credential could not be removed from
-    /// Windows Credential Manager (audit S-07). The status is still masked;
+    /// Windows Credential Manager. The status is still masked;
     /// Remove (clear) retries the cleanup.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cleanup_notice: Option<String>,
 }
 
 /// The user-facing wording for a failed legacy cleanup, shared by save and
-/// status so the message never varies by path (audit S-07).
+/// status so the message never varies by path.
 pub const LEGACY_CLEANUP_NOTICE: &str = "A credential from a previous product version is still stored in Windows Credential Manager. Remove retries the cleanup.";
 
-/// Map the legacy deletion result onto a visible notice (audit S-07): a
+/// Map the legacy deletion result onto a visible notice: a
 /// failure is never silently swallowed, and a success keeps the notice away.
 pub fn legacy_cleanup_notice(delete_result: Result<(), String>) -> Option<String> {
     delete_result
@@ -1660,7 +1660,7 @@ pub fn mask_token(token: &str) -> String {
 
 /// Reject input that cannot be a Hugging Face token before it reaches the
 /// network, so the user gets an immediate, specific error.
-/// Longest accepted Hugging Face token input (audit S-07). Real tokens are
+/// Longest accepted Hugging Face token input. Real tokens are
 /// well under 100 bytes; the bound stops an enormous paste before any
 /// character scan, storage attempt or diagnostic.
 pub const MAX_HF_TOKEN_BYTES: usize = 4096;
@@ -1777,7 +1777,7 @@ pub fn save_hf_token(token: &str) -> Result<TokenStatus, String> {
         .map_err(|error| format!("Could not save the token to Credential Manager: {error}"))?;
     // A migrated write replaces the legacy entry; never keep two copies. A
     // failed removal is surfaced, never swallowed, and never fails the save
-    // (audit S-07): the new value is already stored.
+    //: the new value is already stored.
     let cleanup_notice =
         legacy_cleanup_notice(hf_entry_for(LEGACY_HF_KEYRING_SERVICE).and_then(|entry| {
             match entry.delete_credential() {
@@ -1814,7 +1814,7 @@ pub fn clear_hf_token() -> Result<TokenStatus, String> {
 mod tests {
 
     #[test]
-    fn s06_ipc_payload_bounds_reject_oversized_before_aggregation() {
+    fn ipc_payload_bounds_reject_oversized_before_aggregation() {
         let file = |index: usize| CatalogFile {
             quant: "Q4_K_M".into(),
             filename: format!("file-{index}.gguf"),
@@ -1910,7 +1910,7 @@ mod tests {
     }
 
     #[test]
-    fn s06_the_mirror_read_refuses_an_oversized_row_set() {
+    fn the_mirror_read_refuses_an_oversized_row_set() {
         let mut connection = rusqlite::Connection::open_in_memory().unwrap();
         crate::catalog_db::migrate_catalog_db(&connection).unwrap();
         // Mirror one past the read bound through the same path the app uses.
@@ -1937,7 +1937,7 @@ mod tests {
     }
 
     #[test]
-    fn s05_shared_fixture_cases_agree_with_the_javascript_validator() {
+    fn shared_fixture_cases_agree_with_the_javascript_validator() {
         let raw = include_str!("../../scripts/tests/fixtures/catalog-schema-cases.json");
         let fixture: serde_json::Value = serde_json::from_str(raw).unwrap();
         let cases = fixture["cases"].as_array().unwrap();
@@ -2000,8 +2000,8 @@ mod tests {
     }
 
     #[test]
-    fn p19_verification_mode_is_active_only_with_an_effective_override() {
-        // P1-9 (CORE-01): the banner signal is true exactly when the process
+    fn verification_mode_is_active_only_with_an_effective_override() {
+        // the banner signal is true exactly when the process
         // runs under the isolated verifier root AND at least one authority
         // override takes effect. An empty environment is production.
         let none = |_: &str| -> Option<String> { None };
@@ -2044,7 +2044,7 @@ mod tests {
     }
 
     #[test]
-    fn gh05_verify_source_overrides_require_the_isolated_verifier_root() {
+    fn verify_source_overrides_require_the_isolated_verifier_root() {
         // Without LOCALMOTIVE_VERIFY_ISOLATED_ROOT nothing is overridden,
         // even when the other variables are present.
         let vars = [
@@ -2223,7 +2223,7 @@ mod tests {
     }
 
     #[test]
-    fn s07_hf_token_input_is_bounded_before_validation_and_never_echoed() {
+    fn hf_token_input_is_bounded_before_validation_and_never_echoed() {
         // A real token is far below the bound and passes.
         let ok = validate_hf_token("hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx").unwrap();
         assert_eq!(ok, "hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
@@ -2248,7 +2248,7 @@ mod tests {
     }
 
     #[test]
-    fn s07_legacy_cleanup_failures_become_a_visible_notice() {
+    fn legacy_cleanup_failures_become_a_visible_notice() {
         assert_eq!(legacy_cleanup_notice(Ok(())), None);
         let notice = legacy_cleanup_notice(Err("Could not remove the token: denied".into()))
             .expect("a failed cleanup must surface");
@@ -2500,7 +2500,7 @@ mod tests {
     }
 
     #[test]
-    fn dc09_quant_facets_dedupe_case_insensitively_and_keep_canonical_casing() {
+    fn quant_facets_dedupe_case_insensitively_and_keep_canonical_casing() {
         let model = |quant: &str| CatalogModel {
             id: format!("m-{quant}"),
             repo: "org/repo".into(),
@@ -2628,7 +2628,7 @@ mod tests {
 
     #[test]
     fn frontend_shaped_catalog_query_applies_pipeline_and_fit_filters() {
-        // P0-4 (FE-02): this payload mirrors the query object App.tsx sends
+        // this payload mirrors the query object App.tsx sends
         // to `filter_catalog` (camelCase wire keys). The pipeline filter
         // and the hardware-fit filter must narrow the list. Before the fix
         // the frontend sent snake_case keys, which the backend ignored, and
@@ -3085,7 +3085,7 @@ mod tests {
         assert!(!snapshot.catalog.models.is_empty());
         let _ = std::fs::remove_dir_all(root);
     }
-    fn dc10_catalog_document(sequence: Option<u64>, expires: Option<u64>) -> String {
+    fn catalog_document(sequence: Option<u64>, expires: Option<u64>) -> String {
         // A minimal but fully valid v2 document; the freshness fields are
         // injected so the policy can be exercised independently.
         let mut value = serde_json::json!({
@@ -3125,7 +3125,7 @@ mod tests {
     }
 
     #[test]
-    fn dc10_freshness_policy_prefers_accept_only_for_fresh_non_replayed_documents() {
+    fn freshness_policy_prefers_accept_only_for_fresh_non_replayed_documents() {
         assert_eq!(
             catalog_freshness(Some(10), None, Some(10), 1_000),
             Freshness::Accept
@@ -3152,15 +3152,15 @@ mod tests {
     }
 
     #[test]
-    fn dc10_expired_and_replayed_signed_catalogs_keep_the_cache() {
+    fn expired_and_replayed_signed_catalogs_keep_the_cache() {
         let root = unique_test_dir("localmotive-dc10");
-        let cache_body = dc10_catalog_document(Some(100), None);
+        let cache_body = catalog_document(Some(100), None);
         save_cache_record(&root, &cache_body, Some("etag"), "sig").unwrap();
         let allow = |_body: &[u8], _sig: &str| true;
 
         // (a) A signature-valid but expired candidate is refused.
         let fixture = serve_catalog_http(
-            dc10_catalog_document(Some(200), Some(1)).into_bytes(),
+            catalog_document(Some(200), Some(1)).into_bytes(),
             b"sig".to_vec(),
             BodyFraming::DeclaredLength,
         );
@@ -3180,7 +3180,7 @@ mod tests {
 
         // (b) A replayed older sequence is refused.
         let fixture = serve_catalog_http(
-            dc10_catalog_document(Some(50), None).into_bytes(),
+            catalog_document(Some(50), None).into_bytes(),
             b"sig".to_vec(),
             BodyFraming::DeclaredLength,
         );
@@ -3200,7 +3200,7 @@ mod tests {
 
         // (c) An equal sequence is an idempotent refresh and is accepted.
         let fixture = serve_catalog_http(
-            dc10_catalog_document(Some(100), None).into_bytes(),
+            catalog_document(Some(100), None).into_bytes(),
             b"sig".to_vec(),
             BodyFraming::DeclaredLength,
         );
@@ -3212,7 +3212,7 @@ mod tests {
 
         // (d) A newer sequence is accepted and replaces the cache.
         let fixture = serve_catalog_http(
-            dc10_catalog_document(Some(101), None).into_bytes(),
+            catalog_document(Some(101), None).into_bytes(),
             b"sig".to_vec(),
             BodyFraming::DeclaredLength,
         );
@@ -3224,7 +3224,7 @@ mod tests {
 
         // (e) A catalog without freshness fields still loads (older builds).
         let fixture = serve_catalog_http(
-            dc10_catalog_document(None, None).into_bytes(),
+            catalog_document(None, None).into_bytes(),
             b"sig".to_vec(),
             BodyFraming::DeclaredLength,
         );
@@ -3275,8 +3275,8 @@ mod tests {
 
     /// A one-connection-at-a-time HTTP server for `catalog.json` and its
     /// signature, so candidate-side failures are exercised through the real
-    /// reqwest client and the real fetch_catalog routing (audit DC-07).
-    /// Optional response behavior for the catalog HTTP fixture (audit S-10):
+    /// reqwest client and the real fetch_catalog routing.
+    /// Optional response behavior for the catalog HTTP fixture:
     /// a custom catalog status and an ETag header let tests drive the 304
     /// validator comparison; the defaults keep the 200 behavior.
     #[derive(Clone)]
@@ -3389,7 +3389,7 @@ mod tests {
     }
 
     #[test]
-    fn s10_validator_semantics_are_strict_and_weak_etags_are_never_replayed() {
+    fn validator_semantics_are_strict_and_weak_etags_are_never_replayed() {
         // Unit contract: only strong, sane validators may be stored.
         assert!(etag_is_strong("\"abc\""));
         assert!(etag_is_strong("abc"));
@@ -3525,7 +3525,7 @@ mod tests {
     }
 
     #[test]
-    fn s10_retry_after_values_are_bounded_and_parsed_from_both_forms() {
+    fn retry_after_values_are_bounded_and_parsed_from_both_forms() {
         use crate::download::{bounded_retry_after_secs, httpdate_secs};
         assert_eq!(bounded_retry_after_secs(Some("5")), Some(5));
         assert_eq!(bounded_retry_after_secs(Some("0")), Some(1));
@@ -3548,7 +3548,7 @@ mod tests {
     }
 
     #[test]
-    fn s09_cache_publication_keeps_the_handle_and_retains_last_good() {
+    fn cache_publication_keeps_the_handle_and_retains_last_good() {
         let root = std::env::temp_dir().join(format!(
             "localmotive-s09-cache-{}-{}",
             std::process::id(),
@@ -3591,7 +3591,7 @@ mod tests {
     }
 
     #[test]
-    fn s09_persistence_failures_are_surfaced_while_fresh_data_is_served() {
+    fn persistence_failures_are_surfaced_while_fresh_data_is_served() {
         let body = serde_json::json!({
             "schemaVersion": 2,
             "updated": "2026-09-11",
@@ -3664,10 +3664,10 @@ mod tests {
     }
 
     #[test]
-    fn dc01_local_load_serves_the_signed_cache_with_the_cooldown_and_no_refresh_error() {
+    fn local_load_serves_the_signed_cache_with_the_cooldown_and_no_refresh_error() {
         // A restart inside the refresh cooldown must still browse the same
         // verified data: loading applies no throttle and reports it instead
-        // (audit DC-01). This function contains no client, so no network
+        //. This function contains no client, so no network
         // request is structurally possible.
         let root = unique_test_dir("localmotive-load-cache");
         let (body, signature) = shipped_signed_pair();
@@ -3691,7 +3691,7 @@ mod tests {
     }
 
     #[test]
-    fn dc01_local_load_uses_bundled_data_for_missing_corrupt_or_untrusted_caches() {
+    fn local_load_uses_bundled_data_for_missing_corrupt_or_untrusted_caches() {
         let root = unique_test_dir("localmotive-load-local");
         let url = "https://example.invalid/catalog.json";
 
@@ -3724,9 +3724,9 @@ mod tests {
     }
 
     #[test]
-    fn dc01_local_load_reports_the_full_cooldown_after_a_clock_rollback() {
+    fn local_load_reports_the_full_cooldown_after_a_clock_rollback() {
         // A clock rollback must not disable the throttle or lose local data:
-        // the cache still loads and the full window is reported (audit DC-01).
+        // the cache still loads and the full window is reported.
         let root = unique_test_dir("localmotive-load-clock");
         let (body, signature) = shipped_signed_pair();
         save_cache_record(&root, &body, None, &signature).unwrap();
@@ -3772,10 +3772,10 @@ mod tests {
     }
 
     #[test]
-    fn dc07_truncated_invalid_utf8_and_malformed_signature_candidates_keep_the_cache() {
+    fn truncated_invalid_utf8_and_malformed_signature_candidates_keep_the_cache() {
         // Every candidate-side failure must route through the same fallback as
         // a network failure; the last supported catalog stays available with
-        // an explicit refresh error (audit DC-07).
+        // an explicit refresh error.
         let root = unique_test_dir("localmotive-net-bad");
         let (body, signature) = shipped_signed_pair();
         save_cache_record(&root, &body, Some("etag"), &signature).unwrap();
@@ -3842,9 +3842,9 @@ mod tests {
     }
 
     #[test]
-    fn dc07_oversized_close_delimited_stream_keeps_the_cache_with_a_bounded_read() {
+    fn oversized_close_delimited_stream_keeps_the_cache_with_a_bounded_read() {
         // Without a Content-Length header the reader must still stop at its
-        // byte limit instead of buffering an unbounded stream (audit DC-07).
+        // byte limit instead of buffering an unbounded stream.
         let root = unique_test_dir("localmotive-net-big");
         let (body, signature) = shipped_signed_pair();
         save_cache_record(&root, &body, Some("etag"), &signature).unwrap();
@@ -3870,10 +3870,10 @@ mod tests {
     }
 
     #[test]
-    fn dc07_a_validly_signed_future_schema_never_replaces_the_supported_cache() {
+    fn a_validly_signed_future_schema_never_replaces_the_supported_cache() {
         // A newer builder can publish a schema this build does not support.
         // Even with a valid signature, the candidate must not replace the
-        // supported cache or become the authoritative catalog (audit DC-07).
+        // supported cache or become the authoritative catalog.
         let root = unique_test_dir("localmotive-future-schema");
         let (body, signature) = shipped_signed_pair();
         save_cache_record(&root, &body, Some("etag"), &signature).unwrap();
@@ -3908,12 +3908,12 @@ mod tests {
         assert!(read_refresh_stamp(&root).is_none());
         let _ = std::fs::remove_dir_all(root);
     }
-    /// S-25 I2 measurement (run with `--release --ignored --nocapture`): the
+    /// Measurement (run with `--release --ignored --nocapture`): the
     /// catalog pipeline against the REAL committed catalog. Prints one JSON
     /// line so the ledger can cite exact numbers and the workload identity.
     #[test]
     #[ignore = "measurement harness: run explicitly with --release --ignored --nocapture"]
-    fn s25_catalog_pipeline_measurement() {
+    fn catalog_pipeline_measurement() {
         use std::time::Instant;
         let raw = include_str!("../../catalog/catalog.json");
         let parse_started = Instant::now();

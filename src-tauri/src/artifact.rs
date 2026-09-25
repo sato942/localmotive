@@ -26,7 +26,7 @@ pub enum ArtifactProblemCode {
     ConflictingHeader,
     UnreadableHeader,
     /// A grouped file is not a consistent shard name; discovery and launch
-    /// validation must refuse it identically (audit MT-15).
+    /// validation must refuse it identically.
     MalformedShardName,
 }
 
@@ -37,7 +37,7 @@ pub struct ArtifactProblem {
     pub message: String,
 }
 
-/// How a shard's own header metadata relates to the filename plan (S-02).
+/// How a shard's own header metadata relates to the filename plan.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SplitVerdict {
     /// The header records the same index and count as the filename plan.
@@ -63,7 +63,7 @@ pub fn split_metadata_verdict(
     match (recorded_no, recorded_count) {
         (Some(no), Some(count)) => {
             let planned = (shard_index, shard_count);
-            // DL-02: `split.no` is hostile file metadata. A plain `no + 1`
+            // `split.no` is hostile file metadata. A plain `no + 1`
             // panics in debug and wraps in release (u64::MAX becomes shard 0,
             // a false agreement). Reject the overflow as untrustworthy and
             // keep the raw value for diagnosis.
@@ -297,7 +297,7 @@ pub(crate) fn validate_regular_non_reparse_file(label: &str, path: &Path) -> Res
 }
 
 /// Open a file for reading and verify the OPENED HANDLE, not the path
-/// (audit DL-03). A path check followed by a separate open leaves a
+///. A path check followed by a separate open leaves a
 /// plant-between-check-and-open window: a swapped symlink, reparse point,
 /// or second hard link passes the check and diverts the open. Here the
 /// link count (exactly one), the regular-file bit, and the handle's final
@@ -398,7 +398,7 @@ fn verify_open_read_handle(label: &str, path: &Path, file: &File) -> Result<(), 
 }
 
 pub fn sha256_path(path: &Path) -> Result<String, String> {
-    // DL-03: the file is opened through the verified handle (link count,
+    // the file is opened through the verified handle (link count,
     // regular bit, final path), so a link planted between any path check
     // and the open is refused instead of hashed.
     let mut file = open_verified_read_file("Artifact", path)?;
@@ -430,7 +430,7 @@ pub fn sha256_path(path: &Path) -> Result<String, String> {
 }
 
 fn sha256_prefix_path(path: &Path, byte_count: u64) -> Result<String, String> {
-    // DL-03: same verified-handle open as `sha256_path`.
+    // same verified-handle open as `sha256_path`.
     let mut file = open_verified_read_file("Artifact", path)?;
     let mut remaining = byte_count;
     let mut hasher = Sha256::new();
@@ -677,7 +677,7 @@ fn sum_file_bytes(files: &[ArtifactFileFact], label: &str) -> Result<u64, String
 mod tests {
 
     #[test]
-    fn s02_split_verdict_agrees_or_reports_mismatch_and_unknown() {
+    fn split_verdict_agrees_or_reports_mismatch_and_unknown() {
         // Agree: filename says shard 3 of 4; the header records no=2, count=4
         // (split.no is zero-based).
         assert_eq!(
@@ -716,8 +716,8 @@ mod tests {
     }
 
     #[test]
-    fn s02_split_verdict_rejects_an_overflowing_split_number() {
-        // P1-8 (DL-02): a hostile header `split.no` of u64::MAX must not
+    fn split_verdict_rejects_an_overflowing_split_number() {
+        // a hostile header `split.no` of u64::MAX must not
         // panic (debug) or wrap to 0 and agree (release). The set is not
         // trustworthy, so the verdict is Mismatch and the raw value is kept
         // for diagnosis.
@@ -837,8 +837,8 @@ mod tests {
     }
 
     #[test]
-    fn proc10_open_verified_read_refuses_a_symlink() {
-        // P1-26 (DL-03): validate-then-open leaves a plant-between-check-and-
+    fn open_verified_read_refuses_a_symlink() {
+        // validate-then-open leaves a plant-between-check-and-
         // open window. The read helper verifies the opened handle, so a link
         // planted at (or before) the check is refused instead of followed.
         let directory = std::env::temp_dir().join(format!(
@@ -867,8 +867,8 @@ mod tests {
     }
 
     #[test]
-    fn proc10_open_verified_read_refuses_a_hard_link() {
-        // DL-03 companion: two names for one inode defeat path checks
+    fn open_verified_read_refuses_a_hard_link() {
+        // two names for one inode defeat path checks
         // entirely (both names look regular). Only the handle's link count
         // catches it.
         let directory = std::env::temp_dir().join(format!(
@@ -893,8 +893,8 @@ mod tests {
     }
 
     #[test]
-    fn proc10_open_verified_read_opens_a_regular_file() {
-        // DL-03 companion: the good path still opens and reads.
+    fn open_verified_read_opens_a_regular_file() {
+        // the good path still opens and reads.
         use std::io::Read as _;
         let directory = std::env::temp_dir().join(format!(
             "localmotive-artifact-proc10-good-{}",
@@ -912,8 +912,8 @@ mod tests {
     }
 
     #[test]
-    fn proc10_readers_verify_the_open_handle() {
-        // DL-03 ordering guard: every file-content read site opens through
+    fn readers_verify_the_open_handle() {
+        // every file-content read site opens through
         // the verified-handle helper. Execution sites (probes, spawns) stay
         // under the managed-execution lease, not this helper.
         for (name, source) in [

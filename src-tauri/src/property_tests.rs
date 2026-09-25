@@ -1,12 +1,12 @@
 //! Bounded property campaigns over the parser and evidence invariants
-//! (audit S-19). Every campaign is deterministic from its seed and capped in
+//!. Every campaign is deterministic from its seed and capped in
 //! iterations and input size; a failing seed reproduces the case exactly.
 #![cfg(test)]
 
 use crate::test_support::campaign;
 
 #[test]
-fn s19_gguf_reader_never_panics_on_malformed_bytes_and_stays_bounded() {
+fn gguf_reader_never_panics_on_malformed_bytes_and_stays_bounded() {
     let root = std::env::temp_dir().join(format!("localmotive-s19-gguf-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
     let path = root.join("fuzz.gguf");
@@ -36,7 +36,7 @@ fn s19_gguf_reader_never_panics_on_malformed_bytes_and_stays_bounded() {
 }
 
 #[test]
-fn s19_proposal_parser_tolerates_malformed_and_nested_brace_input() {
+fn proposal_parser_tolerates_malformed_and_nested_brace_input() {
     campaign(600, |_seed, rng| {
         let text = rng.text(256);
         let _ = crate::tune::parse_proposal(&text);
@@ -54,7 +54,7 @@ fn s19_proposal_parser_tolerates_malformed_and_nested_brace_input() {
 }
 
 #[test]
-fn s19_shard_name_round_trips_and_rejects_noise() {
+fn shard_name_round_trips_and_rejects_noise() {
     campaign(500, |seed, rng| {
         if rng.boolean() {
             // Generated VALID split names round-trip through parse -> display.
@@ -73,7 +73,7 @@ fn s19_shard_name_round_trips_and_rejects_noise() {
 }
 
 #[test]
-fn s19_effective_argument_sanitizer_is_idempotent_and_leaks_no_canary() {
+fn effective_argument_sanitizer_is_idempotent_and_leaks_no_canary() {
     let canary = "C:/Users/canary-user/secret";
     let flags = [
         "-m",
@@ -107,7 +107,7 @@ fn s19_effective_argument_sanitizer_is_idempotent_and_leaks_no_canary() {
 }
 
 #[test]
-fn s19_numeric_summaries_never_return_nan_for_extreme_inputs() {
+fn numeric_summaries_never_return_nan_for_extreme_inputs() {
     campaign(400, |seed, rng| {
         let count = 1 + rng.below(16);
         let values: Vec<f64> = (0..count)

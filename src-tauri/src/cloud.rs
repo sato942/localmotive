@@ -58,7 +58,7 @@ pub const PROVIDERS: &[Provider] = &[
         // The documented OpenAI compatibility layer covers chat completions
         // (Bearer `authorization`, `choices[].message.content`, `retry-after`);
         // it documents no `GET /models`, so the picker offers the fixed model
-        // instead of guessing at an undocumented route (audit S-21.I3,
+        // instead of guessing at an undocumented route (see
         // platform.claude.com/docs/en/cli-sdks-libraries/libraries/openai-sdk).
         lists_models: false,
     },
@@ -302,7 +302,7 @@ fn percent_encode(value: &str) -> String {
     out
 }
 
-/// Limits for the loopback callback (audit CLD-01): a request line, a code
+/// Limits for the loopback callback: a request line, a code
 /// value, and the number of stray connections one login may tolerate.
 pub const MAX_CALLBACK_REQUEST_LINE_BYTES: usize = 8 * 1024;
 pub const MAX_CALLBACK_CODE_BYTES: usize = 512;
@@ -428,7 +428,7 @@ fn callback_page(title: &str, accent: &str, message: &str) -> String {
 
 /// Read one bounded request line from an accepted stream. The deadline is
 /// enforced per chunk, so a steady byte trickle cannot extend the login
-/// beyond its overall budget (audit CLD-01 I1).
+/// beyond its overall budget.
 fn read_bounded_request_line(
     stream: &mut std::net::TcpStream,
     deadline: std::time::Instant,
@@ -481,7 +481,7 @@ fn read_bounded_request_line(
 /// Wait (bounded) for the browser to hit the callback, answer it, and return
 /// the authorization code. Stray probes are answered and ignored; malformed
 /// callback attempts get an explicit 400 without ending the login before the
-/// deadline or the request budget is exhausted (audit CLD-01).
+/// deadline or the request budget is exhausted.
 pub fn wait_for_code(listener: &TcpListener, timeout: Duration) -> Result<String, String> {
     let deadline = std::time::Instant::now() + timeout;
     listener
@@ -602,7 +602,7 @@ pub fn exchange_code_for_key(code: &str, verifier: &str) -> Result<String, Strin
         .send()
         .map_err(|error| format!("OpenRouter key exchange failed: {error}"))?;
     let status = response.status();
-    // DL-04: the exchange answer is read bounded, never buffered unbounded.
+    // the exchange answer is read bounded, never buffered unbounded.
     let text = read_bounded_body(response, MAX_KEY_EXCHANGE_BYTES)?;
     if !status.is_success() {
         return Err(format!(
@@ -675,15 +675,15 @@ pub fn parse_models(body: &str) -> Result<Vec<CloudModel>, String> {
 }
 
 /// Hard caps on what a provider response may make this process buffer
-/// (audit S-21.I1). Model lists are small; a chat completion can carry a
+///. Model lists are small; a chat completion can carry a
 /// long proposal, but not an unbounded body.
 pub const MAX_MODEL_LIST_BYTES: usize = 512 * 1024;
 pub const MAX_CHAT_BYTES: usize = 2 * 1024 * 1024;
 /// The key-exchange answer is one short JSON object (`{"key": "..."}`), so
-/// its cap is far below the model-list and chat caps (audit DL-04).
+/// its cap is far below the model-list and chat caps.
 pub const MAX_KEY_EXCHANGE_BYTES: usize = 16 * 1024;
 /// One bounded retry after a 429: at most this many seconds of waiting
-/// (audit S-21.I1 — visible, never an unlimited invisible retry loop).
+///.
 pub const MAX_RETRY_AFTER_SECS: u64 = 30;
 
 /// Read a response body with a hard byte cap. Exceeding the cap is an error
@@ -854,7 +854,7 @@ pub fn chat<S: SecretStore>(
 }
 
 /// The chat call with an optional deadline: the request timeout never
-/// outlives the remaining tuning budget (audit S-21.I1), so one slow request
+/// outlives the remaining tuning budget, so one slow request
 /// cannot overrun a run that is almost out of time.
 pub fn chat_with_deadline<S: SecretStore>(
     store: &S,
@@ -964,7 +964,7 @@ pub struct CloudAdvisor<'a, S: SecretStore> {
     pub model: String,
     pub last_raw_reply: String,
     /// The tuning run's remaining time; each request timeout is clamped to
-    /// it so one slow request cannot outlive the run (audit S-21.I1).
+    /// it so one slow request cannot outlive the run.
     pub deadline: Option<std::time::Instant>,
 }
 
@@ -992,8 +992,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn proc11_bounded_body_refuses_an_oversized_response() {
-        // P1-27 (DL-04): response bodies are read with a hard cap, never
+    fn bounded_body_refuses_an_oversized_response() {
+        // response bodies are read with a hard cap, never
         // buffered unbounded. A body one byte over the cap is an error
         // naming the limit.
         let big = vec![b'x'; 1024];
@@ -1008,8 +1008,8 @@ mod tests {
     }
 
     #[test]
-    fn proc11_key_exchange_reads_bounded() {
-        // DL-04 ordering guard: the OAuth key exchange must read through
+    fn key_exchange_reads_bounded() {
+        // the OAuth key exchange must read through
         // the bounded helper with its own cap. The unbounded buffering call
         // must not appear anywhere in this module (the gate forbids live
         // network in tests, so the guard pins the call site). The guard
@@ -1115,7 +1115,7 @@ mod tests {
     }
 
     #[test]
-    fn cld01_request_line_contract_is_strict_and_decoded() {
+    fn request_line_contract_is_strict_and_decoded() {
         assert_eq!(
             parse_callback_request_line("GET /callback?code=abc123 HTTP/1.1"),
             CallbackRequest::Code("abc123".into())
@@ -1163,7 +1163,7 @@ mod tests {
     }
 
     #[test]
-    fn cld01_probes_and_bad_requests_do_not_end_the_login() {
+    fn probes_and_bad_requests_do_not_end_the_login() {
         let (listener, url) = bind_callback().unwrap();
         let port: u16 = url
             .rsplit(':')
@@ -1204,7 +1204,7 @@ mod tests {
     }
 
     #[test]
-    fn cld01_successive_probes_are_bounded_by_the_request_budget() {
+    fn successive_probes_are_bounded_by_the_request_budget() {
         let (listener, url) = bind_callback().unwrap();
         let port: u16 = url
             .rsplit(':')
@@ -1238,7 +1238,7 @@ mod tests {
     }
 
     #[test]
-    fn cld01_a_byte_trickle_cannot_extend_the_overall_deadline() {
+    fn a_byte_trickle_cannot_extend_the_overall_deadline() {
         let (listener, url) = bind_callback().unwrap();
         let port: u16 = url
             .rsplit(':')
@@ -1317,7 +1317,7 @@ mod tests {
         }
         assert!(response.starts_with("HTTP/1.1 200"));
         // The browser page must not claim the connection succeeded before
-        // the key exchange and credential write finish (audit CLD-01 I4).
+        // the key exchange and credential write finish.
         assert!(response.contains("CALLBACK RECEIVED"), "{response}");
         assert!(
             response.contains("confirms the connection when the key exchange finishes")
@@ -1353,7 +1353,7 @@ mod tests {
     }
 
     #[test]
-    fn s21_contract_fixtures_cover_every_provider_and_case() {
+    fn contract_fixtures_cover_every_provider_and_case() {
         let raw = include_str!("../../scripts/tests/fixtures/cloud-contracts.json");
         let fixture: serde_json::Value = serde_json::from_str(raw).unwrap();
         let entries = fixture["providers"].as_object().unwrap();
@@ -1457,7 +1457,7 @@ mod tests {
     }
 
     #[test]
-    fn s21_retry_after_is_bounded_and_tolerant() {
+    fn retry_after_is_bounded_and_tolerant() {
         let header = |value: &str| {
             let mut headers = reqwest::header::HeaderMap::new();
             headers.insert(
@@ -1545,7 +1545,7 @@ mod tests {
     }
 
     #[test]
-    fn s21_oversized_response_terminates_with_the_cap_error() {
+    fn oversized_response_terminates_with_the_cap_error() {
         let huge = vec![b'x'; MAX_CHAT_BYTES + 1];
         let (base, server) = fixture_server(vec![fixture_http(200, "", &huge)]);
         let provider = provider("openai").unwrap();
@@ -1567,7 +1567,7 @@ mod tests {
     }
 
     #[test]
-    fn s21_one_bounded_retry_after_a_429_then_success() {
+    fn one_bounded_retry_after_a_429_then_success() {
         let retry = fixture_http(
             429,
             "Retry-After: 1\r\n",
@@ -1596,7 +1596,7 @@ mod tests {
     }
 
     #[test]
-    fn s21_a_hung_request_ends_at_the_deadline() {
+    fn a_hung_request_ends_at_the_deadline() {
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
         let _hang = std::thread::spawn(move || {

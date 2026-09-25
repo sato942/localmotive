@@ -1,4 +1,4 @@
-//! Supervised server lifecycle command family (audit S-27 I1, slice 3a).
+//! Supervised server lifecycle command family.
 //!
 //! Extracted from `lib.rs`: these are the same Tauri commands. The shared
 //! operation coordinator (`reserve_operation`, `OperationOwner`) stays in
@@ -24,7 +24,7 @@ pub(crate) async fn start_server(
     state: tauri::State<'_, AppState>,
 ) -> Result<ServerStatus, String> {
     // One owner at a time: a running server, benchmark, or tuning session
-    // holds the reservation (audit MT-05).
+    // holds the reservation.
     let reservation = reserve_operation(&state.operations, OperationOwner::Server)?;
     // Aborted-command shape (review deleg_16c0e72a): an abandoned benchmark
     // worker can still infer after its reservation released. The held slot
@@ -35,7 +35,7 @@ pub(crate) async fn start_server(
     {
         // One short lock claims the operation and publishes the starting
         // state; the readiness wait runs on a blocking worker without any
-        // server lock held (audit IPC-01 I1/I2).
+        // server lock held.
         let mut slot = state
             .server
             .lock()
@@ -67,7 +67,7 @@ pub(crate) async fn start_server(
 
 /// True when the given startup operation may still publish: the server
 /// reservation is still held, no cancellation arrived, and the starting slot
-/// still names this operation (audit IPC-01 I3). A late completion from an
+/// still names this operation. A late completion from an
 /// older operation can never publish or clear a newer operation's state.
 pub(crate) fn startup_is_current(state: &AppState, operation_id: u64, cancel: &AtomicBool) -> bool {
     !cancel.load(Ordering::Relaxed)
@@ -83,7 +83,7 @@ pub(crate) fn startup_is_current(state: &AppState, operation_id: u64, cancel: &A
 /// The blocking half of `start_server`: launch, wait for readiness without
 /// holding any lock, and commit the server slot only while this operation
 /// still owns it; otherwise terminate and reap before returning
-/// (audit IPC-01 I2/I3).
+///.
 pub(crate) fn start_server_worker(
     app: &tauri::AppHandle,
     profile: LaunchProfile,
@@ -101,7 +101,7 @@ pub(crate) fn start_server_worker(
             }
         }
     };
-    // PROC-04: the readiness client is built before the spawn, so a client
+    // the readiness client is built before the spawn, so a client
     // failure returns while there is still no child to reap and no slot to
     // clear. It must not be constructed between spawn and the health wait.
     let client = local_client(&profile)?;
@@ -260,7 +260,7 @@ fn stop_server_worker(state: &AppState, generation: u64) -> Result<ServerStatus,
             return Err("The contained llama-server process tree did not stop".into());
         }
         // The child holds no more output: join the bounded-log drains so
-        // the retained file is complete (audit OPS-01). A drain that
+        // the retained file is complete. A drain that
         // somehow lingers is detached rather than blocking Stop.
         let deadline = Instant::now() + Duration::from_secs(2);
         for drain in server.log_drains.drain(..) {

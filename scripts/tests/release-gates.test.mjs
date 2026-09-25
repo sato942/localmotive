@@ -1148,7 +1148,7 @@ test("R10: TLS transport validation parses real structures and matches the pair"
   assert.match(client, /subject_public_key_info_from_private_key/, "the key SPKI is derived structurally");
   assert.match(client, /do not belong together/, "a mismatched pair fails");
   assert.match(client, /rustls_pemfile::certs|rustls_pemfile::private_key/, "PEM decoding is strict");
-  assert.match(client, /r10_transport_validation_parses_real_x509_and_matches_the_pair/);
+  assert.match(client, /transport_validation_parses_real_x509_and_matches_the_pair/);
 });
 
 test("R15: the loopback client never hops, and its bounds are structural", async () => {
@@ -1159,9 +1159,9 @@ test("R15: the loopback client never hops, and its bounds are structural", async
   assert.doesNotMatch(client, /serde_json::to_vec\(value\)/, "no unbounded pre-check serialization");
   assert.match(client, /file\.take\(limit \+ 1\)/, "file reads are bounded by the handle");
   for (const name of [
-    "r15_a_redirect_is_not_followed_and_the_client_fails_the_call",
-    "r15_the_request_body_serializes_through_a_bounded_writer",
-    "r15_bounded_file_reads_are_enforced_by_the_read_not_a_metadata_precheck",
+    "a_redirect_is_not_followed_and_the_client_fails_the_call",
+    "the_request_body_serializes_through_a_bounded_writer",
+    "bounded_file_reads_are_enforced_by_the_read_not_a_metadata_precheck",
   ]) {
     assert.match(client, new RegExp(name));
   }
@@ -2087,6 +2087,24 @@ test("every g05 lab driver is referenced or deleted", async () => {
     if (external === 0) dead.push(name);
   }
   assert.deepStrictEqual(dead, []);
+});
+
+test("rust source carries behavior descriptions, not ticket labels", async () => {
+  // P2-5: audit-finding labels (PROC-01, RT-04, P1-30, R16, F9-02, ...) once
+  // named the reason for a comment. The reason now reads as behavior; the
+  // labels are gone so a future reader is not sent ticket-hunting.
+  const dir = join(process.cwd(), "src-tauri", "src");
+  const ticket = /\b(?:PROC|RT|DL|MT|IPC|FE|QD|GH|DOC|REL|LAB|CORE|F9)-[0-9]+|\bP1-[0-9]+|\bR16\b|\bR04\b|\bS-[0-9]+/;
+  const fnPrefix = /\bfn (?:proc[0-9]+|mt[0-9]+|rt[0-9]+|ipc[0-9]+|dl[0-9]+|dc[0-9]+|cld[0-9]+|fe[0-9]+|gh[0-9]+|s[0-9]{2}|r[0-9]{2}|f9_02|p19|g07)_/;
+  const hits = [];
+  for (const name of await readdir(dir)) {
+    if (!name.endsWith(".rs")) continue;
+    const text = await readFile(join(dir, name), "utf8");
+    text.split("\n").forEach((line, index) => {
+      if (ticket.test(line) || fnPrefix.test(line)) hits.push(`${name}:${index + 1}: ${line.trim().slice(0, 80)}`);
+    });
+  }
+  assert.deepStrictEqual(hits, []);
 });
 
 test("every automation script is referenced or deleted", async () => {
@@ -3108,14 +3126,14 @@ test("R04: the benchmark run owns its cancelled workers until they exit", async 
     !cfgTest.some((part) => part.slice(0, 200).includes("fn active_cancellable_workers")),
     "the worker counter is not gated to tests",
   );
-  // The R04 regression proves the drain waits for the slow worker, and the
-  // R16 regressions pin the derived bound and the every-exit-path hold.
-  assert.match(client, /r04_worker_drain_waits_for_the_abandoned_slow_request_to_exit/);
-  assert.match(service, /r16_the_drain_bound_follows_the_workload_request_deadline/);
-  const lib = await readFile(join(process.cwd(), "src-tauri", "src", "lib.rs"), "utf8");
+  // The abandoned-worker regression proves the drain waits for the slow
+  // worker, and the derivation regressions pin the derived bound and the
+  // every-exit-path hold.
+  assert.match(client, /worker_drain_waits_for_the_abandoned_slow_request_to_exit/);
+  assert.match(service, /the_drain_bound_follows_the_workload_request_deadline/);
   assert.match(
-    lib,
-    /r16_the_benchmark_command_releases_ownership_only_after_its_workers_exit/,
+    service,
+    /cancellation_during_preparation_leaves_an_owned_worker_the_drain_waits_for/,
     "the command-level ownership test must exist",
   );
 });

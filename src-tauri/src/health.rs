@@ -168,7 +168,7 @@ pub(crate) struct ManagedHealthContext {
     pub model_path: PathBuf,
     /// Read-shared handles that pin the verified runtime content for the whole
     /// health run so a long preparation interval cannot reopen a modification
-    /// window before the CLI, benchmark, and server launches (audit RT-04).
+    /// window before the CLI, benchmark, and server launches.
     pub execution_lease: Option<crate::runtime::ManagedExecutionLease>,
 }
 
@@ -395,7 +395,7 @@ pub(crate) fn verify_pinned_model(
             "The selected health model filename does not match the approved pin.".into(),
         ));
     }
-    // DL-03: the model bytes are read through the verified handle, so a
+    // the model bytes are read through the verified handle, so a
     // link planted after the check is refused instead of hashed.
     let mut file =
         crate::artifact::open_verified_read_file("Health model", path).map_err(|error| {
@@ -416,7 +416,7 @@ pub(crate) fn verify_pinned_model(
             "The health model size does not match the approved pin.".into(),
         ));
     }
-    // DL-03: `file` is the verified handle from above; the bytes are hashed
+    // `file` is the verified handle from above; the bytes are hashed
     // from it directly, never re-opened by path.
     let mut hasher = Sha256::new();
     let mut buffer = vec![0_u8; 1024 * 1024];
@@ -661,7 +661,7 @@ fn path_is_link_or_reparse(path: &Path) -> bool {
 /// short slices and, once either fires, terminates the contained server so the
 /// pending HTTP read ends promptly. Cancellation arriving during response
 /// waiting, body reading, or immediately after completion always reports
-/// `Cancelled`, never a passed stage (audit RT-03).
+/// `Cancelled`, never a passed stage.
 fn completion_request_supervised(
     port: u16,
     cancel: &AtomicBool,
@@ -721,7 +721,7 @@ fn completion_request_supervised(
 /// Grace period for the nested completion worker to observe server
 /// termination after an early exit. A worker still blocked past the deadline
 /// outlived its server and is detached instead of joined forever; the caller
-/// reports it as unresolved (audit PROC-06).
+/// reports it as unresolved.
 const COMPLETION_WORKER_JOIN_GRACE: Duration = Duration::from_secs(5);
 
 /// Join the nested completion worker after an early exit (cancel or
@@ -743,7 +743,7 @@ fn join_completion_worker(
 fn completion_request(port: u16) -> Result<(u16, Vec<u8>), (HealthFailureReason, String)> {
     let pin = crate::core::pinned_model_load_pin();
     // The health run launches its own plaintext loopback server; the request
-    // still goes through the centralized local client (audit MT-06) so
+    // still goes through the centralized local client so
     // framing (including chunked bodies), size bounds and the whole-operation
     // deadline always apply.
     let client =
@@ -820,7 +820,7 @@ pub(crate) fn run_managed_health(
     context: ManagedHealthContext,
     cancel: &AtomicBool,
 ) -> HealthRunResult {
-    // The execution lease (audit RT-04) lives with the context for the whole
+    // The execution lease lives with the context for the whole
     // run: its read-shared handles pin the verified runtime content across the
     // CLI, benchmark, and server launches below. Hold an explicit reference so
     // the guarantee is visible at the health entry point.
@@ -1394,8 +1394,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn proc05_the_loopback_readiness_client_never_follows_redirects() {
-        // P1-21 (PROC-05): port of the R15 redirect test for the health
+    fn the_loopback_readiness_client_never_follows_redirects() {
+        // port of the R15 redirect test for the health
         // readiness client. A 3xx is a failure, never a hop: the redirect
         // target must never receive the request.
         use std::io::{Read, Write};
@@ -1893,7 +1893,7 @@ mod tests {
     }
 
     /// A loopback fixture that accepts one completion request, reads it, and
-    /// deliberately withholds the response until `release` is set (audit RT-03).
+    /// deliberately withholds the response until `release` is set.
     fn serve_withheld_completion() -> (u16, std::sync::Arc<AtomicBool>, std::thread::JoinHandle<()>)
     {
         use std::io::{Read as _, Write as _};
@@ -1938,8 +1938,8 @@ mod tests {
     }
 
     #[test]
-    fn proc06_a_completion_worker_that_survives_termination_is_unresolved() {
-        // P1-22 (PROC-06): the supervisor must join the nested worker with a
+    fn a_completion_worker_that_survives_termination_is_unresolved() {
+        // the supervisor must join the nested worker with a
         // deadline instead of abandoning it. A worker still blocked past the
         // deadline - its server ignored termination - reports Unresolved, not
         // the success-shaped Cancelled kind.
@@ -1976,11 +1976,11 @@ mod tests {
     }
 
     #[test]
-    fn rt03_cancel_terminates_a_pending_completion_within_the_bound() {
+    fn cancel_terminates_a_pending_completion_within_the_bound() {
         // A server that accepts /completion and never answers must not hold a
         // cancelled health run for the 120-second request deadline: the
         // supervisor returns Cancelled, terminates the server, and does so
-        // promptly (audit RT-03).
+        // promptly.
         let (port, release, fixture) = serve_withheld_completion();
         let cancel = std::sync::Arc::new(AtomicBool::new(false));
         let terminated = std::sync::Arc::new(AtomicBool::new(false));
@@ -1999,7 +1999,7 @@ mod tests {
                 Instant::now() + Duration::from_secs(30),
                 move || {
                     terminate_flag.store(true, Ordering::Relaxed);
-                    // PROC-06: a real termination closes the server socket, so
+                    // a real termination closes the server socket, so
                     // the worker's pending read ends. Release the fixture for
                     // the same effect: its thread exits and drops the stream.
                     release_flag.store(true, Ordering::Relaxed);
@@ -2022,10 +2022,10 @@ mod tests {
     }
 
     #[test]
-    fn rt03_a_completion_finishing_at_cancellation_is_never_reported_as_passed() {
+    fn a_completion_finishing_at_cancellation_is_never_reported_as_passed() {
         // The response-versus-cancel race resolves toward Cancelled: a
         // complete, valid response arriving while the flag is set must not
-        // become a passed completion stage (audit RT-03).
+        // become a passed completion stage.
         let body: &'static [u8] = br#"{"content":"ok","tokens_predicted":4}"#;
         let (port, fixture) = serve_one_completion_response(body);
         let cancel = AtomicBool::new(true);
@@ -2046,7 +2046,7 @@ mod tests {
     }
 
     #[test]
-    fn rt03_the_supervised_request_still_returns_normal_responses() {
+    fn the_supervised_request_still_returns_normal_responses() {
         // Positive control: without cancellation the supervisor is transparent
         // and does not terminate the server.
         let body: &'static [u8] = br#"{"content":"ok","tokens_predicted":4}"#;

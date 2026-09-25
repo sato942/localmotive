@@ -1,5 +1,5 @@
 //! The one Rust-owned HTTP client for the locally launched `llama-server`
-//! (audit MT-06). It is built from the validated launch profile, honors the
+//!. It is built from the validated launch profile, honors the
 //! profile's TLS certificate as an explicit trusted root (never disabling
 //! verification) and its API-key file (read only in Rust), and applies
 //! bounded request/response sizes with whole-operation deadlines that cover
@@ -389,7 +389,7 @@ impl LocalHttpClient {
         Self::build(host, port, None, None)
     }
 
-    /// Pre-launch transport validation (audit MT-06 I4): the host/port are
+    /// Pre-launch transport validation: the host/port are
     /// usable, the API-key file exists with a single key line, and the TLS
     /// certificate/key pair is readable PEM. A failure rejects the
     /// combination with a precise message before any server starts.
@@ -554,9 +554,9 @@ impl LocalHttpClient {
         self.inner.api_key.is_some()
     }
 
-    /// Test-only view of the abandoned-worker bound (MT-06 extension).
+    /// Test-only view of the abandoned-worker bound.
     /// How many cancellable workers of this client have not exited yet
-    /// (R04, follow-up review). A cancelled call abandons its worker; the
+    ///. A cancelled call abandons its worker; the
     /// worker exits by itself at the whole-operation deadline, and this count
     /// is the ownership bound the run drains before releasing its slot.
     pub(crate) fn active_cancellable_workers(&self) -> usize {
@@ -567,7 +567,7 @@ impl LocalHttpClient {
     /// until the ceiling elapses. Returns true when the client is drained.
     /// The wait is a poll on the worker count; a worker never outlives its
     /// own request deadline, so the caller passes a ceiling above that
-    /// deadline and treats expiry as unresolved ownership (R04).
+    /// deadline and treats expiry as unresolved ownership.
     pub(crate) fn wait_for_worker_drain(&self, ceiling: Duration) -> bool {
         let started = std::time::Instant::now();
         loop {
@@ -852,7 +852,7 @@ fn error_chain(error: &dyn std::error::Error) -> String {
 }
 
 fn read_bounded_file(path: &str, limit: u64, label: &str) -> Result<Vec<u8>, String> {
-    // PROC-07 + DL-03: transport files (SSL keys/certs, API key files) must
+    // transport files (SSL keys/certs, API key files) must
     // be regular files, never symlinks or reparse points, and the check
     // verifies the opened handle so a planted link is refused instead of
     // followed.
@@ -863,7 +863,7 @@ fn read_bounded_file(path: &str, limit: u64, label: &str) -> Result<Vec<u8>, Str
     // can never copy more than the limit plus one byte, and the overflow is
     // detected and refused.
     use std::io::Read as _;
-    // DL-03: `file` is the verified handle from above; it is read directly,
+    // `file` is the verified handle from above; it is read directly,
     // never re-opened by path.
     let metadata = file
         .metadata()
@@ -1186,7 +1186,7 @@ ab1VTmVlluUDakDfjhwCcnE=
 
     /// HTTP fixture that answers headers immediately and dribbles the body
     /// over `total`, counting requests, live connections, completed and
-    /// aborted responses. The MT-06 extension uses it so cancellation is
+    /// aborted responses. The abandoned-worker extension uses it so cancellation is
     /// judged by resources (workers, sockets, duplicate requests) instead of
     /// caller-return latency alone.
     pub(crate) struct SlowBodyFixture {
@@ -1220,7 +1220,8 @@ ab1VTmVlluUDakDfjhwCcnE=
                     .ok();
                 let mut buffer = [0u8; 8192];
                 let _ = stream.read(&mut buffer);
-                let body = b"{\"content\":\"dribbled response body for the MT-06 extension\"}";
+                let body =
+                    b"{\"content\":\"dribbled response body for the abandoned-worker probe\"}";
                 let headers = format!(
                     "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
                     body.len()
@@ -1351,7 +1352,7 @@ ab1VTmVlluUDakDfjhwCcnE=
     }
 
     #[test]
-    fn mt06_plain_client_normalizes_hosts_and_brackets_ipv6() {
+    fn plain_client_normalizes_hosts_and_brackets_ipv6() {
         let client = LocalHttpClient::plain("0.0.0.0", 8080).unwrap();
         assert_eq!(client.url("/health"), "http://127.0.0.1:8080/health");
         let client = LocalHttpClient::plain("::1", 8081).unwrap();
@@ -1365,7 +1366,7 @@ ab1VTmVlluUDakDfjhwCcnE=
     }
 
     #[test]
-    fn mt06_invalid_hosts_and_ports_are_rejected() {
+    fn invalid_hosts_and_ports_are_rejected() {
         assert!(LocalHttpClient::plain("", 8080).is_err());
         assert!(LocalHttpClient::plain("http://evil", 8080).is_err());
         assert!(LocalHttpClient::plain("bad host", 8080).is_err());
@@ -1374,7 +1375,7 @@ ab1VTmVlluUDakDfjhwCcnE=
     }
 
     #[test]
-    fn mt06_api_key_file_is_read_in_rust_and_redacted_in_debug() {
+    fn api_key_file_is_read_in_rust_and_redacted_in_debug() {
         let key_path = temp_path("key.txt");
         std::fs::write(&key_path, "super-secret-canary\n").unwrap();
         let mut profile = profile_with("127.0.0.1", 8080);
@@ -1391,7 +1392,7 @@ ab1VTmVlluUDakDfjhwCcnE=
     }
 
     #[test]
-    fn mt06_missing_or_empty_or_multiline_key_files_are_rejected() {
+    fn missing_or_empty_or_multiline_key_files_are_rejected() {
         let mut profile = profile_with("127.0.0.1", 8080);
         profile.api_key_file = temp_path("missing.txt").to_string_lossy().to_string();
         let error = LocalHttpClient::from_profile(&profile).unwrap_err();
@@ -1413,7 +1414,7 @@ ab1VTmVlluUDakDfjhwCcnE=
     }
 
     #[test]
-    fn mt06_api_key_protected_completion_sends_the_bearer_header() {
+    fn api_key_protected_completion_sends_the_bearer_header() {
         let (port, seen) = serve_plain(ok_response("{}"), true);
         let key_path = temp_path("key2.txt");
         std::fs::write(&key_path, "canary-key-123").unwrap();
@@ -1439,7 +1440,7 @@ ab1VTmVlluUDakDfjhwCcnE=
     }
 
     #[test]
-    fn mt06_trusted_local_tls_certificate_is_accepted() {
+    fn trusted_local_tls_certificate_is_accepted() {
         let port = serve_tls(TRUSTED_CERT, TRUSTED_KEY, ok_response("{\"ok\":true}"));
         let cert_path = temp_path("trusted.crt");
         std::fs::write(&cert_path, TRUSTED_CERT).unwrap();
@@ -1456,7 +1457,7 @@ ab1VTmVlluUDakDfjhwCcnE=
     }
 
     #[test]
-    fn mt06_untrusted_certificate_is_rejected_with_verification_enabled() {
+    fn untrusted_certificate_is_rejected_with_verification_enabled() {
         // The server presents the OTHER self-signed pair; the client trusts
         // only the trusted pair. Verification must fail.
         let port = serve_tls(OTHER_CERT, OTHER_KEY, ok_response("{}"));
@@ -1476,7 +1477,7 @@ ab1VTmVlluUDakDfjhwCcnE=
     }
 
     #[test]
-    fn mt06_chunked_json_response_is_decoded() {
+    fn chunked_json_response_is_decoded() {
         let body = "{\"done\":true,\"n\":3}";
         let chunked = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{:x}\r\n{}\r\n{:x}\r\n{}\r\n0\r\n\r\n",
@@ -1500,7 +1501,7 @@ ab1VTmVlluUDakDfjhwCcnE=
     }
 
     #[test]
-    fn mt06_oversized_response_is_rejected() {
+    fn oversized_response_is_rejected() {
         let declaration = format!(
             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             MAX_LOCAL_RESPONSE_BYTES + 10
@@ -1515,7 +1516,7 @@ ab1VTmVlluUDakDfjhwCcnE=
     }
 
     #[test]
-    fn mt06_whole_operation_deadline_bounds_a_slow_writer() {
+    fn whole_operation_deadline_bounds_a_slow_writer() {
         // The fixture accepts the connection but never writes: the whole
         // operation deadline must bound connect + write + read.
         let (port, _) = serve_plain(Vec::new(), false);
@@ -1529,7 +1530,7 @@ ab1VTmVlluUDakDfjhwCcnE=
     }
 
     #[test]
-    fn mt06_cancellation_is_observed_during_the_response_wait() {
+    fn cancellation_is_observed_during_the_response_wait() {
         let (port, _) = serve_plain(Vec::new(), false);
         let client = LocalHttpClient::plain("127.0.0.1", port).unwrap();
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -1618,8 +1619,8 @@ ab1VTmVlluUDakDfjhwCcnE=
     }
 
     #[test]
-    fn r04_worker_drain_waits_for_the_abandoned_slow_request_to_exit() {
-        // R04 (follow-up review db548c8): after a cancellation the abandoned
+    fn worker_drain_waits_for_the_abandoned_slow_request_to_exit() {
+        // After a cancellation the abandoned
         // worker keeps its slow request alive until its own deadline, and the
         // run must not report its ownership resolved before that worker
         // exits - otherwise replacement work can overlap the slow request.
@@ -1666,7 +1667,7 @@ ab1VTmVlluUDakDfjhwCcnE=
     }
 
     #[test]
-    fn r10_transport_validation_parses_real_x509_and_matches_the_pair() {
+    fn transport_validation_parses_real_x509_and_matches_the_pair() {
         // R10 (follow-up review db548c8): the validator decodes the real PEM
         // and DER. Marker-wrapped junk must fail; a mismatched pair must fail
         // with the pair message; a real matching pair passes.
@@ -1815,7 +1816,7 @@ MIIB
     }
 
     #[test]
-    fn r16_a_raw_sec1_private_key_is_parsed_and_matched() {
+    fn a_raw_sec1_private_key_is_parsed_and_matched() {
         // Follow-up review: the raw SEC1 branch passed the private scalar
         // (children[1]) to the SEC1 parser instead of the complete SEC1
         // structure, so every "EC PRIVATE KEY" file failed as malformed even
@@ -1884,7 +1885,7 @@ MIIB
     }
 
     #[test]
-    fn r15_a_redirect_is_not_followed_and_the_client_fails_the_call() {
+    fn a_redirect_is_not_followed_and_the_client_fails_the_call() {
         // R15 (follow-up review db548c8): the loopback client speaks to one
         // server. A 3xx is a failure, never a hop: the redirect target must
         // never receive the request.
@@ -1933,7 +1934,7 @@ connection: close
     }
 
     #[test]
-    fn r15_the_request_body_serializes_through_a_bounded_writer() {
+    fn the_request_body_serializes_through_a_bounded_writer() {
         // R15: the writer refuses bytes past the cap instead of accepting a
         // full oversized allocation that is checked only afterwards.
         use std::io::Write as _;
@@ -1952,8 +1953,8 @@ connection: close
     }
 
     #[test]
-    fn proc07_transport_file_reads_refuse_a_symlink() {
-        // P1-23 (PROC-07): read_bounded_file reads SSL keys/certs and API key
+    fn transport_file_reads_refuse_a_symlink() {
+        // read_bounded_file reads SSL keys/certs and API key
         // files. A symlink in that position must be refused, never followed:
         // the secret bytes must not come back.
         let dir = std::env::temp_dir().join(format!("localmotive-proc07-{}", std::process::id()));
@@ -1992,7 +1993,7 @@ connection: close
     }
 
     #[test]
-    fn r15_bounded_file_reads_are_enforced_by_the_read_not_a_metadata_precheck() {
+    fn bounded_file_reads_are_enforced_by_the_read_not_a_metadata_precheck() {
         // R15: the read is bounded by the handle (take(limit + 1)), so a file
         // that lies about or grows past its size can never copy more than the
         // limit plus one byte.
@@ -2051,7 +2052,7 @@ connection: close
 
     #[test]
     fn a_cancelled_body_read_resolves_worker_ownership_without_duplicate_requests() {
-        // MT-06 extension: a cancelled call returns on the caller thread, but
+        // extension: a cancelled call returns on the caller thread, but
         // the abandoned worker must still exit - at the latest when its own
         // whole-operation deadline expires - and the half-read connection must
         // be torn down exactly once. The fixture streams far longer than the
@@ -2248,7 +2249,7 @@ connection: close
     }
 
     #[test]
-    fn mt06_error_statuses_reach_the_caller_without_panicking() {
+    fn error_statuses_reach_the_caller_without_panicking() {
         let response =
             b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec();
         let (port, _) = serve_plain(response, false);

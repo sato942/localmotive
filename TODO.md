@@ -550,8 +550,19 @@ Fix these after P0 and before the next feature.
   `ALL_SOURCES` stays; KEPT the release-gates doc/decision pins (D3/D4/D5, L2
   ceiling, unsigned disclosure: owner-ordered locks, not incidental prose).
   Rust 668/0, fmt/clippy clean.
-- [ ] **P2-5 — Remove the audit-ticket labels** from Rust source (399) and
-  rename ticket-named test modules by behavior.
+- [x] **P2-5 — Remove the audit-ticket labels.** Done 2026-09-25: stripped
+  286 ticket-label comment lines (period-preserving redo after a first pass
+  ate `XS-00001` inside a string literal and 20 sentence periods; lesson:
+  ticket regexes need `\b` anchors and must never eat trailing periods, and
+  the ticket must sit at paren-content start) and renamed 192 ticket-prefixed
+  test fns to behavior names across 19 files (no new duplicates; compiler is
+  the verifier). Gate test extended (comments + `fn` prefixes; mutant-probed:
+  flags `r16_/proc14_/s05_`, passes `process_/sha256_`). Release-gates name
+  pins updated to the new names (R10/R15/R04/R16 pins; the deleted P2-4 guard
+  pin now points at the surviving cancellation twin in measurement_service).
+  Rust 668/0, fmt/clippy clean, `npm run check` EXIT 0 15 files / 265 tests
+  (`/tmp/check41.log`), audit 0, versions/pins/gates PASS. Scope: Rust source
+  only; scripts/ evidence keys (`mt06_verdicts`, driver names) untouched.
 - [ ] **P2-6 — Keep one benchmark system (MT-09, FE-05).**
 - [ ] **P2-7 — Keep one catalog schema source (LAB-06).**
 - [ ] **P2-8 — Split `src/App.tsx` (FE-04)** and keep IPC out of the screens

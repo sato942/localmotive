@@ -1,5 +1,5 @@
 //! Deterministic test-support helpers for bounded property campaigns
-//! (audit S-19). No external proptest/fuzz dependency: a fixed splitmix64
+//!. No external proptest/fuzz dependency: a fixed splitmix64
 //! generator keeps every campaign reproducible from its seed alone, and each
 //! property test reports the failing seed in its panic message.
 #![cfg(test)]

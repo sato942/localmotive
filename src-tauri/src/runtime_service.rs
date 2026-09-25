@@ -1,4 +1,4 @@
-//! Managed-runtime setup, install and health command family (audit S-27 I1).
+//! Managed-runtime setup, install and health command family.
 //!
 //! Extracted from `lib.rs`: these are the same Tauri commands, and the
 //! runtime/health ownership (download verification, execution authorization,
@@ -64,7 +64,7 @@ pub(crate) fn detect_hardware() -> runtime::HardwareInfo {
 }
 
 /// Verification instrumentation for the runtime setup screens: jobs run,
-/// requests coalesced, bytes hashed, jobs cancelled (audit RT-06 I4).
+/// requests coalesced, bytes hashed, jobs cancelled.
 #[tauri::command]
 pub(crate) fn runtime_verification_stats() -> runtime::RuntimeVerificationStats {
     runtime::verification_stats()

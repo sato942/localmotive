@@ -319,7 +319,7 @@ pub fn resolve_url(repo: &str, filename: &str, revision: &str) -> String {
 }
 
 /// Rewrite a canonical Hugging Face URL onto the verifier-profile loopback
-/// fixture when the seam is active (RT-04.V2 delay injection for the pinned
+/// fixture when the seam is active (delay injection for the pinned
 /// health-model fetch); otherwise return the URL unchanged. Only URLs under
 /// the canonical host are touched, and only for the gated loopback bases
 /// described on [`resolve_download_base`].
@@ -342,7 +342,7 @@ pub(crate) fn rebase_download_url_with(
     format!("{base}{rest}")
 }
 
-/// Verification-profile seam (audit DC-04.V2): inside
+/// Verification-profile seam: inside
 /// `LOCALMOTIVE_VERIFY_ISOLATED_ROOT` the packaged verifier may point catalog
 /// downloads at a loopback fixture so the authority and checksum legs run
 /// against controlled bytes. Outside that profile - or for any value that is
@@ -351,7 +351,7 @@ pub(crate) fn rebase_download_url_with(
 const CANONICAL_DOWNLOAD_BASE: &str = "https://huggingface.co";
 
 /// True when the verification profile redirects downloads at a loopback
-/// fixture (audit CORE-01). This is the verification-mode banner signal for
+/// fixture. This is the verification-mode banner signal for
 /// the download half of the authority override.
 pub fn download_base_overridden_with(lookup: impl Fn(&str) -> Option<String>) -> bool {
     resolve_download_base(lookup) != CANONICAL_DOWNLOAD_BASE
@@ -467,7 +467,7 @@ struct DownloadEntries {
     target: PathBuf,
     part: PathBuf,
     meta: PathBuf,
-    /// Cross-process reservation for this target (audit DC-11): another app
+    /// Cross-process reservation for this target: another app
     /// instance cannot start a second writer for the same filename.
     lock: PathBuf,
 }
@@ -488,7 +488,7 @@ impl Drop for DownloadLock {
 
 /// Reserve the target for this process. A fresh lock refuses a second
 /// writer; a lock older than six hours is treated as stale from a crashed
-/// run and replaced once (audit DC-11).
+/// run and replaced once.
 fn reserve_download_target(dir: &Dir, target: &Path, lock: &Path) -> Result<DownloadLock, String> {
     let mut options = CapOpenOptions::new();
     options.write(true).create_new(true);
@@ -750,7 +750,7 @@ pub(crate) fn ensure_safe_write_entry(path: &Path) -> Result<(), String> {
 /// handle (a relative open cannot escape it), and on Windows the open handle
 /// itself is verified: exactly one hard link, no reparse attribute, and a
 /// final path whose parent is the expected directory. Verifying the handle —
-/// not the path — closes the plant-between-check-and-open race (audit RT-01).
+/// not the path — closes the plant-between-check-and-open race.
 pub(crate) fn write_trusted_record(
     directory: &Dir,
     expected_dir: &Path,
@@ -765,7 +765,7 @@ pub(crate) fn write_trusted_record(
     ensure_safe_write_entry(&expected_dir.join(name))?;
     let mut options = CapOpenOptions::new();
     // No truncate here: the handle is verified before any byte changes, so a
-    // refused entry keeps its bytes (audit RT-01).
+    // refused entry keeps its bytes.
     options.write(true).create(true);
     let file = directory
         .open_with(name, &options)
@@ -936,7 +936,7 @@ fn sha256_file(path: &Path) -> Result<String, String> {
 
 /// Streaming SHA-256 with cancellation checks and byte progress, so a large
 /// existing-file or final-part verification returns control promptly when
-/// the user keeps the current state and stops (audit DC-12 I3).
+/// the user keeps the current state and stops.
 fn sha256_reader_with(
     mut file: impl Read,
     display_path: &Path,
@@ -970,7 +970,7 @@ fn sha256_reader_with(
 
 /// Flush the part file's data before a resume checkpoint claims those bytes.
 ///
-/// The documented recovery guarantee (audit DC-12): a published checkpoint
+/// The documented recovery guarantee: a published checkpoint
 /// never claims bytes that were not first written to the part file and
 /// flushed to the operating system. A process crash resumes up to the last
 /// checkpoint; an OS crash or power loss re-fetches bytes written after the
@@ -999,11 +999,11 @@ fn sync_part_data(entries: &DownloadEntries) -> Result<(), String> {
 
 /// Documented checkpoint cadence: progress UI updates every poll, but the
 /// durable sidecar (with its data sync) is published at most this often,
-/// plus on completion or stop (audit DC-12 I2).
+/// plus on completion or stop.
 const CHECKPOINT_INTERVAL_SECS: u64 = 2;
 
 /// The documented network policy for catalog and runtime transfers
-/// (audit S-08): production endpoints are always HTTPS, and a redirect may
+///: production endpoints are always HTTPS, and a redirect may
 /// only stay on Hugging Face, GitHub or their content-delivery hosts
 /// (suffix match on a dot boundary). Loopback addresses are the one
 /// exception, so repository and verifier fixtures can use local servers.
@@ -1076,7 +1076,7 @@ fn client(
 }
 
 /// Translate an HTTP status into advice the user can act on.
-/// Parse a bounded Retry-After value from a response (audit S-10). Returns
+/// Parse a bounded Retry-After value from a response. Returns
 /// whole seconds clamped into [1, 30]; a malformed, absurd or past value
 /// yields None and the caller keeps its exponential fallback.
 pub fn bounded_retry_after_secs(value: Option<&str>) -> Option<u64> {
@@ -1320,7 +1320,7 @@ pub fn download_file(
         return Err("Download cancelled before network access started.".into());
     }
     // Progress must be monotonic for the UI: a later verification pass over
-    // local bytes must never rewind the reported byte total (audit DC-12).
+    // local bytes must never rewind the reported byte total.
     let mut last_reported = 0_u64;
     let mut on_progress = {
         let mut inner = on_progress;
@@ -1338,7 +1338,7 @@ pub fn download_file(
     ensure_safe_write_entry(&part)?;
     ensure_safe_write_entry(&meta)?;
     let entries = open_download_entries(target)?;
-    // One writer per target across processes (audit DC-11); the lock is
+    // One writer per target across processes; the lock is
     // released on every exit path below.
     let lock_guard = Some(reserve_download_target(
         &entries.dir,
@@ -1477,7 +1477,7 @@ pub fn download_file(
             // Report progress every poll; publish a durable checkpoint only
             // at the documented cadence (or on completion), and always flush
             // the part data before the sidecar claims those bytes
-            // (audit DC-12 I1/I2).
+            //.
             let mut last_checkpoint = Instant::now();
             while !cancel.load(Ordering::Relaxed) {
                 std::thread::sleep(Duration::from_millis(400));
@@ -1529,7 +1529,7 @@ pub fn download_file(
     // Verify against the curator-published digest before exposing the final
     // name, even when a CDN omits or uses a non-cryptographic ETag. The
     // verified handle's identity is captured and re-checked after
-    // publication (audit DC-11).
+    // publication.
     let part_file = entries
         .dir
         .open(&entries.part)
@@ -1562,7 +1562,7 @@ pub fn download_file(
 
 /// Publish the verified `.part` under the final name without replacing an
 /// existing file, and refuse to publish when the part's identity changed
-/// between verification and publication (audit DC-11). On a conflict both
+/// between verification and publication. On a conflict both
 /// files are preserved: the existing target and the verified part.
 fn publish_verified_part(
     entries: &DownloadEntries,
@@ -1716,7 +1716,7 @@ fn fetch_chunk(
             // A retry against a range-ignoring server restarts from zero
             // BEFORE the cursor is read: an interrupted 200 stream cannot be
             // resumed at a byte offset, and a misleading Accept-Ranges header
-            // must never cause unsafe reuse of partial bytes (audit DC-02 I3).
+            // must never cause unsafe reuse of partial bytes.
             let mut guard = chunks.lock().unwrap();
             let entry = &mut guard[index];
             if entry.done > 0 {
@@ -1728,7 +1728,7 @@ fn fetch_chunk(
         }
         // A server proven to ignore Range is transferred as one sequential
         // whole-response stream sized by the complete expected length, not by
-        // the 8 MiB ranged-request span (audit DC-02 I1).
+        // the 8 MiB ranged-request span.
         let chunk = chunks.lock().unwrap()[index];
         let request_start = chunk.cursor();
         let request_end = if supports_ranges {
@@ -1877,7 +1877,7 @@ fn fetch_chunk(
                 }
                 // A server-supplied Retry-After (bounded in the error
                 // marker) wins over the linear backoff for 429s (audit
-                // S-10); the wait stays cancellable and bounded.
+                // the wait stays cancellable and bounded.
                 let retry_delay = match error
                     .rsplit_once(" retry-after=")
                     .and_then(|(_, value)| value.trim().parse::<u64>().ok())
@@ -3043,7 +3043,7 @@ mod tests {
 
     #[test]
     fn rebase_download_url_preserves_the_canonical_url_without_the_profile() {
-        // The RT-04.V2 seam rewrites only inside the verifier profile and
+        // The verification seam rewrites only inside the verifier profile and
         // only for canonical-host URLs; everything else is untouched.
         let canonical = "https://huggingface.co/ggml-org/SmolLM2-135M-GGUF/resolve/4468/SmolLM2-135M-Q4_K_M.gguf?download=true";
         let base_only = |name: &str| match name {
@@ -3379,11 +3379,11 @@ mod tests {
     }
 
     #[test]
-    fn dc12_cancelled_existing_file_verification_keeps_the_file_and_retry_reverifies() {
+    fn cancelled_existing_file_verification_keeps_the_file_and_retry_reverifies() {
         // A large existing-file verification must return promptly when the
         // user keeps the current state and stops, keep the bytes on disk,
         // and re-verify (never shortcut to completion) on the next attempt
-        // (audit DC-12 I3/V2).
+        //.
         let payload: Vec<u8> = (0..(3 * 1024 * 1024))
             .map(|index| (index % 251) as u8)
             .collect();
@@ -3458,7 +3458,7 @@ mod tests {
     }
 
     #[test]
-    fn dc12_checkpoint_publication_is_ordered_after_a_data_sync() {
+    fn checkpoint_publication_is_ordered_after_a_data_sync() {
         // The documented guarantee: a published checkpoint never claims
         // bytes that were not first flushed to the part file (audit DC-12
         // I1/I2). Both production publication points must sync first.
@@ -3501,7 +3501,7 @@ mod tests {
 
     /// Serve one scripted plain-HTTP response per entry: (payload,
     /// declare_length, truncate_at). Answers every request with 200 and the
-    /// full body, modelling a server that ignores Range (audit DC-02).
+    /// full body, modelling a server that ignores Range.
     /// Shutdown guard: dropping the returned flag wakes the server loop
     /// within ~50 ms, which also covers the panic path (`JoinHandle`
     /// detaches on unwind, so without the guard a failing client would orphan
@@ -3647,7 +3647,7 @@ mod tests {
         );
     }
 
-    fn dc02_payload() -> (Vec<u8>, String) {
+    fn payload() -> (Vec<u8>, String) {
         // 8 MiB + 1: one byte past the ranged-request span that used to be
         // mistaken for the expected response length.
         let payload: Vec<u8> = (0..(8 * 1024 * 1024 + 1))
@@ -3685,7 +3685,7 @@ mod tests {
     }
 
     #[test]
-    fn s08_redirect_policy_defines_schemes_and_hosts() {
+    fn redirect_policy_defines_schemes_and_hosts() {
         // Production hosts, including their content-delivery subdomains.
         for (scheme, host) in [
             ("https", "huggingface.co"),
@@ -3728,7 +3728,7 @@ mod tests {
     }
 
     #[test]
-    fn s08_a_redirect_outside_the_allowed_set_fails_with_a_safe_diagnostic() {
+    fn a_redirect_outside_the_allowed_set_fails_with_a_safe_diagnostic() {
         use std::io::{BufRead as _, BufReader, Write as _};
         use std::net::TcpListener;
         use std::time::{Duration, Instant};
@@ -3824,7 +3824,7 @@ mod tests {
     }
 
     #[test]
-    fn g07_an_authenticated_redirect_does_not_forward_the_token_to_another_host() {
+    fn an_authenticated_redirect_does_not_forward_the_token_to_another_host() {
         // The audit's redirect observation (line ~692): demonstrate the
         // behavior instead of assuming it. The first host answers 302 and
         // points at `localhost` (a different host name than 127.0.0.1, same
@@ -3966,7 +3966,7 @@ mod tests {
     }
 
     #[test]
-    fn dc11_a_fresh_lock_refuses_a_second_writer() {
+    fn a_fresh_lock_refuses_a_second_writer() {
         let root = unique_test_dir("localmotive-dc11-lock");
         let target = root.join("locked.bin");
         std::fs::write(root.join("locked.bin.lm-lock"), b"fresh").unwrap();
@@ -3991,10 +3991,10 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn dc11_a_conflicting_target_preserves_both_files() {
+    fn a_conflicting_target_preserves_both_files() {
         // The conflict branch of publication: an existing file under the
         // final name must never be replaced, and the verified part must
-        // survive for the user (audit DC-11).
+        // survive for the user.
         let root = unique_test_dir("localmotive-dc11-conflict");
         let target = root.join("model.gguf");
         std::fs::write(&target, b"pre-existing user bytes").unwrap();
@@ -4023,7 +4023,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn dc11_a_part_swapped_after_verification_is_not_published() {
+    fn a_part_swapped_after_verification_is_not_published() {
         let root = unique_test_dir("localmotive-dc11-swap");
         let target = root.join("final.gguf");
         let entries = open_download_entries(&target).unwrap();
@@ -4054,7 +4054,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn dc11_an_unchanged_part_publishes_without_replacing() {
+    fn an_unchanged_part_publishes_without_replacing() {
         let root = unique_test_dir("localmotive-dc11-clean");
         let target = root.join("clean.gguf");
         let entries = open_download_entries(&target).unwrap();
@@ -4077,7 +4077,7 @@ mod tests {
 
     #[test]
     #[ignore = "DC-12.I4 measurement: shared write-mutex/seek throughput"]
-    fn dc12_shared_write_mutex_throughput() {
+    fn shared_write_mutex_throughput() {
         // Mirror the downloader's serialized disk path: four parallel range
         // workers each seek and write 64 KiB chunks through one Mutex<File>.
         // Measure the aggregate throughput the write path can sustain, to
@@ -4129,13 +4129,13 @@ mod tests {
     }
 
     #[test]
-    fn dc02_a_range_ignoring_server_completes_files_larger_than_the_request_span() {
+    fn a_range_ignoring_server_completes_files_larger_than_the_request_span() {
         // The audited defect: HTTP 200 to every Range request for a file
         // larger than 8 MiB was rejected because the response length was
         // compared against the 8 MiB request span. The sequential
         // whole-response path must complete it with the exact bytes and
-        // digest (audit DC-02 V1).
-        let (payload, digest) = dc02_payload();
+        // digest.
+        let (payload, digest) = payload();
         let (port, server, shutdown_guard) = serve_plain_responses(vec![
             (payload.clone(), true, None), // probe: 200, full Content-Length
             (payload.clone(), true, None), // transfer: 200 with Content-Length
@@ -4156,11 +4156,11 @@ mod tests {
     }
 
     #[test]
-    fn dc02_a_chunked_range_ignoring_response_also_completes() {
+    fn a_chunked_range_ignoring_response_also_completes() {
         // Same path with a chunked transfer (no Content-Length): the read
         // loop must be bounded by the expected object size, not by a header
-        // it never receives (audit DC-02 V1).
-        let (payload, digest) = dc02_payload();
+        // it never receives.
+        let (payload, digest) = payload();
         let (port, server, shutdown_guard) = serve_plain_responses(vec![
             (payload.clone(), true, None),  // probe
             (payload.clone(), false, None), // transfer: chunked 200
@@ -4179,11 +4179,11 @@ mod tests {
     }
 
     #[test]
-    fn dc02_an_interrupted_no_range_transfer_retries_from_zero() {
+    fn an_interrupted_no_range_transfer_retries_from_zero() {
         // An interrupted 200 stream cannot be resumed at an offset: the retry
         // must restart from zero and still publish exactly once, with the
-        // digest checked (audit DC-02 V2/V3).
-        let (payload, digest) = dc02_payload();
+        // digest checked.
+        let (payload, digest) = payload();
         let truncated = payload.len() / 2;
         let (port, server, shutdown_guard) = serve_plain_responses(vec![
             (payload.clone(), true, None),            // probe

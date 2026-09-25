@@ -565,7 +565,7 @@ pub struct BenchmarkObservation {
     pub prompt_tokens: u32,
     /// Prompt tokens restored from the runtime's prompt cache
     /// (`timings.cache_n`, b10816 semantics). A warm trial is valid when
-    /// processed + cached equals the requested prompt size (audit MT-01).
+    /// processed + cached equals the requested prompt size.
     #[serde(default)]
     pub cached_prompt_tokens: u32,
     pub generated_tokens: u32,
@@ -611,12 +611,12 @@ impl Default for BenchmarkObservation {
     }
 }
 
-/// What the v2 benchmark actually measures (audit S-12): a controlled
+/// What the v2 benchmark actually measures: a controlled
 /// greedy microbenchmark, not a workload-class guarantee. Exported manifests
 /// carry this so a caveat survives the round trip.
 pub const WORKLOAD_SCOPE_NOTE: &str = "Controlled greedy microbenchmark: one fixed prompt, temperature 0, one request at a time on a warm server. It does not represent every workload class; speculative-decoding gains measured here do not generalize to other prompts.";
 
-/// What `peakProcessRssBytes` is (audit S-12): process-lifetime CPU working
+/// What `peakProcessRssBytes` is: process-lifetime CPU working
 /// set, not an isolated request allocation and not GPU memory.
 pub const WORKING_SET_SCOPE_NOTE: &str = "Peak working set is the server process lifetime CPU working-set evidence. It excludes dedicated GPU memory and is not an isolated request allocation.";
 
@@ -625,13 +625,13 @@ pub const WORKING_SET_SCOPE_NOTE: &str = "Peak working set is the server process
 pub struct BenchmarkManifest {
     pub schema: u32,
     pub harness_version: String,
-    /// The workload-scope caveat for this harness (audit S-12). Defaulted so
+    /// The workload-scope caveat for this harness. Defaulted so
     /// manifests written before the caveat existed still deserialize.
     #[serde(default)]
     pub scope_note: String,
     pub compatibility_key: Option<String>,
     /// The launch-scope execution-snapshot key of the same configuration. The
-    /// identity must match before this run evidence can attach (audit MT-09).
+    /// identity must match before this run evidence can attach.
     #[serde(default)]
     pub launch_compatibility_key: Option<String>,
     /// Schema of the execution snapshot behind `compatibility_key` (empty for
@@ -639,7 +639,7 @@ pub struct BenchmarkManifest {
     #[serde(default)]
     pub execution_snapshot_schema: String,
     /// Material facts the snapshot could not observe, so calibration anchors
-    /// derived from this run know whether reuse is supported (audit MT-07/08).
+    /// derived from this run know whether reuse is supported.
     #[serde(default)]
     pub execution_snapshot_unknowns: Vec<String>,
     pub runtime: Option<RuntimeFact>,
@@ -784,7 +784,7 @@ impl BenchmarkManifest {
             )
         })?;
         // The compatibility key carries the execution-snapshot schema
-        // prefix; legacy keys are insufficient evidence (audit MT-07 I4).
+        // prefix; legacy keys are insufficient evidence.
         crate::calibration::validate_compatibility_key(compatibility_key).map_err(|message| {
             DomainError::new(ErrorCode::InvalidDigest, "compatibilityKey", &message)
         })?;
@@ -809,14 +809,14 @@ impl BenchmarkManifest {
 }
 
 /// Attempt/workload/result consistency shared by persistence and replay
-/// (audit MT-13): one contract at every retained boundary.
+///: one contract at every retained boundary.
 pub fn validate_attempt_consistency(
     workload: &Workload,
     observations: &[BenchmarkObservation],
     terminal_outcome: Option<AttemptOutcome>,
 ) -> Result<(), DomainError> {
     if observations.is_empty() {
-        // MT-03: a run that dies in warmup has no observations, but it
+        // a run that dies in warmup has no observations, but it
         // carries its terminal failure outcome and warmup errors. It
         // persists as a Failed record instead of vanishing. Cancellation
         // still leaves no record, and a run with no outcome at all is still
@@ -1083,7 +1083,7 @@ mod tests {
     }
 
     #[test]
-    fn s12_scope_notes_survive_the_manifest_round_trip_and_default_honestly() {
+    fn scope_notes_survive_the_manifest_round_trip_and_default_honestly() {
         let manifest = BenchmarkManifest::default();
         assert_eq!(manifest.scope_note, WORKLOAD_SCOPE_NOTE);
         let serialized = serde_json::to_string(&manifest).unwrap();
@@ -1205,8 +1205,8 @@ mod tests {
     }
 
     #[test]
-    fn proc12_warmup_only_failure_validates_as_a_failed_attempt() {
-        // P1-29 (MT-03): a run that dies in warmup carries its terminal
+    fn warmup_only_failure_validates_as_a_failed_attempt() {
+        // a run that dies in warmup carries its terminal
         // outcome and warmup errors but zero observations. The contract must
         // accept it so the partial run persists as Failed instead of
         // vanishing; a run with no outcome at all is still rejected.

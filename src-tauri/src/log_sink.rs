@@ -1,6 +1,6 @@
-//! Bounded per-run launch logs with explicit retention (audit OPS-01).
+//! Bounded per-run launch logs with explicit retention.
 //!
-//! Output-overflow policy (audit S-01.I2): crossing the quota truncates the
+//! Output-overflow policy: crossing the quota truncates the
 //! **retained** output only. The child is never terminated for emitting too
 //! much, and the drain keeps reading (and discarding) so the child can never
 //! block on a full pipe. The truncation marker is written once when the
@@ -31,7 +31,7 @@ static RUN_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// A unique, filename-safe identity for one launch: millisecond timestamp
 /// plus a process-local sequence, so two instances or two quick runs can
-/// never collide on the same file (audit OPS-01 I1).
+/// never collide on the same file.
 pub fn new_run_id() -> String {
     let millis = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -59,7 +59,7 @@ impl LogSink {
     /// Create the run log in `directory`. Creation fails when the target
     /// name already exists in any form (a collision or a planted link) and
     /// the directory must be a real directory, not a reparse point
-    /// (audit OPS-01 I1).
+    ///.
     pub fn create(directory: &Path, prefix: &str, run_id: &str) -> Result<Self, String> {
         Self::create_with_quota(directory, prefix, run_id, LOG_QUOTA_BYTES)
     }
@@ -99,9 +99,9 @@ impl LogSink {
 
     /// A second writer for the other stream: a separate append handle with
     /// its own file position, sharing the one quota with the primary writer
-    /// so both streams stay inside the same budget (audit OPS-01 I2).
+    /// so both streams stay inside the same budget.
     pub fn second_writer(&self) -> Result<LogWriter, String> {
-        // PROC-08: the path is refused as a link/reparse point before the
+        // the path is refused as a link/reparse point before the
         // reopen, so a planted link is never followed. Append mode is kept:
         // the second stream needs its own end-of-file position while sharing
         // the quota. The no-open variant applies: the sink holds this file
@@ -126,7 +126,7 @@ impl LogSink {
 
     /// Copy `reader` into the log until EOF, never exceeding the quota and
     /// never blocking the writer: bytes past the quota are drained and
-    /// discarded with a single truncation marker (audit OPS-01 I2).
+    /// discarded with a single truncation marker.
     pub fn drain<R: Read>(&mut self, reader: R) -> Result<u64, String> {
         let mut writer = LogWriter {
             file: self
@@ -212,7 +212,7 @@ impl LogWriter {
 /// Persist the bounded failure tail beside the log so diagnostics survive
 /// retention cleanup, and prune old runs. Keeps the newest
 /// [`FAILURE_EVIDENCE_KEPT`] failure files plus [`LOG_RETENTION_PER_PREFIX`]
-/// logs per prefix within [`LOG_DIRECTORY_QUOTA_BYTES`] (audit OPS-01 I3).
+/// logs per prefix within [`LOG_DIRECTORY_QUOTA_BYTES`].
 pub fn write_failure_evidence(log_path: &str, evidence_json: &str) -> Option<PathBuf> {
     let path = Path::new(log_path);
     if log_path.is_empty() {
@@ -220,7 +220,7 @@ pub fn write_failure_evidence(log_path: &str, evidence_json: &str) -> Option<Pat
     }
     let file_name = path.file_name()?.to_string_lossy().to_string();
     let evidence_path = path.with_file_name(format!("{file_name}.failure.json"));
-    // PROC-08: refuse a planted link before the write: `fs::write` truncates,
+    // refuse a planted link before the write: `fs::write` truncates,
     // so following a link here would destroy another file's bytes.
     crate::download::ensure_safe_write_entry(&evidence_path).ok()?;
     let bounded = evidence_json.as_bytes();
@@ -371,8 +371,8 @@ mod tests {
     }
 
     #[test]
-    fn proc08_existing_links_are_refused_before_any_reopen() {
-        // P1-23b (PROC-08): the reopen checks refuse symlinks, reparse
+    fn existing_links_are_refused_before_any_reopen() {
+        // the reopen checks refuse symlinks, reparse
         // points, and (for truncating writes) extra hard links, while missing
         // and regular paths pass. Both reopen sites go through them (see the
         // guard below).
@@ -415,8 +415,8 @@ mod tests {
     }
 
     #[test]
-    fn proc08_failure_evidence_never_writes_through_a_planted_link() {
-        // P1-23b (PROC-08): a hard link planted at the evidence path must be
+    fn failure_evidence_never_writes_through_a_planted_link() {
+        // a hard link planted at the evidence path must be
         // refused: the victim keeps its bytes and no evidence path is
         // reported. `fs::hard_link` needs no privilege, so this is
         // deterministic on every machine.
@@ -438,7 +438,7 @@ mod tests {
     }
 
     #[test]
-    fn proc08_log_reopens_go_through_the_link_check() {
+    fn log_reopens_go_through_the_link_check() {
         // Both reopen sites refuse planted links before any open or write:
         // `second_writer` uses the no-open variant (the sink holds the file
         // open), `write_failure_evidence` the full truncating-write check.

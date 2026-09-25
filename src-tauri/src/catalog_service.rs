@@ -1,4 +1,4 @@
-//! Catalog store/cache and browse command family (audit S-27 I1).
+//! Catalog store/cache and browse command family.
 //!
 //! Extracted from `lib.rs` so the catalog's load/fetch/mirror/browse
 //! ownership lives behind one tested boundary: these are the same Tauri
@@ -10,7 +10,7 @@ use crate::{catalog, catalog_db, AppState};
 pub(crate) fn catalog_cache_root(app: &tauri::AppHandle) -> std::path::PathBuf {
     use tauri::Manager;
     // The packaged verifier runs inside an isolated profile whose root the
-    // process names explicitly (audit GH-05): Tauri's known-folder cache
+    // process names explicitly: Tauri's known-folder cache
     // path ignores a redirected LOCALAPPDATA, so the override keeps the
     // controlled matrix off the real user cache.
     if let Some(root) = catalog::verify_catalog_root() {
@@ -24,7 +24,7 @@ pub(crate) fn catalog_cache_root(app: &tauri::AppHandle) -> std::path::PathBuf {
 /// Load the local catalog without any network request: the signature-verified
 /// cache, else the bundled snapshot. Populates the authoritative in-memory
 /// catalog so browsing, filtering, and download authorization survive a
-/// restart inside the refresh cooldown and offline use (audit DC-01).
+/// restart inside the refresh cooldown and offline use.
 #[tauri::command]
 pub(crate) async fn load_model_catalog(
     app: tauri::AppHandle,
@@ -42,7 +42,7 @@ pub(crate) async fn load_model_catalog(
 
 /// Publish a resolved local snapshot as the authoritative catalog state, so
 /// browsing, facets, and download authorization work inside the refresh
-/// cooldown and offline (audit DC-01).
+/// cooldown and offline.
 pub(crate) fn publish_loaded_catalog(
     slot: &std::sync::Mutex<Option<catalog::Catalog>>,
     snapshot: &catalog::CatalogSnapshot,
@@ -105,7 +105,7 @@ pub(crate) async fn fetch_model_catalog(
     // preserving user rows; a confirmed migration or corruption failure goes
     // through controlled recovery that quarantines the old file and salvages
     // readable user rows, and every persistence failure stays visible
-    // (audit DC-03).
+    //.
     let mirror_models = snapshot.catalog.models.clone();
     let mirror_root = root.clone();
     let persistence = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
@@ -166,7 +166,7 @@ pub(crate) fn catalog_local_models(
 /// Read the local SQLite mirror: verified rows plus marked user rows. Any
 /// database-open, migration, or read failure selects the verified in-memory
 /// or bundled rows instead, so the tab never goes empty because of a local
-/// database problem (audit DC-07).
+/// database problem.
 pub(crate) fn read_local_catalog_rows(
     root: &std::path::Path,
     authoritative: Option<&catalog::Catalog>,

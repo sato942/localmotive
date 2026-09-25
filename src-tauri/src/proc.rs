@@ -59,7 +59,7 @@ pub enum ProcessFailureKind {
     Io,
     /// The operation ended but the process tree survived termination: the
     /// caller must not treat this like a finished Timeout/Cancelled run
-    /// (audit PROC-03).
+    ///.
     Unresolved,
 }
 
@@ -105,7 +105,7 @@ impl ContainedProcess {
     }
 
     /// Take the child's piped stdout/stderr so a drain thread can copy them
-    /// into a bounded sink without the child ever blocking (audit OPS-01).
+    /// into a bounded sink without the child ever blocking.
     /// Both are `None` when the command did not request pipes.
     pub fn take_pipes(
         &mut self,
@@ -214,7 +214,7 @@ mod containment {
     }
 
     /// Resume every thread of a process that was created suspended.
-    /// P1-6 (PROC-01): children start suspended so the job assignment
+    /// children start suspended so the job assignment
     /// happens before they run; this releases them afterwards. Returns
     /// an error when no thread could be resumed, so the caller refuses
     /// to leave a permanently suspended child behind.
@@ -375,7 +375,7 @@ fn spawn_contained(command: &mut Command) -> Result<ContainedChild, ProcessFailu
         .map_err(|message| ProcessFailure::new(ProcessFailureKind::Spawn, message))?;
     let command = std::mem::replace(command, Command::new(""));
     let mut wrapped = CommandWrap::from(command);
-    // P1-6 (PROC-01): the child starts suspended, so the job assignment
+    // the child starts suspended, so the job assignment
     // below happens before it runs. A child that spawns descendants before
     // the assignment would strand them outside the job.
     wrapped.wrap(CreationFlags(WINDOWS_CREATE_NO_WINDOW | CREATE_SUSPENDED));
@@ -447,7 +447,7 @@ fn take_stderr(child: &mut ContainedChild) -> Option<ChildStderr> {
 }
 
 /// How long cleanup waits for an exit confirmation before reporting the
-/// outcome as unresolved (audit S-01). A blocking `wait()` would hide an
+/// outcome as unresolved. A blocking `wait()` would hide an
 /// unkillable process forever and make every caller's deadline a lie.
 pub const TERMINATION_DEADLINE: Duration = Duration::from_secs(10);
 const TERMINATION_POLL: Duration = Duration::from_millis(50);
@@ -614,7 +614,7 @@ fn cleanup_outcome(kind: ProcessFailureKind, detail: &str, terminated: bool) -> 
 /// gone. A reader that is still blocked past the deadline belongs to a child
 /// that survived termination; its handle is detached instead of joined
 /// forever, so one unkillable child cannot hang a bounded operation
-/// (audit PROC-02). The detached thread exits on its own when the child
+///. The detached thread exits on its own when the child
 /// finally releases the pipes.
 const READER_JOIN_GRACE: Duration = Duration::from_secs(5);
 
@@ -652,7 +652,7 @@ mod tests {
 
     #[test]
     fn reader_join_returns_finished_threads() {
-        // P1-18 (PROC-02): cleanup paths must not join pipe readers forever.
+        // cleanup paths must not join pipe readers forever.
         let handle = std::thread::spawn(|| 42);
         let started = Instant::now();
         let result = join_reader_with_deadline(handle, Duration::from_millis(100));
@@ -683,7 +683,7 @@ mod tests {
 
     #[test]
     fn cleanup_outcome_reports_unresolved_termination() {
-        // P1-19 (PROC-03): a timeout or cancel whose tree survives cleanup
+        // a timeout or cancel whose tree survives cleanup
         // must not return the success-shaped Timeout/Cancelled kind.
         let failure = cleanup_outcome(
             ProcessFailureKind::Timeout,
@@ -705,7 +705,7 @@ mod tests {
     #[test]
     fn failed_tree_cleanup_names_the_unresolved_kind() {
         // The post-loop branch (the tree ignored termination) must surface
-        // Unresolved instead of the generic Io kind (audit PROC-03).
+        // Unresolved instead of the generic Io kind.
         let source = include_str!("proc.rs");
         let runner = source
             .find("pub fn output_with_timeout_and_cancel(")
@@ -721,7 +721,7 @@ mod tests {
     fn cleanup_paths_never_join_readers_without_a_deadline() {
         // The bounded runner must not contain a bare reader join: every
         // cleanup path (cancel, timeout, status error, failed termination)
-        // goes through the deadline helper (audit PROC-02).
+        // goes through the deadline helper.
         let source = include_str!("proc.rs");
         let runner = source
             .find("pub fn output_with_timeout_and_cancel(")
@@ -769,7 +769,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn suspended_children_are_assigned_before_they_run() {
-        // P1-6 (PROC-01): the spawn-assign gap let a fast child spawn
+        // the spawn-assign gap let a fast child spawn
         // descendants outside the job. The child starts suspended (it must
         // not exit while held), joins the job, then resumes to its exit.
         use std::os::windows::io::{AsRawHandle, BorrowedHandle};
@@ -823,7 +823,7 @@ mod tests {
     #[test]
     fn no_module_constructs_a_raw_command() {
         // Discover every production module instead of trusting a fixed list
-        // (audit S-01.I3): a new module cannot silently bypass the invariant.
+        //: a new module cannot silently bypass the invariant.
         // proc.rs itself is the one module allowed to build commands, and only
         // inside `hidden_command`; assert that exception stays small.
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -873,7 +873,7 @@ mod tests {
         assert!(source.contains("containment::JobHandle::create()"));
         assert!(source.contains("JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE"));
         assert_eq!(source.matches("ProcessTree::assign").count(), 1);
-        // P1-6 (PROC-01): assignment after a running start still leaves a
+        // assignment after a running start still leaves a
         // gap where the child spawns descendants outside the job. The spawn
         // must order suspended create, job assignment, then resume.
         let start = source

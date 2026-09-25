@@ -106,7 +106,7 @@ pub struct LogicalModel {
     pub shard_count: usize,
     pub expected_shards: usize,
     pub complete: bool,
-    /// Shard problems from the artifact analyzer (audit MT-15): the same
+    /// Shard problems from the artifact analyzer: the same
     /// decision the launch validator reaches, visible at discovery time.
     #[serde(default)]
     pub problems: Vec<ArtifactProblem>,
@@ -228,7 +228,7 @@ fn shard_key(name: &str) -> (String, usize) {
     (stem.to_string(), 1)
 }
 
-/// Bounds for a recursive model scan (audit S-15): depth, visited entries and
+/// Bounds for a recursive model scan: depth, visited entries and
 /// retained diagnostics are all capped so a pathological tree can neither
 /// monopolize discovery nor flood the result.
 #[derive(Clone, Debug)]
@@ -249,7 +249,7 @@ impl Default for ScanLimits {
 }
 
 /// One directory that could not be read, or a limit that was reached
-/// (audit S-15.I2). Diagnostics are bounded; valid discovered models are
+///. Diagnostics are bounded; valid discovered models are
 /// preserved regardless.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -258,7 +258,7 @@ pub struct ScanProblem {
     pub reason: String,
 }
 
-/// The full outcome of a bounded scan (audit S-15).
+/// The full outcome of a bounded scan.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanReport {
@@ -268,7 +268,7 @@ pub struct ScanReport {
     pub truncated: bool,
 }
 
-/// Append a bounded diagnostic (audit S-15.I2). When the retained list is
+/// Append a bounded diagnostic. When the retained list is
 /// full the newest entry collapses into a single suppression notice, so the
 /// reason stays visible without unbounded growth.
 fn push_problem(problems: &mut Vec<ScanProblem>, limits: &ScanLimits, path: &Path, reason: String) {
@@ -284,7 +284,7 @@ fn push_problem(problems: &mut Vec<ScanProblem>, limits: &ScanLimits, path: &Pat
 }
 
 /// Recursive GGUF collection with depth, work, diagnostic and cancellation
-/// bounds (audit S-15). Symlinks and reparse points are still skipped. An
+/// bounds. Symlinks and reparse points are still skipped. An
 /// unreadable directory becomes a bounded diagnostic and the remaining tree
 /// is still scanned, so valid models are never erased by one bad subtree.
 fn collect_gguf(
@@ -375,7 +375,7 @@ fn collect_gguf(
 }
 
 /// [`scan_models`] with explicit bounds and a cancellation flag (audit
-/// S-15). The caller keeps the partial result: problems are diagnostics, not
+/// The caller keeps the partial result: problems are diagnostics, not
 /// failures, and a cancelled scan still returns everything found so far.
 pub fn scan_models_with_cancel(
     root: &Path,
@@ -473,7 +473,7 @@ fn assemble_models(root: &Path, files: Vec<PathBuf>) -> Result<Vec<LogicalModel>
             .map(|shard| shard.count)
             .max()
             .unwrap_or(1);
-        // Discovery uses the artifact module's shard analysis (audit MT-15):
+        // Discovery uses the artifact module's shard analysis:
         // duplicate indices, malformed shard-looking names, inconsistent
         // counts and missing members produce the same decision the launch
         // validator reaches, instead of a looser scanner-only heuristic.
@@ -738,7 +738,7 @@ impl Default for LaunchProfile {
 }
 
 impl LaunchProfile {
-    /// Domain validation for profile values (audit S-13.I1): the selected
+    /// Domain validation for profile values: the selected
     /// runtime contract proves an argument exists, but not that its value is a
     /// legal member of its domain. Every list and range here comes from the
     /// upstream `llama-server` option tables in `tools/server/README.md` (the
@@ -969,8 +969,7 @@ impl LaunchProfile {
         }
         // Transport files are validated here, before launch: a missing or
         // malformed API-key/certificate file would otherwise surface as the
-        // server's own launch failure or a long health timeout (audit MT-06
-        // I4). The centralized local client uses the same rules.
+        // server's own launch failure or a long health timeout. The centralized local client uses the same rules.
         crate::local_client::LocalHttpClient::validate_transport_files(self)?;
         let model_backed = matches!(
             self.spec_type.as_str(),
@@ -1275,7 +1274,7 @@ impl LaunchProfile {
         Ok(args)
     }
 
-    /// The launch line quoted for one NAMED shell (audit S-14.I1). The app
+    /// The launch line quoted for one NAMED shell. The app
     /// itself always launches with an argument array; this string exists only
     /// for display and copy/paste, so the quoting must be correct for the
     /// shell it names. Use [`Self::argv_json_with_args`] for a lossless form.
@@ -1306,7 +1305,7 @@ impl LaunchProfile {
         }
     }
 
-    /// The launch line as a JSON array of exact arguments (audit S-14.I1):
+    /// The launch line as a JSON array of exact arguments:
     /// lossless for every shell and safe to paste into a wrapper.
     pub fn argv_json_with_args(&self, args: &[String]) -> Result<String, String> {
         let mut argv = Vec::with_capacity(args.len() + 1);
@@ -1316,7 +1315,7 @@ impl LaunchProfile {
     }
 }
 
-/// The shell a copied command line targets (audit S-14.I1).
+/// The shell a copied command line targets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CommandShell {
     PowerShell,
@@ -1730,7 +1729,7 @@ const RUNTIME_PROBE_STREAM_LIMIT: usize = 2 * 1024 * 1024;
 ///
 /// The managed-execution guard runs before any byte of the probed binary
 /// executes, so a caller that invokes runtime inspection directly cannot
-/// bypass compiled-content authorization (audit RT-02: tuning preparation and
+/// bypass compiled-content authorization: tuning preparation and
 /// the older runtime-health command previously executed managed binaries
 /// without the protected launch path's trust check).
 fn run_runtime_probe_with<
@@ -1740,11 +1739,11 @@ fn run_runtime_probe_with<
     arg: &str,
     guard: G,
 ) -> Result<String, String> {
-    // RT-03: the guard returns the execution lease and the probe holds it
+    // the guard returns the execution lease and the probe holds it
     // across spawn and output collection. The lease pins the verified bytes
     // with deny-write/delete sharing, so a same-user replacement between
     // verification and execution fails at the OS instead of racing the spawn.
-    // RT-04: the inventory is re-checked here because a file planted after
+    // the inventory is re-checked here because a file planted after
     // acquisition (for example a hostile DLL) is not stopped by the pinned
     // handles alone.
     let lease = guard(path)?;
@@ -1790,7 +1789,7 @@ pub fn inspect_runtime(path: &Path) -> Result<RuntimeCapabilities, String> {
 ///
 /// Tuning preparation and the public inspect command both reach managed probes
 /// through this function, so the guard is part of the probe path itself and
-/// cannot be skipped by calling runtime inspection directly (audit RT-02).
+/// cannot be skipped by calling runtime inspection directly.
 fn inspect_runtime_with<
     G: Fn(&Path) -> Result<Option<crate::runtime::ManagedExecutionLease>, String>,
 >(
@@ -2214,7 +2213,7 @@ pub fn check_runtime_health(
 /// Device health with an explicit managed-execution guard.
 ///
 /// The guard returns the execution lease so the `--list-devices` probe below
-/// runs while the verified bytes are pinned (audit RT-03).
+/// runs while the verified bytes are pinned.
 fn check_runtime_health_with<
     G: Fn(&Path) -> Result<Option<crate::runtime::ManagedExecutionLease>, String>,
 >(
@@ -2342,7 +2341,7 @@ pub(crate) const LEGACY_BENCH_TIMEOUT: std::time::Duration = std::time::Duration
 
 /// The cancellable benchmark the tuner uses: identical measurements, but
 /// every read waits in short slices and checks the cancellation flag, so a
-/// Stop during an in-flight generation cannot be ignored (audit MT-04).
+/// Stop during an in-flight generation cannot be ignored.
 pub fn benchmark_server_cancellable(
     client: &crate::local_client::LocalHttpClient,
     tokens: u32,
@@ -2980,7 +2979,7 @@ mod tests {
         assert!(probe.contains("output_with_timeout"));
         assert!(!probe.contains(".spawn()"));
         // The managed-execution guard must run before the probe process starts
-        // (audit RT-02): the guard call precedes the contained runner.
+        //: the guard call precedes the contained runner.
         let guard = probe
             .find("guard(path)?")
             .expect("the probe boundary must consult the execution guard");
@@ -2992,13 +2991,13 @@ mod tests {
             "the guard must run before the process starts"
         );
         // The guard's execution lease must stay alive across the spawn
-        // (audit RT-03): the probe binds it past the contained runner.
+        //: the probe binds it past the contained runner.
         assert!(
             probe.contains("_lease"),
             "the probe must hold the execution lease across the child"
         );
         // The inventory is re-checked after acquisition and before the spawn
-        // (audit RT-04): pinned handles alone do not stop a planted file.
+        //: pinned handles alone do not stop a planted file.
         let revalidate = probe
             .find("revalidate_inventory")
             .expect("the probe boundary must re-check the lease inventory");
@@ -3114,7 +3113,7 @@ fn main() {
     }
 
     #[test]
-    fn rt02_tampered_managed_cli_never_executes_through_the_runtime_health_workflow() {
+    fn tampered_managed_cli_never_executes_through_the_runtime_health_workflow() {
         let base =
             std::env::temp_dir().join(format!("localmotive-rt02-health-{}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
@@ -3138,7 +3137,7 @@ fn main() {
         fs::copy(&sentinel, &cli).unwrap();
 
         // The older runtime-health workflow must reject the replaced managed CLI
-        // before the --list-devices probe executes it (audit RT-02).
+        // before the --list-devices probe executes it.
         let guard = |path: &Path| {
             crate::runtime::authorize_managed_execution_lease_with(
                 path,
@@ -3157,7 +3156,7 @@ fn main() {
     }
 
     #[test]
-    fn rt02_tampered_managed_server_never_executes_through_runtime_inspection() {
+    fn tampered_managed_server_never_executes_through_runtime_inspection() {
         let base =
             std::env::temp_dir().join(format!("localmotive-rt02-inspect-{}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
@@ -3172,7 +3171,7 @@ fn main() {
 
         // Tuning preparation and the protected inspect command both reach
         // managed probes through inspect_runtime; the replaced server must be
-        // rejected before --version runs it (audit RT-02).
+        // rejected before --version runs it.
         let guard = |path: &Path| {
             crate::runtime::authorize_managed_execution_lease_with(
                 path,
@@ -3215,7 +3214,7 @@ fn main() {
     }
 
     #[test]
-    fn rt03_probe_holds_the_execution_lease_across_the_child() {
+    fn probe_holds_the_execution_lease_across_the_child() {
         let base =
             std::env::temp_dir().join(format!("localmotive-rt03-held-{0}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
@@ -3229,7 +3228,7 @@ fn main() {
         // The probe guard leases the fixture install while the probe target
         // itself is an unrelated slow executable: any replacement of the
         // leased bytes must fail for as long as the probe child runs, and
-        // succeed once the probe returns (audit RT-03).
+        // succeed once the probe returns.
         let guard_server = server.clone();
         let guard_primary = primary.clone();
         let guard_legacy = legacy.clone();
@@ -3269,7 +3268,7 @@ fn main() {
     }
 
     #[test]
-    fn rt03_tampered_managed_server_fails_execution_identity_before_probe() {
+    fn tampered_managed_server_fails_execution_identity_before_probe() {
         let base =
             std::env::temp_dir().join(format!("localmotive-rt03-tamper-{0}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
@@ -3281,7 +3280,7 @@ fn main() {
 
         // The lease guard verifies content hashes, so a replaced server is
         // rejected with an execution-identity error before any probe child
-        // starts (audit RT-03).
+        // starts.
         let guard = |path: &Path| {
             crate::runtime::authorize_managed_execution_lease_with(
                 path,
@@ -3411,7 +3410,7 @@ fn main() {
         assert_eq!(quant_weight("no-quant-here.gguf"), None);
     }
 
-    /// DIAGNOSTIC, not an acceptance test (audit S-26 I3): it prints the
+    /// DIAGNOSTIC, not an acceptance test: it prints the
     /// companion order of the operator's real model tree and returns early
     /// when `C:\models` is absent. There are deliberately NO assertions here —
     /// a run of this test, skipped or not, must never be counted as a passing
@@ -3441,9 +3440,9 @@ fn main() {
         }
     }
 
-    /// Audit MT-15: discovery must reach the same completeness decision as
+    /// discovery must reach the same completeness decision as
     /// the artifact module's shard analysis for every ambiguous shape.
-    fn mt15_scan_matches_artifact_analysis(files: &[&str]) -> (bool, bool) {
+    fn scan_matches_artifact_analysis(files: &[&str]) -> (bool, bool) {
         let root = std::env::temp_dir().join(format!(
             "localmotive-mt15-{}-{}",
             std::process::id(),
@@ -3471,33 +3470,32 @@ fn main() {
     }
 
     #[test]
-    fn mt15_duplicate_indices_and_unsplit_collisions_are_incomplete() {
+    fn duplicate_indices_and_unsplit_collisions_are_incomplete() {
         // An unsplit file and its split twin group under one logical key:
         // the artifact analyzer reports a duplicate index, and discovery must
         // agree instead of advertising a complete model.
         let (discovery, validation) =
-            mt15_scan_matches_artifact_analysis(&["foo.gguf", "foo-00001-of-00001.gguf"]);
+            scan_matches_artifact_analysis(&["foo.gguf", "foo-00001-of-00001.gguf"]);
         assert!(!discovery, "duplicate indices must not be complete");
         assert_eq!(discovery, validation);
     }
 
     #[test]
-    fn mt15_malformed_and_inconsistent_shard_names_are_incomplete() {
+    fn malformed_and_inconsistent_shard_names_are_incomplete() {
         // A shard-looking name the parser rejects.
-        let (discovery, validation) =
-            mt15_scan_matches_artifact_analysis(&["foo-0001-of-0004.gguf"]);
+        let (discovery, validation) = scan_matches_artifact_analysis(&["foo-0001-of-0004.gguf"]);
         assert!(!discovery, "a malformed shard name must not be complete");
         assert_eq!(discovery, validation);
 
         // Inconsistent expected counts across the folder.
-        let (discovery, validation) = mt15_scan_matches_artifact_analysis(&[
+        let (discovery, validation) = scan_matches_artifact_analysis(&[
             "foo-Q4-00001-of-00002.gguf",
             "foo-Q4-00002-of-00003.gguf",
         ]);
         assert_eq!(discovery, validation, "inconsistent counts must agree");
 
         // A missing member in an otherwise consistent set.
-        let (discovery, validation) = mt15_scan_matches_artifact_analysis(&[
+        let (discovery, validation) = scan_matches_artifact_analysis(&[
             "foo-Q4-00001-of-00003.gguf",
             "foo-Q4-00003-of-00003.gguf",
         ]);
@@ -3506,18 +3504,18 @@ fn main() {
     }
 
     #[test]
-    fn mt15_extension_case_variation_and_valid_sets_stay_complete() {
+    fn extension_case_variation_and_valid_sets_stay_complete() {
         // Case variation in the extension still counts as a GGUF file.
         let (discovery, validation) =
-            mt15_scan_matches_artifact_analysis(&["bar-Q4-00001-of-00002.GGUF"]);
+            scan_matches_artifact_analysis(&["bar-Q4-00001-of-00002.GGUF"]);
         assert_eq!(discovery, validation);
         assert!(!discovery, "a lone member of a two-shard set is incomplete");
 
         // Complete valid singleton and split set.
-        let (discovery, validation) = mt15_scan_matches_artifact_analysis(&["solo.gguf"]);
+        let (discovery, validation) = scan_matches_artifact_analysis(&["solo.gguf"]);
         assert!(discovery, "a single unsplit file is a complete model");
         assert_eq!(discovery, validation);
-        let (discovery, validation) = mt15_scan_matches_artifact_analysis(&[
+        let (discovery, validation) = scan_matches_artifact_analysis(&[
             "pair-Q4-00001-of-00002.gguf",
             "pair-Q4-00002-of-00002.gguf",
         ]);
@@ -3740,7 +3738,7 @@ fn main() {
         };
         assert!(profile.build_args().unwrap_err().contains("API key file"));
 
-        // A real key file is required now (audit MT-06 I4): pre-launch
+        // A real key file is required now: pre-launch
         // validation reads it instead of deferring to the server.
         let dir = std::env::temp_dir().join(format!("localmotive-lan-key-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -4103,7 +4101,7 @@ fn main() {
     }
 
     #[test]
-    fn mt06_profile_validation_rejects_unusable_transport_files_before_launch() {
+    fn profile_validation_rejects_unusable_transport_files_before_launch() {
         let dir = std::env::temp_dir().join(format!("localmotive-mt06-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let mut profile = LaunchProfile {
@@ -4173,7 +4171,7 @@ MIIB
     }
 
     #[test]
-    fn mt06_managaged_transport_flags_require_runtime_capability() {
+    fn managaged_transport_flags_require_runtime_capability() {
         // A runtime whose help does not advertise the TLS flags must fail
         // validation before launch instead of starting a plaintext server.
         let mut profile = LaunchProfile {
@@ -4277,10 +4275,10 @@ MIIB
         assert_eq!(parse_tps(body).unwrap(), 478.25);
     }
     #[test]
-    fn fe04_provisional_command_composes_without_capabilities_and_validation_still_filters() {
+    fn provisional_command_composes_without_capabilities_and_validation_still_filters() {
         // Composition needs no runtime at all, while authoritative validation
         // still refuses flags the runtime's help cannot advertise
-        // (audit FE-04 I2).
+        //.
         let mut profile = LaunchProfile {
             name: "Fixture".into(),
             alias: "fixture".into(),
@@ -4305,7 +4303,7 @@ MIIB
     }
 
     #[test]
-    fn s13_impossible_profile_domains_fail_before_launch_and_name_the_value() {
+    fn impossible_profile_domains_fail_before_launch_and_name_the_value() {
         let base = || LaunchProfile {
             name: "fixture".into(),
             runtime: "C:/runtime/llama-server.exe".into(),
@@ -4490,7 +4488,7 @@ MIIB
     }
 
     #[test]
-    fn s14_quoted_commands_and_argv_round_trip_every_hazard() {
+    fn quoted_commands_and_argv_round_trip_every_hazard() {
         let profile = LaunchProfile {
             runtime: "C:\\Program Files\\llama\\llama-server.exe".into(),
             ..LaunchProfile::default()
@@ -4544,7 +4542,7 @@ MIIB
     }
 
     #[test]
-    fn s15_deep_wide_unreadable_and_cancelled_scans_stay_bounded_and_partial() {
+    fn deep_wide_unreadable_and_cancelled_scans_stay_bounded_and_partial() {
         let root = std::env::temp_dir().join(format!(
             "localmotive-s15-{}-{}",
             std::process::id(),

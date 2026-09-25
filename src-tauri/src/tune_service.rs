@@ -1,4 +1,4 @@
-//! AI tuning command family (audit S-27 I1, slice 3c): the last supervised
+//! AI tuning command family: the last supervised
 //! job-lifecycle owner. Extracted from `lib.rs`; the tuning engine, cloud
 //! advisor and the shared operation coordinator stay authoritative in their
 //! modules and are consumed here.
@@ -36,14 +36,14 @@ impl tune::Bench for LiveBench<'_> {
             },
         );
         // The lease binding pins the verified runtime content for the whole
-        // tuning session (audit RT-04); it drops when the session ends.
+        // tuning session; it drops when the session ends.
         let (mut child, mut validation, log_path, _lease, _drains) =
             spawn_server(profile, "tuning")?;
         let command = validation.arguments.command.clone();
         let result = (|| {
             // The cancellable health wait converts Stop into a prompt failure
             // instead of holding the session for the full 600-second bound
-            // (audit MT-04).
+            //.
             wait_until_healthy_cancellable(
                 &mut child,
                 &local_client(profile)?,
@@ -64,7 +64,7 @@ impl tune::Bench for LiveBench<'_> {
                 observed_at_ms,
             );
             // The observed effective per-slot context is the identity the
-            // requested-capacity objective is checked against (audit MT-11).
+            // requested-capacity objective is checked against.
             let effective_context = validation.effective_context.value;
             let _ = self.app.emit(
                 "tuning-progress",
@@ -82,7 +82,7 @@ impl tune::Bench for LiveBench<'_> {
             }
             // The cancellable completion path replaces the legacy benchmark so
             // Stop cannot be ignored while a generation request is pending
-            // (audit MT-04).
+            //.
             let client = crate::local_client::LocalHttpClient::from_profile(profile)?;
             core::benchmark_server_cancellable(&client, self.tokens, self.repeats, &self.cancel)
                 .map(|summary| tune::TrialMeasurement {
@@ -93,7 +93,7 @@ impl tune::Bench for LiveBench<'_> {
         })();
         // Cleanup failures must be visible: a measured result may not be
         // reported as a clean success when the trial server could not be
-        // stopped (audit MT-04).
+        // stopped.
         let cleanup = child.terminate_and_wait();
         // Give the OS a moment to release the port before the next launch.
         std::thread::sleep(Duration::from_millis(600));
@@ -103,7 +103,7 @@ impl tune::Bench for LiveBench<'_> {
 
 /// Combine a trial result with the outcome of stopping its server. A
 /// measured result is withheld when the server could not be stopped, so a
-/// failed cleanup can never read as a clean tuning success (audit MT-04).
+/// failed cleanup can never read as a clean tuning success.
 pub(crate) fn combine_trial_outcome(
     result: Result<tune::TrialMeasurement, String>,
     cleanup_stopped: bool,
@@ -148,7 +148,7 @@ mod combine_trial_outcome_tests {
     #[test]
     fn a_measurement_is_withheld_when_its_server_could_not_be_stopped() {
         // Injection: the trial measured fine, but cleanup failed. The result
-        // must not be reported as a clean success (audit MT-04).
+        // must not be reported as a clean success.
         let error = combine_trial_outcome(Ok(measurement()), false, String::new()).unwrap_err();
         assert!(error.contains("could not be stopped cleanly"), "{error}");
         assert!(error.contains("withheld"), "{error}");
@@ -181,7 +181,7 @@ pub(crate) struct TuningRequest {
     tokens: u32,
     repeats: u16,
     companions: Vec<String>,
-    /// What the cloud brief carries (audit S-20.I2); absent means Full so
+    /// What the cloud brief carries; absent means Full so
     /// older callers keep the previous behaviour.
     #[serde(default)]
     disclosure: tune::BriefDisclosure,
@@ -218,7 +218,7 @@ pub(crate) struct TuningProgress {
     trial: Option<tune::TuningTrial>,
 }
 
-/// The data-sent disclosure list for cloud tuning (audit S-20.I1): Rust owns
+/// The data-sent disclosure list for cloud tuning: Rust owns
 /// the list and a test keeps it in sync with the brief's wire fields.
 #[tauri::command]
 pub(crate) fn tune_disclosure_list() -> Vec<tune::DisclosureSection> {
@@ -242,7 +242,7 @@ pub(crate) async fn start_tuning(
         }
     }
     // One machine owner: a benchmark, tuning session, or another server may
-    // not be replaced silently by a tuning session (audit MT-05).
+    // not be replaced silently by a tuning session.
     let _reservation = reserve_operation(&state.operations, OperationOwner::Tuning)?;
     // Aborted-command shape (review deleg_16c0e72a): refuse tuning while an
     // abandoned benchmark worker can still infer, even when its reservation
@@ -294,7 +294,7 @@ pub(crate) async fn start_tuning(
             budgets: tune::TuningBudgets {
                 // Independent of measured trials: no-op and duplicate replies
                 // each consume one of these calls, so the session cannot stay
-                // alive on talkative advisors (audit MT-03).
+                // alive on talkative advisors.
                 max_advisor_calls: request.max_trials.saturating_mul(2).saturating_add(6),
                 max_consecutive_rejections: 3,
                 deadline: Some(
@@ -470,7 +470,7 @@ mod tests {
         }
     }
 
-    /// QC2 regression (S-27 slice 3c): the mutation "cancel stores false
+    /// QC2 regression: the mutation "cancel stores false
     /// instead of true" passed every test before this one existed. A cancel
     /// request must set the flag the session polls, and must report no-op
     /// when no session is running.

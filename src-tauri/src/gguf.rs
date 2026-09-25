@@ -20,21 +20,21 @@ const MAX_TENSOR_COUNT: u64 = 1_000_000;
 const MAX_RECORDED_TENSORS: usize = 4_096;
 const MAX_TENSOR_DIMENSIONS: u32 = 8;
 /// Metadata key/value pairs are counted; a file claiming more fails before
-/// any per-pair work starts (audit DC-08).
+/// any per-pair work starts.
 const MAX_KV_COUNT: u64 = 1_000_000;
-/// One metadata key (audit DC-08).
+/// One metadata key.
 const MAX_KEY_BYTES: u64 = 16 * 1024;
-/// One retained string value (audit DC-08).
+/// One retained string value.
 const MAX_RETAINED_STRING_BYTES: u64 = 64 * 1024;
-/// Aggregate bytes retained across the whole parsed summary (audit DC-08).
+/// Aggregate bytes retained across the whole parsed summary.
 const MAX_RETAINED_METADATA_BYTES: u64 = 2 * 1024 * 1024;
 /// Aggregate parser work units (one per scalar or array element touched),
-/// bounding total CPU spent on adversarially arranged metadata (audit DC-08).
+/// bounding total CPU spent on adversarially arranged metadata.
 const MAX_PARSER_WORK_UNITS: u64 = 64 * 1024 * 1024;
 
 /// The documented allocation/work limits of one parse. Production always
 /// uses `Default`; tests can pass tiny limits to assert exact boundary
-/// behavior deterministically (audit DC-08 V1).
+/// behavior deterministically.
 #[derive(Clone, Copy, Debug)]
 pub struct ParseLimits {
     pub max_kv_count: u64,
@@ -120,7 +120,7 @@ pub struct GgufSummary {
     pub tensor_count: u64,
     pub kv_count: u64,
     /// Optional split metadata written by tooling that produced a shard set
-    /// (audit S-02). Absent keys stay `None`: the completeness of the tensor
+    ///. Absent keys stay `None`: the completeness of the tensor
     /// set is then unknowable from metadata alone, and callers must not
     /// upgrade it to a claim.
     pub split_no: Option<u64>,
@@ -233,7 +233,7 @@ fn checked_header_length(consumed: u64, requested: u64) -> io::Result<usize> {
 
 /// One reader with explicit accounting: consumed bytes bound the input
 /// range, `work` bounds parser effort, and `retained` bounds the bytes that
-/// survive into the returned summary (audit DC-08).
+/// survive into the returned summary.
 fn budget_error(what: &str) -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidData,
@@ -284,7 +284,7 @@ impl<R: Read> Reader<'_, R> {
     }
 
     /// Read `len` declared bytes, discarding them in bounded chunks instead
-    /// of allocating the whole declared length (audit DC-08).
+    /// of allocating the whole declared length.
     fn discard_bytes(&mut self, len: u64) -> io::Result<()> {
         let mut remaining = checked_header_length(self.consumed, len)?;
         let mut buffer = [0_u8; 16 * 1024];
@@ -325,7 +325,7 @@ impl<R: Read> Reader<'_, R> {
         Ok(u64::from_le_bytes(self.read_array::<8>()?))
     }
     /// A string with an explicit retained-byte cap: the declared length is
-    /// validated before any allocation (audit DC-08).
+    /// validated before any allocation.
     fn string(&mut self, max_bytes: u64, retain: bool) -> io::Result<String> {
         let requested = self.u64()?;
         let len = checked_header_length(self.consumed, requested)?;
@@ -587,7 +587,7 @@ fn parse_inner<R: Read>(
     summary.expert_used_count = get("expert_used_count").and_then(Value::as_u64);
     summary.vocab_size = get("vocab_size").and_then(Value::as_u64);
     summary.rope_freq_base = get("rope.freq_base").and_then(Value::as_f64);
-    // Split metadata is optional (audit S-02): tooling that writes shard sets
+    // Split metadata is optional: tooling that writes shard sets
     // may record the shard's own index and the total count; when the keys are
     // absent the values stay unknown instead of being guessed from names.
     summary.split_no = general("split.no").and_then(Value::as_u64);
@@ -644,7 +644,7 @@ pub fn read_summary(path: &Path) -> Result<GgufSummary, String> {
 
 /// `read_summary` with an optional cancellation flag, checked between parse
 /// steps so a large or malformed header cannot hold the worker hostage
-/// (audit DC-08 I4).
+///.
 pub fn read_summary_cancellable(
     path: &Path,
     cancel: Option<&std::sync::atomic::AtomicBool>,
@@ -765,7 +765,7 @@ mod tests {
     }
 
     /// The same header with `split.no`/`split.count` recorded, as shard
-    /// tooling writes them (audit S-02).
+    /// tooling writes them.
     fn fixture_with_split(no: u32, count: u32) -> Vec<u8> {
         let mut out = Vec::new();
         out.extend(GGUF_MAGIC);
@@ -800,7 +800,7 @@ mod tests {
     }
 
     #[test]
-    fn s02_split_metadata_is_read_when_present_and_stays_unknown_when_absent() {
+    fn split_metadata_is_read_when_present_and_stays_unknown_when_absent() {
         let plain = parse(fixture().as_slice()).unwrap();
         assert_eq!(plain.split_no, None);
         assert_eq!(plain.split_count, None);
@@ -830,10 +830,10 @@ mod tests {
     }
 
     #[test]
-    fn dc08_a_short_file_declaring_a_giant_string_fails_before_allocating() {
+    fn a_short_file_declaring_a_giant_string_fails_before_allocating() {
         // A tiny file claims a 100 MiB string: the declared length must fail
         // the string budget while the real input is a few dozen bytes, so no
-        // parser can allocate the claimed size first (audit DC-08 V1).
+        // parser can allocate the claimed size first.
         let mut bytes = gguf_header(0, 1);
         put_str(&mut bytes, "general.name");
         bytes.extend(8_u32.to_le_bytes());
@@ -845,8 +845,8 @@ mod tests {
     }
 
     #[test]
-    fn dc08_kv_key_and_count_budget_failures_are_deterministic() {
-        // Oversized key: beyond its own budget (audit DC-08 V1).
+    fn kv_key_and_count_budget_failures_are_deterministic() {
+        // Oversized key: beyond its own budget.
         let mut bytes = gguf_header(0, 1);
         put_str(&mut bytes, &"k".repeat(20 * 1024));
         bytes.extend(4_u32.to_le_bytes());
@@ -869,9 +869,9 @@ mod tests {
     }
 
     #[test]
-    fn dc08_arrays_are_skipped_by_shape_and_bounded_by_element_and_depth_budgets() {
+    fn arrays_are_skipped_by_shape_and_bounded_by_element_and_depth_budgets() {
         // A fixed-width irrelevant array is skipped with one checked byte
-        // count and stays out of the retained facts (audit DC-08 V1).
+        // count and stays out of the retained facts.
         let mut bytes = gguf_header(0, 1);
         put_str(&mut bytes, "unrelated.arr");
         bytes.extend(9_u32.to_le_bytes());
@@ -890,7 +890,7 @@ mod tests {
         let error = parse_with_limits(bytes.as_slice(), None, tiny_limits()).unwrap_err();
         assert!(error.to_string().contains("element count"), "{error}");
         // A non-captured tokenizer vocabulary is stream-discarded rather
-        // than retained (audit DC-08 I2).
+        // than retained.
         let mut bytes = gguf_header(0, 1);
         put_str(&mut bytes, "tokenizer.ggml.tokens");
         bytes.extend(9_u32.to_le_bytes());
@@ -914,12 +914,12 @@ mod tests {
     }
 
     #[test]
-    fn dc08_cancellation_and_truncation_produce_prompt_errors() {
+    fn cancellation_and_truncation_produce_prompt_errors() {
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::Arc;
         // A reader that flips the cancel flag once it has supplied 8 bytes:
         // the kv loop's cancellation check must stop the parse promptly
-        // (audit DC-08 V2).
+        //.
         struct FlipOnRead<R: Read> {
             inner: R,
             flag: Arc<AtomicBool>,
@@ -954,10 +954,10 @@ mod tests {
     }
 
     #[test]
-    fn dc08_truncated_prefixes_fail_cleanly_and_valid_headers_stay_useful() {
+    fn truncated_prefixes_fail_cleanly_and_valid_headers_stay_useful() {
         // Fuzz every short prefix of a valid header: no panics, explicit
         // errors, and the intact fixture keeps its measured facts
-        // (audit DC-08 V3).
+        //.
         let valid = fixture();
         for cut in 0..64 {
             let outcome = std::panic::catch_unwind(|| parse(&valid[..cut]));

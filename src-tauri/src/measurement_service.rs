@@ -1,4 +1,4 @@
-//! Measurement command family (audit S-27 I1, slice 3b).
+//! Measurement command family.
 //! operation coordinator and the measurement/evidence authorities stay in
 //! their modules and are consumed here.
 use crate::core::LaunchProfile;
@@ -12,7 +12,7 @@ use crate::{
 use crate::{spawn_server, wait_until_healthy_cancellable};
 
 /// Slack above the workload's own request deadline before a worker drain is
-/// considered abnormal (R16 follow-up). A cancellable worker can never outlive
+/// considered abnormal. A cancellable worker can never outlive
 /// its request deadline by more than process teardown, so the drain bound is
 /// derived from the deadline the run actually used instead of a fixed value:
 /// the previous fixed 300 s ceiling sat BELOW the default 600 s request
@@ -31,10 +31,10 @@ pub(crate) fn benchmark_drain_ceiling(workload: &evidence::Workload) -> Duration
 /// the request deadline. The run - and the command that owns it - must not
 /// finalize a record, clear its slot, or release the operations reservation
 /// while such a worker can still be inferring: replacement work would overlap
-/// it (R04/R16). The ceiling derives from the workload's own request deadline
+/// it. The ceiling derives from the workload's own request deadline
 /// plus teardown slack; a worker owned past it is anomalous, so the wait is
 /// bounded there and the outcome is reported as [`DrainOutcome::Unresolved`]
-/// instead of holding the slot permanently (audit MT-06).
+/// instead of holding the slot permanently.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DrainOutcome {
     /// Every owned worker exited within the ceiling.
@@ -69,7 +69,7 @@ pub(crate) struct BenchmarkRunResult {
     compatibility_key: String,
     result_class: evidence::FitClass,
     failure: Option<String>,
-    /// Cold runs take the user's server for a quiet machine (audit MT-05).
+    /// Cold runs take the user's server for a quiet machine.
     /// True when the same profile was relaunched after the run; false when
     /// this run never took a server or the relaunch failed (see
     /// `server_restore_error`).
@@ -172,7 +172,7 @@ pub(crate) fn benchmark_execution_snapshot_from_profile(
     let (adapter_ids, driver_versions): (Vec<String>, Vec<String>) = adapters.into_iter().unzip();
 
     // Content identities for file-backed influences: a changed file under
-    // the same name must change the key (audit MT-07 I2).
+    // the same name must change the key.
     let file_sha = |path: &str| -> Result<String, String> {
         let trimmed = path.trim();
         if trimmed.is_empty() {
@@ -198,7 +198,7 @@ pub(crate) fn benchmark_execution_snapshot_from_profile(
     let host_cpu_model = String::new();
 
     // Material facts this machine cannot observe make reuse insufficiently
-    // supported and are named explicitly (audit MT-07 I3).
+    // supported and are named explicitly.
     let mut unknown_identities = Vec::new();
     for (adapter, driver) in adapter_ids.iter().zip(driver_versions.iter()) {
         let normalized = driver.trim().to_ascii_lowercase();
@@ -226,7 +226,7 @@ pub(crate) fn benchmark_execution_snapshot_from_profile(
 
     // The scope is part of the identity: `launch` snapshots carry no
     // workload digest and identify a launch configuration, while
-    // `launch+workload` snapshots identify a measured run (audit MT-09).
+    // `launch+workload` snapshots identify a measured run.
     let (scope, workload_sha256) = match workload {
         Some(workload) => (
             calibration::SNAPSHOT_SCOPE_LAUNCH_WORKLOAD,
@@ -269,7 +269,7 @@ pub(crate) fn benchmark_execution_snapshot_from_profile(
 }
 
 /// Everything one measured attempt needs, grouped so the run signature stays
-/// readable as the ownership requirements grow (R16 added the shared client).
+/// readable as the ownership requirements grow.
 pub(crate) struct BenchmarkRunContext<'a> {
     pub server_pid: u32,
     pub profile: LaunchProfile,
@@ -354,7 +354,7 @@ pub(crate) fn run_benchmark_snapshot(
     )?;
     let compatibility_key = snapshot_outcome.compatibility_key.clone();
     // The launch-scope identity records the same configuration without a
-    // workload (audit MT-09).
+    // workload.
     let launch_compatibility_key = benchmark_execution_snapshot_from_profile(
         &profile,
         &validation,
@@ -386,7 +386,7 @@ pub(crate) fn run_benchmark_snapshot(
             .collect(),
     };
     launch_fact.validate().map_err(|error| error.to_string())?;
-    // R04 (follow-up review db548c8): the whole run shares one client - the
+    // The whole run shares one client - the
     // command creates it and passes it to preparation and to this function -
     // so every cancellable worker of this benchmark is observable on it; the
     // run drains those workers before it returns.
@@ -405,7 +405,7 @@ pub(crate) fn run_benchmark_snapshot(
                 return Err("Benchmark cancelled before fresh runtime launch".into());
             }
             // The lease binding pins the verified runtime content for the whole
-            // cold attempt (audit RT-04); it drops with this scope.
+            // cold attempt; it drops with this scope.
             let (mut child, _, log_path, _lease, _drains) =
                 spawn_server(&profile, "benchmark-cold")?;
             let attempt = wait_until_healthy_cancellable(
@@ -449,10 +449,10 @@ pub(crate) fn run_benchmark_snapshot(
             Ok(timing)
         })?
     };
-    // R04/R16: a cancelled attempt abandons its worker, which keeps its
+    // A cancelled attempt abandons its worker, which keeps its
     // request until the operation deadline. The run holds ownership until
     // the ceiling derives from THIS workload's request deadline; a worker
-    // still owned past it is reported Unresolved (MT-06) instead of holding
+    // still owned past it is reported Unresolved instead of holding
     // the slot forever.
     let drain = drain_owned_workers(&client, benchmark_drain_ceiling(&workload));
     let mut manifest = evidence::BenchmarkManifest {
@@ -498,7 +498,7 @@ pub(crate) fn run_benchmark_snapshot(
         ),
         (Err(error), _) => (None, evidence::FitClass::Failed, Some(error)),
     };
-    // MT-06: an unresolved drain means a worker may still be inferring. The
+    // an unresolved drain means a worker may still be inferring. The
     // record keeps its observations, but the run is Failed so unsettled work
     // never feeds fit as Measured, and the note tells replacement work why.
     let (result_class, failure) = match drain {
@@ -528,7 +528,7 @@ pub(crate) fn run_benchmark_snapshot(
     })
 }
 
-/// F9-02 with construction-window cancel (review deleg_16c0e72a): the slot is
+/// with construction-window cancel (review deleg_16c0e72a): the slot is
 /// published before the fallible client is constructed, so a Cancel during
 /// construction lands on this run's flag instead of reporting "No benchmark
 /// is running". A construction failure clears only our own flag, so the slot
@@ -545,7 +545,7 @@ fn publish_benchmark_slot<T>(
     // construction for the cancel to land on this run's own flag (review
     // deleg_16c0e72a). Occupancy is checked first so a refused caller never
     // overwrites the occupant; a construction failure clears only our own
-    // flag, so the slot stays free (F9-02) without clearing a replacement.
+    // flag, so the slot stays free without clearing a replacement.
     {
         let mut active = slot.lock().map_err(|_| "Benchmark state is unavailable")?;
         if active.is_some() {
@@ -579,7 +579,7 @@ pub(crate) async fn benchmark_v2(
     workload.validate().map_err(|error| error.to_string())?;
     // One machine owner: a benchmark cannot start while a server or tuning
     // session owns the operations slot, and a cold attempt is its own owner
-    // kind (audit MT-05).
+    // kind.
     let owner = if workload.cache_mode == evidence::CacheMode::Cold {
         OperationOwner::ColdBenchmark
     } else {
@@ -598,7 +598,7 @@ pub(crate) async fn benchmark_v2(
             .map_err(|_| "Server state is unavailable")?;
         validated_server_snapshot(&mut slot, "benchmarking")?
     };
-    // MT-05: a cold run takes the user's server for a quiet machine. Keep
+    // a cold run takes the user's server for a quiet machine. Keep
     // the profile aside so the same server is relaunched after the finalized
     // record below.
     let cold_profile = if workload.cache_mode == evidence::CacheMode::Cold {
@@ -607,10 +607,10 @@ pub(crate) async fn benchmark_v2(
         None
     };
     let cancelled = Arc::new(AtomicBool::new(false));
-    // F9-02: the fallible client is built BEFORE the active slot is published.
+    // the fallible client is built BEFORE the active slot is published.
     // One client owns every request of this run: prompt preparation and the
     // measured attempts share it, so a cancellation during preparation is
-    // covered by the same worker drain as the measured attempts (R16). A
+    // covered by the same worker drain as the measured attempts. A
     // construction failure here reports truthfully and leaves no occupied
     // benchmark state behind.
     let client = publish_benchmark_slot(&state.benchmark, cancelled.clone(), || {
@@ -684,7 +684,7 @@ pub(crate) async fn benchmark_v2(
         .map_err(|error| format!("Benchmark task failed: {error}"))?
     }
     .await;
-    // R16: ownership is released only after every owned request and worker
+    // Ownership is released only after every owned request and worker
     // has actually terminated. This covers the boundaries the run's own drain
     // cannot - a cancellation during prompt preparation, an ordinary error
     // before the run, a cleanup failure, and a worker that outlived even its
@@ -692,7 +692,7 @@ pub(crate) async fn benchmark_v2(
     // for the whole wait, so replacement work is refused while the abandoned
     // request can still be inferring; a discarded result never releases
     // ownership early. The ceiling derives from this workload's deadline; a
-    // worker still owned past it is reported Unresolved (MT-06).
+    // worker still owned past it is reported Unresolved.
     let command_drain = drain_owned_workers(&client, drain_ceiling);
     {
         let mut active = state
@@ -704,17 +704,17 @@ pub(crate) async fn benchmark_v2(
     let mut result = benchmark_result?;
     // A replaced or stopped server invalidates the whole record: results must
     // never be finalized under an identity that no longer exists
-    // (audit MT-05 I3).
+    //.
     if !reservation.is_current() {
         return Err(
             "The managed server was stopped or replaced during the benchmark; the record was discarded."
                 .into(),
         );
     }
-    // MT-06: an unresolved command drain means a worker may still be
+    // an unresolved command drain means a worker may still be
     // inferring. Mark the run Failed so unsettled work never feeds fit as
     // Measured, and skip the server relaunch: starting replacement work over
-    // a still-inferring worker is the overlap R04 guards against.
+    // a still-inferring worker is the overlap the drain guards against.
     if command_drain == DrainOutcome::Unresolved {
         result.result_class = evidence::FitClass::Failed;
         let note = "Benchmark workers did not drain within the workload deadline; \
@@ -732,7 +732,7 @@ pub(crate) async fn benchmark_v2(
             );
         }
     }
-    // MT-05: the record above is finalized; now give the user their server
+    // the record above is finalized; now give the user their server
     // back. The benchmark reservation is released first so the relaunch can
     // own the machine through the normal start path. A relaunch failure is
     // recorded on the result, never substituted for the benchmark outcome.
@@ -777,7 +777,7 @@ pub(crate) async fn replay_benchmark_manifest(
         validated_server_snapshot(&mut slot, "replaying a benchmark manifest")?
     };
     // Replay re-hashes artifacts and the runtime executable: blocking worker
-    // (audit IPC-01 I4).
+    //.
     tauri::async_runtime::spawn_blocking(move || replay_benchmark_manifest_worker(manifest, server))
         .await
         .map_err(|error| format!("Replay task failed: {error}"))?
@@ -931,8 +931,8 @@ mod lora_identity_tests {
     }
 
     #[test]
-    fn proc13_cold_restore_outcome_lands_in_the_record() {
-        // P1-30 (MT-05): the cold benchmark relaunches the profile it took,
+    fn cold_restore_outcome_lands_in_the_record() {
+        // the cold benchmark relaunches the profile it took,
         // and the relaunch outcome is recorded without touching the
         // measurements. Success marks the server restored; a relaunch
         // failure keeps the benchmark record and names the restore error
@@ -1071,7 +1071,7 @@ mod lora_identity_tests {
 }
 
 #[cfg(test)]
-mod r16_ownership_tests {
+mod ownership_tests {
     use super::*;
     use crate::local_client::tests::serve_slow_body;
     use std::sync::atomic::Ordering;
@@ -1089,8 +1089,8 @@ mod r16_ownership_tests {
     }
 
     #[test]
-    fn f9_02_a_client_construction_failure_leaves_the_benchmark_slot_free() {
-        // F9-02: the previous order published the active slot and THEN called
+    fn a_client_construction_failure_leaves_the_benchmark_slot_free() {
+        // the previous order published the active slot and THEN called
         // the fallible `local_client(&server.profile)?`. A certificate or
         // API-key file that became invalid after the server launched returned
         // an error while the slot stayed occupied, so no benchmark had started
@@ -1124,7 +1124,7 @@ mod r16_ownership_tests {
     }
 
     #[test]
-    fn f9_02_a_refused_caller_never_replaces_the_occupants_state() {
+    fn a_refused_caller_never_replaces_the_occupants_state() {
         // The occupant's slot and its cancellation flag stay exactly as the
         // occupant left them. The fallible dependency is deliberately built
         // before occupancy is known (that ordering is what keeps a
@@ -1210,8 +1210,8 @@ mod r16_ownership_tests {
     }
 
     #[test]
-    fn r16_the_drain_bound_follows_the_workload_request_deadline() {
-        // R16: the previous fixed 300 s ceiling sat BELOW the default 600 s
+    fn the_drain_bound_follows_the_workload_request_deadline() {
+        // The previous fixed 300 s ceiling sat BELOW the default 600 s
         // request deadline, so a cancelled slow request could outlive the
         // ceiling while ownership was already released. The bound is derived
         // from the deadline the run actually uses.
@@ -1233,8 +1233,8 @@ mod r16_ownership_tests {
     }
 
     #[test]
-    fn proc14_bounded_drain_reports_an_unresolved_worker() {
-        // P1-31 (MT-06): the ownership drain is bounded by its ceiling. A
+    fn bounded_drain_reports_an_unresolved_worker() {
+        // the ownership drain is bounded by its ceiling. A
         // worker still owned past the ceiling is reported Unresolved instead
         // of holding the benchmark slot forever; a settled client drains.
         let fixture = serve_slow_body(Duration::from_millis(1_200), 12);
@@ -1282,12 +1282,12 @@ mod r16_ownership_tests {
     }
 
     #[test]
-    fn r16_cancellation_during_preparation_leaves_an_owned_worker_the_drain_waits_for() {
-        // MT-06 supersedes the infinite wait this test once pinned: the
+    fn cancellation_during_preparation_leaves_an_owned_worker_the_drain_waits_for() {
+        // supersedes the infinite wait this test once pinned: the
         // abandoned-worker scenario now lives in
-        // proc14_bounded_drain_reports_an_unresolved_worker, which asserts the
+        // bounded_drain_reports_an_unresolved_worker, which asserts the
         // ceiling bounds the drain and the straggler is reported Unresolved.
-        // This test keeps the R16 derivation pin: the bound follows the
+        // This test keeps the derivation pin: the bound follows the
         // workload's own request deadline.
         let short = evidence::Workload {
             timeout_ms: 5_000,
