@@ -310,59 +310,7 @@ describe("denied browser storage (audit FE-09 I3)", () => {
     expect(text()).toContain("Saved fixture-renamed");
   });
 
-  it("keeps a completed benchmark result visible when its save fails", async () => {
-    handlers.set("server_status", () => ({
-      ...idleServerStatus,
-      running: true,
-      phase: "running",
-      pid: 42,
-      profileName: "fixture / Baseline",
-      alias: "fixture-baseline",
-      port: 8080,
-      startedAt: 1,
-      resultClass: "measured",
-    }));
-    handlers.set("benchmark_server", () => ({
-      samples: [41, 42, 43],
-      meanTps: 42,
-      medianTps: 42,
-      minTps: 41,
-      maxTps: 43,
-      tokens: 256,
-      repeats: 3,
-    }));
-    // The status poll is a 2-second interval; advance it so the app observes
-    // the running server before the click.
-    vi.useFakeTimers();
-    try {
-      await mount();
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(2100);
-      });
-      await click(navButton("Benchmark"), "Benchmark navigation must exist");
-      const setItem = denyStorage();
-      try {
-        // Scope to the benchmark screen: the dashboard keeps its own controls
-        // in the DOM with this screen hidden.
-        const section = container.querySelector(".benchmark-screen") as HTMLElement | null;
-        expect(section, "the benchmark screen section must exist").toBeTruthy();
-        await click(
-          [...section!.querySelectorAll("button")].find((button) =>
-            (button.textContent ?? "").includes("Run benchmark"),
-          ),
-          "the Run benchmark action must exist",
-        );
-        // The completed native operation is reported as completed; the save
-        // failure is a separate sentence, not an operation failure.
-        expect(text()).toContain("Benchmark complete: 42.00 generation tok/s mean.");
-        expect(text()).toContain("could not be saved to browser storage");
-      } finally {
-        setItem.mockRestore();
-      }
-    } finally {
-      vi.useRealTimers();
-    }
-  });
+
 
   it("keeps a finished tuning report visible when its save fails", async () => {
     handlers.set("cloud_credential_status", () => ({ provider: "openrouter", configured: true, masked: "sk-or-…1234" }));

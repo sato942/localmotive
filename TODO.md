@@ -489,10 +489,16 @@ Fix these after P0 and before the next feature.
   re-measure ...`). Worker passes the rebuilt snapshot's unknowns instead of
   discarding them. RED proc15 (both sides) + key-only mutant failed; cargo
   674/0, fmt/clippy clean.
-- [ ] **P1-33 — MT-09/FE-05: remove the legacy benchmark system.** `benchmark_server`
-  + `BenchmarkScreen` duplicate `benchmark_v2` + `V03EvidencePanel`, and both commands
-  are registered (`lib.rs:2293-2294`). Migrate remaining callers, then delete the
-  legacy command, screen, and service path.
+- [x] **P1-33 — MT-09/FE-05: remove the legacy benchmark system.** Done 2026-09-25:
+  deleted `benchmark_server` + `run_legacy_benchmark` + `finalize_legacy_benchmark`
+  + registration + guard tuples; stripped the screen's legacy half (Benchmark view
+  is now the v2 panel only); removed `runBenchmark`/legacy state/tokens/repeats,
+  the Dashboard LAST TEST tile, `legacyBenchmarkInputError` + `BenchmarkSummary`
+  (frontend; Rust keeps both for tune's `LiveBench`), and 26 obsolete tests
+  (storage save-failure, staleResponses legacy block, model input). Kept
+  `cancel_benchmark` (v2 adapter) + the slot helper test (renamed). RED absence
+  test + registration-restore mutant failed; `npm run check` EXIT 0 (265/265),
+  cargo 670/0, clippy clean.
 - [ ] **P1-34 — FE-04: split `App.tsx`.** One 1858-line component owns state,
   persistence, async coordination, and shell rendering. Extract the first coherent
   piece (e.g., persistence or one screen's coordination) with component tests kept

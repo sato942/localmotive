@@ -3060,6 +3060,23 @@ test("R04: the benchmark run owns its cancelled workers until they exit", async 
   );
 });
 
+test("the legacy benchmark system is removed (MT-09/FE-05)", async () => {
+  // RED for P1-33: the legacy command, screen half, and service path are
+  // deleted; the v2 evidence panel is the only benchmark runner.
+  const service = await readFile(join(process.cwd(), "src-tauri", "src", "measurement_service.rs"), "utf8");
+  assert.ok(!service.includes("async fn benchmark_server("), "the legacy command must be gone");
+  assert.ok(!service.includes("fn run_legacy_benchmark("), "the legacy service path must be gone");
+  assert.ok(!service.includes("fn finalize_legacy_benchmark("), "the legacy finalizer must be gone");
+  const lib = await readFile(join(process.cwd(), "src-tauri", "src", "lib.rs"), "utf8");
+  assert.ok(!lib.includes("measurement_service::benchmark_server,"), "the legacy registration must be gone");
+  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  assert.ok(!app.includes('"benchmark_server"'), "the frontend must not invoke the legacy command");
+  assert.ok(!app.includes("runBenchmark"), "the legacy runner must be gone");
+  const screen = await readFile(join(process.cwd(), "src", "screens", "BenchmarkScreen.tsx"), "utf8");
+  assert.ok(!screen.includes("runBenchmark"), "the screen must not offer the legacy run");
+  assert.ok(!screen.includes("BenchmarkSummary"), "the screen must not render the legacy result");
+});
+
 test("the stalled-fetch deadline stays injectable and bounded in tests (CI cancellation fix)", async () => {
   const retry = await readFile(join(process.cwd(), "scripts", "lib", "http_retry.mjs"), "utf8");
   assert.match(retry, /deadlineMs = REQUEST_TIMEOUT_MS/, "the deadline must stay injectable");

@@ -3,7 +3,6 @@ import {
   Box, CircleStop, Play, SquareTerminal,
 } from "lucide-react";
 import type {
-  BenchmarkSummary,
   LaunchProfile,
   LogicalModel,
   RuntimeCapabilities,
@@ -24,7 +23,6 @@ export type AppView =
   | "about";
 
 export interface DashboardScreenProps {
-  benchmark: BenchmarkSummary | null;
   busy: string;
   evidenceRun: EvidenceRun | null;
   log: string;
@@ -85,11 +83,6 @@ export function DashboardScreen(props: DashboardScreenProps) {
               (audit FE-16). */}
           <strong>{(props.status.running ? props.status.specType : props.profile?.specType)?.replace("draft-", "").toUpperCase() ?? "NONE"}</strong>
           <small>{props.status.running ? (props.status.companionLinked ? "Companion linked" : "Target only") : props.profile?.draftModel ? "Companion linked" : "Target only"}</small>
-        </div>
-        <div className="instrument">
-          <span className="instrument-label">LAST TEST</span>
-          <strong>{props.benchmark ? props.benchmark.meanTps.toFixed(1) : "—"}</strong>
-          <small>{props.benchmark ? "generation tok/s mean" : "Not measured"}</small>
         </div>
       </div>
 

@@ -2324,7 +2324,6 @@ pub fn run() {
             server_service::stop_server,
             server_service::server_status,
             server_service::read_server_log,
-            measurement_service::benchmark_server,
             measurement_service::benchmark_v2,
             measurement_service::cancel_benchmark,
             measurement_service::replay_benchmark_manifest,
@@ -3094,7 +3093,6 @@ mod release_security_tests {
     fn every_measurement_entry_point_requires_a_validated_server_snapshot() {
         let source = crate::ALL_SOURCES;
         for (start, end) in [
-            ("fn benchmark_server(", "struct BenchmarkRunResult"),
             ("async fn benchmark_v2(", "fn cancel_benchmark("),
             ("fn replay_benchmark_manifest(", "#[cfg(test)]"),
         ] {
@@ -3891,7 +3889,6 @@ mod ipc01_startup_tests {
                 "async fn preflight_model(request: PreflightRequest)",
                 "fn preview_command",
             ),
-            ("async fn benchmark_server(", "struct BenchmarkRunResult"),
             (
                 "async fn replay_benchmark_manifest(",
                 "fn replay_benchmark_manifest_worker",

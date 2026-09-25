@@ -1102,26 +1102,6 @@ export type ServerStatus = {
   failure: LaunchFailureEvidence | null;
 };
 
-/** Report invalid legacy benchmark input before IPC; Rust remains authoritative. */
-export function legacyBenchmarkInputError(tokens: number, repeats: number): string | null {
-  if (!Number.isInteger(tokens) || tokens < 64 || tokens > 4096) {
-    return "Forced output tokens must be a whole number between 64 and 4096.";
-  }
-  if (!Number.isInteger(repeats) || repeats < 1 || repeats > 10) {
-    return "Measured repeats must be a whole number between 1 and 10.";
-  }
-  return null;
-}
-
-export type BenchmarkSummary = {
-  samples: number[];
-  meanTps: number;
-  medianTps: number;
-  minTps: number;
-  maxTps: number;
-  tokens: number;
-  repeats: number;
-};
 
 export type GgufSummary = {
   version: number;

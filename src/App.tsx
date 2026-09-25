@@ -21,7 +21,6 @@ import {
   displayedSelection,
   profileIdentity,
   profileNumberError,
-  legacyBenchmarkInputError,
   tuningWorkloadError,
   applySuggestedPort,
   responseIsCurrent,
@@ -34,7 +33,6 @@ import {
   runtimeCatalogViewState,
   runtimeInstallRequest,
   suggestedProfile,
-  type BenchmarkSummary,
   type CloudModel,
   type CloudProvider,
   type CredentialStatus,
@@ -170,12 +168,9 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 
 function App() {
   const [view, setView] = useState<View>(RUNTIME ? "dashboard" : "runtime");
-  // Keep each owner's handle separate so panel activity cannot erase a
-  // legacy run's cancellation control during navigation.
+  // The v2 evidence panel owns its run handle; navigation cannot erase it.
   const [panelEvidenceRun, setEvidenceRun] = useState<EvidenceRun | null>(null);
-  const [legacyEvidenceRun, setLegacyEvidenceRun] = useState<EvidenceRun | null>(null);
-  const legacyBenchmarkActive = useRef(false);
-  const evidenceRun = legacyEvidenceRun ?? panelEvidenceRun;
+  const evidenceRun = panelEvidenceRun;
   const [extraArgsDraft, setExtraArgsDraft] = useState<string | null>(null);
   // FE-11: every download carries the destination and revision captured at
   // start, so cancel and progress always address the job itself.
@@ -254,10 +249,6 @@ function App() {
     }
   }
   const [busy, setBusy] = useState("");
-  const [benchmark, setBenchmark] = useState<BenchmarkSummary | null>(null);
-  const [tokens, setTokens] = useState(512);
-  const [repeats, setRepeats] = useState(3);
-  const benchmarkInputError = legacyBenchmarkInputError(tokens, repeats);
   const [runtimeIdentity, setRuntimeIdentity] = useState<RuntimeIdentity | null>(null);
   const [managedRuntimes, setManagedRuntimes] = useState<ManagedRuntimeRecord[]>([]);
   const [providers, setProviders] = useState<CloudProvider[]>([]);
@@ -1309,41 +1300,6 @@ function App() {
     }
   }
 
-  async function runBenchmark() {
-    if (!status.port || evidenceRun || legacyBenchmarkActive.current) return;
-    if (benchmarkInputError) { setNotice(benchmarkInputError); return; }
-    legacyBenchmarkActive.current = true;
-    setBusy("benchmark");
-    setLegacyEvidenceRun({
-      kind: "benchmark",
-      cancel: () => {
-        void invoke<void>("cancel_benchmark").then(
-          () => setNotice("Benchmark cancellation requested; waiting for the current request to finish."),
-          (error) => setNotice(errorText(error)),
-        );
-      },
-    });
-    try {
-      const result = await invoke<BenchmarkSummary>("benchmark_server", {
-        host: profile?.host ?? "127.0.0.1",
-        port: status.port,
-        tokens,
-        repeats,
-      });
-      setBenchmark(result);
-      const resultSaved = persistRecord(`benchmark:${status.alias}`, JSON.stringify(result));
-      setNotice(
-        `Benchmark complete: ${result.meanTps.toFixed(2)} generation tok/s mean.${resultSaved ? "" : ` ${persistenceFailureNote("The benchmark result")}`}`,
-      );
-    } catch (error) {
-      setNotice(errorText(error));
-    } finally {
-      legacyBenchmarkActive.current = false;
-      setLegacyEvidenceRun(null);
-      setBusy("");
-    }
-  }
-
   useEffect(() => {
     if (view === "catalog" && !catalogSnapshot && !catalogBusy) loadModelCatalog();
   }, [view]);
@@ -1624,7 +1580,6 @@ function App() {
 
         {view === "dashboard" && (
           <DashboardScreen
-            benchmark={benchmark}
             busy={busy}
             evidenceRun={evidenceRun}
             log={log}
@@ -1852,20 +1807,11 @@ function App() {
         >
           <BenchmarkScreen
             adapter={tauriEvidenceAdapter}
-            benchmark={benchmark}
-            inputError={benchmarkInputError}
-            busy={busy}
-            evidenceRun={evidenceRun}
             hardware={hardware}
             profile={profile}
-            repeats={repeats}
-            runBenchmark={runBenchmark}
             selected={selected}
             setEvidenceRun={setEvidenceRun}
-            setRepeats={setRepeats}
-            setTokens={setTokens}
             status={status}
-            tokens={tokens}
           />
           </section>
       </main>
