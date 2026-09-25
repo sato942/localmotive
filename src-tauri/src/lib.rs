@@ -4021,9 +4021,10 @@ mod runtime_service_source_tests {
             .unwrap();
         // The install command guards through the single runtime_install slot:
         // it must refuse a second install, keep the slot for the run, and
-        // clear it afterwards.
+        // clear it afterwards. The slot is taken through `lock_recover`
+        // (RT-11: poison recovery), which locks the same mutex.
         let slot = install
-            .find("state.runtime_install.lock()")
+            .find("lock_recover(&state.runtime_install)")
             .expect("install_managed_runtime must take the runtime_install slot");
         let refusal = install
             .find("already active")
@@ -4032,7 +4033,7 @@ mod runtime_service_source_tests {
             .find("runtime::install_runtime")
             .expect("install_managed_runtime must call the installer");
         let cleared = install
-            .find("*state.runtime_install.lock().unwrap() = None;")
+            .find("*lock_recover(&state.runtime_install) = None;")
             .expect("install_managed_runtime must clear the slot afterwards");
         assert!(
             slot < refusal && refusal < install_work && install_work < cleared,

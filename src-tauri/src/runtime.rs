@@ -146,19 +146,6 @@ pub struct GithubAsset {
     pub digest: Option<String>,
 }
 
-#[cfg(test)]
-impl GithubAsset {
-    #[allow(dead_code)]
-    fn sample(name: &str) -> Self {
-        Self {
-            name: name.into(),
-            browser_download_url: format!("https://example.invalid/{name}"),
-            size: 1,
-            digest: None,
-        }
-    }
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HardwareInfo {

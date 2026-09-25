@@ -646,6 +646,28 @@ Fix these after P0 and before the next feature.
     tie-breakers` (RED→GREEN→mutant). Freshness bytes still change per build
     by DC-10 design.
   - LAB-13 (Low, error coercion): ACCEPT — cosmetic, lab-only survivors.
+  Part 2 done 2026-09-25 (RT-08/09/11..15 + RT-01/RT-03 adjudication):
+  - RT-08 (GPU preflight Unknown): ACCEPT — Unknown is the honest contract
+    without a GPU (`Show unknown when evidence is unavailable`); night
+    hardware campaign covers real GPUs, never the release gate.
+  - RT-09 (lossy help discovery): REFUTED — discovery is lossy by nature of
+    `--help` prose, but authority is `filter_supported_args` against
+    `capabilities.supported_flags` (core.rs:1645), which enforces the rule.
+  - RT-11 (poisoned state locks): VERIFIED + fixed — new `lock_recover`
+    helper in `runtime_service.rs`, all 6 sites converted, RED
+    (`E0432` pre-helper) → GREEN (`poisoned_state_lock_recovers...`) →
+    mutant (unwrap restore fails it). The lib.rs slot-protocol pin follows
+    the new spelling. The wider 20-site idiom stays: same rationale.
+  - RT-12 (source-spelling tests): ACCEPT under the P2-4 policy — the RT-11
+    pin update above is the policy working, not a violation.
+  - RT-14 (version-pinned data): ACCEPT — pinning IS the trust mechanism
+    (P0-1 compiled catalog); bumps update pins by design.
+  - RT-13 (Low, dead scaffolding): VERIFIED + pruned — zero-caller
+    `GithubAsset::sample` test helper deleted (661/0 after).
+  - RT-15 (Low, ticket narration): SUPERSEDED — P2-5 stripped it.
+  - RT-01/RT-03 (Medium, same-user races): ACCEPT per the Medium threat
+    model; P1-10/P1-15 closed the user-data half. Rust 661/0, fmt/clippy
+    clean.
 
 ---
 
