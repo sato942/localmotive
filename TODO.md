@@ -609,7 +609,11 @@ Fix these after P0 and before the next feature.
   `EVIDENCE-MATRIX is merged` failed before, passes now; resurrecting the
   old file fails it again (mutant). `npm run check` EXIT 0
   (`/tmp/check47.log`).
-- [ ] **P2-10 — Prune superseded evidence (D5).**
+- [x] **P2-10 — Prune superseded evidence (D5).** Closed 2026-09-25 as
+  already-done (no change): D5 executed under L-23 (`998557d`,
+  merged via PR #60) — `release-evidence/0.6.0/history/` (85 files, 453K)
+  deleted, tree now holds only attestations + inventory/manifest/SHA256SUMS;
+  the stays-deleted guard rides in the full gate (green in `/tmp/check47.log`).
 - [ ] **P2-11 — Remove stale references to deleted files:** the
   `HISTORICAL_FILES` entries in `scripts/verify_branding.mjs`, and the note in
   `catalog/providers.json` that names `docs/history/TODO-0.5.md` (change it
