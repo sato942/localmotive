@@ -113,7 +113,12 @@ Standing release policy:
   exists (V06-GH-01.V3 waiver already covers this trigger).
 - [ ] **A2 — Remove the single-runner dependency (ADMIN).** Owner decision
   2026-09-26: register a self-hosted Windows runner that the team controls;
-  the owner runner stays untouched (Admin-grant path rejected). See P1-12.
+  the owner runner stays untouched (Admin-grant path rejected). Pack shipped
+  2026-09-26 on `fix/runner-pack` (`scripts/team-runner/`: idempotent
+  provisioner with owner-host guard + `-WhatIf`, start template,
+  REGISTER.md cutover/rollback; 8 invariant tests, mutant-proven). Awaiting
+  a team machine + human registration (REGISTER.md steps 1-3), then the
+  `release.yml` dispatch and owner-label removal (steps 4-5). See P1-12.
 - [x] **D6 — Approve the `AGENTS.md` pointer change (OWNER).** The owner
   approved it on 2026-09-24 ("edit AGENTS.md"). L-07.
   - `AGENTS.md:185-187` now reads: "Read `REVIEW.md` for the current
