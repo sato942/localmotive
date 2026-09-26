@@ -961,13 +961,31 @@ Owner decision 2026-09-26: schedule Bounded UI input next (was unscheduled).
   `npm run check` EXIT 0 (node 303/0, Vitest 273/273, build OK), audit 0
   vulns, tsc clean, design lint 0/0. No Rust changes; Rust results carried
   from L-25.
-- [ ] **UI speed and responsiveness (SCHEDULED 2026-09-26, measuring on
-  `fix/ui-speed-baseline`).** Baseline 2026-09-26 (main + runner pack):
-  JS bundle 350,816 B raw / 105,791 B gzip, CSS 43,222 B / 8,882 B,
-  `vite build` 2.66 s, node tests 311 in 11.7 s, Vitest 273. Budget guard
-  `scripts/check-ui-budget.mjs` wired into `npm run build` (caps 420 kB
-  raw / 130 kB gzip, RED-proven at 100 kB). Next: packaged startup +
-  interaction timings over CDP before any optimization.
+- [ ] **UI speed and responsiveness (SCHEDULED 2026-09-26, staged plan on
+  `fix/ui-speed-plan`).** Optimize nothing without a number. Stages:
+  - Stage 1 — static baseline (DONE 2026-09-26): JS bundle 350,816 B raw /
+    105,791 B gzip, CSS 43,222 B / 8,882 B, `vite build` 2.66 s, node tests
+    311 in 11.7 s, Vitest 273. Budget guard `scripts/check-ui-budget.mjs`
+    wired into `npm run build` (caps 420 kB raw / 130 kB gzip, RED-proven
+    at 100 kB).
+  - Stage 2 — packaged timings over CDP (next): launch-to-first-window,
+    time-to-interactive, click-to-painted for all 8 views (dashboard,
+    models, catalog, runtime, profile, tune, benchmark, about),
+    profile-save→feedback latency, benchmark-start latency. Catalog/Models
+    fetch on entry, so their switches include backend time. Same harness as
+    the packaged matrix (`scripts/lib/cdp_client.mjs`).
+  - Stage 3 — thresholds: pin measured numbers as caps (tab switch ≤100 ms
+    target; startup cap set from measurement, not guessed). Anything under
+    its cap is recorded and left alone.
+  - Stage 4 — optimize only cap breaches, one at a time, re-measuring after
+    each change (virtualize long lists, defer non-critical IPC on view
+    entry, memoize hot renders — pick by profile, not by taste).
+  - Stage 5 — gate the timings: CDP timing assertions join the packaged
+    matrix so a regression fails the release, and fold the 3-flow E2E smoke
+    (launch → profile save → server start; catalog → download → benchmark;
+    upgrade preserves data) into the same run.
+  - Exit: every stage recorded in the ledger; no stage skipped to reach an
+    optimization.
 - Smarter tuning search without AI. Research the algorithms first.
 - In-app version check and automatic update. This needs a design decision on
   update signing.
