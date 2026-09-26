@@ -111,14 +111,14 @@ Standing release policy:
   takes effect, run the direct-push refusal test (section 8, V06-GH-01.V3).
   Owner decision 2026-09-26: DEFERRED until the first Write collaborator
   exists (V06-GH-01.V3 waiver already covers this trigger).
-- [ ] **A2 — Remove the single-runner dependency (ADMIN).** Owner decision
-  2026-09-26: register a self-hosted Windows runner that the team controls;
-  the owner runner stays untouched (Admin-grant path rejected). Pack shipped
-  2026-09-26 on `fix/runner-pack` (`scripts/team-runner/`: idempotent
+- [ ] **A2 — Remove the single-runner dependency (ADMIN).** CLOSED
+  2026-09-26, moved to the backlog as a long-term goal (owner: not
+  immediate). The pack stays in `scripts/team-runner/` for reactivation.
+  Owner decision 2026-09-26 (record): register a self-hosted Windows runner
+  that the team controls; the owner runner stays untouched (Admin-grant path
+  rejected). Pack shipped 2026-09-26 (`scripts/team-runner/`: idempotent
   provisioner with owner-host guard + `-WhatIf`, start template,
-  REGISTER.md cutover/rollback; 8 invariant tests, mutant-proven). Awaiting
-  a team machine + human registration (REGISTER.md steps 1-3), then the
-  `release.yml` dispatch and owner-label removal (steps 4-5). See P1-12.
+  REGISTER.md cutover/rollback; 8 invariant tests, mutant-proven). See P1-12.
 - [x] **D6 — Approve the `AGENTS.md` pointer change (OWNER).** The owner
   approved it on 2026-09-24 ("edit AGENTS.md"). L-07.
   - `AGENTS.md:185-187` now reads: "Read `REVIEW.md` for the current
@@ -359,22 +359,24 @@ Fix these after P0 and before the next feature.
     PROC-04, PROC-05, PROC-06, PROC-07, PROC-08, DL-01, DL-03, DL-04, MT-01,
     MT-03, MT-05, MT-06, MT-08, MT-09 + FE-05 (one defect), FE-04, FE-06.
     Evidence per item below.
-- [ ] **P1-12 — Decouple the release jobs from the hardware host.** (In progress
-  2026-09-25: `release.yml`/`release-promote.yml` jobs now need only
+- [ ] **P1-12 — Decouple the release jobs from the hardware host.** CLOSED
+  2026-09-26, remaining runner cutover moved to the backlog as a long-term
+  goal (owner: not immediate). The completed part stays done 2026-09-25:
+  `release.yml`/`release-promote.yml` jobs now need only
   `[self-hosted, Windows, X64, localmotive-release]`; `hardware-qualify.yml`
   keeps the hardware labels; runner `DESKTOP-HPTF57N-zen5-blackwell`
   re-registered (API dereg id 21 + fresh configure) with labels
   `self-hosted,Windows,X64,zen5,blackwell,localmotive-hw,localmotive-release`,
-  online idle. Gate test updated+extended. Remaining: commit, pre-push gate,
-  push the lane, one green `release.yml` dispatch as evidence.) Today
-  `release.yml` and `release-promote.yml` need all six labels of the one
-  runner on the owner's PC.
+  online idle. Gate test updated+extended. The unexecuted remainder (one
+  green `release.yml` dispatch on a team runner) is the backlog long-term
+  goal above.)
   - Behavior: the release jobs use `[self-hosted, Windows, X64,
     localmotive-release]`. `hardware-qualify.yml` keeps the hardware labels.
     At least one runner that the team controls carries `localmotive-release`
     (A2).
-  - Evidence: one green `release.yml` run on that runner. Owner decision
-    2026-09-26: the team-controlled runner path (A2); owner runner untouched.
+  - Evidence: one green `release.yml` run on that runner (deferred with the
+    long-term goal). Owner decision 2026-09-26: the team-controlled runner
+    path (A2); owner runner untouched.
 - [x] **P1-13 — LAB-03: unify the three CDP clients.** Done 2026-09-25:
   `attach()` in `scripts/lib/cdp_client.mjs` gained `pageFilter` +
   `trustedInput` options; `verify_041.mjs` (deleted 100-line `CdpClient` +
@@ -970,6 +972,12 @@ Owner decision 2026-09-26: schedule Bounded UI input next (was unscheduled).
   update signing.
 - Modern inference methods (DSpark2, n-gram, MTP). Research first.
 - Model quality measurement with lighteval.
+- **Team-controlled release runner (LONG-TERM, was P1-12/A2, closed
+  2026-09-26, not immediate).** Reactivate when a team Windows machine
+  exists: human registration (REGISTER.md steps 1-3), one green
+  `release.yml` dispatch as evidence, then owner-label removal (steps 4-5).
+  Pack in `scripts/team-runner/`; workflow already needs only
+  `[self-hosted, Windows, X64, localmotive-release]`.
 
 ---
 
