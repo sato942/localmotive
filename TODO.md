@@ -802,6 +802,9 @@ Fix these after P0 and before the next feature.
   `release-gates` FE-07 adapter regex now tolerates the explicit generic
   (command pin unchanged); the lib.rs tuning-lifecycle pin follows the
   drain-join cleanup spelling.
+  Shipped 2026-09-26 as `f80108f` on `fix/p1-defects` (pushed); PR #66
+  lane→main opened, pr-check pending (run 36238338443). Merge only after
+  pr-check passes.
   Part 4 done 2026-09-25 (PROC-09..22):
   - PROC-09 (cleanup port-closed): REFUTED with measured evidence — this
     host reports closed loopback ports (even never-bound ones) as `TimedOut`,
