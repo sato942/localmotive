@@ -106,11 +106,12 @@ Standing release policy:
 - [x] **D5 — Decide superseded evidence (TEAM).** Decided 2026-09-24:
   exception granted; `release-evidence/0.6.0/history/` deleted. Accepted
   published evidence stays frozen.
-- [ ] **A1 — Give the team access (ADMIN).** Give each developer the Write
-  role. Give the release lead Maintain or Admin. Before the first Write grant
-  takes effect, run the direct-push refusal test (section 8, V06-GH-01.V3).
-  Owner decision 2026-09-26: DEFERRED until the first Write collaborator
-  exists (V06-GH-01.V3 waiver already covers this trigger).
+- [ ] **A1 — Give the team access (ADMIN).** CLOSED 2026-09-26, moved to the
+  backlog as a long-term goal with the runner item (owner: not immediate).
+  Owner decision 2026-09-26 (record): DEFERRED until the first Write
+  collaborator exists (V06-GH-01.V3 waiver already covers this trigger).
+  Reactivate then: Write per developer, Maintain or Admin for the release
+  lead, direct-push refusal test before the first grant takes effect.
 - [ ] **A2 — Remove the single-runner dependency (ADMIN).** CLOSED
   2026-09-26, moved to the backlog as a long-term goal (owner: not
   immediate). The pack stays in `scripts/team-runner/` for reactivation.
@@ -978,6 +979,10 @@ Owner decision 2026-09-26: schedule Bounded UI input next (was unscheduled).
   `release.yml` dispatch as evidence, then owner-label removal (steps 4-5).
   Pack in `scripts/team-runner/`; workflow already needs only
   `[self-hosted, Windows, X64, localmotive-release]`.
+- **Team access grants (LONG-TERM, was A1, closed 2026-09-26, not
+  immediate).** Reactivate with the first Write collaborator: Write per
+  developer, Maintain or Admin for the release lead, direct-push refusal
+  test (V06-GH-01.V3) before the first grant takes effect.
 
 ---
 
