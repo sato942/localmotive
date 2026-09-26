@@ -252,28 +252,27 @@ not wait for D1.
     V06-G-08.V1, V06-G-09.I1, V06-G-09.I2, V06-G-09.I3, V06-G-09.V1, and
     V06-G-10.I1 from the old tracker.
 
-- [ ] **P0-11 — Revert the host network change after the release.**
+- [x] **P0-11 — Revert the host network change after the release.** DONE
+  2026-09-26.
   - On 2026-09-22, the release host got a reversible network change: IPv4
     prefix precedence from 35 to 46, DNS order with 1.1.1.1 first, and IPv6
     unbound from Ethernet. The old tracker says: "IPv4-prefer stays until
     green."
-  - Owner decision 2026-09-26: DNS target is 9.9.9.9 first with DHCP
-    fallback (not a restore of 1.1.1.1-first). Prefix precedence and IPv6
-    binding restore to original unless the ledger notes otherwise.
-  - BLOCKED-ELEVATION 2026-09-26: this shell is not elevated
-    (`IsInRole(Administrator)` False), `Set-DnsClientServerAddress`
-    refused with PermissionDenied, and Windows `sudo` is disabled on
-    this host. Before-values recorded: Ethernet static DNS
-    {1.1.1.1, 9.9.9.9}, DHCP enabled, 192.168.1.2/24, gateway
-    192.168.1.1; `::ffff:0:0/96` precedence 46; `ms_tcpip6` on Ethernet
-    Disabled. Fallback evidence: both 9.9.9.9 and 192.168.1.1 resolve
-    google.com (nslookup, 2026-09-26). To finish, run these three lines
-    in an elevated PowerShell, then record the after-values:
-    `Set-DnsClientServerAddress -InterfaceAlias 'Ethernet' -ServerAddresses '9.9.9.9','192.168.1.1'`;
-    `netsh interface ipv6 set prefixpolicy ::ffff:0:0/96 35 4`;
-    `Enable-NetAdapterBinding -Name 'Ethernet' -ComponentID ms_tcpip6`.
-  - After P0-10 passes, restore the original settings. Record the before and
-    after values in the ledger.
+  - Owner correction 2026-09-26 (supersedes the earlier 9.9.9.9-first
+    decision): the host uses Cloudflare first and Quad9 second on both
+    families (v6 RDNSS `{2606:4700:4700::1111, 2620:fe::fe}`), so P0-11
+    resolves as keep-current. This also explains the interim observation
+    that `nslookup` answered via `one.one.one.one` while v4 briefly read
+    `{9.9.9.9, 192.168.1.1}` (dnscache had not reloaded).
+  - Applied via two UAC-elevated runs (owner approved both prompts;
+    non-elevated shell refused with PermissionDenied, Windows `sudo`
+    disabled). Run 1 set `{9.9.9.9, 192.168.1.1}`, prefix 35, IPv6 bound.
+    Run 2 corrected DNS back to `{1.1.1.1, 9.9.9.9}`.
+  - After-values 2026-09-26: Ethernet IPv4 DNS `{1.1.1.1, 9.9.9.9}`;
+    `::ffff:0:0/96` precedence 35; `ms_tcpip6` on Ethernet Enabled;
+    `nslookup github.com` via Cloudflare; gateway `192.168.1.1` ping True.
+  - `git checkout main` has no `netsh`/DNS steps, so reruns cannot mutate
+    the host again.
   - P0-1 removes the reason for this change.
 
 ---
@@ -1020,3 +1019,4 @@ To restore one file: `git show 9b09857:<path> > <path>`.
 - `L-25 | 2026-09-26 | ef18931 plus uncommitted lane changes (P2-12 MT/FE/DL-09) | npm run check; npm audit --audit-level=moderate; four workflow verifiers; verify_cleanup_matrix.ps1; cargo fmt --check; cargo clippy --locked --all-targets -- -D warnings; RUSTDOCFLAGS='-D warnings' cargo test --locked; tsc app+node; designmd lint | local logs (/tmp/npmcheck2.log, /tmp/cargotest2.log) | PASS` — MT-02/04/11/14/15 + MT-13 deletions, FE-07/08/10/12/13 + FE-09 doc, DL-09 rotation doc, two intent-preserving gate-test repins (release-gates adapter regex, lib.rs lifecycle pin). RED→GREEN→mutant for every behavioral fix (incl. a caught vacuous jsdom storage-spy test). GREEN: node tests 303/0, Vitest 268/268, audit 0 vulnerabilities, four workflow verifiers pass, cleanup 12/12, fmt clean, clippy 0 warnings, Rust 686 passed 0 failed 6 ignored (default parallelism), tsc clean both projects, design lint 0 errors 0 warnings. Watch: one `dropping_a_contained_process_terminates_descendants` failure in an earlier full-suite run under parallel load; passes solo and 14/0 ×3 in isolation plus this full green run — recorded, not a blocker. EOL hygiene: three tool-touched files normalized back to HEAD LF convention. New dep `@types/node ^22` (lockfile +19 lines).
 - `L-26 | 2026-09-26 | a81a382 (merge of 46d15a0) | PR #66, CI run 36238443887 job pr-check | — | PASS` — lane `fix/p1-defects` (56 commits: P1 fixes + P2-12 REL/LAB/RT/CORE/PROC/DL/MT/FE triage) merged to `main` after pr-check SUCCESS (9m32s on `windows-latest`). Lane branch deleted locally and remotely; checkout is `main` at `a81a382`, clean. Remaining open: P0-11 (waits for owner DNS answer), P1-12/A2 (team-controlled runner or Admin grant), A1 (permission grants + push-refusal test), backlog, section 7 risks.
 - `L-27 | 2026-09-26 | 397da7b (merge of a52a29a) | PR #70, CI run 36249866371 job pr-check | — | PASS` — backlog Bounded UI input merged to `main` after pr-check SUCCESS (10m22s on `windows-latest`). Lane branch deleted locally and remotely; checkout is `main` at `397da7b`, clean.
+- `L-28 | 2026-09-26 | host network (no commit) | two UAC-elevated runs, owner-approved | — | PASS` — P0-11 DONE. Owner correction (Cloudflare first, Quad9 second, both families) superseded the earlier 9.9.9.9-first decision. Run 1 applied `{9.9.9.9, 192.168.1.1}` + prefix 35 + IPv6 bound; run 2 corrected DNS to `{1.1.1.1, 9.9.9.9}`. After-values: v4 DNS `{1.1.1.1, 9.9.9.9}`, v6 RDNSS `{2606:4700:4700::1111, 2620:fe::fe}`, prefix 35, binding Enabled, `nslookup` via Cloudflare, gateway ping True. No repo bytes changed by the runs; only the TODO record ships.
