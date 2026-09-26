@@ -968,15 +968,18 @@ Owner decision 2026-09-26: schedule Bounded UI input next (was unscheduled).
     311 in 11.7 s, Vitest 273. Budget guard `scripts/check-ui-budget.mjs`
     wired into `npm run build` (caps 420 kB raw / 130 kB gzip, RED-proven
     at 100 kB).
-  - Stage 2 — packaged timings over CDP (next): launch-to-first-window,
-    time-to-interactive, click-to-painted for all 8 views (dashboard,
-    models, catalog, runtime, profile, tune, benchmark, about),
-    profile-save→feedback latency, benchmark-start latency. Catalog/Models
-    fetch on entry, so their switches include backend time. Same harness as
-    the packaged matrix (`scripts/lib/cdp_client.mjs`).
-  - Stage 3 — thresholds: pin measured numbers as caps (tab switch ≤100 ms
-    target; startup cap set from measurement, not guessed). Anything under
-    its cap is recorded and left alone.
+  - Stage 2 — packaged timings over CDP (MEASURED 2026-09-27 on
+    `fix/ui-stage2-timings`, `scripts/measure-ui-timings.mjs`, exe
+    20,315,136 B built from `main`): launch-to-window 282–732 ms (2 runs;
+    WebView2 init varies), time-to-interactive 400–875 ms, click-to-PAINTED
+    medians 9–13 ms across all 8 views (in-page double-rAF timing, 3 real
+    switches each; first methodology attempt measured only CDP round-trips
+    and was discarded). Cleanup verified: 0 `localmotive` processes left.
+    Not measurable without a model fixture (recorded, not skipped
+    silently): profile save→feedback, benchmark start.
+  - Stage 3 — thresholds (PINNED 2026-09-27): tab switch ≤100 ms (all pass
+    9–13 ms, left alone), launch ≤2,000 ms, TTI ≤2,500 ms. No breach, so
+    Stage 4 has no target: no optimization authorized.
   - Stage 4 — optimize only cap breaches, one at a time, re-measuring after
     each change (virtualize long lists, defer non-critical IPC on view
     entry, memoize hot renders — pick by profile, not by taste).
