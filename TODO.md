@@ -109,9 +109,11 @@ Standing release policy:
 - [ ] **A1 — Give the team access (ADMIN).** Give each developer the Write
   role. Give the release lead Maintain or Admin. Before the first Write grant
   takes effect, run the direct-push refusal test (section 8, V06-GH-01.V3).
-- [ ] **A2 — Remove the single-runner dependency (ADMIN).** Register a
-  self-hosted Windows runner that the team controls, or give the release
-  lead Admin so that the team can register one. See P1-12.
+  Owner decision 2026-09-26: DEFERRED until the first Write collaborator
+  exists (V06-GH-01.V3 waiver already covers this trigger).
+- [ ] **A2 — Remove the single-runner dependency (ADMIN).** Owner decision
+  2026-09-26: register a self-hosted Windows runner that the team controls;
+  the owner runner stays untouched (Admin-grant path rejected). See P1-12.
 - [x] **D6 — Approve the `AGENTS.md` pointer change (OWNER).** The owner
   approved it on 2026-09-24 ("edit AGENTS.md"). L-07.
   - `AGENTS.md:185-187` now reads: "Read `REVIEW.md` for the current
@@ -255,6 +257,21 @@ not wait for D1.
     prefix precedence from 35 to 46, DNS order with 1.1.1.1 first, and IPv6
     unbound from Ethernet. The old tracker says: "IPv4-prefer stays until
     green."
+  - Owner decision 2026-09-26: DNS target is 9.9.9.9 first with DHCP
+    fallback (not a restore of 1.1.1.1-first). Prefix precedence and IPv6
+    binding restore to original unless the ledger notes otherwise.
+  - BLOCKED-ELEVATION 2026-09-26: this shell is not elevated
+    (`IsInRole(Administrator)` False), `Set-DnsClientServerAddress`
+    refused with PermissionDenied, and Windows `sudo` is disabled on
+    this host. Before-values recorded: Ethernet static DNS
+    {1.1.1.1, 9.9.9.9}, DHCP enabled, 192.168.1.2/24, gateway
+    192.168.1.1; `::ffff:0:0/96` precedence 46; `ms_tcpip6` on Ethernet
+    Disabled. Fallback evidence: both 9.9.9.9 and 192.168.1.1 resolve
+    google.com (nslookup, 2026-09-26). To finish, run these three lines
+    in an elevated PowerShell, then record the after-values:
+    `Set-DnsClientServerAddress -InterfaceAlias 'Ethernet' -ServerAddresses '9.9.9.9','192.168.1.1'`;
+    `netsh interface ipv6 set prefixpolicy ::ffff:0:0/96 35 4`;
+    `Enable-NetAdapterBinding -Name 'Ethernet' -ComponentID ms_tcpip6`.
   - After P0-10 passes, restore the original settings. Record the before and
     after values in the ledger.
   - P0-1 removes the reason for this change.
@@ -352,7 +369,8 @@ Fix these after P0 and before the next feature.
     localmotive-release]`. `hardware-qualify.yml` keeps the hardware labels.
     At least one runner that the team controls carries `localmotive-release`
     (A2).
-  - Evidence: one green `release.yml` run on that runner.
+  - Evidence: one green `release.yml` run on that runner. Owner decision
+    2026-09-26: the team-controlled runner path (A2); owner runner untouched.
 - [x] **P1-13 — LAB-03: unify the three CDP clients.** Done 2026-09-25:
   `attach()` in `scripts/lib/cdp_client.mjs` gained `pageFilter` +
   `trustedInput` options; `verify_041.mjs` (deleted 100-line `CdpClient` +
@@ -737,8 +755,8 @@ Fix these after P0 and before the next feature.
     section — sequenced single-key rollover (new-key release with
     new-signed bundle while the old-signed catalog is still served, then
     switch the publish signing + `CATALOG_SIGNING_KEY_PEM`, then destroy
-    the old key); schema v2 has no dual-signature support, so a
-    dual-signed transition needs an owner-approved schema change first.
+    the old key); schema v2 has no dual-signature support. Owner decision
+    2026-09-26: single-key rollover STANDS; no dual-sign schema change.
   Part 6 done 2026-09-26 (MT-02/04/11..15):
   - MT-02 (present-but-invalid `first_token_ms` silently dropped):
     VERIFIED + fixed — strict parse now errors on a present invalid
@@ -917,10 +935,11 @@ Reopen a deferral when the missing environment exists. The team decides.
 
 ## 9. Backlog
 
-These items are not scheduled.
+Owner decision 2026-09-26: schedule Bounded UI input next (was unscheduled).
 
+- [ ] **Bounded UI input (SCHEDULED 2026-09-26):** no value outside its valid
+  range (see CORE-05).
 - UI speed and responsiveness. Measure first.
-- Bounded UI input: no value outside its valid range (see CORE-05).
 - Smarter tuning search without AI. Research the algorithms first.
 - In-app version check and automatic update. This needs a design decision on
   update signing.
