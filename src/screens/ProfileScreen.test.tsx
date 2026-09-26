@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { normalizeProfile, suggestedProfile, type LogicalModel, type RuntimeCapabilities } from "../model";
+import { normalizeProfile, profileNumberError, suggestedProfile, type LogicalModel, type RuntimeCapabilities } from "../model";
 import { ProfileScreen, type ProfileScreenProps } from "./ProfileScreen";
 
 let container: HTMLDivElement;
@@ -59,16 +59,25 @@ it("preserves a saved unsupported method without offering it as verified", () =>
   expect(select.selectedOptions[0].textContent).toContain("not verified");
 });
 
-it("renders native numeric bounds without excluding valid fractional probabilities", () => {
+it("shows typed numeric text with a numeric keyboard while the validator owns the bounds", () => {
   render();
   const input = (label: string) => [...container.querySelectorAll("label")].find((item) => item.textContent?.startsWith(label))!.querySelector("input")!;
-  expect(input("Port").min).toBe("1");
-  expect(input("Port").max).toBe("65535");
+  expect(input("Port").inputMode).toBe("numeric");
   expect(input("Port").required).toBe(true);
-  input("Port").value = "65536";
-  expect(input("Port").checkValidity()).toBe(false);
-  input("Top P").value = "0.975";
-  expect(input("Top P").checkValidity()).toBe(true);
+  // Typing commits through the noop fixture setter, but the field still
+  // shows exactly what was typed instead of eating it.
+  const proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!;
+  act(() => {
+    proto.set!.call(input("Port"), "65536");
+    input("Port").dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(input("Port").value).toBe("65536");
+  // Bounds live in the validator, not the widget: the same contract that
+  // gates Save rejects 65536 and accepts a fractional probability.
+  expect(profileNumberError({ ...suggestedProfile(model, runtime.path), port: 65536 })).toBe(
+    "Port must be between 1 and 65535.",
+  );
+  expect(profileNumberError({ ...suggestedProfile(model, runtime.path), topP: 0.975 })).toBeNull();
 });
 
 it.each([null, {}, [], 42])("keeps a malformed stored method recoverable: %j", (specType) => {

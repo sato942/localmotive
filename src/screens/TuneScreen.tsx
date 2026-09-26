@@ -1,5 +1,6 @@
 import type { Dispatch, KeyboardEvent, RefObject, SetStateAction } from "react";
 import { useEffect } from "react";
+import { useNumericText } from "../useNumericText";
 import {
   Activity, KeyRound, LogIn, RefreshCw, Save, Settings2, Sparkles, Square, SquareTerminal, Trophy, Unplug,
 } from "lucide-react";
@@ -176,6 +177,11 @@ export function TuneScreen(props: TuneScreenProps) {
   useEffect(() => () => {
     setKeyDraft("");
   }, [setKeyDraft]);
+  // Bounded UI input: the fields show exactly what was typed (blank stays
+  // blank); only parsed numbers reach the tuning validators and IPC.
+  const [trialsText, onTrialsText] = useNumericText(tuneTrials, setTuneTrials);
+  const [tokensText, onTokensText] = useNumericText(tuneTokens, setTuneTokens);
+  const [repeatsText, onRepeatsText] = useNumericText(tuneRepeats, setTuneRepeats);
   return (
     <section className="screen tune-screen">
       <div className="section-heading">
@@ -312,11 +318,11 @@ export function TuneScreen(props: TuneScreenProps) {
                 <small className="field-help">Every trial runs at exactly this context; the KV cache is sized for it.</small>
               </label>
               <label>Search trials
-                <input type="number" min="1" max="12" step="1" required value={Number.isFinite(tuneTrials) ? tuneTrials : ""} onChange={(e) => setTuneTrials(e.target.valueAsNumber)} disabled={tuning} />
+                <input type="text" inputMode="numeric" required value={trialsText} onChange={(e) => onTrialsText(e.target.value)} disabled={tuning} />
                 <small className="field-help">Measurements after the baseline (T0): local grid, then nudges{useAdvisor ? ", plus one advisor try" : ""}. Each is one server launch.</small>
               </label>
-              <label>Tokens per measurement<input type="number" min="64" max="2048" step="1" required value={Number.isFinite(tuneTokens) ? tuneTokens : ""} onChange={(e) => setTuneTokens(e.target.valueAsNumber)} disabled={tuning} /></label>
-              <label>Repeats per trial<input type="number" min="1" max="5" step="1" required value={Number.isFinite(tuneRepeats) ? tuneRepeats : ""} onChange={(e) => setTuneRepeats(e.target.valueAsNumber)} disabled={tuning} /></label>
+              <label>Tokens per measurement<input type="text" inputMode="numeric" required value={tokensText} onChange={(e) => onTokensText(e.target.value)} disabled={tuning} /></label>
+              <label>Repeats per trial<input type="text" inputMode="numeric" required value={repeatsText} onChange={(e) => onRepeatsText(e.target.value)} disabled={tuning} /></label>
             </div>
             {tuneInputError && <p className="group-note" role="status">{tuneInputError}</p>}
             <dl className="spec-list">

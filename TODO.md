@@ -937,8 +937,23 @@ Reopen a deferral when the missing environment exists. The team decides.
 
 Owner decision 2026-09-26: schedule Bounded UI input next (was unscheduled).
 
-- [ ] **Bounded UI input (SCHEDULED 2026-09-26):** no value outside its valid
-  range (see CORE-05).
+- [x] **Bounded UI input (SCHEDULED 2026-09-26, done on
+  `fix/bounded-ui-input`):** no value outside its valid range (see
+  CORE-05). Backend bounds done in P1-11; all three surfaces already gate
+  on validators pre-action. This lane fixed the residual defect: numeric
+  fields ate incomplete typing (`valueAsNumber` → NaN → `""`), against the
+  DESIGN rule. New `parseNumericText` (model.ts, 3 RED→GREEN tests) +
+  `useNumericText` hook (RED→GREEN→mutant; resyncs only on external value
+  change via ref), applied to Profile (41 fields via module-level
+  `ProfileNumberInput`), Tune (3), and the benchmark workload (4); fields
+  are text + numeric keyboard with error-as-text gating unchanged. Two
+  mechanism-pinned tests repinned to the new contract with intent intact
+  (V03 `checkValidity` → errors-list/inputMode; Profile native bounds →
+  visibility + validator bounds). Caught live: the first resync design
+  fought a noop parent (Profile test RED) — fixed with the change-ref.
+  `npm run check` EXIT 0 (node 303/0, Vitest 273/273, build OK), audit 0
+  vulns, tsc clean, design lint 0/0. No Rust changes; Rust results carried
+  from L-25.
 - UI speed and responsiveness. Measure first.
 - Smarter tuning search without AI. Research the algorithms first.
 - In-app version check and automatic update. This needs a design decision on

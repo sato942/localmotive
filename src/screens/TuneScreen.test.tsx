@@ -216,3 +216,58 @@ describe("TuneScreen presentation contract", () => {
     expect(trialChosenLabel(undefined)).toBe("UNRECORDED");
   });
 });
+
+describe("TuneScreen bounded numeric input", () => {
+  it("keeps incomplete typing visible and reports the bounds error as text", async () => {
+    const { useState } = await import("react");
+    const { tuningWorkloadError } = await import("../model");
+    function Stateful() {
+      const [trials, setTrials] = useState(6);
+      const [tokens, setTokens] = useState(256);
+      const [repeats, setRepeats] = useState(2);
+      const error = tuningWorkloadError({ targetContext: 8192, maxTrials: trials, tokens, repeats });
+      return (
+        <TuneScreen
+          {...props({
+            tuneTrials: trials,
+            setTuneTrials: setTrials,
+            tuneTokens: tokens,
+            setTuneTokens: setTokens,
+            tuneRepeats: repeats,
+            setTuneRepeats: setRepeats,
+            tuneInputError: error,
+          })}
+        />
+      );
+    }
+    act(() => {
+      root.render(<Stateful />);
+    });
+    const trialsInput = Array.from(container.querySelectorAll("label")).find((label) =>
+      (label.textContent ?? "").includes("Search trials"),
+    )?.querySelector("input") as HTMLInputElement;
+    expect(trialsInput.value).toBe("6");
+    const proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!;
+    act(() => {
+      proto.set!.call(trialsInput, "-");
+      trialsInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    // The lone "-" stays visible instead of being eaten; the bounds error
+    // reports the problem as text.
+    expect(trialsInput.value).toBe("-");
+    expect(container.querySelector('[role="status"]')?.textContent).toBe(
+      "Search trials must be a whole number between 1 and 12.",
+    );
+    act(() => {
+      proto.set!.call(trialsInput, "");
+      trialsInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(trialsInput.value).toBe("");
+    act(() => {
+      proto.set!.call(trialsInput, "0");
+      trialsInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    // An explicit zero stays a visible zero — distinct from blank.
+    expect(trialsInput.value).toBe("0");
+  });
+});

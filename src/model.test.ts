@@ -40,6 +40,7 @@ import {
   manualGpuOverride,
   modelHiddenByFitRule,
   buildCatalogQuery,
+  parseNumericText,
   retainOrDisposeListener,
   etaLabel,
   originLabel,
@@ -1286,5 +1287,27 @@ describe("buildCatalogQuery (FE-02)", () => {
     expect(query.maxBytes).toBe(8 * 1024 ** 3);
     expect(query.fitPerMille).toBe(0);
     expect(query.budgetBytes).toBe(0);
+  });
+});
+
+describe("parseNumericText (bounded UI input)", () => {
+  it("keeps blank distinct from explicit zero", () => {
+    expect(parseNumericText("", 1)).toBeNaN();
+    expect(parseNumericText("   ", 1)).toBeNaN();
+    expect(parseNumericText("0", 1)).toBe(0);
+  });
+
+  it("parses whole numbers and intermediate typing states without throwing", () => {
+    expect(parseNumericText("12", 1)).toBe(12);
+    expect(parseNumericText("-3", 1)).toBe(-3);
+    expect(parseNumericText("1e3", 1)).toBe(1000);
+    expect(parseNumericText("-", 1)).toBeNaN();
+    expect(parseNumericText("abc", 1)).toBeNaN();
+  });
+
+  it("rejects fractions on integer steps but accepts them on free steps", () => {
+    expect(parseNumericText("1.5", 1)).toBeNaN();
+    expect(parseNumericText("1.5", "any")).toBe(1.5);
+    expect(parseNumericText("0.25", "any")).toBe(0.25);
   });
 });

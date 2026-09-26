@@ -8,6 +8,7 @@ import {
   type ReactNode,
   type SelectHTMLAttributes,
 } from "react";
+import { useNumericText } from "./useNumericText";
 import {
   tauriEvidenceAdapter,
   type EvidenceAdapter,
@@ -145,6 +146,16 @@ export function V03EvidencePanel({
   const [preflight, setPreflight] = useState<PreflightResult | null>(null);
   // Audit FE-17 I1: the tested factory is the single default source.
   const [workload, setWorkload] = useState<Workload>(() => defaultWorkload());
+  // Bounded UI input: the numeric fields show exactly what was typed;
+  // only parsed numbers reach the workload validator and IPC.
+  const [promptText, onPromptText] = useNumericText(workload.promptTokens, (next) =>
+    setWorkload((current) => ({ ...current, promptTokens: next })));
+  const [generationText, onGenerationText] = useNumericText(workload.generationTokens, (next) =>
+    setWorkload((current) => ({ ...current, generationTokens: next })));
+  const [warmupsText, onWarmupsText] = useNumericText(workload.warmups, (next) =>
+    setWorkload((current) => ({ ...current, warmups: next })));
+  const [trialsText, onTrialsText] = useNumericText(workload.trials, (next) =>
+    setWorkload((current) => ({ ...current, trials: next })));
   const [benchmark, setBenchmark] = useState<BenchmarkRunResult | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   // FE-07: a cancellation request in flight is distinct from the run itself.
@@ -597,10 +608,10 @@ export function V03EvidencePanel({
 
           <div className="grid cols-3 evidence-controls">
             <Field label="Workload ID"><Input value={workload.id} onChange={(event) => setWorkload({ ...workload, id: event.target.value })} aria-label="Benchmark workload ID" /></Field>
-            <Field label="Prompt tokens"><Input type="number" min={1} max={1_048_576} step={1} required value={Number.isFinite(workload.promptTokens) ? workload.promptTokens : ""} onChange={(event) => setWorkload({ ...workload, promptTokens: event.target.valueAsNumber })} aria-label="Benchmark prompt tokens" /></Field>
-            <Field label="Generated tokens"><Input type="number" min={1} max={65_536} step={1} required value={Number.isFinite(workload.generationTokens) ? workload.generationTokens : ""} onChange={(event) => setWorkload({ ...workload, generationTokens: event.target.valueAsNumber })} aria-label="Benchmark generated tokens" /></Field>
-            <Field label="Warmups"><Input type="number" min={0} max={10} step={1} required value={Number.isFinite(workload.warmups) ? workload.warmups : ""} onChange={(event) => setWorkload({ ...workload, warmups: event.target.valueAsNumber })} aria-label="Benchmark warmups" /></Field>
-            <Field label="Trials"><Input type="number" min={1} max={100} step={1} required value={Number.isFinite(workload.trials) ? workload.trials : ""} onChange={(event) => setWorkload({ ...workload, trials: event.target.valueAsNumber })} aria-label="Benchmark trials" /></Field>
+            <Field label="Prompt tokens"><Input type="text" inputMode="numeric" required value={promptText} onChange={(event) => onPromptText(event.target.value)} aria-label="Benchmark prompt tokens" /></Field>
+            <Field label="Generated tokens"><Input type="text" inputMode="numeric" required value={generationText} onChange={(event) => onGenerationText(event.target.value)} aria-label="Benchmark generated tokens" /></Field>
+            <Field label="Warmups"><Input type="text" inputMode="numeric" required value={warmupsText} onChange={(event) => onWarmupsText(event.target.value)} aria-label="Benchmark warmups" /></Field>
+            <Field label="Trials"><Input type="text" inputMode="numeric" required value={trialsText} onChange={(event) => onTrialsText(event.target.value)} aria-label="Benchmark trials" /></Field>
             <Field label="Cache mode"><Select value={workload.cacheMode} onChange={(event) => setWorkload({ ...workload, cacheMode: event.target.value as Workload["cacheMode"] })} aria-label="Benchmark cache mode"><option value="warm">Warm</option><option value="cold">Cold (requires a fresh runtime)</option></Select></Field>
           </div>
           {workloadErrors.length > 0 && (
