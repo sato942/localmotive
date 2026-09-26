@@ -958,7 +958,13 @@ Owner decision 2026-09-26: schedule Bounded UI input next (was unscheduled).
   `npm run check` EXIT 0 (node 303/0, Vitest 273/273, build OK), audit 0
   vulns, tsc clean, design lint 0/0. No Rust changes; Rust results carried
   from L-25.
-- UI speed and responsiveness. Measure first.
+- [ ] **UI speed and responsiveness (SCHEDULED 2026-09-26, measuring on
+  `fix/ui-speed-baseline`).** Baseline 2026-09-26 (main + runner pack):
+  JS bundle 350,816 B raw / 105,791 B gzip, CSS 43,222 B / 8,882 B,
+  `vite build` 2.66 s, node tests 311 in 11.7 s, Vitest 273. Budget guard
+  `scripts/check-ui-budget.mjs` wired into `npm run build` (caps 420 kB
+  raw / 130 kB gzip, RED-proven at 100 kB). Next: packaged startup +
+  interaction timings over CDP before any optimization.
 - Smarter tuning search without AI. Research the algorithms first.
 - In-app version check and automatic update. This needs a design decision on
   update signing.
