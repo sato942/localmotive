@@ -15,7 +15,7 @@ pub mod measurement;
 mod measurement_service;
 mod tune_service;
 /// Test-only concatenation of every source file whose contents the
-/// source-pattern guards inspect. The S-27 extractions move command bodies
+/// source-pattern guards inspect. The extractions move command bodies
 /// across files; guards that read one file break or, worse, silently stop
 /// matching when code moves. Every guard reads this instead.
 #[cfg(test)]
@@ -40,12 +40,13 @@ mod proc;
 mod property_tests;
 mod runtime;
 mod runtime_service;
+use runtime_service::lock_recover;
 mod server_service;
 #[cfg(test)]
 mod test_support;
 mod tune;
 
-use core::{LaunchProfile, LogicalModel, RuntimeCapabilities};
+use core::{LaunchProfile, RuntimeCapabilities};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 #[cfg(test)]
@@ -66,11 +67,11 @@ pub(crate) struct ManagedServer {
     log_path: String,
     started_at: u64,
     /// Read-shared handles that pin the verified managed runtime content for
-    /// the whole server lifetime (audit RT-04). Dropped when the server is
+    /// the whole server lifetime. Dropped when the server is
     /// stopped or replaced.
     #[allow(dead_code)]
     runtime_lease: Option<runtime::ManagedExecutionLease>,
-    /// The bounded log drain threads for this run (audit OPS-01). Joined
+    /// The bounded log drain threads for this run. Joined
     /// after the child exits so the log file is complete before retention.
     log_drains: Vec<std::thread::JoinHandle<()>>,
 }
@@ -111,23 +112,23 @@ pub(crate) struct AppState {
     downloads: Mutex<std::collections::HashMap<String, Arc<AtomicBool>>>,
     /// One managed-runtime installation may run at a time.
     runtime_install: Mutex<Option<Arc<AtomicBool>>>,
-    /// Concurrent catalog readers share one in-flight load (P0-2, RT-06).
+    /// Concurrent catalog readers share one in-flight load.
     runtime_catalog: runtime::CatalogLoadGate,
     /// One cancellable GGUF metadata read may run at a time.
     gguf_read: Mutex<Option<Arc<AtomicBool>>>,
     /// The in-flight managed-server start, when one is pending: the child
-    /// stays reachable by Stop through its cancellation signal (audit
-    /// IPC-01), and only the worker that owns this operation ID may commit
+    /// stays reachable by Stop through its cancellation signal,
+    /// and only the worker that owns this operation ID may commit
     /// the server slot.
     starting: Mutex<Option<StartingServer>>,
-    /// One pinned health-model repair may execute at a time (audit S-04).
+    /// One pinned health-model repair may execute at a time.
     health_repair: Mutex<Option<Arc<AtomicBool>>>,
-    /// One bounded model discovery scan may run at a time (audit S-15).
+    /// One bounded model discovery scan may run at a time.
     scan: Mutex<Option<Arc<AtomicBool>>>,
     /// One managed-runtime seven-stage health run may execute at a time.
     runtime_health: Mutex<Option<Arc<AtomicBool>>>,
     /// One managed-inference operation at a time, with process generations
-    /// (audit MT-05).
+    ///.
     operations: Mutex<OperationCoordinator>,
 }
 
@@ -135,7 +136,7 @@ pub(crate) struct AppState {
 /// subsystem that launches or drives a llama-server — ordinary startup, warm
 /// benchmarks, cold attempts, and tuning sessions — reserves here first, so
 /// two owners can never run concurrently and every finalizer can detect that
-/// its server identity was replaced (audit MT-05).
+/// its server identity was replaced.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum OperationOwner {
     Server,
@@ -166,7 +167,7 @@ struct OperationCoordinator {
 
 /// RAII reservation: released on drop, and only when this exact generation
 /// is still the active one, so one operation's completion cannot release a
-/// replacement's ownership (audit MT-05 I2).
+/// replacement's ownership.
 #[derive(Debug)]
 struct OperationReservation<'a> {
     coordinator: &'a Mutex<OperationCoordinator>,
@@ -177,7 +178,7 @@ struct OperationReservation<'a> {
 impl OperationReservation<'_> {
     /// True while this reservation still owns the machine generation. A
     /// false value means results must not be finalized under the original
-    /// server identity (audit MT-05 I3).
+    /// server identity.
     fn is_current(&self) -> bool {
         self.coordinator
             .lock()
@@ -252,7 +253,7 @@ pub(crate) fn reject_if_benchmark_active(state: &AppState) -> Result<(), String>
 
 /// A Stop request may only act on the ordinary server owner: anything else
 /// owns the machine right now, and its own cancel control must run first
-/// (audit MT-05 I3).
+///.
 pub(crate) fn stop_owner_conflict(active: Option<OperationOwner>) -> Option<String> {
     match active {
         Some(OperationOwner::Server) | None => None,
@@ -263,7 +264,7 @@ pub(crate) fn stop_owner_conflict(active: Option<OperationOwner>) -> Option<Stri
     }
 }
 
-/// A managed-server start in flight (audit IPC-01). The cancellation signal
+/// A managed-server start in flight. The cancellation signal
 /// is the handle Stop uses while readiness is pending; the worker that owns
 /// `operation_id` is the only writer allowed to publish the running server.
 pub(crate) struct StartingServer {
@@ -276,7 +277,7 @@ pub(crate) struct StartingServer {
 pub(crate) struct ServerStatus {
     running: bool,
     /// Explicit lifecycle phase: idle, starting, running, or stopping
-    /// (audit IPC-01 I1).
+    ///.
     phase: String,
     pid: Option<u32>,
     profile_name: Option<String>,
@@ -287,7 +288,7 @@ pub(crate) struct ServerStatus {
     started_at: Option<u64>,
     exit_code: Option<i32>,
     /// Speculative strategy of the LAUNCHED configuration (snapshot), so the
-    /// running identity never follows the editable draft (audit FE-16).
+    /// running identity never follows the editable draft.
     spec_type: Option<String>,
     companion_linked: Option<bool>,
     result_class: evidence::FitClass,
@@ -693,6 +694,29 @@ fn lora_references(profile: &LaunchProfile) -> Result<Vec<(String, PathBuf, f32)
     Ok(references)
 }
 
+/// the profile model must be the first shard of its set.
+/// Only `-m` receives the model path, and the runtime assembles the rest.
+fn reject_non_first_shard_model(profile: &LaunchProfile) -> Result<(), String> {
+    let model = Path::new(&profile.model);
+    let Some((first, selected)) = artifact::first_shard_for_model(model)? else {
+        return Ok(());
+    };
+    if selected.split {
+        let same = fs::canonicalize(model)
+            .ok()
+            .zip(fs::canonicalize(&first).ok())
+            .is_some_and(|(model_path, first_path)| model_path == first_path);
+        if !same {
+            return Err(format!(
+                "The profile model is shard {} of its set; use the first shard: {}",
+                selected.index,
+                first.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_lora_paths(profile: &LaunchProfile) -> Result<(), String> {
     for (label, path, _) in lora_references(profile)? {
         require_regular_non_reparse_file(&label, &path)?;
@@ -703,6 +727,7 @@ fn validate_lora_paths(profile: &LaunchProfile) -> Result<(), String> {
 fn validate_profile_paths(profile: &LaunchProfile) -> Result<(), String> {
     require_regular_non_reparse_file("Runtime", Path::new(&profile.runtime))?;
     require_regular_non_reparse_file("Model", Path::new(&profile.model))?;
+    reject_non_first_shard_model(profile)?;
     if let Some(path) = profile.draft_model.as_ref().filter(|path| !path.is_empty()) {
         require_regular_non_reparse_file("Draft model", Path::new(path))?;
     }
@@ -743,10 +768,16 @@ pub(crate) fn spawn_server(
     // process starts: for a managed runtime the approved bytes stay pinned by
     // read-shared handles for as long as the returned lease lives, so the
     // content cannot change between the trust check and image/DLL loading
-    // (audit RT-04). An external runtime deliberately keeps no lease.
+    //. An external runtime deliberately keeps no lease.
     let execution_lease =
         runtime::authorize_managed_execution_lease(Path::new(&profile.runtime))
             .map_err(|message| launch_failure("validation", message, "", None, false))?;
+    // Re-check the inventory before the process starts: a file planted after
+    // acquisition is not stopped by the pinned handles alone.
+    if let Some(held) = execution_lease.as_ref() {
+        held.revalidate_inventory()
+            .map_err(|message| launch_failure("validation", message, "", None, false))?;
+    }
 
     let log_dir = std::env::temp_dir().join("localmotive");
     fs::create_dir_all(&log_dir).map_err(|error| {
@@ -759,7 +790,7 @@ pub(crate) fn spawn_server(
         )
     })?;
     // Retention runs before the new run is created; failure evidence from
-    // the newest runs survives pruning (audit OPS-01 I2/I3).
+    // the newest runs survives pruning.
     let _ = log_sink::prune_log_directory(&log_dir);
     // Each run gets its own identity; a collision or a planted link fails
     // creation instead of truncating someone else's evidence (OPS-01 I1).
@@ -1059,7 +1090,7 @@ fn query_server_effective_context(
     timeout: Duration,
 ) -> Result<u32, String> {
     // The effective-context probe goes through the centralized local client
-    // (audit MT-06), so a TLS/API-key-configured server answers it.
+    //, so a TLS/API-key-configured server answers it.
     let (status, body) = client
         .get_bytes("/props", timeout)
         .map_err(|error| format!("Could not observe llama-server effective context: {error}"))?;
@@ -1197,7 +1228,7 @@ fn launch_failure_evidence(
         log_tail: bounded_log_tail(log_path),
     };
     // Persist the failure identity beside the run log before retention can
-    // prune it (audit OPS-01 I3): the newest failure files survive cleanup.
+    // prune it: the newest failure files survive cleanup.
     if let Ok(serialized) = serde_json::to_string(&evidence) {
         let _ = log_sink::write_failure_evidence(log_path, &serialized);
     }
@@ -1206,7 +1237,7 @@ fn launch_failure_evidence(
 
 /// Block until `/health` answers 200, the child exits, or the deadline passes.
 /// The production startup path uses `wait_until_healthy_cancellable`
-/// (audit IPC-01); this non-cancellable form remains for tests.
+///; this non-cancellable form remains for tests.
 #[cfg(test)]
 fn wait_until_healthy(
     child: &mut impl HealthProcess,
@@ -1265,7 +1296,7 @@ fn wait_until_healthy_inner(
         }
         {
             // The startup health probe goes through the centralized local
-            // client (audit MT-06): a TLS/API-key-configured server answers
+            // client: a TLS/API-key-configured server answers
             // it, framing and bounds apply, and the profile's transport is
             // honored instead of a plaintext TCP guess.
             // Bound each probe so the loop still observes process exit and
@@ -1394,16 +1425,9 @@ fn wait_until_healthy_inner(
     }
 }
 
-#[tauri::command]
-async fn scan_models(root: String) -> Result<Vec<LogicalModel>, String> {
-    tauri::async_runtime::spawn_blocking(move || core::scan_models(Path::new(&root)))
-        .await
-        .map_err(|error| format!("Model scan task failed: {error}"))?
-}
-
-/// Bounded, cancellable discovery for the application path (audit S-15).
+/// Bounded, cancellable discovery for the application path.
 /// Runs off the interface thread and returns bounded diagnostics alongside
-/// the models; the legacy `scan_models` command stays for verifier scripts.
+/// the models.
 #[tauri::command]
 async fn scan_models_report(
     state: tauri::State<'_, AppState>,
@@ -1502,7 +1526,7 @@ async fn read_gguf_summary(
     state: tauri::State<'_, AppState>,
 ) -> Result<gguf::GgufSummary, String> {
     // Parsing runs in bounded background work: the flag lets a large or
-    // malformed header be cancelled without holding the UI (audit DC-08 I4).
+    // malformed header be cancelled without holding the UI.
     let cancel = Arc::new(AtomicBool::new(false));
     {
         let mut slot = state
@@ -1541,6 +1565,7 @@ async fn inspect_model_artifact(
     companions: Vec<String>,
     hash_files: bool,
 ) -> Result<artifact::ArtifactInspection, String> {
+    reject_oversized_ipc_vector("companions", companions.len(), MAX_IPC_COMPANIONS)?;
     tauri::async_runtime::spawn_blocking(move || {
         let companion_paths = companions
             .into_iter()
@@ -1550,6 +1575,23 @@ async fn inspect_model_artifact(
     })
     .await
     .map_err(|error| format!("Artifact inspection task failed: {error}"))?
+}
+
+/// Command-boundary caps for frontend-supplied vectors.
+/// The limits sit far above legitimate use (model sets hold single-digit
+/// shards, machines hold single-digit adapters) and are enforced before any
+/// allocation or file work.
+const MAX_IPC_COMPANIONS: usize = 64;
+const MAX_IPC_ADAPTER_IDS: usize = 16;
+const MAX_IPC_OVERRIDES: usize = 16;
+
+fn reject_oversized_ipc_vector(label: &str, len: usize, limit: usize) -> Result<(), String> {
+    if len > limit {
+        return Err(format!(
+            "{label} with {len} entries exceeds the {limit}-entry IPC limit"
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -1588,9 +1630,19 @@ fn unknown_memory(detail: &str, observed_at_ms: u64) -> evidence::Evidence<u64> 
 
 #[tauri::command]
 async fn preflight_model(request: PreflightRequest) -> Result<PreflightResult, String> {
+    reject_oversized_ipc_vector(
+        "selected_adapter_ids",
+        request.selected_adapter_ids.len(),
+        MAX_IPC_ADAPTER_IDS,
+    )?;
+    reject_oversized_ipc_vector(
+        "manual_overrides",
+        request.manual_overrides.len(),
+        MAX_IPC_OVERRIDES,
+    )?;
     // Preflight hashes files and probes hardware: run it on a blocking
     // worker so neither the Tauri main thread nor the async executor stalls
-    // (audit IPC-01 I4).
+    //.
     tauri::async_runtime::spawn_blocking(move || {
         let launch = prepare_launch(&request.profile)?;
         let mut hardware = runtime::detect_hardware();
@@ -1770,9 +1822,9 @@ async fn preflight_model(request: PreflightRequest) -> Result<PreflightResult, S
 #[tauri::command]
 fn preview_command(profile: LaunchProfile) -> Result<CommandPreview, String> {
     // Cheap provisional composition only: no runtime probes, no artifact
-    // hashing, no trust checks (audit FE-04 I2). Every authoritative check
+    // hashing, no trust checks. Every authoritative check
     // still runs at validation and launch. The preview names its shell and
-    // offers a lossless argv form (audit S-14.I1).
+    // offers a lossless argv form.
     let raw_args = profile.build_args()?;
     let power_shell =
         profile.escaped_command_with_args(&raw_args, core::CommandShell::PowerShell)?;
@@ -1790,7 +1842,7 @@ fn preview_command(profile: LaunchProfile) -> Result<CommandPreview, String> {
     })
 }
 
-/// The provisional launch line for the interface (audit S-14): each form
+/// The provisional launch line for the interface: each form
 /// names its shell or is a lossless argv array.
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1807,7 +1859,7 @@ fn validate_launch_profile(profile: LaunchProfile) -> Result<LaunchValidation, S
 }
 
 /// Stop-to-exit budget for a startup that is still waiting for readiness
-/// (audit IPC-01). The worker polls its cancellation signal every few
+///. The worker polls its cancellation signal every few
 /// hundred milliseconds, then terminates and reaps the contained tree; this
 /// deadline bounds how long Stop waits for that terminal state.
 pub(crate) const STARTUP_STOP_DEADLINE_SECS: u64 = 10;
@@ -1898,8 +1950,7 @@ fn suggest_port(host: String, preferred: u16) -> Result<u16, String> {
 // ---------------------------------------------------------------------------
 
 /// Where the catalog cache and any in-flight download bookkeeping live.
-/// The centralized local-server client for one validated profile (audit
-/// MT-06): honors TLS/API-key configuration and applies bounded,
+/// The centralized local-server client for one validated profile:
 /// deadline-governed requests.
 pub(crate) fn local_client(
     profile: &core::LaunchProfile,
@@ -1977,7 +2028,7 @@ fn download_target(
 struct AuthorizedDownload {
     file: catalog::CatalogFile,
     /// `curated` for signature-verified snapshot rows, `user` for validated
-    /// local overrides carrying their own exact digest (audit DC-04).
+    /// local overrides carrying their own exact digest.
     authority: &'static str,
 }
 
@@ -2028,8 +2079,7 @@ fn resolve_catalog_download(
 
 /// Start a download. Progress is emitted as `download:progress` events so a
 /// multi-gigabyte transfer never blocks the interface.
-/// Identity of a download job for UI progress and cancellation (audit
-/// FE-11): the same file downloaded to a different destination, or resolved
+/// Identity of a download job for UI progress and cancellation:
 /// at a different revision, is a different job and must not share state.
 pub(crate) fn download_event_key(
     repo: &str,
@@ -2056,13 +2106,13 @@ async fn download_catalog_file(
     let revision = revision.unwrap_or_else(|| "main".into());
     let root = catalog_service::catalog_cache_root(&app);
     let authorized = {
-        let active = state.catalog.lock().unwrap();
+        let active = lock_recover(&state.catalog);
         resolve_catalog_download(active.as_ref(), &root, &repo, &filename, &revision)?
     };
     let expected_size = authorized.file.size_bytes;
     let expected_sha256 = authorized.file.sha256;
     // Which authority admitted this transfer stays visible to the user
-    // (audit DC-04: provenance travels through the whole workflow).
+    //.
     let completion_message = if authorized.authority == "user" {
         "Download complete: checksum verified against your local override digest."
     } else {
@@ -2072,7 +2122,7 @@ async fn download_catalog_file(
     let event_key = download_event_key(&repo, &filename, &revision, &destination);
     let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     {
-        let mut running = state.downloads.lock().unwrap();
+        let mut running = lock_recover(&state.downloads);
         if running.contains_key(&lock_key) {
             return Err("That file is already downloading.".into());
         }
@@ -2129,7 +2179,7 @@ async fn download_catalog_file(
     })
     .await;
 
-    state.downloads.lock().unwrap().remove(&lock_key);
+    lock_recover(&state.downloads).remove(&lock_key);
     let result = task_result.map_err(|error| format!("Download task failed: {error}"))?;
 
     match result {
@@ -2176,7 +2226,7 @@ fn cancel_download(
     let Ok((_, lock_key)) = download_target(&destination, &filename) else {
         return false;
     };
-    match state.downloads.lock().unwrap().get(&lock_key) {
+    match lock_recover(&state.downloads).get(&lock_key) {
         Some(flag) => {
             flag.store(true, std::sync::atomic::Ordering::Relaxed);
             true
@@ -2194,6 +2244,15 @@ fn format_bytes(bytes: u64) -> String {
 #[tauri::command]
 fn download_eta(downloaded: u64, total: u64, bytes_per_second: u64) -> Option<u64> {
     download::eta_seconds(downloaded, total, bytes_per_second)
+}
+
+/// Whether the process runs with verifier-only authority overrides (audit
+/// The frontend shows a verification-mode banner while this is
+/// true. Read-only: it reports the recorded source overrides and the
+/// effective download base, and changes nothing.
+#[tauri::command]
+fn verification_mode() -> bool {
+    catalog::verification_overrides_active(&|name| std::env::var(name).ok())
 }
 
 #[tauri::command]
@@ -2234,14 +2293,13 @@ struct AboutInfo {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Record verifier-only catalog source overrides before any catalog work
-    // starts (audit GH-05); normal runs keep the shipped defaults.
+    // starts; normal runs keep the shipped defaults.
     catalog::apply_env_verify_source();
     tauri::Builder::default()
         .manage(AppState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
-            scan_models,
             inspect_runtime,
             check_runtime_health,
             describe_runtime,
@@ -2257,7 +2315,6 @@ pub fn run() {
             server_service::stop_server,
             server_service::server_status,
             server_service::read_server_log,
-            measurement_service::benchmark_server,
             measurement_service::benchmark_v2,
             measurement_service::cancel_benchmark,
             measurement_service::replay_benchmark_manifest,
@@ -2286,6 +2343,7 @@ pub fn run() {
             tune_service::cancel_tuning,
             tune_service::apply_tuning_trial_changes,
             suggest_port,
+            verification_mode,
             about_info,
             catalog_service::load_model_catalog,
             catalog_service::fetch_model_catalog,
@@ -2312,7 +2370,7 @@ pub fn run() {
                 // signal the startup worker and stop the contained child.
                 // Containment (a job object) guarantees the tree dies with
                 // this process even if the orderly stop is interrupted
-                // (audit IPC-01 I3).
+                //.
                 let state = app.state::<AppState>();
                 if let Ok(starting) = state.starting.lock() {
                     if let Some(entry) = starting.as_ref() {
@@ -2996,7 +3054,7 @@ mod release_security_tests {
 
         // The managed execution lease must be acquired after verification and
         // before the process starts, so the approved content cannot change
-        // between the trust check and image/DLL loading (audit RT-04).
+        // between the trust check and image/DLL loading.
         let lease = body
             .find("authorize_managed_execution_lease")
             .expect("spawn_server must acquire the managed execution lease");
@@ -3011,13 +3069,21 @@ mod release_security_tests {
             body.contains("execution_lease"),
             "spawn_server must return the lease to its caller"
         );
+        // The inventory is re-checked after acquisition and before the spawn
+        //: pinned handles alone do not stop a planted file.
+        let revalidate = body
+            .find("revalidate_inventory")
+            .expect("spawn_server must re-check the lease inventory");
+        assert!(
+            lease < revalidate && revalidate < spawn,
+            "the inventory recheck must run after acquisition and before the process starts"
+        );
     }
 
     #[test]
     fn every_measurement_entry_point_requires_a_validated_server_snapshot() {
         let source = crate::ALL_SOURCES;
         for (start, end) in [
-            ("fn benchmark_server(", "struct BenchmarkRunResult"),
             ("async fn benchmark_v2(", "fn cancel_benchmark("),
             ("fn replay_benchmark_manifest(", "#[cfg(test)]"),
         ] {
@@ -3030,22 +3096,6 @@ mod release_security_tests {
                 "{start} bypasses the shared validated-server gate"
             );
         }
-    }
-
-    #[test]
-    fn cold_benchmark_uses_a_fresh_runtime_for_each_attempt() {
-        let source = crate::ALL_SOURCES;
-        let body = source
-            .split_once("fn run_benchmark_snapshot(")
-            .and_then(|(_, rest)| {
-                rest.split_once("async fn benchmark_v2(")
-                    .map(|(body, _)| body)
-            })
-            .unwrap();
-
-        assert!(body.contains("CacheMode::Cold"));
-        assert!(body.contains("run_cold_workload_with"));
-        assert!(body.contains("spawn_server("));
     }
 
     #[test]
@@ -3063,75 +3113,6 @@ mod release_security_tests {
     }
 
     #[test]
-    fn r16_the_benchmark_command_releases_ownership_only_after_its_workers_exit() {
-        // R16 follow-up: the drain covers the command's own boundaries -
-        // cancellation during preparation, ordinary errors, a cleanup failure,
-        // and a worker that outlived even its own request deadline - and it
-        // runs BEFORE the benchmark slot is cleared, so replacement work can
-        // never start while an abandoned request can still be inferring. The
-        // bound is derived from the workload's own request deadline.
-        let source = crate::ALL_SOURCES;
-        // Built at runtime so this guard's own text cannot satisfy it.
-        let banned = format!("WORKER_DRAIN_{}", "CEILING");
-        assert!(
-            !source.contains(&banned),
-            "the fixed drain ceiling must not return; it sat below the default request deadline"
-        );
-        let body = source
-            .split_once("async fn benchmark_v2(")
-            .and_then(|(_, rest)| {
-                rest.split_once("fn cancel_benchmark(")
-                    .map(|(body, _)| body)
-            })
-            .unwrap();
-        let drain = body
-            .find("drain_owned_workers(&client, drain_ceiling)")
-            .expect("benchmark_v2 must drain its owned workers on every exit path");
-        let clear = body
-            .find("*active = None")
-            .expect("benchmark_v2 must clear its slot");
-        assert!(
-            drain < clear,
-            "the slot must not be cleared - and ownership not released - before the drain"
-        );
-        let bound = body
-            .find("let drain_ceiling = benchmark_drain_ceiling(&workload);")
-            .expect("the drain bound must derive from the workload deadline");
-        assert!(
-            bound < drain,
-            "the bound must be computed before the run task moves the workload"
-        );
-        assert!(
-            body.contains("publish_benchmark_slot(&state.benchmark, cancelled.clone(), || {"),
-            "the command must publish its slot through the F9-02 helper, which builds the \
-             fallible client first"
-        );
-        assert!(
-            body.contains("local_client(&server.profile)"),
-            "the command must own the run's client"
-        );
-        assert!(
-            !body.contains("*active = Some("),
-            "the slot publication must not bypass the fallible-client ordering (F9-02)"
-        );
-        let run = source
-            .split_once("fn run_benchmark_snapshot(")
-            .and_then(|(_, rest)| {
-                rest.split_once("async fn benchmark_v2(")
-                    .map(|(body, _)| body)
-            })
-            .unwrap();
-        assert!(
-            run.contains("drain_owned_workers(&client, benchmark_drain_ceiling(&workload))"),
-            "the run must drain its owned workers before it finalizes the record"
-        );
-        assert!(
-            run.contains("client: LocalHttpClient,"),
-            "the run must share the command's client so preparation workers are observable"
-        );
-    }
-
-    #[test]
     fn multi_gpu_path_requires_explicit_adapter_selection() {
         let profile = LaunchProfile {
             tensor_split: "1,1".into(),
@@ -3146,6 +3127,50 @@ mod release_security_tests {
             execution_path_for(&profile, &[]),
             evidence::ExecutionPath::Unknown
         );
+    }
+
+    #[test]
+    fn profile_model_must_be_the_first_shard_of_its_set() {
+        // a profile that points at shard 2 of a 3-shard set
+        // gets a validation error that names the first shard. Before the
+        // fix, validation accepted any shard and the launch failed late
+        // inside the runtime with no pointer at the profile.
+        let dir = std::env::temp_dir().join(format!(
+            "localmotive-first-shard-fixture-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        for index in 1..=3 {
+            std::fs::write(
+                dir.join(format!("model-{index:05}-of-00003.gguf")),
+                b"shard",
+            )
+            .unwrap();
+        }
+        let runtime = dir.join("llama-server.exe");
+        std::fs::write(&runtime, b"runtime").unwrap();
+        let second = dir.join("model-00002-of-00003.gguf");
+        let profile = LaunchProfile {
+            runtime: runtime.to_string_lossy().to_string(),
+            model: second.to_string_lossy().to_string(),
+            ..LaunchProfile::default()
+        };
+        let error = validate_profile_paths(&profile).unwrap_err();
+        assert!(
+            error.contains("shard 2")
+                && error.contains("first shard")
+                && error.contains("model-00001-of-00003.gguf"),
+            "unexpected error: {error}"
+        );
+        let first_profile = LaunchProfile {
+            model: dir
+                .join("model-00001-of-00003.gguf")
+                .to_string_lossy()
+                .to_string(),
+            ..profile
+        };
+        assert!(validate_profile_paths(&first_profile).is_ok());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -3499,6 +3524,61 @@ mod release_security_tests {
         let _ = std::fs::remove_file(path);
     }
 
+    #[test]
+    fn inspect_model_artifact_refuses_an_oversized_companion_list() {
+        // frontend-supplied vectors are capped at the command
+        // boundary, before allocation and file work.
+        let companions = vec!["companion.gguf".to_string(); MAX_IPC_COMPANIONS + 1];
+        let error = tauri::async_runtime::block_on(inspect_model_artifact(
+            "model.gguf".into(),
+            companions,
+            false,
+        ))
+        .expect_err("an oversized companion list must be refused");
+        assert!(
+            error.contains("companions"),
+            "the refusal must name the payload: {error}"
+        );
+    }
+
+    #[test]
+    fn preflight_model_refuses_oversized_ipc_vectors() {
+        // Adapter IDs and manual overrides are capped before preflight hashes
+        // files or probes hardware.
+        let profile = LaunchProfile {
+            name: "fixture".into(),
+            ..LaunchProfile::default()
+        };
+        let error = tauri::async_runtime::block_on(preflight_model(PreflightRequest {
+            profile: profile.clone(),
+            selected_adapter_ids: vec!["gpu-0".to_string(); MAX_IPC_ADAPTER_IDS + 1],
+            manual_overrides: Vec::new(),
+            reserve_bytes: None,
+        }))
+        .expect_err("oversized adapter lists must be refused");
+        assert!(
+            error.contains("selected_adapter_ids"),
+            "the refusal must name the payload: {error}"
+        );
+        let override_row = runtime::HardwareOverride {
+            adapter_id: "gpu-0".into(),
+            dedicated_bytes: None,
+            shared_bytes: None,
+            note: String::new(),
+        };
+        let error = tauri::async_runtime::block_on(preflight_model(PreflightRequest {
+            profile,
+            selected_adapter_ids: Vec::new(),
+            manual_overrides: vec![override_row; MAX_IPC_OVERRIDES + 1],
+            reserve_bytes: None,
+        }))
+        .expect_err("oversized override lists must be refused");
+        assert!(
+            error.contains("manual_overrides"),
+            "the refusal must name the payload: {error}"
+        );
+    }
+
     #[cfg(windows)]
     #[test]
     fn executable_validation_rejects_a_parent_directory_reparse_point() {
@@ -3569,14 +3649,14 @@ mod release_security_tests {
 }
 
 #[cfg(test)]
-mod ipc01_startup_tests {
+mod startup_tests {
     use super::*;
     use crate::server_service::startup_is_current;
 
     #[test]
-    fn ipc01_startup_commit_requires_the_operation_to_still_own_the_slot() {
+    fn startup_commit_requires_the_operation_to_still_own_the_slot() {
         // A late completion from an older operation can never publish
-        // (audit IPC-01 I3): mismatched IDs, superseded reservations, or a
+        //: mismatched IDs, superseded reservations, or a
         // cancelled start must all be refused.
         let state = AppState::default();
         let cancel = AtomicBool::new(false);
@@ -3590,7 +3670,7 @@ mod ipc01_startup_tests {
             !startup_is_current(&state, operation_id, &cancel),
             "no starting slot must not publish"
         );
-        *state.starting.lock().unwrap() = Some(StartingServer {
+        *lock_recover(&state.starting) = Some(StartingServer {
             operation_id,
             cancel: Arc::new(AtomicBool::new(false)),
         });
@@ -3607,13 +3687,45 @@ mod ipc01_startup_tests {
     }
 
     #[test]
-    fn ipc01_startup_never_holds_the_server_lock_across_the_readiness_wait() {
+    fn startup_builds_the_client_before_spawning() {
+        // `&local_client(&profile)?` used to sit between the
+        // spawn and the health wait, so a client failure returned without
+        // `clear_starting` and without reaping the child. The client must be
+        // built before the spawn, while there is still nothing to clean up.
+        let source = include_str!("server_service.rs");
+        let worker = source
+            .split("fn start_server_worker(")
+            .nth(1)
+            .unwrap()
+            .split("#[tauri::command]")
+            .next()
+            .unwrap();
+        let client = worker
+            .find("local_client(&profile)")
+            .expect("the worker must build the readiness client");
+        let spawn = worker
+            .find("spawn_server(&profile")
+            .expect("the worker must spawn the server");
+        assert!(
+            client < spawn,
+            "the client must be built before the child is spawned"
+        );
+        let wait = worker
+            .find("wait_until_healthy_cancellable")
+            .expect("the worker must wait cancellably");
+        assert!(
+            worker[wait..].contains("&client,"),
+            "the readiness wait must reuse the prebuilt client"
+        );
+    }
+
+    #[test]
+    fn startup_never_holds_the_server_lock_across_the_readiness_wait() {
         // The audited defect: the server mutex was held for the whole 600 s
-        // health wait, freezing every other command (audit IPC-01). The
+        // health wait, freezing every other command. The
         // worker must reach the cancellable wait before any server lock,
         // and the commit must check ownership before publishing.
-        // The server lifecycle commands moved to server_service.rs (S-27
-        // slice 3a); the guard follows the code.
+        // The server lifecycle commands moved to server_service.rs; the guard follows the code.
         let source = include_str!("server_service.rs");
         let worker = source
             .split("fn start_server_worker(")
@@ -3663,14 +3775,14 @@ mod ipc01_startup_tests {
     }
 
     #[test]
-    fn ipc01_expensive_commands_run_on_blocking_workers() {
+    fn expensive_commands_run_on_blocking_workers() {
         // Every command the audit named as expensive must run its blocking
         // half on a worker, never on the Tauri main thread or the async
-        // executor (audit IPC-01 I4).
+        // executor.
         let source = crate::ALL_SOURCES;
         for (start, end) in [
             (
-                "async fn scan_models(root: String)",
+                "async fn scan_models_report(",
                 "async fn inspect_runtime(path: String)",
             ),
             (
@@ -3682,7 +3794,6 @@ mod ipc01_startup_tests {
                 "async fn preflight_model(request: PreflightRequest)",
                 "fn preview_command",
             ),
-            ("async fn benchmark_server(", "struct BenchmarkRunResult"),
             (
                 "async fn replay_benchmark_manifest(",
                 "fn replay_benchmark_manifest_worker",
@@ -3732,10 +3843,10 @@ mod catalog_command_tests {
     }
 
     #[test]
-    fn dc01_local_load_publishes_state_inside_the_cooldown_and_authorizes_downloads() {
+    fn local_load_publishes_state_inside_the_cooldown_and_authorizes_downloads() {
         // A restart with a new app state, a signed cache, and a fresh stamp
         // must browse and authorize downloads without any network request
-        // (audit DC-01 I2/V1/V2). This path contains no HTTP client, so no
+        //. This path contains no HTTP client, so no
         // network request is structurally possible.
         let root = unique_dir("localmotive-lib-load");
         let (body, signature) = shipped_signed_pair();
@@ -3755,7 +3866,7 @@ mod catalog_command_tests {
         assert!(snapshot.refresh_error.is_none());
 
         // The published state authorizes a download of one of its own rows...
-        let active = slot.lock().unwrap();
+        let active = lock_recover(&slot);
         let state_catalog = active.as_ref().expect("local load must publish state");
         let (model, file) = state_catalog
             .models
@@ -3785,7 +3896,7 @@ mod catalog_command_tests {
     }
 
     #[test]
-    fn dc01_local_load_without_a_cache_publishes_the_bundled_catalog() {
+    fn local_load_without_a_cache_publishes_the_bundled_catalog() {
         // First start with no cache: the bundled snapshot is authoritative
         // immediately, so facets and authorization work before any refresh.
         let root = unique_dir("localmotive-lib-bundled");
@@ -3794,7 +3905,7 @@ mod catalog_command_tests {
         catalog_service::publish_loaded_catalog(&slot, &snapshot);
 
         assert_eq!(snapshot.origin, "bundled");
-        let active = slot.lock().unwrap();
+        let active = lock_recover(&slot);
         assert!(active
             .as_ref()
             .is_some_and(|catalog| !catalog.models.is_empty()));
@@ -3802,10 +3913,10 @@ mod catalog_command_tests {
     }
 
     #[test]
-    fn dc07_database_open_and_migration_failures_select_verified_rows() {
+    fn database_open_and_migration_failures_select_verified_rows() {
         // A mirror that cannot be opened or migrated must not empty the tab
         // or fail the command: verified memory wins, else the bundled rows
-        // (audit DC-07 I4/V3).
+        //.
         let root = unique_dir("localmotive-lib-db");
 
         // (a) The database path is a directory: open fails.
@@ -3826,11 +3937,11 @@ mod catalog_command_tests {
 }
 
 #[cfg(test)]
-mod fe11_download_identity_tests {
+mod download_identity_tests {
     use super::download_event_key;
 
     #[test]
-    fn fe11_download_job_identity_includes_destination_and_revision() {
+    fn download_job_identity_includes_destination_and_revision() {
         let a = download_event_key("org/repo", "model.gguf", "main", "C:/models");
         let b = download_event_key("org/repo", "model.gguf", "main", "D:/other");
         let c = download_event_key("org/repo", "model.gguf", "abc123", "C:/models");
@@ -3840,7 +3951,7 @@ mod fe11_download_identity_tests {
     }
 
     #[test]
-    fn fe11_progress_emits_use_the_job_identity_helper() {
+    fn progress_emits_use_the_job_identity_helper() {
         // The event key must come from the helper so the frontend contract
         // cannot drift from the backend identity.
         let source = crate::ALL_SOURCES;
@@ -3859,7 +3970,7 @@ mod fe11_download_identity_tests {
 mod runtime_service_source_tests {
     #[test]
     fn runtime_service_commands_share_the_catalog_load() {
-        // Source guard (audit S-27 slice 2, P0-2): the fetch command shares
+        // Source guard: the fetch command shares
         // one catalog load through the gate, while the install command keeps
         // the exclusive runtime_install slot. Mutations QA1/QA2 initially
         // passed without these assertions, which is why they exist.
@@ -3871,7 +3982,7 @@ mod runtime_service_source_tests {
             .split("fn managed_runtime_root(")
             .next()
             .unwrap();
-        // P0-2 (RT-06): the fetch command shares one in-flight catalog load
+        // the fetch command shares one in-flight catalog load
         // through the gate instead of failing with `Busy`. The behavioral
         // proof lives in the `CatalogLoadGate` concurrency tests in
         // `runtime.rs`; this guard pins the wiring.
@@ -3903,9 +4014,10 @@ mod runtime_service_source_tests {
             .unwrap();
         // The install command guards through the single runtime_install slot:
         // it must refuse a second install, keep the slot for the run, and
-        // clear it afterwards.
+        // clear it afterwards. The slot is taken through `lock_recover`
+        // (poison recovery), which locks the same mutex.
         let slot = install
-            .find("state.runtime_install.lock()")
+            .find("lock_recover(&state.runtime_install)")
             .expect("install_managed_runtime must take the runtime_install slot");
         let refusal = install
             .find("already active")
@@ -3914,7 +4026,7 @@ mod runtime_service_source_tests {
             .find("runtime::install_runtime")
             .expect("install_managed_runtime must call the installer");
         let cleared = install
-            .find("*state.runtime_install.lock().unwrap() = None;")
+            .find("*lock_recover(&state.runtime_install) = None;")
             .expect("install_managed_runtime must clear the slot afterwards");
         assert!(
             slot < refusal && refusal < install_work && install_work < cleared,
@@ -3925,13 +4037,13 @@ mod runtime_service_source_tests {
 
 mod catalog_persistence_source_tests {
     #[test]
-    fn dc03_fetch_mirrors_healthy_databases_and_only_recovers_after_migration_failure() {
+    fn fetch_mirrors_healthy_databases_and_only_recovers_after_migration_failure() {
         // Source guard for the audited inverted branch: a healthy database
         // must be updated transactionally through mirror_verified_catalog,
         // and only a confirmed migration failure may enter quarantine-based
-        // recovery (audit DC-03). Swapping these branches must fail here.
+        // recovery. Swapping these branches must fail here.
         // The fetch/mirror command moved to `catalog_service.rs` (audit
-        // S-27 I1); the guard follows the code so the invariant stays
+        // the guard follows the code so the invariant stays
         // enforced at the new boundary.
         let source = include_str!("catalog_service.rs");
         let block = source
@@ -3959,10 +4071,10 @@ mod catalog_persistence_source_tests {
     }
 
     #[test]
-    fn dc03_fetch_holds_the_shared_refresh_guard_for_the_whole_refresh() {
+    fn fetch_holds_the_shared_refresh_guard_for_the_whole_refresh() {
         // The command must take the single in-flight guard before the network
-        // work (audit DC-03/DC-04 shared authority): removing it would let two
-        // Refresh clicks start two fetches, which the S-27 extraction must not
+        // work: removing it would let two
+        // Refresh clicks start two fetches, which the extraction must not
         // silently drop (mutation PA1 initially passed without this guard).
         let source = include_str!("catalog_service.rs");
         let fetch = source
@@ -4033,8 +4145,8 @@ mod override_authority_tests {
     }
 
     #[test]
-    fn dc04_user_overrides_authorize_with_their_own_digest_and_only_when_marked() {
-        // The explicit curated-versus-user split (audit DC-04): a saved,
+    fn user_overrides_authorize_with_their_own_digest_and_only_when_marked() {
+        // The explicit curated-versus-user split: a saved,
         // validated override authorizes a download with its exact stored
         // digest; removal and provenance flags change that immediately, and
         // nothing here ever acquires signed curated status.
@@ -4094,7 +4206,7 @@ mod override_authority_tests {
     }
 
     #[test]
-    fn dc04_curated_authority_wins_and_unknown_rows_never_authorize() {
+    fn curated_authority_wins_and_unknown_rows_never_authorize() {
         // A curated row resolves from the signed snapshot even when a user
         // store also exists; an unknown filename resolves nowhere (DC-04).
         let root = crate::catalog_command_tests::unique_dir("localmotive-lib-dc04-curated");
@@ -4132,7 +4244,7 @@ mod override_authority_tests {
 mod tuning_lifecycle_source_tests {
     #[test]
     fn tuning_lifecycle_uses_cancellable_paths_and_reports_cleanup_failures() {
-        // Audit MT-04: the live tuner must use the cancellable health wait and
+        // the live tuner must use the cancellable health wait and
         // the cancellable benchmark, and a failed trial-server cleanup must be
         // surfaced instead of discarded. Reverting any of these fails here.
         let source = crate::ALL_SOURCES;
@@ -4140,7 +4252,7 @@ mod tuning_lifecycle_source_tests {
             .split("impl tune::Bench for LiveBench<'_> {")
             .nth(1)
             .expect("LiveBench must implement tune::Bench")
-            .split("// Give the OS a moment to release the port")
+            .split("fn wait_for_port_release(")
             .next()
             .unwrap();
         assert!(
@@ -4152,8 +4264,8 @@ mod tuning_lifecycle_source_tests {
             "the live bench must not use the non-cancellable health wait"
         );
         assert!(
-            bench_block.contains("benchmark_server_cancellable("),
-            "the live bench must use the cancellable benchmark"
+            bench_block.contains("measure_trial_summary("),
+            "the live bench must use the v2 trial probe"
         );
         assert!(
             !bench_block.contains("core::benchmark_server("),
@@ -4167,8 +4279,12 @@ mod tuning_lifecycle_source_tests {
             .next()
             .unwrap();
         assert!(
-            tail.contains("let cleanup = child.terminate_and_wait();"),
+            tail.contains("child.terminate_and_wait()"),
             "the cleanup result must be captured"
+        );
+        assert!(
+            tail.contains("join_log_drains(drains)"),
+            "the trial log drains are part of cleanup"
         );
         assert!(
             tail.contains("could not be stopped cleanly"),
@@ -4194,22 +4310,22 @@ mod operation_coordinator_tests {
         let state = AppState::default();
         assert!(active_operation_owner(&state.operations).is_none());
         assert!(reject_if_benchmark_active(&state).is_ok());
-        *state.benchmark.lock().unwrap() = Some(std::sync::Arc::new(
+        *lock_recover(&state.benchmark) = Some(std::sync::Arc::new(
             std::sync::atomic::AtomicBool::new(false),
         ));
         assert!(active_operation_owner(&state.operations).is_none());
         let err = reject_if_benchmark_active(&state).unwrap_err();
         assert!(err.contains("already running"), "{err}");
         assert!(benchmark_slot_occupied(&state));
-        *state.benchmark.lock().unwrap() = None;
+        *lock_recover(&state.benchmark) = None;
         assert!(reject_if_benchmark_active(&state).is_ok());
     }
 
     #[test]
-    fn mt05_one_operation_owns_the_machine_and_generations_advance() {
+    fn one_operation_owns_the_machine_and_generations_advance() {
         // The audited interleavings all relied on two subsystems passing
         // their own "nothing running" checks; the reservation closes that
-        // window with one atomic slot (audit MT-05 V1).
+        // window with one atomic slot.
         let coordinator = coordinator();
         let server = reserve_operation(&coordinator, OperationOwner::Server).unwrap();
         assert_eq!(
@@ -4239,10 +4355,10 @@ mod operation_coordinator_tests {
     }
 
     #[test]
-    fn mt05_a_stale_reservation_cannot_release_or_finalize_a_replacement() {
+    fn a_stale_reservation_cannot_release_or_finalize_a_replacement() {
         // A stopped server's work must not (a) look current after a
         // replacement acquired the slot or (b) release the replacement when
-        // its own cleanup finally runs (audit MT-05 V2).
+        // its own cleanup finally runs.
         let coordinator = coordinator();
         let first = reserve_operation(&coordinator, OperationOwner::Server).unwrap();
         let stale = OperationReservation {
@@ -4268,7 +4384,7 @@ mod operation_coordinator_tests {
     }
 
     #[test]
-    fn mt05_stop_rejects_while_another_owner_holds_the_machine() {
+    fn stop_rejects_while_another_owner_holds_the_machine() {
         assert!(stop_owner_conflict(None).is_none());
         assert!(stop_owner_conflict(Some(OperationOwner::Server)).is_none());
         for owner in [
@@ -4283,12 +4399,12 @@ mod operation_coordinator_tests {
     }
 
     #[test]
-    fn mt05_every_launching_command_reserves_the_operation_slot() {
+    fn every_launching_command_reserves_the_operation_slot() {
         // Source guard: each managed-inference entry point reserves its owner
         // kind, Stop consults the ownership gate, and both benchmark paths
-        // discard results whose server identity was replaced (audit MT-05).
+        // discard results whose server identity was replaced.
         // The launching commands span lib.rs and the extracted service modules
-        // (S-27); concatenating the sources keeps every pair visible to the
+        //; concatenating the sources keeps every pair visible to the
         // guard without weakening it.
         let source = crate::ALL_SOURCES;
         for (start, end, expected) in [
@@ -4355,7 +4471,7 @@ mod ipc_contract_tests {
     use super::*;
 
     #[test]
-    fn s18_shared_ipc_contract_fixture_matches_rust_serialization() {
+    fn shared_ipc_contract_fixture_matches_rust_serialization() {
         let raw = include_str!("../../scripts/tests/fixtures/ipc-contract.json");
         let fixture: serde_json::Value = serde_json::from_str(raw).unwrap();
         let types = &fixture["types"];
@@ -4396,7 +4512,7 @@ mod ipc_contract_tests {
             "CatalogDrop wire shape drifted"
         );
 
-        // P0-4 (FE-02): the catalog query wire shape. The frontend must
+        // the catalog query wire shape. The frontend must
         // send these exact camelCase keys; snake_case keys are ignored.
         let query = catalog::CatalogQuery {
             text: "qwen".into(),

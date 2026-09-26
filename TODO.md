@@ -265,45 +265,87 @@ not wait for D1.
 
 Fix these after P0 and before the next feature.
 
-- [ ] **P1-1 — CORE-04:** Rust rejects a launch profile whose model is not the
-  first shard of its set. RED test: a profile that points at shard 2 of a
-  3-shard set gets a validation error that names the first shard.
-- [ ] **P1-2 — MT-10:** The cloud brief sends only the fields that the
-  disclosure lists. Remove `adapterId`, `compatibilityId`, and `physicalId`
-  from the payload, or add them to the disclosure. RED test on the serialized
-  brief in minimal mode and in full mode.
-- [ ] **P1-3 — RT-02:** Install keeps the rollback copy until the final
-  verification passes. RED test: make the final verification fail and expect
-  the previous runtime back in place.
-- [ ] **P1-4 — LAB-04:** Delete `scripts/g05_vitems_c.mjs`, or make it stop
-  only the processes that it started, by PID. Search all scripts and
-  workflows for stops by name or by port, and remove each one.
-- [ ] **P1-5 — REL-10:** Where a workflow stops the app, stop the whole
-  process tree that the step started.
-- [ ] **P1-6 — PROC-01:** Put the child process in the job object before it
-  runs: create it suspended, assign it, then resume it.
-- [ ] **P1-7 — FE-01:** Clear each credential draft on every exit path,
-  including a failed save and an unmount.
-- [ ] **P1-8 — DL-02:** Use checked arithmetic for GGUF split metadata. RED
-  test with a split number of `u64::MAX`.
-- [ ] **P1-9 — CORE-01, CORE-06:** Accept the verification overrides only with
+- [x] **P1-1 — CORE-04:** Rust rejects a launch profile whose model is not the
+  first shard of its set. Done 2026-09-25: `artifact::first_shard_for_model`
+  plus `reject_non_first_shard_model` in launch-path validation; shard 2 of 3
+  fails naming shard 1. Non-shard names pass through (no extension rule).
+- [x] **P1-2 — MT-10:** The cloud brief sends only the fields that the
+  disclosure lists. Done 2026-09-25: `apply_disclosure` strips `adapterId`,
+  `compatibilityId`, `physicalId` from every adapter in both modes; names,
+  VRAM and driver versions stay. RED plus mutation-proven test on the wire.
+- [x] **P1-3 — RT-02:** Install keeps the rollback copy until the final
+  verification passes. Done 2026-09-25: `replace_verified_runtime_directory`
+  returns the backup; `finalize_runtime_replacement` removes it on verify
+  success and restores it on verify failure. RED plus mutation-proven test.
+- [x] **P1-4 — LAB-04:** Delete `scripts/g05_vitems_c.mjs`, or make it stop
+  only the processes that it started, by PID. Done 2026-09-25: deleted the
+  dead name-killing script (no callers; REVIEW marked it DELETE). Repo sweep:
+  every surviving stop is PID-scoped. Guard test RED plus mutation-proven.
+- [x] **P1-5 — REL-10:** Where a workflow stops the app, stop the whole
+  process tree that the step started. Done 2026-09-25: `ci.yml` smoke stop
+  plus lab watchdog and `Stop-LabApp` use `taskkill /T` on the owned PID
+  with immediate exit-code checks. RED plus mutation-proven workflow test.
+- [x] **P1-6 — PROC-01:** Put the child process in the job object before it
+  runs: create it suspended, assign it, then resume it. Done 2026-09-25:
+  `spawn_contained` sets `CREATE_SUSPENDED`, assigns, then releases via new
+  `containment::resume_process` (ToolHelp; fail-closed). Behavioral test
+  plus ordering guard, RED and mutation-proven.
+- [x] **P1-7 — FE-01:** Clear each credential draft on every exit path,
+  including a failed save and an unmount. Done 2026-09-25: both saves clear
+  the failed attempt (newer typing survives); both screens clear on unmount.
+  4 App-level tests, RED plus mutation-proven. Vitest 288/288 (14 files).
+- [x] **P1-8 — DL-02:** Use checked arithmetic for GGUF split metadata. RED
+  test with a split number of `u64::MAX`. Done 2026-09-25:
+  `split_metadata_verdict` uses `checked_add`; overflow is Mismatch with the
+  raw value kept. RED (debug panic) plus wrap-mutant proven. The release
+  `overflow-checks` profile flag stays untouched as out of scope.
+- [x] **P1-9 — CORE-01, CORE-06:** Accept the verification overrides only with
   the isolated root. Show a verification-mode banner while an override is
   active. Document the WebView2 remote-debugging variable in `SECURITY.md`.
-- [ ] **P1-10 — RT-01, RT-03:** Close the same-user races with handle-based
-  opens and the existing execution lease.
-- [ ] **P1-11 — Check the 31 unverified High findings in `REVIEW.md`.**
-  For each finding, reproduce or refute it. Record VERIFIED or REFUTED in the
-  ledger. Add a P1 item for each verified defect.
-  - Release and lab: REL-11, LAB-03, LAB-05, LAB-06.
-  - Documentation: DOC-05, DOC-07.
-  - Runtime: RT-04, RT-07, RT-10.
-  - Core: CORE-03, CORE-05.
-  - Process and health: PROC-02, PROC-03, PROC-04, PROC-05, PROC-06,
-    PROC-07, PROC-08.
-  - Downloads and cloud: DL-01, DL-03, DL-04.
-  - Measurement: MT-01, MT-03, MT-05, MT-06, MT-07, MT-08, MT-09.
-  - Frontend: FE-04, FE-05, FE-06.
-- [ ] **P1-12 — Decouple the release jobs from the hardware host.** Today
+  Done 2026-09-25: root-binding already held (existing tests); added the
+  read-only `verification_mode` command plus banner (`warning-band`,
+  role=status) and the SECURITY.md section. Rust 638/638, Vitest 290/290.
+- [x] **P1-10 — RT-01, RT-03:** Close the same-user races with handle-based
+  opens and the existing execution lease. (2026-09-25: RT-01 — new
+  `download::write_trusted_record` writes `runtime.json` through the retained
+  staging capability: path-level refusal, open without truncate, handle check
+  (one link, no reparse, final-path parent), truncate+write through the
+  verified handle; staging guard now drops after `finalize`, not before
+  publication; deleted `fs::write` path. RT-03 — probe guards return
+  `Option<ManagedExecutionLease>` and `run_runtime_probe_with` holds it
+  across spawn+output; `inspect`+`health` use `authorize_managed_execution_lease`;
+  deleted the orphaned `()` guards and migrated the RT-02 authorization test
+  to the lease. RED: hard-link victim clobbered under old `fs::write`;
+  compile-RED on new guard type. Mutation: path-check skip still refused
+  (handle layer independent; also caught truncate-before-verify flaw, fixed to
+  verify-then-set_len); lease-drop mutant failed the holding test. Rust
+  642/0, clippy clean, node 290/290.)
+- [x] **P1-11 — Check the 31 unverified High findings in `REVIEW.md`.**
+  Done 2026-09-25: all 31 checked against current code (tracker + code +
+  tests). REVIEW.md statuses updated to `VERIFIED 2026-09-25 (P1-11)` (24)
+  or `REFUTED 2026-09-25 (P1-11)` (7). New P1 items below for the verified
+  defects.
+  - REFUTED (7): REL-11 (release.yml is 309 lines, no inline lab JS — cut by
+    P0-7); LAB-06 (shared `catalog-schema-cases.json` conformance both
+    sides + DC-10 envelope checks); DOC-05 (README/matrices agree on 0.6.5;
+    fixed one stale "no 0.6.x release" sentence in SUPPORT-MATRIX.md);
+    DOC-07 (single 43-checkbox TODO.md; cited history files not in tree);
+    RT-07 (`ScanLimits` depth 12/entries 100k + `safe_directory`
+    no-follow discovery); CORE-03 (tuning holds slot + RAII reservation to
+    completion; cancel sets a flag without releasing); MT-07 (tuning uses
+    the cancellable MT-04 path, not the legacy worker).
+  - VERIFIED (24): LAB-03, LAB-05, RT-04, RT-10, CORE-05, PROC-02, PROC-03,
+    PROC-04, PROC-05, PROC-06, PROC-07, PROC-08, DL-01, DL-03, DL-04, MT-01,
+    MT-03, MT-05, MT-06, MT-08, MT-09 + FE-05 (one defect), FE-04, FE-06.
+    Evidence per item below.
+- [ ] **P1-12 — Decouple the release jobs from the hardware host.** (In progress
+  2026-09-25: `release.yml`/`release-promote.yml` jobs now need only
+  `[self-hosted, Windows, X64, localmotive-release]`; `hardware-qualify.yml`
+  keeps the hardware labels; runner `DESKTOP-HPTF57N-zen5-blackwell`
+  re-registered (API dereg id 21 + fresh configure) with labels
+  `self-hosted,Windows,X64,zen5,blackwell,localmotive-hw,localmotive-release`,
+  online idle. Gate test updated+extended. Remaining: commit, pre-push gate,
+  push the lane, one green `release.yml` dispatch as evidence.) Today
   `release.yml` and `release-promote.yml` need all six labels of the one
   runner on the owner's PC.
   - Behavior: the release jobs use `[self-hosted, Windows, X64,
@@ -311,6 +353,172 @@ Fix these after P0 and before the next feature.
     At least one runner that the team controls carries `localmotive-release`
     (A2).
   - Evidence: one green `release.yml` run on that runner.
+- [x] **P1-13 — LAB-03: unify the three CDP clients.** Done 2026-09-25:
+  `attach()` in `scripts/lib/cdp_client.mjs` gained `pageFilter` +
+  `trustedInput` options; `verify_041.mjs` (deleted 100-line `CdpClient` +
+  socket code, keeps its Localmotive page filter + trusted clicks),
+  `drive_console_check.mjs`, and `verify_installer_payloads.mjs` (preserves its
+  tolerated no-page/probe-error observations) attach through the lib. Only
+  `new WebSocket(` site left is the lib. RED: single-owner test failed with 4
+  sites; mutant re-add failed it again. `npm run check` 290/290, audit 0,
+  verifiers pass.
+- [x] **P1-14 — LAB-05: delete or wire the 15 dead g05 drivers.** Done 2026-09-25:
+  deleted via `git rm` (`g05_cancellation`, `g05_churn_repro`, `g05_dc01`,
+  `g05_hardlink_drive`, `g05_health`, `g05_launch_benchmark`, `g05_mt01d`,
+  `g05_partial_resume`, `g05_partial_retention`, `g05_run_cancel`, `g05_state`,
+  `g05_stop_supervision`, `g05_tamper_dll`, `g05_v2_cancel`, `g05_vitems_d`).
+  Six referenced drivers stay (workflows + tests name them). RED: new
+  external-reference test; mutant unreferenced file failed it. `npm run check`
+ CHECK_EXIT:0, release-gates 171/0.
+- [x] **P1-15 — RT-04: pin the directory inventory for the lease lifetime.** Done
+  2026-09-25: `ManagedExecutionLease` carries `expected_files` +
+  `revalidate_inventory()`; called after acquisition in `run_runtime_probe_with`,
+  `spawn_server` (covers server-service + cold-bench launches), with the health
+  context lease site also carrying the list. RED `E0599`, mutant always-Ok
+  failed, source-order guards extended. fmt clean, clippy clean, cargo 643/0.
+- [x] **P1-16 — RT-10: validate the runtime root before creating it.** Done
+  2026-09-25: new `validate_install_root_before_create` (ancestors first, then
+  existing-leaf `safe_directory`) runs before `create_dir_all` in
+  `install_runtime`. RED `E0425`, mutant call-site removal failed the order
+  guard, fmt/clippy clean, cargo 646/0.
+- [x] **P1-17 — CORE-05: bound IPC vectors at the command boundary.** Done
+  2026-09-25: `MAX_IPC_COMPANIONS` 64 / `MAX_IPC_ADAPTER_IDS` 16 /
+  `MAX_IPC_OVERRIDES` 16 + `reject_oversized_ipc_vector`, enforced in
+  `inspect_model_artifact` + `preflight_model` before allocation/work. RED
+  `E0425`, cap-removal mutant failed, fmt/clippy clean, cargo 648/0.
+- [x] **P1-18 — PROC-02: join pipe readers with a deadline after failed cleanup.**
+  Done 2026-09-25: `join_reader_with_deadline` (5 s `READER_JOIN_GRACE`,
+  detach past the deadline) replaces all six reader joins in
+  `output_with_timeout_and_cancel`. RED `E0425`, bare-join mutant failed the
+  source guard, fmt/clippy clean, cargo 651/0.
+- [x] **P1-19 — PROC-03: surface unresolved termination distinctly.** Done
+  2026-09-25: new `ProcessFailureKind::Unresolved` + `cleanup_outcome`
+  (timeout/cancel branches route `terminate_and_wait` through it; the
+  post-loop branch changed `Io` → `Unresolved`); mapped to new
+  `HealthFailureReason::Unresolved` + TS mirror `"unresolved"`. RED
+  `E0425/E0599`, ignore-flag mutant failed, `npm run check` EXIT 0, cargo
+  653/0, clippy clean.
+- [x] **P1-20 — PROC-04: clear the starting slot when `local_client` fails.** Done
+  2026-09-25: `local_client(&profile)?` hoisted above `spawn_server` in
+  `start_server_worker`; the wait reuses `&client`. A client failure now
+  returns while no child/slot exists. RED guard failed pre-fix, move-back
+  mutant failed, fmt/clippy clean, cargo 654/0. Note: one full-suite run
+  showed an unrelated parallel-load flake
+  (`health_from_an_unrelated_process...`, isolated green, rerun green);
+  not hidden, not caused by this diff.
+- [x] **P1-21 — PROC-05: stop following redirects on the health readiness client.**
+  Done 2026-09-25: extracted `loopback_readiness_client` (`Policy::none` +
+  `no_proxy`, same timeouts) used by the loopback stage; ported R15 redirect
+  test fails without the policy. RED `E0425/E0433`, policy-removal mutant
+  failed, fmt/clippy clean, cargo 655/0.
+- [x] **P1-22 — PROC-06: track and join the nested completion worker.** Done
+  2026-09-25: `completion_request_supervised` keeps the worker `JoinHandle`
+  and routes cancel/deadline exits through `join_completion_worker` (5 s
+  grace via `proc::join_reader_with_deadline`, now `pub(crate)`); a survivor
+  reports `HealthFailureReason::Unresolved`. RT-03 fixture updated so
+  `terminate` models a real kill (releases the socket). RED failed pre-fix,
+  abandon-mutant failed, RT-03 5/5 in 0.58 s, cargo 656/0, clippy clean.
+- [x] **P1-23 — PROC-07: refuse links in transport-file reads.** Done 2026-09-25:
+  `read_bounded_file` runs `artifact::validate_regular_non_reparse_file`
+  before the open. RED via removal mutant (pre-fix error was `could not be
+  read... Access is denied`, proving the link was followed); file symlinks
+  need privilege this host lacks, so the test uses one when creatable and a
+  privilege-free junction otherwise. fmt/clippy clean, cargo 657/0.
+- [x] **P1-24 — PROC-08: stop following replaced log paths.** Done 2026-09-25:
+  `second_writer` runs new `download::ensure_no_link_or_reparse` (no-open
+  variant: link-counting opens fail on the sink-held file with os error 32,
+  and extra hard-link names cannot divert a pinned handle), `write_failure_evidence`
+  runs full `ensure_safe_write_entry` (truncating write). Reused the RT-01
+  check instead of a new helper. RED `E0425`, removal mutant failed the
+  guard, fmt/clippy clean, cargo 660/0.
+- [x] **P1-25 — DL-01: revalidate override rows at read time.** Done 2026-09-25:
+  new `row_mac` column (schema v2, in-place `ALTER` for v1, no backfill —
+  backfilling would launder a swapped digest) + HMAC-SHA256 tag over every
+  authorization field, key in Credential Manager (`Localmotive /
+  catalog-override-mac`, get-or-create; `hmac 0.12` dep justified as the
+  audit fix). `user_override_file` rechecks the tag each read (constant-time
+  `verify_slice`); legacy rows refused until re-saved. RED tamper test,
+  bypass mutant failed (2 tests), round-trip + legacy + migration tests,
+  fmt/clippy clean, cargo 664/0.
+- [x] **P1-26 — DL-03: verify the handle, not the path, on reads.** Done 2026-09-25:
+  new `artifact::open_verified_read_file` (pre-check, then open, then
+  handle verify: link count 1, regular bit, final-path equals the requested
+  path; unix `nlink` variant). Migrated `sha256_path`, `sha256_prefix_path`,
+  `gguf read_summary`, `read_bounded_file` (reads the handle, no re-open),
+  health model hash. Execution sites (probes/spawns) stay under the
+  managed-execution lease, not this helper — pinned by the `proc10_readers`
+  source guard. RED `E0425`, skip-verify mutant failed the hard-link test,
+  fmt/clippy clean, cargo 668/0.
+- [x] **P1-27 — DL-04: bound the OAuth key-exchange response.** Done 2026-09-25:
+  new `MAX_KEY_EXCHANGE_BYTES` (16 KiB; the answer is one short JSON object)
+  + `exchange_code_for_key` reads through `read_bounded_body` instead of
+  unbounded `response.text()`. `read_bounded_body` now takes `impl Read` so
+  the cap is unit-testable without network (gate forbids live calls).
+  Behavioral oversized test + call-site source guard (self-comment-safe),
+  cap-removal mutant failed, fmt/clippy clean, cargo 670/0.
+- [x] **P1-28 — MT-01: stop presenting a same-prompt repeat as confirmation.** Done
+  2026-09-25: relabel (no held-out prompt; the fixed harness prompt is a design
+  constant). UI now says "reproduced / did not reproduce on the fixed harness
+  prompt (same-prompt re-measurement[, not independent confirmation])". Wire
+  field `confirmed` kept so old reports load (documented on the struct);
+  stopped_reason "stays unconfirmed" → "records no verdict". RED render test
+  + label mutant failed, `npm run check` EXIT 0 (291/291), cargo 670/0.
+- [x] **P1-29 — MT-03: persist warmup-only failures as Failed manifests.** Done
+  2026-09-25: `validate_attempt_consistency` accepts empty observations iff the
+  terminal outcome is Failed or TimedOut (the run carries warmup errors +
+  outcome, so it persists as Failed via the existing `(Err, Some)` summary
+  arm). Cancelled/None/Succeeded + empty still rejected (cancel leaves no
+  record, as before). RED contract test + reject-mutant failed, fmt/clippy
+  clean, cargo 671/0.
+- [x] **P1-30 — MT-05: restore the server after a cold v2 benchmark.** Done
+  2026-09-25: relaunch chosen (refusing would make cold unreachable — cold
+  needs a live snapshot at start). `benchmark_v2` keeps the cold profile,
+  finalizes the record, drops the reservation, then relaunches through the
+  normal `start_server` path. New `serverRestored`/`serverRestoreError` on
+  `BenchmarkRunResult` (mirrored in `model.ts`, shown in the evidence panel);
+  relaunch failure keeps the record and names the error. RED merge test +
+  discard-mutant failed; R04 gate updated for `let mut result` (drain-before-
+  read invariant unchanged); `npm run check` EXIT 0 (291/291), cargo 672/0.
+- [x] **P1-31 — MT-06: bound the worker drain.** Done 2026-09-25:
+  `drain_owned_workers` returns `DrainOutcome::{Drained, Unresolved}` after one
+  bounded ceiling wait; the infinite 1 s loop is gone. Snapshot folds
+  Unresolved into Failed + a drain note (observations stay in the manifest);
+  the v2 command marks Failed, appends the note, and skips the relaunch (R04
+  overlap) with a recorded skip reason; legacy discards with a drain error
+  after clearing its slot. Rule change per AGENTS.md (R04-as-tested blocked
+  every bounded path): infinite-hold pins replaced in release-gates + the old
+  r16 wait test (scenario now in proc14). RED proc14 + always-Drained mutant
+  failed; `npm run check` EXIT 0 (291/291), cargo 673/0, clippy clean.
+- [x] **P1-32 — MT-08: make replay respect unknown execution identity.** Done
+  2026-09-25: `validate_replay_compatibility` takes the current machine's
+  unknowns and refuses while either side is non-empty, naming the unobserved
+  identities (`Replay refused: unobserved execution identity (...);
+  re-measure ...`). Worker passes the rebuilt snapshot's unknowns instead of
+  discarding them. RED proc15 (both sides) + key-only mutant failed; cargo
+  674/0, fmt/clippy clean.
+- [x] **P1-33 — MT-09/FE-05: remove the legacy benchmark system.** Done 2026-09-25:
+  deleted `benchmark_server` + `run_legacy_benchmark` + `finalize_legacy_benchmark`
+  + registration + guard tuples; stripped the screen's legacy half (Benchmark view
+  is now the v2 panel only); removed `runBenchmark`/legacy state/tokens/repeats,
+  the Dashboard LAST TEST tile, `legacyBenchmarkInputError` + `BenchmarkSummary`
+  (frontend; Rust keeps both for tune's `LiveBench`), and 26 obsolete tests
+  (storage save-failure, staleResponses legacy block, model input). Kept
+  `cancel_benchmark` (v2 adapter) + the slot helper test (renamed). RED absence
+  test + registration-restore mutant failed; `npm run check` EXIT 0 (265/265),
+  cargo 670/0, clippy clean. Post-commit fix: python text-mode writes had
+  flipped LF to CRLF file-wide on the 5 script-edited files; converted back to
+  LF and amended (40+/807-).
+- [x] **P1-34 — FE-04: split `App.tsx`.** Done (first piece) 2026-09-25:
+  extracted the persistence cluster (`readRecord`, `quarantineRecord`,
+  `persistRecord`, `persistenceFailureNote`, `readSetting`) verbatim to
+  `src/persistence.ts`; `App.tsx` 1822→1781 lines. Branding allowlist moved
+  with the migrated lines. `npm run check` EXIT 0 (265/265). Next split
+  recorded: the `useDebouncedValue` hook + `inTauri`/`idleStatus` module
+  preamble, then one screen's coordination (tune or catalog).
+- [x] **P1-35 — FE-06: route `cancel_scan` through props.** Done 2026-09-25:
+  `InventoryScreen` takes `cancelScan: () => void` (no `invoke` import left);
+  `App.tsx` owns `cancelScan()` beside `scan()`. RED boundary test fails on the
+  old file (`invoke(` present, no `cancelScan`); `npm run check` EXIT 0 (265/265).
 
 ---
 
@@ -321,28 +529,336 @@ Fix these after P0 and before the next feature.
   removed. The one test that read tracked `artifacts/*.json` fixtures now
   reads the byte-identical `release-evidence/0.6.1/` copies; all other
   `artifacts/` references are runtime workspace paths or fixture-temp labels.
-- [ ] **P2-2 — Delete dead scripts (LAB-05).** List each script in `scripts/`
-  with its callers. Delete each script that no `package.json` script,
-  workflow, or kept test calls. `scripts/g05_dc01.mjs` is one (FE-03).
-- [ ] **P2-3 — Keep one CDP client (LAB-03):** `scripts/lib/cdp_client.mjs`.
-- [ ] **P2-4 — Replace source-text tests with behavior tests.** Delete the
-  test-only `ALL_SOURCES` (`src-tauri/src/lib.rs:17-37`). Delete the prose
-  assertions in `scripts/tests/release-gates.test.mjs`.
-- [ ] **P2-5 — Remove the audit-ticket labels** from Rust source (399) and
-  rename ticket-named test modules by behavior.
-- [ ] **P2-6 — Keep one benchmark system (MT-09, FE-05).**
-- [ ] **P2-7 — Keep one catalog schema source (LAB-06).**
-- [ ] **P2-8 — Split `src/App.tsx` (FE-04)** and keep IPC out of the screens
-  (FE-06).
-- [ ] **P2-9 — Merge `docs/EVIDENCE-MATRIX.md` into
-  `docs/SUPPORT-MATRIX.md`.**
-- [ ] **P2-10 — Prune superseded evidence (D5).**
-- [ ] **P2-11 — Remove stale references to deleted files:** the
-  `HISTORICAL_FILES` entries in `scripts/verify_branding.mjs`, and the note in
-  `catalog/providers.json` that names `docs/history/TODO-0.5.md` (change it
-  at the next catalog change).
+- [x] **P2-2 — Delete dead scripts (LAB-05).** Done 2026-09-25: new generic
+  sweep test (`every automation script is referenced or deleted`) was RED with
+  11 dead files, then caught a 12th (`watch_console_windows.py`, REVIEW-only
+  mention) the manual pass missed; deleted all 12 via `git rm`. `npm run check`
+  EXIT 0 (265/265).
+- [x] **P2-3 — Keep one CDP client (LAB-03):** `scripts/lib/cdp_client.mjs`.
+  Triple-checked 2026-09-25: exactly one `new WebSocket(` in `scripts/`
+  (`lib/cdp_client.mjs:44`); consolidated by P1-13; enforced by the
+  `the CDP WebSocket is constructed in exactly one place` gate (green in
+  `npm run check` EXIT 0 runs). No change needed.
+- [x] **P2-4 — Replace source-text tests with behavior tests.** Done (safe
+  subset) 2026-09-25: deleted `cold_benchmark_uses_a_fresh_runtime...` (twinned
+  by `proc13` + `cold_harness_*` behaviorals) and `r16_..._releases_ownership...`
+  (twinned by `proc14` + `r16_*` + `f9_02_*` behaviorals, all mutant-proven in
+  P1-30/P1-31). KEPT the other 7 `ALL_SOURCES` guards (managed-trust, lease
+  ordering RT-04, contained-spawn, launch evidence, snapshot gate, memory
+  wiring, IPC-01 placement: ordering/absence/wiring invariants with no
+  unit-observable equivalent; deleting them loses trust-boundary coverage) so
+  `ALL_SOURCES` stays; KEPT the release-gates doc/decision pins (D3/D4/D5, L2
+  ceiling, unsigned disclosure: owner-ordered locks, not incidental prose).
+  Rust 668/0, fmt/clippy clean.
+- [x] **P2-5 — Remove the audit-ticket labels.** Done 2026-09-25: stripped
+  286 ticket-label comment lines (period-preserving redo after a first pass
+  ate `XS-00001` inside a string literal and 20 sentence periods; lesson:
+  ticket regexes need `\b` anchors and must never eat trailing periods, and
+  the ticket must sit at paren-content start) and renamed 192 ticket-prefixed
+  test fns to behavior names across 19 files (no new duplicates; compiler is
+  the verifier). Gate test extended (comments + `fn` prefixes; mutant-probed:
+  flags `r16_/proc14_/s05_`, passes `process_/sha256_`). Release-gates name
+  pins updated to the new names (R10/R15/R04/R16 pins; the deleted P2-4 guard
+  pin now points at the surviving cancellation twin in measurement_service).
+  Rust 668/0, fmt/clippy clean, `npm run check` EXIT 0 15 files / 265 tests
+  (`/tmp/check41.log`), audit 0, versions/pins/gates PASS. Scope: Rust source
+  only; scripts/ evidence keys (`mt06_verdicts`, driver names) untouched.
+- [x] **P2-6 — Keep one benchmark system (MT-09, FE-05).** Done 2026-09-25:
+  tuner migrated to the v2 contract via new `measure_trial_summary` probe
+  (`measurement_service.rs`: per-trial `evidence::Workload`, v2 warm workload
+  runner + `completion_request_cancellable`, `summarize_observations` →
+  `BenchmarkSummaryV2`); `TrialMeasurement.summary` + consumers (evidence
+  mapping, winner `decode_tps.mean`, fixtures via new `summarize_fixture_tps`)
+  on V2; V1 core block deleted (`BenchmarkSummary`, `summarize_benchmark`,
+  `parse_tps`, V1 completion path, `validate_benchmark_options`,
+  `LEGACY_BENCH_TIMEOUT`, `benchmark_server_cancellable`, 8 tests); lib.rs
+  live-bench guard repointed to the probe. One cut-script range swallowed an
+  unrelated test (`raw_file_arguments...`); restored byte-identical to HEAD.
+  Semantic changes: trial spread is population std (0.5 for [130,131], was
+  sqrt(0.5)); trials keep partial successes with `failed_trials` noted (V1
+  aborted on first error). Mutant `.skip(1)` in fixture helper failed 6 tune
+  tests, green after restore. Rust FMT_CLEAN, clippy 0, 660/0 exact;
+  `npm run check` EXIT 0 15 files / 265 tests (`/tmp/check42.log`).
+- [x] **P2-7 — Keep one catalog schema source (LAB-06).** Closed 2026-09-25
+  as corroborated-refuted (no code change): the two-validator copy is
+  deliberate and pinned by `shared_fixture_cases_agree_with_the_javascript_
+  validator` (catalog.rs:1940, green in the 660/0 suite); the alleged shape
+  gap is benign by contract — `sequence`/`expires` are `Option<u64>`
+  (catalog.rs:255/259), enforced only when present (DC-10 replay protection
+  for served updates), so the checked-in catalog without them and
+  `validate_catalog.mjs` pinning only `schemaVersion: 2` are consistent, not
+  contradictory. P1-11 REFUTED stands.
+- [x] **P2-8 — Split `src/App.tsx` (FE-04)** and keep IPC out of the screens
+  (FE-06). First increment done 2026-09-25: cloud-credential cluster
+  (~160 lines: providers, credential, key draft, model list, probe state +
+  all 8 acquisition fns) extracted to `src/useCloudCredentials.ts`;
+  `App.tsx` 1792→1638 lines, screens unchanged (same props). RED gate
+  `cloud credentials live in a hook` failed before, passes now. `frontend
+  Sources()` registers the hook so FE-03/FE-06 pins keep seeing moved code.
+  Mutant (drop FE-01 failure-clear) failed exactly
+  `clears the cloud key draft when the save fails`, green after restore.
+  `npm run check` EXIT 0, 15 files / 265 tests (`/tmp/check46.log`),
+  audit 0 vulns. Remaining App.tsx clusters (runtime, catalog, tuning) split
+  in later increments.
+- [x] **P2-9 — Merge `docs/EVIDENCE-MATRIX.md` into
+  `docs/SUPPORT-MATRIX.md`.** Done 2026-09-25: version table (hosts,
+  versions, column meanings, reading rules) plus the S-14/S-16/S-18/S-19
+  audit notes transplanted to a `Version evidence` section (78→193 lines);
+  `git rm` the old file; backlinks in README/CHANGELOG repointed; the two
+  gates that read the old file now read SUPPORT-MATRIX. RED gate
+  `EVIDENCE-MATRIX is merged` failed before, passes now; resurrecting the
+  old file fails it again (mutant). `npm run check` EXIT 0
+  (`/tmp/check47.log`).
+- [x] **P2-10 — Prune superseded evidence (D5).** Closed 2026-09-25 as
+  already-done (no change): D5 executed under L-23 (`998557d`,
+  merged via PR #60) — `release-evidence/0.6.0/history/` (85 files, 453K)
+  deleted, tree now holds only attestations + inventory/manifest/SHA256SUMS;
+  the stays-deleted guard rides in the full gate (green in `/tmp/check47.log`).
+- [x] **P2-11 — Remove stale references to deleted files.** Done 2026-09-25:
+  pruned 10 dead entries from `HISTORICAL_FILES` (`TODO-0.6.md`,
+  `Future_branding.md`, `docs/history/*` ×5, `TODO-0.4.md`, `TODO-0.4.1.md` —
+  none exist in the tree; closed trackers live in git history `9b09857`);
+  kept `CHANGELOG.md`, `TODO.md`, `research-freeze-manifest.json`. Replaced
+  the obsolete `covers the archived docs layout` gate with
+  `names only files present in the tree` (RED failed, GREEN passes; re-adding
+  one dead entry fails it again). The `catalog/providers.json` note stays
+  until the next catalog change, per the row. `npm run check` EXIT 0
+  (`/tmp/check48.log`).
 - [ ] **P2-12 — Triage the 72 Medium and 9 Low findings** in `REVIEW.md`, one
-  part at a time.
+  part at a time. Part 1 done 2026-09-25 (REL-14..16, LAB-07..13, dispositions
+  + REL-16/LAB-12 fixes below; remaining parts: RT, CORE, PROC, DL, MT, FE):
+  - REL-14 (duplicate CI/release gates): ACCEPT — release re-runs source
+    checks on the tag peel by governance rule, not by accident.
+  - REL-15 (gate/workflow coupling): ACCEPT under the P2-4 policy (prune
+    twinned guards, keep trust-boundary pins); no blanket deletion.
+  - REL-16 (hardware summary names hosted runner): VERIFIED + fixed — summary
+    now names `localmotive-release`, gated by `hardware summary names...`.
+  - LAB-07 (fixed sleeps)/LAB-08 (text selectors): bulk SUPERSEDED by P1-14 +
+    P2-2 deletions; residual lab-only drivers run in the non-gating night
+    campaign → ACCEPT.
+  - LAB-09 (hard-coded ports): SUPERSEDED — cited files deleted, survivors
+    take `$labPort`/`$portable` args.
+  - LAB-10 (campaign names): SUPERSEDED — P1-14/P2-2 executed its delete list;
+    `verify_041`/`verify_060_catalog` names are frozen contract identities.
+  - LAB-11 (`dryrun_catalog`): SUPERSEDED — file deleted in P2-2.
+  - LAB-12 (catalog tie-ordering): VERIFIED + fixed — secondary keys
+    (`filename`, `repo`) on all three sorts, gated by `deterministic
+    tie-breakers` (RED→GREEN→mutant). Freshness bytes still change per build
+    by DC-10 design.
+  - LAB-13 (Low, error coercion): ACCEPT — cosmetic, lab-only survivors.
+  Part 2 done 2026-09-25 (RT-08/09/11..15 + RT-01/RT-03 adjudication):
+  - RT-08 (GPU preflight Unknown): ACCEPT — Unknown is the honest contract
+    without a GPU (`Show unknown when evidence is unavailable`); night
+    hardware campaign covers real GPUs, never the release gate.
+  - RT-09 (lossy help discovery): REFUTED — discovery is lossy by nature of
+    `--help` prose, but authority is `filter_supported_args` against
+    `capabilities.supported_flags` (core.rs:1645), which enforces the rule.
+  - RT-11 (poisoned state locks): VERIFIED + fixed — new `lock_recover`
+    helper in `runtime_service.rs`, all 6 sites converted, RED
+    (`E0432` pre-helper) → GREEN (`poisoned_state_lock_recovers...`) →
+    mutant (unwrap restore fails it). The lib.rs slot-protocol pin follows
+    the new spelling. The wider 20-site idiom stays: same rationale.
+  - RT-12 (source-spelling tests): ACCEPT under the P2-4 policy — the RT-11
+    pin update above is the policy working, not a violation.
+  - RT-14 (version-pinned data): ACCEPT — pinning IS the trust mechanism
+    (P0-1 compiled catalog); bumps update pins by design.
+  - RT-13 (Low, dead scaffolding): VERIFIED + pruned — zero-caller
+    `GithubAsset::sample` test helper deleted (661/0 after).
+  - RT-15 (Low, ticket narration): SUPERSEDED — P2-5 stripped it.
+  - RT-01/RT-03 (Medium, same-user races): ACCEPT per the Medium threat
+    model; P1-10/P1-15 closed the user-data half. Rust 661/0, fmt/clippy
+    clean.
+  Part 3 done 2026-09-25 (CORE-07..12 + CORE-01/02/06 adjudication):
+  - CORE-01 (catalog override + banner): CLOSED — done in P1-9
+    (`verification_mode` + banner + SECURITY.md).
+  - CORE-02 (Low, StrictMode double effects): ACCEPT — dev-only; the packaged
+    collision half is RT-06's scope.
+  - CORE-06 (WEBVIEW2 env args): ACCEPT — standard platform behavior,
+    same-user trigger per the Medium model.
+  - CORE-07 (SKIP_HARDWARE_PROBE): ACCEPT — set only in `ci.yml` Rust steps;
+    release/hardware never set it, and the skip writes a visible
+    `detection_status` string in-product (runtime.rs:1352).
+  - CORE-08 (help parser weaker than contract): REFUTED — same evidence as
+    RT-09 (`filter_supported_args`, core.rs:1645).
+  - CORE-09 (capability not minimal): PART FIXED — removed the two dead
+    opener origins (`tauri.app`, `react.dev`; no in-app URL targets them),
+    gated by `opener allowlist carries no unused origins` (RED→GREEN).
+    `core:default` bundle + loopback wildcard ACCEPTED: bundle replacement
+    risks packaged-only breakage beyond a Medium; loopback serves
+    user-selected server ports.
+  - CORE-10 (dead commands/duplicates): VERIFIED + fixed — legacy
+    `scan_models` command deleted (no frontend/script caller; tests mock
+    `scan_models_report`); registration + expensive-command span re-anchored;
+    `core::scan_models` kept as `#[cfg(test)]` shorthand. Cancellation
+    commands are live (P1-35); runtime-setup/scan pairs are distinct commands.
+  - CORE-11 (mixed domains): ACCEPT as managed-incrementally — narration
+    stripped (P2-5), splits continue per-increment (P1-34/P2-8); no big-bang
+    rewrite.
+  - CORE-12 (error conversion + lock unwraps): SPLIT — plain-string errors
+    are contractual (S-18 wire contract) → REFUTED half; all 14 command-slot
+    `.lock().unwrap()` (6 runtime_service + 8 lib.rs) converted to the shared
+    `lock_recover` → FIXED half (661/0, fmt/clippy clean). Lesson: new Rust
+    comments must not carry ticket labels (P2-5 gate caught three).
+  Part 5 done 2026-09-25 (DL-05..16, all mutant-proven unless noted):
+  - DL-05 FIX: GGUF pair budget 1,000,000 to 65,536; relevant facts capped
+    at 1,024 via new `max_facts` parse limit (file order kept, sorted
+    after). Duplicates stay first-wins (deterministic `find`), not
+    rejected: rejecting risks breaking legitimate files.
+  - DL-06 FIX: row bound moved into SQL (`ORDER BY id LIMIT 5001`);
+    per-model file cap 4,096 added. Boundary inserts run in transactions
+    (0.43 s for the set, was 23 s of fsyncs).
+  - DL-07 FIX: override revisions pass the shared signed-catalog
+    `is_safe_revision` rule (now `pub(crate)`); traversal, empty
+    segments, blank, padded values rejected, `refs/pr/27` accepted.
+    Single-dot segments stay accepted (normalize away in URLs, same as
+    the signed path).
+  - DL-08 REFUTED: CRLF normalization is semantics-preserving for JSON
+    (both forms parse identically); exact-bytes would break CRLF
+    checkouts, pinned by `crlf_catalog_still_verifies_after_normalization`.
+  - DL-10 FIX: cloud API client carries explicit `Policy::none`; a 302
+    surfaces as an error, credentials never follow.
+  - DL-11 FIX: request-side bounds (key 4 KiB, model id 256 B, prompts
+    256 KiB) enforced in `save_credential` and `chat_with_deadline`
+    before keyring writes and request construction.
+  - DL-12 FIX: cloud retry-after delegates to the one shared
+    download-side parser (numeric, date, 86,400 s horizon); orphaned
+    `MAX_RETRY_AFTER_SECS` removed. Absurd waits fall back to backoff
+    instead of sleeping 30 s.
+  - DL-13 FIX: `httpdate_secs` allowlists weekday names; 14-case
+    boundary test pins shape, ranges, junk rejection, leap-:60
+    documentation.
+  - DL-15 FIX: `open_catalog_db` validates reparse ancestors before
+    creation; squatted roots fail loudly. Rejection arm is
+    privilege-gated (this host cannot create symlinks); control
+    (real dir opens) proves everywhere.
+  - DL-16 REFUTED: resume identity is same-source string equality;
+    mismatch direction is safe (full re-download, never a wrong resume).
+  - DL-09 FIXED 2026-09-26: `catalog/README.md` gains a `Key rotation`
+    section — sequenced single-key rollover (new-key release with
+    new-signed bundle while the old-signed catalog is still served, then
+    switch the publish signing + `CATALOG_SIGNING_KEY_PEM`, then destroy
+    the old key); schema v2 has no dual-signature support, so a
+    dual-signed transition needs an owner-approved schema change first.
+  Part 6 done 2026-09-26 (MT-02/04/11..15):
+  - MT-02 (present-but-invalid `first_token_ms` silently dropped):
+    VERIFIED + fixed — strict parse now errors on a present invalid
+    value (`completion_timing_rejects_a_present_but_invalid_first_token`
+    RED→GREEN); finite-range guard on derived TTFT (mutant-proven).
+  - MT-04 (evidence persistence weaker than acquisition): VERIFIED +
+    fixed — `validate_complete` rejects zero observation metrics and
+    enforces requested-context identity + exact warmup counts
+    (`manifest_rejects_a_zero_observation_metric` etc. RED→GREEN→mutant).
+  - MT-11 (redaction misses non-path secrets): VERIFIED + fixed —
+    case-insensitive bare-account-name redaction everywhere, not just
+    home-path prefix (`minimal_disclosure_removes_a_bare_account_name_outside_paths`
+    RED→GREEN). Residual: arbitrary non-path names stay in evidence text
+    (accepted: bounded to the operator's own machine).
+  - MT-12 (cloud timeouts): ACCEPT — bounded (180 s clamp, one bounded
+    429 retry, tuning deadline); Stop latency documented.
+  - MT-13 (unknown dead fields): SPLIT — unknowns REFUTED (consumed by
+    the P1-32 replay gate); dead `launch_compatibility_key` and
+    `last_raw_reply` plumbing deleted (cargo check clean); narration
+    CLOSED by P2-5.
+  - MT-14 (log drains detached from Stop): VERIFIED + fixed — bounded
+    `join_log_drains` (2 s deadline, lingering drains reported) called
+    in managed stop, cold-bench cleanup, and trial cleanup
+    (`log_drains_join_before_the_deadline...` RED→GREEN→mutant).
+  - MT-15 (two std-dev conventions): VERIFIED + fixed — population SD
+    documented on both live fields; shared [130, 131] → 0.5 vector pins
+    it on both sides; dead `sample_std_dev` + its 3 tests deleted
+    (overflow-robustness retained via `metric_summary_remains_finite` +
+    extremes tests).
+  Part 7 done 2026-09-26 (FE-01/07..13):
+  - FE-01 (credential drafts linger): CLOSED — P1-7 stands: both screens
+    clear drafts on save success, guarded failed save, and unmount
+    (verified in source).
+  - FE-07 (stale owner callback): VERIFIED + fixed — owner callback
+    through a ref; mid-run swap test (`owner.test.tsx`) RED→GREEN→mutant
+    (old effect fails it); eslint-disable removed.
+  - FE-08 (reset throws on denied storage): VERIFIED + fixed — exported
+    `resetSavedState` (try/catch-report/finally-reload, injectable
+    reload); 2 tests RED→GREEN→mutant. Caught a vacuous-test trap:
+    jsdom storage does not route through `Storage.prototype`, so the
+    denied-storage test uses `vi.stubGlobal` (the prototype-spy version
+    passed the mutant).
+  - FE-09 (lamp shadows vs flat rule): CLOSED — only the two lamp
+    shadows exist; DESIGN.md now names the lamp-only exception.
+  - FE-10 (production casts): FIXED — `Window.__TAURI_INTERNALS__`
+    augmentation in `vite-env.d.ts` (App.tsx + 6 test sites simplified);
+    fingerprint is a typed projection (no cast); explicit
+    `invoke<ResultType>` generics in the adapter; `tsc` clean. Remaining
+    casts are test-fixture partial shapes (accepted residual).
+  - FE-11 (brittle UI tests): ACCEPT — exact-copy IPC assertions are
+    release-gate contract, class assertions pin status semantics,
+    real-timer waits are bounded and green.
+  - FE-12 (ts-expect-error in vite.config): FIXED — `@types/node`
+    devDependency + `types: ["node"]` in tsconfig.node.json; node tsc
+    clean. Lockfile churn 19 lines.
+  - FE-13 (token parallel sources): FIXED — DESIGN.md gains an Evidence
+    Panel section (bars/actions/status grammar from the real code) and a
+    source-of-truth note (`src/App.css` wins; theme.css/tokens.json are
+    reference mirrors); design lint 0 errors 0 warnings.
+  Gate-test fallout from the above, both intent-preserving: the
+  `release-gates` FE-07 adapter regex now tolerates the explicit generic
+  (command pin unchanged); the lib.rs tuning-lifecycle pin follows the
+  drain-join cleanup spelling.
+  Shipped 2026-09-26 as `f80108f` on `fix/p1-defects` (pushed); PR #66
+  lane→main opened, pr-check pending (run 36238338443). Merge only after
+  pr-check passes.
+  Part 4 done 2026-09-25 (PROC-09..22):
+  - PROC-09 (cleanup port-closed): REFUTED with measured evidence — this
+    host reports closed loopback ports (even never-bound ones) as `TimedOut`,
+    not `ConnectionRefused` (probe2). A refused-only predicate would fail
+    cleanup everywhere here. Kept `.is_err()` but extracted
+    `loopback_port_is_closed` with the platform note + a pin test; the port
+    leg stays corroborating (conjoins with `child_stopped`/`tree_stopped`).
+  - PROC-10 (health contract debug-only): FIXED the release half —
+    `finish_run` now fails closed on an invalid stage list in all builds
+    (was `debug_assert!` only), pinned by RED-then-GREEN test. No external
+    producers exist (all construction inside health.rs); typed observations
+    per stage would change the IPC wire — deferred.
+  - PROC-11 (CPU enumeration): FIXED — CPU branch requires the
+    `Available devices:` header (from the real fixture) and reports
+    CPU-specific detail (no more "exact adapter" claim). Mutant-proven.
+  - PROC-12 (completion mislabeled): FIXED — `completion_failure_reason`
+    maps cancelled/timeout/output-limit separately, preserves the client
+    string in the detail (was: always Timeout, string erased).
+    Mutant-proven. Fallback is MalformedOutput (matches the Io precedent);
+    no new IPC variant.
+  - PROC-13 (failed stages skip cleanup): FIXED — 10 failing exits now route
+    through `fail_health_stage`, reporting Unresolved when the tree survives
+    termination (was: bool discarded). Pinned by a wiring test (exactly one
+    bare call survives: the supervised-cleanup closure, owned downstream)
+    + a pure-outcome unit test. One repair detour: a mutant edit ate a
+    call's closer; repaired by hand, 670/0 after.
+  - PROC-14 (readiness bound): REFUTED — client carries 2s per-attempt
+    timeout + 250ms connect timeout (P1-21), loop bounded by the 120s budget
+    with cancel checks; 100ms sleep is a bounded poll.
+  - PROC-15 (DER walker): residual PINNED — pair/mismatch coverage existed;
+    mutant proved the DER-frame fail-closed paths untested (indefinite
+    length accepted silently). Added `der_frame_rejects...` unit test
+    (fails on mutant, passes restored).
+  - PROC-16 (detached drains): CLOSED — superseded by P1-31 (bounded drains
+    called in benchmark/command paths).
+  - PROC-17 (tuning port sleep): FIXED — `wait_for_port_release` polls
+    connect-until-refused with a 5s bound (was blind 600ms sleep).
+    Mutant-proven (sleep-600 fails the <500ms closed-port assert).
+  - PROC-18 (stop holds mutex): FIXED — take-out-terminate-commit; slot
+    restored on termination failure; reservation held across. Existing stop
+    tests (incl. real-process reap) green.
+  - PROC-19 (log retention): FIXED — NotFound → Ok(0), other read failures
+    → Err (was: all Ok(0)). RED-then-GREEN. Call site stays non-fatal by
+    decision (launch must not brick on diagnostic retention).
+  - PROC-20 (source-text tests): ACCEPT per P2-4 (trust-boundary policy
+    pins stay; behavior tests added everywhere else this part).
+  - PROC-21 (test flake): FIXED the PID-only dirs — new
+    `test_support::unique_temp_dir` (pid + nanos + counter) + migrated 4
+    local_client sites. `settle_until` already bounded; `temp_path` file
+    names stay per-test-distinct (residual noted).
+  - PROC-22 (ticket narration): CLOSED — superseded by P2-5.
+  Rust 671/0, fmt/clippy clean; `npm run check` EXIT 0 (`/tmp/check52.log`).
+  Watch: one unidentified 669/1 transient during the PROC-13 repair; three
+  subsequent full runs green (670/0 ×2, 671/0 ×1) + 12/12 new-test repeats.
 
 ---
 
@@ -467,3 +983,4 @@ To restore one file: `git show 9b09857:<path> > <path>`.
 - `L-22 | 2026-09-24 | 357cb2f | npm run check (node tests incl. new stays-deleted guard); full gate at L-24 | local logs | PASS` — D4: owner authorized deletion over publication. RED: new `the deleted 0.4.0 corrective note stays deleted` failed on the old tree (file present). GREEN: file deleted; CHANGELOG link replaced with the D4 decision record (L2 test repinned); REVIEW D4 section and file-table row updated; TODO D4 checked.
 - `L-23 | 2026-09-24 | 998557d | stays-deleted guard + qualification_manifest 27 of 27; full gate at L-24 | local logs | PASS` — D5: owner granted the frozen-evidence exception. RED: new `the deleted 0.6.0 history stays deleted` failed (85 files present). GREEN: `release-evidence/0.6.0/history/` deleted (453K); no live reader outside carry-forward fixture labels (the fixture writes its own files, 27 of 27 still pass); REVIEW row and TODO D5 updated.
 - `L-24 | 2026-09-24 | 8b3ff64 + PR #60 merge 020b16a (pr-check SUCCESS) | npm run check; npm audit; four workflow verifiers; cleanup matrix | local logs | PASS` — D3+P2-1: owner chose plain removal over history rewrite. RED: new `the tracked artifacts directory stays removed` failed (5,494 tracked files). GREEN: `git rm -r artifacts` (0 tracked remain; 34M untracked local outputs stay ignored); `/artifacts/` ignore rule (5-line diff); four `.gitattributes` LF rules removed; the one fixture reader rewired to byte-identical `release-evidence/0.6.1/` copies (mutation back to `artifacts/` fails, restored); both historical manifest tests stage committed bytes at recorded paths (`root`+`workflowRoot`, digests MATCH). GREEN: node tests 290 of 290, Vitest 284 of 284, audit 0 vulnerabilities, versions/pins/gates/syntax pass, cleanup 12 of 12. Rust checks carried (no Rust file changed). No packaged matrix: evidence-removal only; the 0.6.5 binaries are unchanged and published.
+- `L-25 | 2026-09-26 | ef18931 plus uncommitted lane changes (P2-12 MT/FE/DL-09) | npm run check; npm audit --audit-level=moderate; four workflow verifiers; verify_cleanup_matrix.ps1; cargo fmt --check; cargo clippy --locked --all-targets -- -D warnings; RUSTDOCFLAGS='-D warnings' cargo test --locked; tsc app+node; designmd lint | local logs (/tmp/npmcheck2.log, /tmp/cargotest2.log) | PASS` — MT-02/04/11/14/15 + MT-13 deletions, FE-07/08/10/12/13 + FE-09 doc, DL-09 rotation doc, two intent-preserving gate-test repins (release-gates adapter regex, lib.rs lifecycle pin). RED→GREEN→mutant for every behavioral fix (incl. a caught vacuous jsdom storage-spy test). GREEN: node tests 303/0, Vitest 268/268, audit 0 vulnerabilities, four workflow verifiers pass, cleanup 12/12, fmt clean, clippy 0 warnings, Rust 686 passed 0 failed 6 ignored (default parallelism), tsc clean both projects, design lint 0 errors 0 warnings. Watch: one `dropping_a_contained_process_terminates_descendants` failure in an earlier full-suite run under parallel load; passes solo and 14/0 ×3 in isolation plus this full green run — recorded, not a blocker. EOL hygiene: three tool-touched files normalized back to HEAD LF convention. New dep `@types/node ^22` (lockfile +19 lines).

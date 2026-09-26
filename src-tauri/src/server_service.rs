@@ -1,4 +1,4 @@
-//! Supervised server lifecycle command family (audit S-27 I1, slice 3a).
+//! Supervised server lifecycle command family.
 //!
 //! Extracted from `lib.rs`: these are the same Tauri commands. The shared
 //! operation coordinator (`reserve_operation`, `OperationOwner`) stays in
@@ -24,7 +24,7 @@ pub(crate) async fn start_server(
     state: tauri::State<'_, AppState>,
 ) -> Result<ServerStatus, String> {
     // One owner at a time: a running server, benchmark, or tuning session
-    // holds the reservation (audit MT-05).
+    // holds the reservation.
     let reservation = reserve_operation(&state.operations, OperationOwner::Server)?;
     // Aborted-command shape (review deleg_16c0e72a): an abandoned benchmark
     // worker can still infer after its reservation released. The held slot
@@ -35,7 +35,7 @@ pub(crate) async fn start_server(
     {
         // One short lock claims the operation and publishes the starting
         // state; the readiness wait runs on a blocking worker without any
-        // server lock held (audit IPC-01 I1/I2).
+        // server lock held.
         let mut slot = state
             .server
             .lock()
@@ -67,7 +67,7 @@ pub(crate) async fn start_server(
 
 /// True when the given startup operation may still publish: the server
 /// reservation is still held, no cancellation arrived, and the starting slot
-/// still names this operation (audit IPC-01 I3). A late completion from an
+/// still names this operation. A late completion from an
 /// older operation can never publish or clear a newer operation's state.
 pub(crate) fn startup_is_current(state: &AppState, operation_id: u64, cancel: &AtomicBool) -> bool {
     !cancel.load(Ordering::Relaxed)
@@ -83,7 +83,7 @@ pub(crate) fn startup_is_current(state: &AppState, operation_id: u64, cancel: &A
 /// The blocking half of `start_server`: launch, wait for readiness without
 /// holding any lock, and commit the server slot only while this operation
 /// still owns it; otherwise terminate and reap before returning
-/// (audit IPC-01 I2/I3).
+///.
 pub(crate) fn start_server_worker(
     app: &tauri::AppHandle,
     profile: LaunchProfile,
@@ -101,6 +101,10 @@ pub(crate) fn start_server_worker(
             }
         }
     };
+    // the readiness client is built before the spawn, so a client
+    // failure returns while there is still no child to reap and no slot to
+    // clear. It must not be constructed between spawn and the health wait.
+    let client = local_client(&profile)?;
     let (mut child, mut validation, log_path, execution_lease, mut log_drains) =
         match spawn_server(&profile, &format!("server-{}", profile.port)) {
             Ok(spawned) => spawned,
@@ -111,7 +115,7 @@ pub(crate) fn start_server_worker(
         };
     let health = wait_until_healthy_cancellable(
         &mut child,
-        &local_client(&profile)?,
+        &client,
         &log_path,
         Duration::from_secs(600),
         &cancel,
@@ -183,6 +187,26 @@ pub(crate) async fn stop_server(
 const STALE_STOP: &str =
     "The managed server operation changed before Stop. Check the current run before requesting Stop again.";
 
+/// Join spawned log-drain threads with a bounded wait and report whether
+/// every drain settled: the retained log is complete when the child holds
+/// no more output, and a drain that somehow lingers is detached rather
+/// than blocking the caller past the deadline.
+pub(crate) fn join_log_drains(drains: Vec<std::thread::JoinHandle<()>>) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut settled = true;
+    for drain in drains {
+        while !drain.is_finished() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        if drain.is_finished() {
+            let _ = drain.join();
+        } else {
+            settled = false;
+        }
+    }
+    settled
+}
+
 fn prepare_stop(state: &AppState) -> Result<u64, String> {
     let coordinator = state
         .operations
@@ -247,28 +271,37 @@ fn stop_server_worker(state: &AppState, generation: u64) -> Result<ServerStatus,
         std::thread::sleep(Duration::from_millis(25));
     }
     let _reservation = reserve_stop(state, generation)?;
+    // Take the server out of the slot under the lock, then terminate and
+    // join outside it: status reads and competing lifecycle calls keep the
+    // mutex while Stop resolves the child. The reservation stays held
+    // across the transition, so no other operation can claim the slot.
+    let taken = {
+        let mut slot = state
+            .server
+            .lock()
+            .map_err(|_| "Server state is unavailable".to_string())?;
+        slot.take()
+    };
+    if let Some(mut server) = taken {
+        if !server.child.terminate_and_wait() {
+            // The child is still alive: restore the slot so the running
+            // server stays tracked, then report the failure.
+            let mut slot = state
+                .server
+                .lock()
+                .map_err(|_| "Server state is unavailable".to_string())?;
+            *slot = Some(server);
+            return Err("The contained llama-server process tree did not stop".into());
+        }
+        // The child holds no more output: join the bounded-log drains so
+        // the retained file is complete. Stop never fails on diagnostics:
+        // a lingering drain is detached rather than blocking Stop.
+        join_log_drains(std::mem::take(&mut server.log_drains));
+    }
     let mut slot = state
         .server
         .lock()
         .map_err(|_| "Server state is unavailable".to_string())?;
-    if let Some(server) = slot.as_mut() {
-        if !server.child.terminate_and_wait() {
-            return Err("The contained llama-server process tree did not stop".into());
-        }
-        // The child holds no more output: join the bounded-log drains so
-        // the retained file is complete (audit OPS-01). A drain that
-        // somehow lingers is detached rather than blocking Stop.
-        let deadline = Instant::now() + Duration::from_secs(2);
-        for drain in server.log_drains.drain(..) {
-            while !drain.is_finished() && Instant::now() < deadline {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            if drain.is_finished() {
-                let _ = drain.join();
-            }
-        }
-    }
-    *slot = None;
     Ok(status_from(&mut slot))
 }
 
@@ -338,6 +371,20 @@ pub(crate) fn read_server_log(state: tauri::State<AppState>) -> Result<String, S
 #[cfg(test)]
 mod stop_ownership_tests {
     use super::*;
+
+    #[test]
+    fn log_drains_join_before_the_deadline_and_report_a_lingering_drain() {
+        // Temporary-server paths must join the drain handles instead of
+        // detaching them: finished drains join, and a drain that outlives
+        // the deadline is reported instead of waited on forever.
+        let finished = std::thread::spawn(|| {});
+        assert!(join_log_drains(vec![finished]));
+
+        let lingering = std::thread::spawn(|| std::thread::sleep(Duration::from_secs(30)));
+        let started = Instant::now();
+        assert!(!join_log_drains(vec![lingering]));
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
 
     #[cfg(windows)]
     fn owned_server(state: &AppState) -> u32 {

@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Activity, Cpu, Database, Download, Gauge, Info, MonitorCog, Settings2, Sparkles, TestTube2 } from "lucide-react";
+import { Activity, Cpu, Database, Download, Gauge, Info, MonitorCog, Settings2, Sparkles, TestTube2, TriangleAlert } from "lucide-react";
 import "./App.css";
 import {
   managedHealthOutcome,
@@ -21,7 +21,6 @@ import {
   displayedSelection,
   profileIdentity,
   profileNumberError,
-  legacyBenchmarkInputError,
   tuningWorkloadError,
   applySuggestedPort,
   responseIsCurrent,
@@ -34,10 +33,6 @@ import {
   runtimeCatalogViewState,
   runtimeInstallRequest,
   suggestedProfile,
-  type BenchmarkSummary,
-  type CloudModel,
-  type CloudProvider,
-  type CredentialStatus,
   type GgufSummary,
   type HardwareInfo,
   type HealthModelProgress,
@@ -82,58 +77,20 @@ import { ProfileScreen } from "./screens/ProfileScreen";
 import { BenchmarkScreen } from "./screens/BenchmarkScreen";
 import { tauriEvidenceAdapter } from "./evidence-adapter";
 import type { EvidenceRun } from "./screens/evidence-run";
+import {
+  persistenceFailureNote,
+  persistRecord,
+  quarantineRecord,
+  readRecord,
+  readSetting,
+} from "./persistence";
+import { useCloudCredentials } from "./useCloudCredentials";
 
 type View = "dashboard" | "models" | "catalog" | "runtime" | "profile" | "tune" | "benchmark" | "about";
 
-const readRecord = (key: string): string | null => {
-  // Upgrades read records saved under the previous product prefix once.
-  // New writes use the current prefix; the old value stays for downgrade.
-  try {
-    const current = localStorage.getItem(`localmotive:${key}`);
-    if (current !== null) return current;
-    return localStorage.getItem(`gguf-pilot:${key}`);
-  } catch {
-    return null;
-  }
-};
-/// Move a record that cannot be parsed or validated out of the way
-/// (audit FE-09): the raw text is kept under a quarantine key, the live
-/// key is cleared, and the caller shows a notice instead of crashing.
-function quarantineRecord(key: string, raw: string) {
-  try {
-    localStorage.setItem(`localmotive:quarantine:${key}:${Date.now()}`, raw);
-    localStorage.removeItem(`localmotive:${key}`);
-    localStorage.removeItem(`gguf-pilot:${key}`);
-  } catch {
-    // Storage may be unavailable; the caller still falls back safely.
-  }
-}
-
-/// Persist a record without letting a storage failure masquerade as an
-/// operation failure (audit FE-09 I3): the operation's own result stays
-/// visible and the caller reports the persistence problem separately.
-function persistRecord(key: string, value: string): boolean {
-  try {
-    localStorage.setItem(`localmotive:${key}`, value);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/// The persistence-failure sentence a caller appends to its own notice so a
-/// completed operation is never relabelled as failed (audit FE-09 I3).
-function persistenceFailureNote(thing: string): string {
-  return `${thing} could not be saved to browser storage (unavailable or full) and will not survive a restart.`;
-}
-
-const readSetting = (key: string): string => readRecord(key) ?? "";
-
 const MODEL_ROOT = readSetting("model-root");
 const RUNTIME = readSetting("runtime");
-const CLOUD_PROVIDER = readSetting("cloud-provider") || "openrouter";
-const CLOUD_MODEL = readSetting("cloud-model");
-const inTauri = () => Boolean((window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+const inTauri = () => Boolean(window.__TAURI_INTERNALS__);
 const idleStatus: ServerStatus = {
   running: false,
   phase: "idle",
@@ -170,12 +127,9 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 
 function App() {
   const [view, setView] = useState<View>(RUNTIME ? "dashboard" : "runtime");
-  // Keep each owner's handle separate so panel activity cannot erase a
-  // legacy run's cancellation control during navigation.
+  // The v2 evidence panel owns its run handle; navigation cannot erase it.
   const [panelEvidenceRun, setEvidenceRun] = useState<EvidenceRun | null>(null);
-  const [legacyEvidenceRun, setLegacyEvidenceRun] = useState<EvidenceRun | null>(null);
-  const legacyBenchmarkActive = useRef(false);
-  const evidenceRun = legacyEvidenceRun ?? panelEvidenceRun;
+  const evidenceRun = panelEvidenceRun;
   const [extraArgsDraft, setExtraArgsDraft] = useState<string | null>(null);
   // FE-11: every download carries the destination and revision captured at
   // start, so cancel and progress always address the job itself.
@@ -209,7 +163,6 @@ function App() {
   const [scanFailed, setScanFailed] = useState(false);
   // FE-03: per-resource request sequences and live identity mirrors, so a
   // deferred response can never commit against a newer resource state.
-  const cloudSeq = useRef(0);
   const ggufSeq = useRef(0);
   const previewSeq = useRef(0);
   const [log, setLog] = useState("Waiting for a managed server.");
@@ -254,30 +207,38 @@ function App() {
     }
   }
   const [busy, setBusy] = useState("");
-  const [benchmark, setBenchmark] = useState<BenchmarkSummary | null>(null);
-  const [tokens, setTokens] = useState(512);
-  const [repeats, setRepeats] = useState(3);
-  const benchmarkInputError = legacyBenchmarkInputError(tokens, repeats);
   const [runtimeIdentity, setRuntimeIdentity] = useState<RuntimeIdentity | null>(null);
   const [managedRuntimes, setManagedRuntimes] = useState<ManagedRuntimeRecord[]>([]);
-  const [providers, setProviders] = useState<CloudProvider[]>([]);
-  const [providerId, setProviderId] = useState(CLOUD_PROVIDER);
   // Live mirrors for stale-response checks (audit FE-03): refs track the
   // committed values without re-rendering on assignment.
   // FE-16: single-flight status polling with a sequence so a delayed poll
   // can never overwrite a newer start/stop snapshot.
   const statusPollSeq = useRef(0);
-  const providerIdRef = useRef(providerId);
-  providerIdRef.current = providerId;
   const profileRef = useRef<LaunchProfile | null>(profile);
+  const {
+    providers,
+    providerId,
+    provider,
+    credential,
+    keyDraft,
+    setKeyDraft,
+    cloudModels,
+    cloudModel,
+    cloudCheck,
+    loadCloud,
+    switchProvider,
+    onProviderTabKey,
+    saveKey,
+    forgetKey,
+    openRouterLogin,
+    probeCloud,
+    chooseCloudModel,
+  } = useCloudCredentials({ notify: setNotice, setBusyState: setBusy, isBrowserPreview: !inTauri() });
   profileRef.current = profile;
-  const [credential, setCredential] = useState<CredentialStatus | null>(null);
-  const [keyDraft, setKeyDraft] = useState("");
-  const [cloudModels, setCloudModels] = useState<CloudModel[]>([]);
-  const [cloudModel, setCloudModel] = useState(CLOUD_MODEL);
-  const [cloudCheck, setCloudCheck] = useState("");
   const [gguf, setGguf] = useState<GgufSummary | null>(null);
   const [about, setAbout] = useState<AboutInfo | null>(null);
+  // CORE-01: true while a verifier-only authority override is active.
+  const [verificationMode, setVerificationMode] = useState(false);
   const [catalogSnapshot, setCatalogSnapshot] = useState<CatalogSnapshot | null>(null);
   const [catalogRows, setCatalogRows] = useState<CatalogModel[]>([]);
   // One merged browse collection: verified curated rows plus user rows.
@@ -357,8 +318,13 @@ function App() {
   const selected = displayedSelection(models, selectedId);
   const totalBytes = useMemo(() => models.reduce((sum, model) => sum + model.sizeBytes, 0), [models]);
   const invalidCount = models.filter((model) => !model.complete).length;
-  const provider = providers.find((entry) => entry.id === providerId) ?? null;
   const isManagedPath = runtimeIdentity?.managedVerified === true;
+
+  /// FE-06: scan acquisition (including cancellation) stays in `App.tsx`;
+  /// the inventory screen reports through the `cancelScan` prop.
+  function cancelScan() {
+    void invoke("cancel_scan");
+  }
 
   async function scan() {
     if (!modelRoot.trim()) {
@@ -757,6 +723,7 @@ function App() {
 
   async function saveHfToken() {
     if (!hfTokenDraft.trim()) return;
+    const attempted = hfTokenDraft;
     setCatalogBusy(true);
     try {
       const status = await invoke<TokenStatus>("save_hf_token", { token: hfTokenDraft });
@@ -764,6 +731,9 @@ function App() {
       setHfToken(status);
       setNotice(`Hugging Face token ${status.masked} stored in Windows Credential Manager.`);
     } catch (error) {
+      // FE-01: a failed save must not leave the typed secret in frontend state.
+      // Only the failed attempt clears; newer typing survives.
+      setHfTokenDraft((current) => (current === attempted ? "" : current));
       setNotice(errorText(error));
     } finally {
       setCatalogBusy(false);
@@ -868,164 +838,6 @@ function App() {
       return null;
     });
     if (typeof selected === "string") await activateRuntime(selected);
-  }
-
-  // ---- Cloud provider & credentials ------------------------------------------
-
-  async function loadCloud(nextProvider = providerId) {
-    const sequence = ++cloudSeq.current;
-    try {
-      const list = providers.length ? providers : await invoke<CloudProvider[]>("cloud_providers");
-      if (sequence !== cloudSeq.current) return;
-      if (!providers.length) setProviders(list);
-      const status = await invoke<CredentialStatus>("cloud_credential_status", { provider: nextProvider });
-      if (!responseIsCurrent(sequence, cloudSeq.current, nextProvider, providerIdRef.current)) return;
-      setCredential(status);
-      setCloudModels([]);
-      setCloudCheck("");
-      setCloudModel("");
-      if (status.configured) {
-        try {
-          const modelsList = await invoke<CloudModel[]>("cloud_list_models", { provider: nextProvider });
-          if (!responseIsCurrent(sequence, cloudSeq.current, nextProvider, providerIdRef.current)) return;
-          setCloudModels(modelsList);
-          const fallback = list.find((entry) => entry.id === nextProvider)?.defaultModel ?? "";
-          const stored = readRecord(`cloud-model:${nextProvider}`);
-          const chosen = stored && modelsList.some((m) => m.id === stored) ? stored : modelsList.some((m) => m.id === fallback) ? fallback : (modelsList[0]?.id ?? fallback);
-          setCloudModel(chosen);
-        } catch (error) {
-          if (responseIsCurrent(sequence, cloudSeq.current, nextProvider, providerIdRef.current)) setCloudCheck(errorText(error));
-        }
-      }
-    } catch (error) {
-      if (sequence !== cloudSeq.current) return;
-      if (!inTauri()) {
-        setProviders([
-          { id: "openrouter", label: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", keyPrefixHint: "sk-or-", consoleUrl: "https://openrouter.ai/settings/keys", supportsOauth: true, defaultModel: "anthropic/claude-sonnet-4.6", listsModels: true },
-          { id: "anthropic", label: "Anthropic", baseUrl: "https://api.anthropic.com/v1", keyPrefixHint: "sk-ant-", consoleUrl: "https://platform.claude.com/settings/keys", supportsOauth: false, defaultModel: "claude-sonnet-4-6", listsModels: true },
-          { id: "openai", label: "OpenAI", baseUrl: "https://api.openai.com/v1", keyPrefixHint: "sk-", consoleUrl: "https://platform.openai.com/api-keys", supportsOauth: false, defaultModel: "gpt-5", listsModels: true },
-          { id: "gemini", label: "Google Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", keyPrefixHint: "AIza", consoleUrl: "https://aistudio.google.com/apikey", supportsOauth: false, defaultModel: "gemini-2.5-pro", listsModels: true },
-        ]);
-        setCredential({ provider: nextProvider, configured: false, masked: "" });
-      } else {
-        setNotice(errorText(error));
-      }
-    }
-  }
-
-  async function switchProvider(next: string) {
-    setProviderId(next);
-    if (!persistRecord("cloud-provider", next)) {
-      setNotice(persistenceFailureNote("The provider choice"));
-    }
-    setKeyDraft("");
-    // FE-03: clear provider-specific presentation at switch start; a slow
-    // previous provider can never relabel the new tab while it loads.
-    cloudSeq.current += 1;
-    setCredential(null);
-    setCloudModels([]);
-    setCloudCheck("");
-    await loadCloud(next);
-  }
-
-  /// WAI-ARIA tabs keyboard pattern (audit FE-13): arrows cycle, Home/End
-  /// jump, and focus follows the selection.
-  function onProviderTabKey(
-    event: React.KeyboardEvent<HTMLButtonElement>,
-    index: number,
-  ) {
-    let next = index;
-    if (event.key === "ArrowRight") next = (index + 1) % providers.length;
-    else if (event.key === "ArrowLeft") next = (index - 1 + providers.length) % providers.length;
-    else if (event.key === "Home") next = 0;
-    else if (event.key === "End") next = providers.length - 1;
-    else return;
-    event.preventDefault();
-    const target = providers[next];
-    if (!target) return;
-    switchProvider(target.id);
-    document.getElementById(`provider-tab-${target.id}`)?.focus();
-  }
-
-  async function saveKey() {
-    if (!keyDraft.trim()) return;
-    const forProvider = providerId;
-    const sequence = ++cloudSeq.current;
-    setBusy("cloud");
-    try {
-      const status = await invoke<CredentialStatus>("cloud_save_credential", { provider: forProvider, secret: keyDraft });
-      if (!responseIsCurrent(sequence, cloudSeq.current, forProvider, providerIdRef.current)) return;
-      setKeyDraft("");
-      setCredential(status);
-      setNotice(`${providers.find((entry) => entry.id === forProvider)?.label ?? forProvider} key stored in Windows Credential Manager.`);
-      await loadCloud(forProvider);
-    } catch (error) {
-      if (responseIsCurrent(sequence, cloudSeq.current, forProvider, providerIdRef.current)) setNotice(errorText(error));
-    } finally {
-      setBusy("");
-    }
-  }
-
-  async function forgetKey() {
-    const forProvider = providerId;
-    const sequence = ++cloudSeq.current;
-    setBusy("cloud");
-    try {
-      const status = await invoke<CredentialStatus>("cloud_clear_credential", { provider: forProvider });
-      if (!responseIsCurrent(sequence, cloudSeq.current, forProvider, providerIdRef.current)) return;
-      setCredential(status);
-      setCloudModels([]);
-      setCloudCheck("");
-      setNotice(`${providers.find((entry) => entry.id === forProvider)?.label ?? forProvider} key removed from Windows Credential Manager.`);
-    } catch (error) {
-      if (responseIsCurrent(sequence, cloudSeq.current, forProvider, providerIdRef.current)) setNotice(errorText(error));
-    } finally {
-      setBusy("");
-    }
-  }
-
-  async function openRouterLogin() {
-    const sequence = ++cloudSeq.current;
-    setBusy("oauth");
-    setNotice("Finish signing in to OpenRouter in your browser. Localmotive is waiting on a local callback.");
-    try {
-      const status = await invoke<CredentialStatus>("cloud_openrouter_login");
-      if (!responseIsCurrent(sequence, cloudSeq.current, "openrouter", providerIdRef.current)) return;
-      setCredential(status);
-      setNotice("OpenRouter connected. A user-controlled key was issued and stored in Windows Credential Manager.");
-      await loadCloud("openrouter");
-    } catch (error) {
-      // A cancelled/timed-out sign-in must not relabel another provider's tab.
-      if (responseIsCurrent(sequence, cloudSeq.current, "openrouter", providerIdRef.current)) setNotice(errorText(error));
-    } finally {
-      setBusy("");
-    }
-  }
-
-  async function probeCloud() {
-    const forProvider = providerId;
-    const forModel = cloudModel;
-    const sequence = ++cloudSeq.current;
-    setBusy("probe");
-    setCloudCheck("Contacting provider…");
-    try {
-      const reply = await invoke<string>("cloud_probe", { provider: forProvider, model: forModel });
-      if (!responseIsCurrent(sequence, cloudSeq.current, forProvider, providerIdRef.current)) return;
-      setCloudCheck(`Connected · ${forModel} replied “${reply.trim().slice(0, 40)}”`);
-    } catch (error) {
-      if (responseIsCurrent(sequence, cloudSeq.current, forProvider, providerIdRef.current)) setCloudCheck(errorText(error));
-    } finally {
-      setBusy("");
-    }
-  }
-
-  function chooseCloudModel(id: string) {
-    setCloudModel(id);
-    const savedGlobally = persistRecord("cloud-model", id);
-    const savedForProvider = persistRecord(`cloud-model:${providerId}`, id);
-    if (!savedGlobally || !savedForProvider) {
-      setNotice(persistenceFailureNote("The advisor model choice"));
-    }
   }
 
   // ---- AI tuning -------------------------------------------------------------
@@ -1299,41 +1111,6 @@ function App() {
     }
   }
 
-  async function runBenchmark() {
-    if (!status.port || evidenceRun || legacyBenchmarkActive.current) return;
-    if (benchmarkInputError) { setNotice(benchmarkInputError); return; }
-    legacyBenchmarkActive.current = true;
-    setBusy("benchmark");
-    setLegacyEvidenceRun({
-      kind: "benchmark",
-      cancel: () => {
-        void invoke<void>("cancel_benchmark").then(
-          () => setNotice("Benchmark cancellation requested; waiting for the current request to finish."),
-          (error) => setNotice(errorText(error)),
-        );
-      },
-    });
-    try {
-      const result = await invoke<BenchmarkSummary>("benchmark_server", {
-        host: profile?.host ?? "127.0.0.1",
-        port: status.port,
-        tokens,
-        repeats,
-      });
-      setBenchmark(result);
-      const resultSaved = persistRecord(`benchmark:${status.alias}`, JSON.stringify(result));
-      setNotice(
-        `Benchmark complete: ${result.meanTps.toFixed(2)} generation tok/s mean.${resultSaved ? "" : ` ${persistenceFailureNote("The benchmark result")}`}`,
-      );
-    } catch (error) {
-      setNotice(errorText(error));
-    } finally {
-      legacyBenchmarkActive.current = false;
-      setLegacyEvidenceRun(null);
-      setBusy("");
-    }
-  }
-
   useEffect(() => {
     if (view === "catalog" && !catalogSnapshot && !catalogBusy) loadModelCatalog();
   }, [view]);
@@ -1422,6 +1199,7 @@ function App() {
     loadRuntimeSetup();
     loadCloud();
     invoke<AboutInfo>("about_info").then(setAbout).catch(() => setAbout(null));
+    invoke<boolean>("verification_mode").then((mode) => setVerificationMode(mode === true)).catch(() => setVerificationMode(false));
     if (modelRoot) scan();
     if (runtimePath) inspect();
     return () => {
@@ -1581,6 +1359,9 @@ function App() {
           </div>
         </header>
 
+        {verificationMode && (
+          <div className="warning-band" role="status"><TriangleAlert size={17} /><strong>VERIFICATION MODE</strong><span>Catalog or download authority is overridden for testing. Do not use for real models.</span></div>
+        )}
         <div className="notice-line" role="status">
           <span className="notice-code">SYS</span>
           <span>{notice}</span>
@@ -1610,7 +1391,6 @@ function App() {
 
         {view === "dashboard" && (
           <DashboardScreen
-            benchmark={benchmark}
             busy={busy}
             evidenceRun={evidenceRun}
             log={log}
@@ -1628,6 +1408,7 @@ function App() {
         {view === "models" && (
           <InventoryScreen
             busy={busy}
+            cancelScan={cancelScan}
             chooseModelFolder={chooseModelFolder}
             invalidCount={invalidCount}
             lastScan={lastScan}
@@ -1838,20 +1619,11 @@ function App() {
         >
           <BenchmarkScreen
             adapter={tauriEvidenceAdapter}
-            benchmark={benchmark}
-            inputError={benchmarkInputError}
-            busy={busy}
-            evidenceRun={evidenceRun}
             hardware={hardware}
             profile={profile}
-            repeats={repeats}
-            runBenchmark={runBenchmark}
             selected={selected}
             setEvidenceRun={setEvidenceRun}
-            setRepeats={setRepeats}
-            setTokens={setTokens}
             status={status}
-            tokens={tokens}
           />
           </section>
       </main>

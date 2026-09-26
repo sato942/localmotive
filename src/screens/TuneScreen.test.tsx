@@ -105,6 +105,26 @@ function props(overrides: Partial<TuneScreenProps> = {}): TuneScreenProps {
 }
 
 describe("TuneScreen presentation contract", () => {
+  it("states the same-prompt limit instead of claiming confirmation", () => {
+    // P1-28 (MT-01): the final check re-measures on the fixed harness
+    // prompt. The UI must present it as a same-prompt re-measurement, never
+    // as an independent confirmation.
+    const selected = {
+      id: "fixture", name: "fixture", directory: "C:/models", firstShard: "C:/models/fixture.gguf",
+      sizeBytes: 24, shardCount: 1, expectedShards: 1, complete: true, quant: "F16", shards: [], companions: [],
+    };
+    const trial = { index: 0, changes: {}, rationale: "Fixture report", meanTps: 1, medianTps: 1, error: null, command: "fixture" };
+    const report = {
+      baselineTps: 100, bestTps: 130, bestIndex: 0, bestProfile: suggestedProfile(selected, "C:/runtime/llama-server.exe"),
+      trials: [trial], stoppedReason: "Fixture verification.",
+      finalVerification: { baselineTps: 100, winnerTps: 130, requiredImprovement: 0.03, confirmed: true },
+    };
+    act(() => root.render(<TuneScreen {...props({ selected, bestLive: trial, trialsForDisplay: [trial], tuneReport: report })} />));
+    const text = container.textContent ?? "";
+    expect(text).toContain("harness prompt");
+    expect(text).toContain("same-prompt re-measurement");
+    expect(text).not.toContain("confirmed.");
+  });
   it("keeps an input error visible while a prior report is displayed", () => {
     const selected = {
       id: "fixture", name: "fixture", directory: "C:/models", firstShard: "C:/models/fixture.gguf",

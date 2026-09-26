@@ -1,4 +1,4 @@
-//! Managed-runtime setup, install and health command family (audit S-27 I1).
+//! Managed-runtime setup, install and health command family.
 //!
 //! Extracted from `lib.rs`: these are the same Tauri commands, and the
 //! runtime/health ownership (download verification, execution authorization,
@@ -8,6 +8,13 @@ use crate::{health, runtime, AppState, RuntimeSetupResponse};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::Emitter;
+
+/// Recover a state mutex instead of panicking on poisoning: a
+/// poisoned lock means a previous holder panicked, not that the guarded value
+/// is unusable. Commands keep serving with the recovered value.
+pub(crate) fn lock_recover<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|poison| poison.into_inner())
+}
 
 #[tauri::command]
 pub(crate) async fn load_runtime_setup(
@@ -64,7 +71,7 @@ pub(crate) fn detect_hardware() -> runtime::HardwareInfo {
 }
 
 /// Verification instrumentation for the runtime setup screens: jobs run,
-/// requests coalesced, bytes hashed, jobs cancelled (audit RT-06 I4).
+/// requests coalesced, bytes hashed, jobs cancelled.
 #[tauri::command]
 pub(crate) fn runtime_verification_stats() -> runtime::RuntimeVerificationStats {
     runtime::verification_stats()
@@ -127,7 +134,7 @@ pub(crate) async fn install_managed_runtime(
 ) -> Result<runtime::InstalledRuntime, String> {
     let cancel = Arc::new(AtomicBool::new(false));
     {
-        let mut active = state.runtime_install.lock().unwrap();
+        let mut active = lock_recover(&state.runtime_install);
         if active.is_some() {
             return Err("A managed runtime installation is already active".into());
         }
@@ -140,13 +147,13 @@ pub(crate) async fn install_managed_runtime(
         })
     })
     .await;
-    *state.runtime_install.lock().unwrap() = None;
+    *lock_recover(&state.runtime_install) = None;
     result.map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
 pub(crate) fn cancel_managed_runtime_install(state: tauri::State<'_, AppState>) -> bool {
-    let active = state.runtime_install.lock().unwrap();
+    let active = lock_recover(&state.runtime_install);
     if let Some(cancel) = active.as_ref() {
         cancel.store(true, Ordering::Relaxed);
         true
@@ -166,7 +173,7 @@ pub(crate) async fn check_managed_runtime_health(
     let adapter_id = request.adapter_id.clone();
     let cancel = Arc::new(AtomicBool::new(false));
     {
-        let mut active = state.runtime_health.lock().unwrap();
+        let mut active = lock_recover(&state.runtime_health);
         if active.is_some() {
             return Err("A managed runtime health run is already active".into());
         }
@@ -202,7 +209,7 @@ pub(crate) async fn check_managed_runtime_health(
         health::run_managed_health(context, cancel.as_ref())
     })
     .await;
-    *state.runtime_health.lock().unwrap() = None;
+    *lock_recover(&state.runtime_health) = None;
     result.map_err(|error| error.to_string())
 }
 
@@ -259,7 +266,7 @@ pub(crate) fn cancel_health_model_repair(state: tauri::State<'_, AppState>) -> b
 
 #[tauri::command]
 pub(crate) fn cancel_managed_runtime_health(state: tauri::State<'_, AppState>) -> bool {
-    let active = state.runtime_health.lock().unwrap();
+    let active = lock_recover(&state.runtime_health);
     if let Some(cancel) = active.as_ref() {
         cancel.store(true, Ordering::Relaxed);
         true
@@ -271,3 +278,21 @@ pub(crate) fn cancel_managed_runtime_health(state: tauri::State<'_, AppState>) -
 // ---------------------------------------------------------------------------
 // Cloud credentials
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod lock_tests {
+    use super::lock_recover;
+
+    #[test]
+    fn poisoned_state_lock_recovers_instead_of_panicking() {
+        // A holder that panics poisons the mutex. Commands must keep
+        // serving with the recovered value instead of panicking on `.unwrap()`.
+        let mutex = std::sync::Mutex::new(7u32);
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = mutex.lock().unwrap();
+            panic!("holder panics while holding the guard");
+        });
+        assert!(mutex.is_poisoned());
+        assert_eq!(*lock_recover(&mutex), 7);
+    }
+}

@@ -1,5 +1,5 @@
 //! Deterministic test-support helpers for bounded property campaigns
-//! (audit S-19). No external proptest/fuzz dependency: a fixed splitmix64
+//!. No external proptest/fuzz dependency: a fixed splitmix64
 //! generator keeps every campaign reproducible from its seed alone, and each
 //! property test reports the failing seed in its panic message.
 #![cfg(test)]
@@ -61,5 +61,37 @@ pub fn campaign(iterations: u64, mut check: impl FnMut(u64, &mut Rng)) {
     for seed in 1..=iterations {
         let mut rng = Rng::new(seed);
         check(seed, &mut rng);
+    }
+}
+
+static TEMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Isolated temp dir for tests: PID-only names collide across recycled PIDs
+/// and leftover trees, so every call mints a fresh directory.
+pub fn unique_temp_dir(label: &str) -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    let root = std::env::temp_dir().join(format!(
+        "localmotive-{label}-{}-{nanos}-{}",
+        std::process::id(),
+        TEMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&root).expect("test temp dir setup failed");
+    root
+}
+
+mod tests {
+    use super::*;
+
+    #[test]
+    fn temp_dirs_are_unique_per_call() {
+        let first = unique_temp_dir("unique");
+        let second = unique_temp_dir("unique");
+        assert_ne!(first, second);
+        assert!(first.is_dir() && second.is_dir());
+        let _ = std::fs::remove_dir_all(first);
+        let _ = std::fs::remove_dir_all(second);
     }
 }

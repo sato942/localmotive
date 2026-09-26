@@ -41,6 +41,35 @@ The maintainer responds on a best-effort basis. There is no bug bounty.
 Valid reports are fixed on `main` with a regression test, and the fix is
 credited in the changelog unless you ask otherwise.
 
+## Verification mode and WebView2 remote debugging
+
+The packaged verifier exercises the app with controlled fixtures. It sets
+these variables only for the candidate process it starts, under an isolated
+application-data profile:
+
+- `LOCALMOTIVE_VERIFY_ISOLATED_ROOT`: the gate. Without it the app ignores
+  every variable below and verifies against the shipped catalog key and the
+  canonical download host.
+- `LOCALMOTIVE_CATALOG_URL`: loopback HTTP fixture endpoint only
+  (`http://127.0.0.1:` or `http://localhost:`); anything else is refused.
+- `LOCALMOTIVE_CATALOG_PUBKEY`: 32-byte fixture signing key, hex-encoded.
+- `LOCALMOTIVE_CATALOG_ROOT`: fixture cache root, required to sit inside the
+  isolated root.
+- `LOCALMOTIVE_HF_BASE`: loopback HTTP base for downloads; anything else
+  falls back to `https://huggingface.co`.
+- `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`: standard WebView2 behavior, not an
+  application setting. The verifier sets
+  `--remote-debugging-port=<port> --user-data-dir=<isolated profile>` so the
+  packaged matrix can drive the candidate over CDP. A normal launch never
+  sets this variable and must expose no debugger endpoint: do not set it
+  outside the isolated verifier profile, and treat any unexpected remote
+  debugging port on a production run as a defect.
+
+While any authority override is active the UI shows a VERIFICATION MODE
+banner (backed by the read-only `verification_mode` command). A run without
+the banner verifies the catalog against the shipped key and downloads from
+the canonical host.
+
 ## Release integrity
 
 Public releases ship **unsigned with an explicit disclosure**; verify the

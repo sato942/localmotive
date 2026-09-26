@@ -37,13 +37,17 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 zip = { version = "4", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
 hex = "0.4"
+# P1-25 (DL-01): HMAC-SHA256 integrity tags on user override file rows, so a
+# direct database edit cannot swap a digest. Pairs with sha2 0.10 already in
+# the tree; no other new cryptography.
+hmac = "0.12"
 tauri-plugin-dialog = "2"
 keyring = { version = "3", features = ["windows-native"] }
 base64 = "0.22"
 rand = "0.8"
 cap-std = "4.0.3"
 ed25519-dalek = { version = "2.2", features = ["std"] }
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_ProcessStatus", "Win32_System_SystemInformation", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_ProcessStatus", "Win32_System_SystemInformation", "Win32_System_Threading"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 # P0-2: the runtime catalog single-flight gate uses tokio watch and Mutex.
 # tokio 1 with sync is already in the tree through tauri; this direct edge

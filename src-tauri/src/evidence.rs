@@ -565,7 +565,7 @@ pub struct BenchmarkObservation {
     pub prompt_tokens: u32,
     /// Prompt tokens restored from the runtime's prompt cache
     /// (`timings.cache_n`, b10816 semantics). A warm trial is valid when
-    /// processed + cached equals the requested prompt size (audit MT-01).
+    /// processed + cached equals the requested prompt size.
     #[serde(default)]
     pub cached_prompt_tokens: u32,
     pub generated_tokens: u32,
@@ -611,12 +611,12 @@ impl Default for BenchmarkObservation {
     }
 }
 
-/// What the v2 benchmark actually measures (audit S-12): a controlled
+/// What the v2 benchmark actually measures: a controlled
 /// greedy microbenchmark, not a workload-class guarantee. Exported manifests
 /// carry this so a caveat survives the round trip.
 pub const WORKLOAD_SCOPE_NOTE: &str = "Controlled greedy microbenchmark: one fixed prompt, temperature 0, one request at a time on a warm server. It does not represent every workload class; speculative-decoding gains measured here do not generalize to other prompts.";
 
-/// What `peakProcessRssBytes` is (audit S-12): process-lifetime CPU working
+/// What `peakProcessRssBytes` is: process-lifetime CPU working
 /// set, not an isolated request allocation and not GPU memory.
 pub const WORKING_SET_SCOPE_NOTE: &str = "Peak working set is the server process lifetime CPU working-set evidence. It excludes dedicated GPU memory and is not an isolated request allocation.";
 
@@ -625,21 +625,17 @@ pub const WORKING_SET_SCOPE_NOTE: &str = "Peak working set is the server process
 pub struct BenchmarkManifest {
     pub schema: u32,
     pub harness_version: String,
-    /// The workload-scope caveat for this harness (audit S-12). Defaulted so
+    /// The workload-scope caveat for this harness. Defaulted so
     /// manifests written before the caveat existed still deserialize.
     #[serde(default)]
     pub scope_note: String,
     pub compatibility_key: Option<String>,
-    /// The launch-scope execution-snapshot key of the same configuration. The
-    /// identity must match before this run evidence can attach (audit MT-09).
-    #[serde(default)]
-    pub launch_compatibility_key: Option<String>,
     /// Schema of the execution snapshot behind `compatibility_key` (empty for
     /// manifests written before the snapshot identity existed).
     #[serde(default)]
     pub execution_snapshot_schema: String,
     /// Material facts the snapshot could not observe, so calibration anchors
-    /// derived from this run know whether reuse is supported (audit MT-07/08).
+    /// derived from this run know whether reuse is supported.
     #[serde(default)]
     pub execution_snapshot_unknowns: Vec<String>,
     pub runtime: Option<RuntimeFact>,
@@ -659,7 +655,6 @@ impl Default for BenchmarkManifest {
             harness_version: env!("CARGO_PKG_VERSION").into(),
             scope_note: WORKLOAD_SCOPE_NOTE.into(),
             compatibility_key: None,
-            launch_compatibility_key: None,
             execution_snapshot_schema: String::new(),
             execution_snapshot_unknowns: Vec::new(),
             runtime: None,
@@ -737,11 +732,11 @@ impl BenchmarkManifest {
             ] {
                 if let Some(value) = value {
                     validate_finite(&format!("observations[{index}].{label}"), value)?;
-                    if value < 0.0 {
+                    if value <= 0.0 {
                         return Err(DomainError::new(
                             ErrorCode::InvalidRange,
                             format!("observations[{index}].{label}"),
-                            "Observation metrics cannot be negative",
+                            "Observation metrics must be positive",
                         ));
                     }
                 }
@@ -784,7 +779,7 @@ impl BenchmarkManifest {
             )
         })?;
         // The compatibility key carries the execution-snapshot schema
-        // prefix; legacy keys are insufficient evidence (audit MT-07 I4).
+        // prefix; legacy keys are insufficient evidence.
         crate::calibration::validate_compatibility_key(compatibility_key).map_err(|message| {
             DomainError::new(ErrorCode::InvalidDigest, "compatibilityKey", &message)
         })?;
@@ -804,23 +799,48 @@ impl BenchmarkManifest {
             .expect("launch presence checked above")
             .validate()?;
         validate_attempt_consistency(&self.workload, &self.observations, self.terminal_outcome)?;
+        // Warmups prove the run reached steady state: a finalized record
+        // carries exactly the requested warmups unless the run died early,
+        // in which case it carries the terminal failure instead.
+        if self.warmups.len() != self.workload.warmups as usize
+            && !matches!(
+                self.terminal_outcome,
+                Some(AttemptOutcome::Failed) | Some(AttemptOutcome::TimedOut)
+            )
+        {
+            return Err(DomainError::new(
+                ErrorCode::InconsistentEvidence,
+                "warmups",
+                "A finalized record carries exactly the requested warmups unless the run failed",
+            ));
+        }
         Ok(())
     }
 }
 
 /// Attempt/workload/result consistency shared by persistence and replay
-/// (audit MT-13): one contract at every retained boundary.
+///: one contract at every retained boundary.
 pub fn validate_attempt_consistency(
     workload: &Workload,
     observations: &[BenchmarkObservation],
     terminal_outcome: Option<AttemptOutcome>,
 ) -> Result<(), DomainError> {
     if observations.is_empty() {
-        return Err(DomainError::new(
-            ErrorCode::MissingValue,
-            "observations",
-            "A finalized record requires at least one observation",
-        ));
+        // a run that dies in warmup has no observations, but it
+        // carries its terminal failure outcome and warmup errors. It
+        // persists as a Failed record instead of vanishing. Cancellation
+        // still leaves no record, and a run with no outcome at all is still
+        // contentless.
+        match terminal_outcome {
+            Some(AttemptOutcome::Failed) | Some(AttemptOutcome::TimedOut) => return Ok(()),
+            _ => {
+                return Err(DomainError::new(
+                    ErrorCode::MissingValue,
+                    "observations",
+                    "A finalized record requires at least one observation",
+                ));
+            }
+        }
     }
     if let Some(outcome) = terminal_outcome {
         if outcome == AttemptOutcome::Succeeded {
@@ -1073,7 +1093,7 @@ mod tests {
     }
 
     #[test]
-    fn s12_scope_notes_survive_the_manifest_round_trip_and_default_honestly() {
+    fn scope_notes_survive_the_manifest_round_trip_and_default_honestly() {
         let manifest = BenchmarkManifest::default();
         assert_eq!(manifest.scope_note, WORKLOAD_SCOPE_NOTE);
         let serialized = serde_json::to_string(&manifest).unwrap();
@@ -1192,6 +1212,19 @@ mod tests {
         assert_eq!(workload.warmups, 1);
         assert_eq!(workload.trials, 5);
         assert_eq!(workload.seed, Some(42));
+    }
+
+    #[test]
+    fn warmup_only_failure_validates_as_a_failed_attempt() {
+        // a run that dies in warmup carries its terminal
+        // outcome and warmup errors but zero observations. The contract must
+        // accept it so the partial run persists as Failed instead of
+        // vanishing; a run with no outcome at all is still rejected.
+        let workload = Workload::default();
+        validate_attempt_consistency(&workload, &[], Some(AttemptOutcome::Failed)).unwrap();
+        validate_attempt_consistency(&workload, &[], Some(AttemptOutcome::TimedOut)).unwrap();
+        let error = validate_attempt_consistency(&workload, &[], None).unwrap_err();
+        assert_eq!(error.field, "observations");
     }
 
     #[test]
@@ -1314,6 +1347,143 @@ mod tests {
 
         assert_eq!(error.code, ErrorCode::MissingValue);
         assert_eq!(error.field, "launch");
+    }
+
+    #[test]
+    fn manifest_rejects_a_zero_observation_metric() {
+        // Acquisition rejects zero metrics, so persistence must reject them
+        // too: a deserialized zero metric is corrupt input, not evidence.
+        let manifest = BenchmarkManifest {
+            observations: vec![BenchmarkObservation {
+                trial: 1,
+                started_at_ms: 1,
+                duration_ms: 10.0,
+                prompt_tokens: 32,
+                cached_prompt_tokens: 0,
+                generated_tokens: 16,
+                prefill_tps: Some(100.0),
+                decode_tps: Some(0.0),
+                first_token_ms: None,
+                derived_ttft_ms: None,
+                peak_process_rss_bytes: Evidence::unknown(
+                    source(EvidenceSourceKind::Unknown),
+                    1,
+                    "fixture",
+                ),
+                outcome: AttemptOutcome::Succeeded,
+                error: None,
+            }],
+            ..BenchmarkManifest::default()
+        };
+
+        let error = manifest.validate().unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidRange);
+        assert_eq!(error.field, "observations[0].decodeTps");
+    }
+
+    fn complete_manifest_fixture() -> BenchmarkManifest {
+        BenchmarkManifest {
+            compatibility_key: Some(format!("v2:{}", "c".repeat(64))),
+            runtime: Some(RuntimeFact {
+                path: "runtime.exe".into(),
+                version: "1".into(),
+                build: "1".into(),
+                executable_sha256: Some("a".repeat(64)),
+                help_sha256: "b".repeat(64),
+                backend: "cpu".into(),
+            }),
+            model: Some(ModelFact {
+                logical_id: "fixture".into(),
+                architecture: "llama".into(),
+                shards: vec![FileFact {
+                    path: "model.gguf".into(),
+                    bytes: 1,
+                    sha256: Some("d".repeat(64)),
+                }],
+                companions: Vec::new(),
+                gguf_header_sha256: "e".repeat(64),
+            }),
+            launch: Some(LaunchFact {
+                requested_context: 4_096,
+                effective_context: Evidence::known(
+                    4_096_u32,
+                    EvidenceLevel::Exact,
+                    source(EvidenceSourceKind::FileSystem),
+                    1,
+                    Vec::new(),
+                )
+                .unwrap(),
+                parallel: 1,
+                gpu_layers: "0".into(),
+                batch: 512,
+                ubatch: 128,
+                cache_type_k: "F16".into(),
+                cache_type_v: "F16".into(),
+                split_mode: "none".into(),
+                ..LaunchFact::default()
+            }),
+            workload: Workload {
+                prompt_tokens: 32,
+                generation_tokens: 16,
+                warmups: 1,
+                trials: 1,
+                ..Workload::default()
+            },
+            observations: vec![BenchmarkObservation {
+                trial: 1,
+                started_at_ms: 1,
+                duration_ms: 10.0,
+                prompt_tokens: 32,
+                cached_prompt_tokens: 0,
+                generated_tokens: 16,
+                prefill_tps: Some(100.0),
+                decode_tps: Some(50.0),
+                first_token_ms: None,
+                derived_ttft_ms: None,
+                peak_process_rss_bytes: Evidence::unknown(
+                    source(EvidenceSourceKind::Unknown),
+                    1,
+                    "fixture",
+                ),
+                outcome: AttemptOutcome::Succeeded,
+                error: None,
+            }],
+            ..BenchmarkManifest::default()
+        }
+    }
+
+    #[test]
+    fn complete_manifest_requires_the_requested_warmups() {
+        // A finalized record carries exactly the requested warmups: fewer
+        // warmups with no terminal failure means the run never reached
+        // steady state, so the record is incomplete.
+        let manifest = complete_manifest_fixture();
+
+        let error = manifest.validate_complete().unwrap_err();
+        assert_eq!(error.code, ErrorCode::InconsistentEvidence);
+        assert_eq!(error.field, "warmups");
+    }
+
+    #[test]
+    fn complete_manifest_accepts_a_full_warmup_set_or_a_failed_run() {
+        let mut full = complete_manifest_fixture();
+        full.warmups = vec![WarmupObservation {
+            warmup: 1,
+            started_at_ms: 1,
+            duration_ms: 5.0,
+            outcome: AttemptOutcome::Succeeded,
+            error: None,
+        }];
+        full.validate_complete().unwrap();
+
+        // A run that dies in warmup carries its terminal failure with a
+        // short warmup set, mirroring the empty-observation rule.
+        let mut failed = complete_manifest_fixture();
+        failed.terminal_outcome = Some(AttemptOutcome::Failed);
+        failed.observations[0].outcome = AttemptOutcome::Failed;
+        failed.observations[0].error = Some("the run died in warmup".into());
+        failed.observations[0].decode_tps = None;
+        failed.validate_complete().unwrap();
     }
 
     #[test]

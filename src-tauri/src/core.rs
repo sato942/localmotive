@@ -106,7 +106,7 @@ pub struct LogicalModel {
     pub shard_count: usize,
     pub expected_shards: usize,
     pub complete: bool,
-    /// Shard problems from the artifact analyzer (audit MT-15): the same
+    /// Shard problems from the artifact analyzer: the same
     /// decision the launch validator reaches, visible at discovery time.
     #[serde(default)]
     pub problems: Vec<ArtifactProblem>,
@@ -228,7 +228,7 @@ fn shard_key(name: &str) -> (String, usize) {
     (stem.to_string(), 1)
 }
 
-/// Bounds for a recursive model scan (audit S-15): depth, visited entries and
+/// Bounds for a recursive model scan: depth, visited entries and
 /// retained diagnostics are all capped so a pathological tree can neither
 /// monopolize discovery nor flood the result.
 #[derive(Clone, Debug)]
@@ -249,7 +249,7 @@ impl Default for ScanLimits {
 }
 
 /// One directory that could not be read, or a limit that was reached
-/// (audit S-15.I2). Diagnostics are bounded; valid discovered models are
+///. Diagnostics are bounded; valid discovered models are
 /// preserved regardless.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -258,7 +258,7 @@ pub struct ScanProblem {
     pub reason: String,
 }
 
-/// The full outcome of a bounded scan (audit S-15).
+/// The full outcome of a bounded scan.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanReport {
@@ -268,7 +268,7 @@ pub struct ScanReport {
     pub truncated: bool,
 }
 
-/// Append a bounded diagnostic (audit S-15.I2). When the retained list is
+/// Append a bounded diagnostic. When the retained list is
 /// full the newest entry collapses into a single suppression notice, so the
 /// reason stays visible without unbounded growth.
 fn push_problem(problems: &mut Vec<ScanProblem>, limits: &ScanLimits, path: &Path, reason: String) {
@@ -284,7 +284,7 @@ fn push_problem(problems: &mut Vec<ScanProblem>, limits: &ScanLimits, path: &Pat
 }
 
 /// Recursive GGUF collection with depth, work, diagnostic and cancellation
-/// bounds (audit S-15). Symlinks and reparse points are still skipped. An
+/// bounds. Symlinks and reparse points are still skipped. An
 /// unreadable directory becomes a bounded diagnostic and the remaining tree
 /// is still scanned, so valid models are never erased by one bad subtree.
 fn collect_gguf(
@@ -375,7 +375,7 @@ fn collect_gguf(
 }
 
 /// [`scan_models`] with explicit bounds and a cancellation flag (audit
-/// S-15). The caller keeps the partial result: problems are diagnostics, not
+/// The caller keeps the partial result: problems are diagnostics, not
 /// failures, and a cancelled scan still returns everything found so far.
 pub fn scan_models_with_cancel(
     root: &Path,
@@ -421,6 +421,8 @@ pub fn scan_models_with_cancel(
     })
 }
 
+/// Test-only shorthand: production paths go through `scan_models_with_cancel`.
+#[cfg(test)]
 pub fn scan_models(root: &Path) -> Result<Vec<LogicalModel>, String> {
     scan_models_with_cancel(root, &AtomicBool::new(false), &ScanLimits::default())
         .map(|report| report.models)
@@ -473,7 +475,7 @@ fn assemble_models(root: &Path, files: Vec<PathBuf>) -> Result<Vec<LogicalModel>
             .map(|shard| shard.count)
             .max()
             .unwrap_or(1);
-        // Discovery uses the artifact module's shard analysis (audit MT-15):
+        // Discovery uses the artifact module's shard analysis:
         // duplicate indices, malformed shard-looking names, inconsistent
         // counts and missing members produce the same decision the launch
         // validator reaches, instead of a looser scanner-only heuristic.
@@ -738,7 +740,7 @@ impl Default for LaunchProfile {
 }
 
 impl LaunchProfile {
-    /// Domain validation for profile values (audit S-13.I1): the selected
+    /// Domain validation for profile values: the selected
     /// runtime contract proves an argument exists, but not that its value is a
     /// legal member of its domain. Every list and range here comes from the
     /// upstream `llama-server` option tables in `tools/server/README.md` (the
@@ -969,8 +971,7 @@ impl LaunchProfile {
         }
         // Transport files are validated here, before launch: a missing or
         // malformed API-key/certificate file would otherwise surface as the
-        // server's own launch failure or a long health timeout (audit MT-06
-        // I4). The centralized local client uses the same rules.
+        // server's own launch failure or a long health timeout. The centralized local client uses the same rules.
         crate::local_client::LocalHttpClient::validate_transport_files(self)?;
         let model_backed = matches!(
             self.spec_type.as_str(),
@@ -1275,7 +1276,7 @@ impl LaunchProfile {
         Ok(args)
     }
 
-    /// The launch line quoted for one NAMED shell (audit S-14.I1). The app
+    /// The launch line quoted for one NAMED shell. The app
     /// itself always launches with an argument array; this string exists only
     /// for display and copy/paste, so the quoting must be correct for the
     /// shell it names. Use [`Self::argv_json_with_args`] for a lossless form.
@@ -1306,7 +1307,7 @@ impl LaunchProfile {
         }
     }
 
-    /// The launch line as a JSON array of exact arguments (audit S-14.I1):
+    /// The launch line as a JSON array of exact arguments:
     /// lossless for every shell and safe to paste into a wrapper.
     pub fn argv_json_with_args(&self, args: &[String]) -> Result<String, String> {
         let mut argv = Vec::with_capacity(args.len() + 1);
@@ -1316,7 +1317,7 @@ impl LaunchProfile {
     }
 }
 
-/// The shell a copied command line targets (audit S-14.I1).
+/// The shell a copied command line targets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CommandShell {
     PowerShell,
@@ -1730,15 +1731,28 @@ const RUNTIME_PROBE_STREAM_LIMIT: usize = 2 * 1024 * 1024;
 ///
 /// The managed-execution guard runs before any byte of the probed binary
 /// executes, so a caller that invokes runtime inspection directly cannot
-/// bypass compiled-content authorization (audit RT-02: tuning preparation and
+/// bypass compiled-content authorization: tuning preparation and
 /// the older runtime-health command previously executed managed binaries
 /// without the protected launch path's trust check).
-fn run_runtime_probe_with<G: Fn(&Path) -> Result<(), String>>(
+fn run_runtime_probe_with<
+    G: Fn(&Path) -> Result<Option<crate::runtime::ManagedExecutionLease>, String>,
+>(
     path: &Path,
     arg: &str,
     guard: G,
 ) -> Result<String, String> {
-    guard(path)?;
+    // the guard returns the execution lease and the probe holds it
+    // across spawn and output collection. The lease pins the verified bytes
+    // with deny-write/delete sharing, so a same-user replacement between
+    // verification and execution fails at the OS instead of racing the spawn.
+    // the inventory is re-checked here because a file planted after
+    // acquisition (for example a hostile DLL) is not stopped by the pinned
+    // handles alone.
+    let lease = guard(path)?;
+    if let Some(held) = lease.as_ref() {
+        held.revalidate_inventory()?;
+    }
+    let _lease = lease;
     let mut command = crate::proc::hidden_command(path);
     command.arg(arg).stdin(std::process::Stdio::null());
     let output = crate::proc::output_with_timeout_and_cancel(
@@ -1770,15 +1784,17 @@ fn run_runtime_probe_with<G: Fn(&Path) -> Result<(), String>>(
 }
 
 pub fn inspect_runtime(path: &Path) -> Result<RuntimeCapabilities, String> {
-    inspect_runtime_with(path, crate::runtime::authorize_managed_execution)
+    inspect_runtime_with(path, crate::runtime::authorize_managed_execution_lease)
 }
 
 /// Runtime inspection with an explicit managed-execution guard.
 ///
 /// Tuning preparation and the public inspect command both reach managed probes
 /// through this function, so the guard is part of the probe path itself and
-/// cannot be skipped by calling runtime inspection directly (audit RT-02).
-fn inspect_runtime_with<G: Fn(&Path) -> Result<(), String>>(
+/// cannot be skipped by calling runtime inspection directly.
+fn inspect_runtime_with<
+    G: Fn(&Path) -> Result<Option<crate::runtime::ManagedExecutionLease>, String>,
+>(
     path: &Path,
     guard: G,
 ) -> Result<RuntimeCapabilities, String> {
@@ -2192,15 +2208,17 @@ pub fn check_runtime_health(
         expected_adapters,
         expected_backend,
         expected_model,
-        crate::runtime::authorize_managed_execution,
+        crate::runtime::authorize_managed_execution_lease,
     )
 }
 
 /// Device health with an explicit managed-execution guard.
 ///
-/// The older public runtime-health command and managed health preparation both
-/// funnel their `llama-cli.exe` probe through this function (audit RT-02).
-fn check_runtime_health_with<G: Fn(&Path) -> Result<(), String>>(
+/// The guard returns the execution lease so the `--list-devices` probe below
+/// runs while the verified bytes are pinned.
+fn check_runtime_health_with<
+    G: Fn(&Path) -> Result<Option<crate::runtime::ManagedExecutionLease>, String>,
+>(
     server_path: &Path,
     expected_adapters: &[String],
     expected_backend: &str,
@@ -2236,135 +2254,10 @@ fn check_runtime_health_with<G: Fn(&Path) -> Result<(), String>>(
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BenchmarkSummary {
-    pub samples: Vec<f64>,
-    pub mean_tps: f64,
-    pub median_tps: f64,
-    pub min_tps: f64,
-    pub max_tps: f64,
-    pub tokens: u32,
-    pub repeats: u16,
-}
-
-pub fn summarize_benchmark(
-    mut samples: Vec<f64>,
-    tokens: u32,
-    repeats: u16,
-) -> Result<BenchmarkSummary, String> {
-    if samples.is_empty() {
-        return Err("No benchmark samples were collected".into());
-    }
-    if samples.iter().any(|v| !v.is_finite() || *v <= 0.0) {
-        return Err("Benchmark samples must be positive finite values".into());
-    }
-    samples.sort_by(|a, b| a.total_cmp(b));
-    let scale = samples[samples.len() - 1];
-    let mean =
-        samples.iter().map(|value| value / scale).sum::<f64>() / samples.len() as f64 * scale;
-    let median = if samples.len().is_multiple_of(2) {
-        samples[samples.len() / 2 - 1].midpoint(samples[samples.len() / 2])
-    } else {
-        samples[samples.len() / 2]
-    };
-    Ok(BenchmarkSummary {
-        mean_tps: mean,
-        median_tps: median,
-        min_tps: samples[0],
-        max_tps: scale,
-        samples,
-        tokens,
-        repeats,
-    })
-}
-
-pub fn parse_tps(body: &str) -> Result<f64, String> {
-    let value: serde_json::Value = serde_json::from_str(body).map_err(|e| e.to_string())?;
-    value["timings"]["predicted_per_second"]
-        .as_f64()
-        .filter(|v| *v > 0.0)
-        .ok_or_else(|| "llama-server response did not include generation throughput".into())
-}
-
-fn completion_request_cancellable(
-    client: &crate::local_client::LocalHttpClient,
-    tokens: u32,
-    cancelled: &std::sync::atomic::AtomicBool,
-) -> Result<f64, String> {
-    let body = serde_json::json!({
-        "prompt": "Write a detailed technical explanation of speculative decoding, including verification, acceptance, and performance tradeoffs.",
-        "n_predict": tokens,
-        "temperature": 0,
-        "seed": 42,
-        "ignore_eos": true,
-        "stream": false
-    });
-    let (status, bytes) =
-        client.post_json_cancellable("/completion", &body, LEGACY_BENCH_TIMEOUT, cancelled)?;
-    if status != 200 {
-        return Err(format!("Benchmark request failed: HTTP {status}"));
-    }
-    let payload = String::from_utf8(bytes)
-        .map_err(|_| "Benchmark response was not valid UTF-8".to_string())?;
-    parse_tps(&payload)
-}
-/// Reject invalid legacy workloads before client setup or generation.
-pub(crate) fn validate_benchmark_options(tokens: u32, repeats: u16) -> Result<(), String> {
-    if !(64..=4096).contains(&tokens) {
-        return Err("Tokens must be between 64 and 4096".into());
-    }
-    if !(1..=10).contains(&repeats) {
-        return Err("Repeats must be between 1 and 10".into());
-    }
-    Ok(())
-}
-
-/// Whole-operation deadline for one legacy benchmark generation.
-pub(crate) const LEGACY_BENCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
-
-/// The cancellable benchmark the tuner uses: identical measurements, but
-/// every read waits in short slices and checks the cancellation flag, so a
-/// Stop during an in-flight generation cannot be ignored (audit MT-04).
-pub fn benchmark_server_cancellable(
-    client: &crate::local_client::LocalHttpClient,
-    tokens: u32,
-    repeats: u16,
-    cancelled: &std::sync::atomic::AtomicBool,
-) -> Result<BenchmarkSummary, String> {
-    validate_benchmark_options(tokens, repeats)?;
-    completion_request_cancellable(client, tokens.min(64), cancelled)?;
-    let mut samples = Vec::new();
-    for _ in 0..repeats {
-        samples.push(completion_request_cancellable(client, tokens, cancelled)?);
-    }
-    // Final gate (review deleg_16c0e72a): a cancel that lands after the last
-    // response was accepted must not become a success record.
-    if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
-        return Err("The local request was cancelled".into());
-    }
-    summarize_benchmark(samples, tokens, repeats)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
-
-    #[test]
-    fn benchmark_option_bounds_match_the_visible_workload_contract() {
-        for tokens in [64, 4096] {
-            for repeats in [1, 10] {
-                assert!(validate_benchmark_options(tokens, repeats).is_ok());
-            }
-        }
-        for tokens in [0, 63, 4097, u32::MAX] {
-            assert!(validate_benchmark_options(tokens, 1).is_err());
-        }
-        for repeats in [0, 11, u16::MAX] {
-            assert!(validate_benchmark_options(256, repeats).is_err());
-        }
-    }
 
     #[test]
     fn raw_file_arguments_cannot_bypass_empty_profile_fields() {
@@ -2398,45 +2291,6 @@ mod tests {
                 error.contains("managed profile flag"),
                 "unexpected rejection for {flag}: {error}"
             );
-        }
-    }
-
-    #[test]
-    fn benchmark_rejects_unbounded_tokens_before_any_http_request() {
-        use std::io::{Read, Write};
-        use std::sync::Arc;
-        for tokens in [0, u32::MAX] {
-            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-            let port = listener.local_addr().unwrap().port();
-            listener.set_nonblocking(true).unwrap();
-            let stop = Arc::new(AtomicBool::new(false));
-            let stopped = stop.clone();
-            let server = std::thread::spawn(move || {
-                let mut requests = 0;
-                while !stopped.load(Ordering::Relaxed) {
-                    match listener.accept() {
-                        Ok((mut socket, _)) => {
-                            socket
-                                .set_read_timeout(Some(Duration::from_secs(2)))
-                                .unwrap();
-                            let _ = socket.read(&mut [0_u8; 4096]);
-                            requests += 1;
-                            let _ = socket.write_all(b"HTTP/1.1 503 Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-                        }
-                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                            std::thread::sleep(Duration::from_millis(1))
-                        }
-                        Err(error) => panic!("{error}"),
-                    }
-                }
-                requests
-            });
-            let client = crate::local_client::LocalHttpClient::plain("127.0.0.1", port).unwrap();
-            let result = benchmark_server_cancellable(&client, tokens, 1, &AtomicBool::new(false));
-            stop.store(true, Ordering::Relaxed);
-            let requests = server.join().unwrap();
-            assert_eq!(result.unwrap_err(), "Tokens must be between 64 and 4096");
-            assert_eq!(requests, 0, "Rejected input must not start even the warmup");
         }
     }
 
@@ -2963,7 +2817,7 @@ mod tests {
         assert!(probe.contains("output_with_timeout"));
         assert!(!probe.contains(".spawn()"));
         // The managed-execution guard must run before the probe process starts
-        // (audit RT-02): the guard call precedes the contained runner.
+        //: the guard call precedes the contained runner.
         let guard = probe
             .find("guard(path)?")
             .expect("the probe boundary must consult the execution guard");
@@ -2973,6 +2827,21 @@ mod tests {
         assert!(
             guard < runner,
             "the guard must run before the process starts"
+        );
+        // The guard's execution lease must stay alive across the spawn
+        //: the probe binds it past the contained runner.
+        assert!(
+            probe.contains("_lease"),
+            "the probe must hold the execution lease across the child"
+        );
+        // The inventory is re-checked after acquisition and before the spawn
+        //: pinned handles alone do not stop a planted file.
+        let revalidate = probe
+            .find("revalidate_inventory")
+            .expect("the probe boundary must re-check the lease inventory");
+        assert!(
+            guard < revalidate && revalidate < runner,
+            "the inventory recheck must run after the guard and before the process starts"
         );
     }
 
@@ -3082,7 +2951,7 @@ fn main() {
     }
 
     #[test]
-    fn rt02_tampered_managed_cli_never_executes_through_the_runtime_health_workflow() {
+    fn tampered_managed_cli_never_executes_through_the_runtime_health_workflow() {
         let base =
             std::env::temp_dir().join(format!("localmotive-rt02-health-{}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
@@ -3106,9 +2975,9 @@ fn main() {
         fs::copy(&sentinel, &cli).unwrap();
 
         // The older runtime-health workflow must reject the replaced managed CLI
-        // before the --list-devices probe executes it (audit RT-02).
+        // before the --list-devices probe executes it.
         let guard = |path: &Path| {
-            crate::runtime::authorize_managed_execution_with(
+            crate::runtime::authorize_managed_execution_lease_with(
                 path,
                 &primary,
                 &legacy,
@@ -3120,12 +2989,12 @@ fn main() {
             !marker.exists(),
             "the tampered managed CLI executed before rejection: {error}"
         );
-        assert!(error.contains("content verification"), "{error}");
+        assert!(error.contains("execution-identity"), "{error}");
         fs::remove_dir_all(base).unwrap();
     }
 
     #[test]
-    fn rt02_tampered_managed_server_never_executes_through_runtime_inspection() {
+    fn tampered_managed_server_never_executes_through_runtime_inspection() {
         let base =
             std::env::temp_dir().join(format!("localmotive-rt02-inspect-{}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
@@ -3140,9 +3009,9 @@ fn main() {
 
         // Tuning preparation and the protected inspect command both reach
         // managed probes through inspect_runtime; the replaced server must be
-        // rejected before --version runs it (audit RT-02).
+        // rejected before --version runs it.
         let guard = |path: &Path| {
-            crate::runtime::authorize_managed_execution_with(
+            crate::runtime::authorize_managed_execution_lease_with(
                 path,
                 &primary,
                 &legacy,
@@ -3154,7 +3023,112 @@ fn main() {
             !marker.exists(),
             "the tampered managed server executed before rejection: {error}"
         );
-        assert!(error.contains("content verification"), "{error}");
+        assert!(error.contains("execution-identity"), "{error}");
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    /// Compile a fixture executable that sleeps past the test probe timeout
+    /// before writing `marker`. The timeout kills the child; the marker only
+    /// matters if the child ever runs to completion.
+    fn build_slow_sentinel_probe(root: &Path, marker: &Path) -> PathBuf {
+        let source = root.join("slow_sentinel.rs");
+        let executable = root.join("slow_sentinel.exe");
+        fs::write(
+            &source,
+            format!(
+                "fn main() {{ std::thread::sleep(std::time::Duration::from_secs(5)); std::fs::write({:?}, b\"ran\").unwrap(); }}",
+                marker
+            ),
+        )
+        .unwrap();
+        let status = crate::proc::hidden_command("rustc")
+            .arg(&source)
+            .arg("-o")
+            .arg(&executable)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        executable
+    }
+
+    #[test]
+    fn probe_holds_the_execution_lease_across_the_child() {
+        let base =
+            std::env::temp_dir().join(format!("localmotive-rt03-held-{0}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        let primary = base.join("Localmotive").join("runtimes");
+        let legacy = base.join("GGUF Pilot").join("runtimes");
+        let (server, _cli) = crate::runtime::test_fixtures::place_fixture_install(&primary);
+        let marker = base.join("slow-ran.txt");
+        let slow = build_slow_sentinel_probe(&base, &marker);
+
+        // The probe guard leases the fixture install while the probe target
+        // itself is an unrelated slow executable: any replacement of the
+        // leased bytes must fail for as long as the probe child runs, and
+        // succeed once the probe returns.
+        let guard_server = server.clone();
+        let guard_primary = primary.clone();
+        let guard_legacy = legacy.clone();
+        let (held_tx, held_rx) = std::sync::mpsc::channel();
+        let guard = move |_: &Path| {
+            let lease = crate::runtime::authorize_managed_execution_lease_with(
+                &guard_server,
+                &guard_primary,
+                &guard_legacy,
+                crate::runtime::test_fixtures::fixture_source(),
+            )?;
+            // The lease is held from this point until the probe returns, so
+            // the main thread may only start replacing after this signal.
+            held_tx.send(()).expect("hold signal receiver hung up");
+            Ok(lease)
+        };
+        let probe = std::thread::spawn(move || run_runtime_probe_with(&slow, "--version", guard));
+        held_rx
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .expect("the probe guard never acquired the lease");
+        let mut refused_during_probe = false;
+        for _ in 0..20 {
+            if fs::write(&server, b"replaced executable").is_err() {
+                refused_during_probe = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let outcome = probe.join().expect("probe thread panicked").unwrap_err();
+        assert!(
+            refused_during_probe,
+            "the leased server was replaceable while the probe child ran: {outcome}"
+        );
+        fs::write(&server, b"replaced executable").unwrap();
+        assert_eq!(fs::read(&server).unwrap(), b"replaced executable");
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn tampered_managed_server_fails_execution_identity_before_probe() {
+        let base =
+            std::env::temp_dir().join(format!("localmotive-rt03-tamper-{0}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        let primary = base.join("Localmotive").join("runtimes");
+        let legacy = base.join("GGUF Pilot").join("runtimes");
+        let (server, _cli) = crate::runtime::test_fixtures::place_fixture_install(&primary);
+        fs::write(&server, b"attacker bytes").unwrap();
+
+        // The lease guard verifies content hashes, so a replaced server is
+        // rejected with an execution-identity error before any probe child
+        // starts.
+        let guard = |path: &Path| {
+            crate::runtime::authorize_managed_execution_lease_with(
+                path,
+                &primary,
+                &legacy,
+                crate::runtime::test_fixtures::fixture_source(),
+            )
+        };
+        let error = run_runtime_probe_with(&server, "--version", guard).unwrap_err();
+        assert!(error.contains("execution-identity"), "{error}");
         fs::remove_dir_all(base).unwrap();
     }
 
@@ -3274,7 +3248,7 @@ fn main() {
         assert_eq!(quant_weight("no-quant-here.gguf"), None);
     }
 
-    /// DIAGNOSTIC, not an acceptance test (audit S-26 I3): it prints the
+    /// DIAGNOSTIC, not an acceptance test: it prints the
     /// companion order of the operator's real model tree and returns early
     /// when `C:\models` is absent. There are deliberately NO assertions here —
     /// a run of this test, skipped or not, must never be counted as a passing
@@ -3304,9 +3278,9 @@ fn main() {
         }
     }
 
-    /// Audit MT-15: discovery must reach the same completeness decision as
+    /// discovery must reach the same completeness decision as
     /// the artifact module's shard analysis for every ambiguous shape.
-    fn mt15_scan_matches_artifact_analysis(files: &[&str]) -> (bool, bool) {
+    fn scan_matches_artifact_analysis(files: &[&str]) -> (bool, bool) {
         let root = std::env::temp_dir().join(format!(
             "localmotive-mt15-{}-{}",
             std::process::id(),
@@ -3334,33 +3308,32 @@ fn main() {
     }
 
     #[test]
-    fn mt15_duplicate_indices_and_unsplit_collisions_are_incomplete() {
+    fn duplicate_indices_and_unsplit_collisions_are_incomplete() {
         // An unsplit file and its split twin group under one logical key:
         // the artifact analyzer reports a duplicate index, and discovery must
         // agree instead of advertising a complete model.
         let (discovery, validation) =
-            mt15_scan_matches_artifact_analysis(&["foo.gguf", "foo-00001-of-00001.gguf"]);
+            scan_matches_artifact_analysis(&["foo.gguf", "foo-00001-of-00001.gguf"]);
         assert!(!discovery, "duplicate indices must not be complete");
         assert_eq!(discovery, validation);
     }
 
     #[test]
-    fn mt15_malformed_and_inconsistent_shard_names_are_incomplete() {
+    fn malformed_and_inconsistent_shard_names_are_incomplete() {
         // A shard-looking name the parser rejects.
-        let (discovery, validation) =
-            mt15_scan_matches_artifact_analysis(&["foo-0001-of-0004.gguf"]);
+        let (discovery, validation) = scan_matches_artifact_analysis(&["foo-0001-of-0004.gguf"]);
         assert!(!discovery, "a malformed shard name must not be complete");
         assert_eq!(discovery, validation);
 
         // Inconsistent expected counts across the folder.
-        let (discovery, validation) = mt15_scan_matches_artifact_analysis(&[
+        let (discovery, validation) = scan_matches_artifact_analysis(&[
             "foo-Q4-00001-of-00002.gguf",
             "foo-Q4-00002-of-00003.gguf",
         ]);
         assert_eq!(discovery, validation, "inconsistent counts must agree");
 
         // A missing member in an otherwise consistent set.
-        let (discovery, validation) = mt15_scan_matches_artifact_analysis(&[
+        let (discovery, validation) = scan_matches_artifact_analysis(&[
             "foo-Q4-00001-of-00003.gguf",
             "foo-Q4-00003-of-00003.gguf",
         ]);
@@ -3369,18 +3342,18 @@ fn main() {
     }
 
     #[test]
-    fn mt15_extension_case_variation_and_valid_sets_stay_complete() {
+    fn extension_case_variation_and_valid_sets_stay_complete() {
         // Case variation in the extension still counts as a GGUF file.
         let (discovery, validation) =
-            mt15_scan_matches_artifact_analysis(&["bar-Q4-00001-of-00002.GGUF"]);
+            scan_matches_artifact_analysis(&["bar-Q4-00001-of-00002.GGUF"]);
         assert_eq!(discovery, validation);
         assert!(!discovery, "a lone member of a two-shard set is incomplete");
 
         // Complete valid singleton and split set.
-        let (discovery, validation) = mt15_scan_matches_artifact_analysis(&["solo.gguf"]);
+        let (discovery, validation) = scan_matches_artifact_analysis(&["solo.gguf"]);
         assert!(discovery, "a single unsplit file is a complete model");
         assert_eq!(discovery, validation);
-        let (discovery, validation) = mt15_scan_matches_artifact_analysis(&[
+        let (discovery, validation) = scan_matches_artifact_analysis(&[
             "pair-Q4-00001-of-00002.gguf",
             "pair-Q4-00002-of-00002.gguf",
         ]);
@@ -3603,7 +3576,7 @@ fn main() {
         };
         assert!(profile.build_args().unwrap_err().contains("API key file"));
 
-        // A real key file is required now (audit MT-06 I4): pre-launch
+        // A real key file is required now: pre-launch
         // validation reads it instead of deferring to the server.
         let dir = std::env::temp_dir().join(format!("localmotive-lan-key-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -3966,7 +3939,7 @@ fn main() {
     }
 
     #[test]
-    fn mt06_profile_validation_rejects_unusable_transport_files_before_launch() {
+    fn profile_validation_rejects_unusable_transport_files_before_launch() {
         let dir = std::env::temp_dir().join(format!("localmotive-mt06-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let mut profile = LaunchProfile {
@@ -4036,7 +4009,7 @@ MIIB
     }
 
     #[test]
-    fn mt06_managaged_transport_flags_require_runtime_capability() {
+    fn managaged_transport_flags_require_runtime_capability() {
         // A runtime whose help does not advertise the TLS flags must fail
         // validation before launch instead of starting a plaintext server.
         let mut profile = LaunchProfile {
@@ -4073,77 +4046,11 @@ MIIB
         assert!(error.contains("--ssl-cert-file"), "{error}");
         let _ = std::fs::remove_dir_all(&dir);
     }
-
     #[test]
-    fn benchmark_summary_keeps_extreme_finite_samples_numeric_in_json() {
-        // A runtime can return finite values whose sum overflows. Infinity
-        // serializes as null, which breaks the frontend's numeric contract.
-        for value in [f64::MAX, f64::from_bits(1)] {
-            for repeats in [2, 3, 10] {
-                let summary =
-                    summarize_benchmark(vec![value; repeats as usize], 256, repeats).unwrap();
-                let serialized = serde_json::to_value(&summary).unwrap();
-                for field in ["meanTps", "medianTps", "minTps", "maxTps"] {
-                    assert_eq!(serialized[field].as_f64(), Some(value), "{field}");
-                }
-                assert_eq!(summary.samples, vec![value; repeats as usize]);
-            }
-        }
-    }
-
-    #[test]
-    fn benchmark_summary_preserves_mixed_extreme_samples() {
-        let summary = summarize_benchmark(vec![1.6e308, 4e307, 1e308], 256, 3).unwrap();
-        assert!((summary.mean_tps / 1e308 - 1.0).abs() <= 4.0 * f64::EPSILON);
-        assert_eq!(summary.median_tps, 1e308);
-        assert_eq!(summary.samples, vec![4e307, 1e308, 1.6e308]);
-        assert_eq!(summary.min_tps, 4e307);
-        assert_eq!(summary.max_tps, 1.6e308);
-    }
-
-    #[test]
-    fn benchmark_summary_even_mixed_extremes_keep_the_expected_median() {
-        for (samples, expected) in [
-            (vec![f64::MAX, f64::MAX / 2.0], f64::MAX * 0.75),
-            (
-                vec![f64::from_bits(3), f64::from_bits(1)],
-                f64::from_bits(2),
-            ),
-        ] {
-            let summary = summarize_benchmark(samples, 256, 2).unwrap();
-            assert_eq!(summary.median_tps, expected);
-        }
-    }
-
-    #[test]
-    fn benchmark_summary_still_rejects_invalid_samples() {
-        assert!(summarize_benchmark(vec![], 256, 1).is_err());
-        for invalid in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-            assert!(summarize_benchmark(vec![10.0, invalid], 256, 2).is_err());
-        }
-    }
-
-    #[test]
-    fn benchmark_summary_reports_stable_statistics() {
-        let summary = summarize_benchmark(vec![360.0, 362.0, 361.0], 2048, 3).unwrap();
-        assert_eq!(summary.mean_tps, 361.0);
-        assert_eq!(summary.median_tps, 361.0);
-        assert_eq!(summary.min_tps, 360.0);
-        assert_eq!(summary.max_tps, 362.0);
-        assert_eq!(summary.tokens, 2048);
-        assert_eq!(summary.repeats, 3);
-    }
-
-    #[test]
-    fn timing_parser_accepts_llama_completion_response() {
-        let body = r#"{"timings":{"predicted_per_second":478.25}}"#;
-        assert_eq!(parse_tps(body).unwrap(), 478.25);
-    }
-    #[test]
-    fn fe04_provisional_command_composes_without_capabilities_and_validation_still_filters() {
+    fn provisional_command_composes_without_capabilities_and_validation_still_filters() {
         // Composition needs no runtime at all, while authoritative validation
         // still refuses flags the runtime's help cannot advertise
-        // (audit FE-04 I2).
+        //.
         let mut profile = LaunchProfile {
             name: "Fixture".into(),
             alias: "fixture".into(),
@@ -4168,7 +4075,7 @@ MIIB
     }
 
     #[test]
-    fn s13_impossible_profile_domains_fail_before_launch_and_name_the_value() {
+    fn impossible_profile_domains_fail_before_launch_and_name_the_value() {
         let base = || LaunchProfile {
             name: "fixture".into(),
             runtime: "C:/runtime/llama-server.exe".into(),
@@ -4353,7 +4260,7 @@ MIIB
     }
 
     #[test]
-    fn s14_quoted_commands_and_argv_round_trip_every_hazard() {
+    fn quoted_commands_and_argv_round_trip_every_hazard() {
         let profile = LaunchProfile {
             runtime: "C:\\Program Files\\llama\\llama-server.exe".into(),
             ..LaunchProfile::default()
@@ -4407,7 +4314,7 @@ MIIB
     }
 
     #[test]
-    fn s15_deep_wide_unreadable_and_cancelled_scans_stay_bounded_and_partial() {
+    fn deep_wide_unreadable_and_cancelled_scans_stay_bounded_and_partial() {
         let root = std::env::temp_dir().join(format!(
             "localmotive-s15-{}-{}",
             std::process::id(),

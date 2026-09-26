@@ -1,6 +1,7 @@
 // Shared minimal CDP client for packaged verifiers: attach to a WebView2
-// page target and evaluate expressions. Kept deliberately small; verify_041
-// carries its own inline copy for historical reasons.
+// page target and evaluate expressions. Every packaged driver uses this
+// module (audit LAB-03); page selection and trusted input are options so no
+// caller needs its own socket copy.
 //
 // Resilience note (R11 campaign): after long driving sessions the page
 // target occasionally stops answering Runtime.evaluate while remaining
@@ -8,13 +9,14 @@
 // evaluation once before the failure is treated as real.
 import WebSocket from "ws";
 
-const evaluateOnce = async (send, expression, timeoutMs) => {
+const evaluateOnce = async (send, expression, timeoutMs, trustedInput = false) => {
   const result = await Promise.race([
     send("Runtime.evaluate", {
       expression,
       awaitPromise: true,
       returnByValue: true,
       timeout: timeoutMs,
+      ...(trustedInput ? { userGesture: true } : {}),
     }),
     new Promise((resolve) => setTimeout(() => resolve({ __timeout: true }), timeoutMs + 5000)),
   ]);
@@ -29,13 +31,13 @@ const evaluateOnce = async (send, expression, timeoutMs) => {
   return result.result?.value;
 };
 
-export async function attach(cdpPort, { deadlineMs = 90_000 } = {}) {
+export async function attach(cdpPort, { deadlineMs = 90_000, pageFilter, trustedInput = false } = {}) {
   const deadline = Date.now() + deadlineMs;
   for (;;) {
     try {
       const list = await (await fetch(`http://127.0.0.1:${cdpPort}/json/list`)).json();
       const page = list.find(
-        (target) => target.type === "page" && target.webSocketDebuggerUrl,
+        (target) => target.type === "page" && target.webSocketDebuggerUrl && (typeof pageFilter === "function" ? pageFilter(target) : true),
       );
       if (page) {
         const makeConnection = async () => {
@@ -103,7 +105,7 @@ export async function attach(cdpPort, { deadlineMs = 90_000 } = {}) {
           async evaluate(expression, timeoutMs = 120_000) {
             for (let attempt = 0; attempt < 2; attempt += 1) {
               try {
-                return await evaluateOnce(state.connection.send, expression, timeoutMs);
+                return await evaluateOnce(state.connection.send, expression, timeoutMs, trustedInput);
               } catch (error) {
                 const message = String(error?.message ?? "");
                 const timedOut = /timed out/i.test(message);

@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Output, Stdio};
@@ -56,6 +55,7 @@ pub enum HealthFailureReason {
     Mismatch,
     Cancelled,
     TrustFailure,
+    Unresolved,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -168,7 +168,7 @@ pub(crate) struct ManagedHealthContext {
     pub model_path: PathBuf,
     /// Read-shared handles that pin the verified runtime content for the whole
     /// health run so a long preparation interval cannot reopen a modification
-    /// window before the CLI, benchmark, and server launches (audit RT-04).
+    /// window before the CLI, benchmark, and server launches.
     pub execution_lease: Option<crate::runtime::ManagedExecutionLease>,
 }
 
@@ -239,10 +239,13 @@ fn finish_run(
     for stage in HealthStage::ALL.into_iter().skip(stages.len()) {
         stages.push(HealthStageResult::skipped(stage, reason));
     }
-    let passed = stages
-        .iter()
-        .all(|stage| stage.status == HealthStageStatus::Pass);
-    debug_assert!(validate_stage_contract(&stages).is_ok());
+    // The evidence/order contract must hold in release builds too, not only
+    // under debug assertions: an invalid stage list fails the run closed.
+    let contract_valid = validate_stage_contract(&stages).is_ok();
+    let passed = contract_valid
+        && stages
+            .iter()
+            .all(|stage| stage.status == HealthStageStatus::Pass);
     HealthRunResult {
         runtime_id: context.runtime_id.clone(),
         model_sha256: crate::core::pinned_model_load_pin().sha256,
@@ -311,6 +314,7 @@ fn process_failure_reason(kind: crate::proc::ProcessFailureKind) -> HealthFailur
         crate::proc::ProcessFailureKind::Cancelled => HealthFailureReason::Cancelled,
         crate::proc::ProcessFailureKind::OutputLimit => HealthFailureReason::OutputLimit,
         crate::proc::ProcessFailureKind::Io => HealthFailureReason::MalformedOutput,
+        crate::proc::ProcessFailureKind::Unresolved => HealthFailureReason::Unresolved,
     }
 }
 
@@ -394,12 +398,15 @@ pub(crate) fn verify_pinned_model(
             "The selected health model filename does not match the approved pin.".into(),
         ));
     }
-    crate::artifact::validate_regular_non_reparse_file("Health model", path).map_err(|_| {
-        (
-            HealthFailureReason::TrustFailure,
-            "The health model is not a regular non-reparse file.".into(),
-        )
-    })?;
+    // the model bytes are read through the verified handle, so a
+    // link planted after the check is refused instead of hashed.
+    let mut file =
+        crate::artifact::open_verified_read_file("Health model", path).map_err(|error| {
+            (
+                HealthFailureReason::TrustFailure,
+                format!("The health model is not a regular non-reparse file: {error}"),
+            )
+        })?;
     let metadata = path.metadata().map_err(|_| {
         (
             HealthFailureReason::TrustFailure,
@@ -412,12 +419,8 @@ pub(crate) fn verify_pinned_model(
             "The health model size does not match the approved pin.".into(),
         ));
     }
-    let mut file = File::open(path).map_err(|_| {
-        (
-            HealthFailureReason::TrustFailure,
-            "The health model could not be opened.".into(),
-        )
-    })?;
+    // `file` is the verified handle from above; the bytes are hashed
+    // from it directly, never re-opened by path.
     let mut hasher = Sha256::new();
     let mut buffer = vec![0_u8; 1024 * 1024];
     loop {
@@ -453,11 +456,17 @@ fn resolve_runtime_device(
     adapter_name: Option<&str>,
 ) -> Result<Option<String>, String> {
     if backend == "cpu" {
-        return if adapter_name.is_none() {
-            Ok(None)
-        } else {
-            Err("The CPU health run must not select an adapter".into())
-        };
+        if adapter_name.is_some() {
+            return Err("The CPU health run must not select an adapter".into());
+        }
+        // The CPU backend has no adapter to match, but the enumeration
+        // output must still show the device-list header: an exit-zero
+        // process with empty or unrelated output proves nothing.
+        let text = String::from_utf8_lossy(output);
+        if !text.contains("Available devices:") {
+            return Err("The CPU device enumeration did not report its device list".into());
+        }
+        return Ok(None);
     }
     let adapter_name = adapter_name
         .map(str::trim)
@@ -661,7 +670,7 @@ fn path_is_link_or_reparse(path: &Path) -> bool {
 /// short slices and, once either fires, terminates the contained server so the
 /// pending HTTP read ends promptly. Cancellation arriving during response
 /// waiting, body reading, or immediately after completion always reports
-/// `Cancelled`, never a passed stage (audit RT-03).
+/// `Cancelled`, never a passed stage.
 fn completion_request_supervised(
     port: u16,
     cancel: &AtomicBool,
@@ -669,23 +678,29 @@ fn completion_request_supervised(
     mut terminate: impl FnMut(),
 ) -> Result<(u16, Vec<u8>), (HealthFailureReason, String)> {
     let (sender, receiver) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
+    let worker = std::thread::spawn(move || {
         let _ = sender.send(completion_request(port));
     });
     loop {
         if cancel.load(Ordering::Relaxed) {
             terminate();
-            return Err((
-                HealthFailureReason::Cancelled,
-                "Deterministic completion was cancelled while its response was pending.".into(),
-            ));
+            return join_completion_worker(
+                worker,
+                Err((
+                    HealthFailureReason::Cancelled,
+                    "Deterministic completion was cancelled while its response was pending.".into(),
+                )),
+            );
         }
         if Instant::now() >= deadline {
             terminate();
-            return Err((
-                HealthFailureReason::Timeout,
-                "The bounded loopback completion request exceeded its deadline.".into(),
-            ));
+            return join_completion_worker(
+                worker,
+                Err((
+                    HealthFailureReason::Timeout,
+                    "The bounded loopback completion request exceeded its deadline.".into(),
+                )),
+            );
         }
         match receiver.recv_timeout(Duration::from_millis(25)) {
             Ok(result) => {
@@ -712,10 +727,49 @@ fn completion_request_supervised(
     }
 }
 
+/// Grace period for the nested completion worker to observe server
+/// termination after an early exit. A worker still blocked past the deadline
+/// outlived its server and is detached instead of joined forever; the caller
+/// reports it as unresolved.
+const COMPLETION_WORKER_JOIN_GRACE: Duration = Duration::from_secs(5);
+
+/// Join the nested completion worker after an early exit (cancel or
+/// deadline), returning the early outcome when the worker stopped and an
+/// `Unresolved` failure when it survived past the join deadline.
+fn join_completion_worker(
+    worker: std::thread::JoinHandle<()>,
+    early: Result<(u16, Vec<u8>), (HealthFailureReason, String)>,
+) -> Result<(u16, Vec<u8>), (HealthFailureReason, String)> {
+    match crate::proc::join_reader_with_deadline(worker, COMPLETION_WORKER_JOIN_GRACE) {
+        Some(_) => early,
+        None => Err((
+            HealthFailureReason::Unresolved,
+            "The completion worker did not stop after the server was terminated; its request may still be running.".into(),
+        )),
+    }
+}
+
+/// Map a loopback completion client error to its own failure reason instead
+/// of mislabeling every failure as a timeout. The client message survives in
+/// the stage detail; the match arms follow the client's stable error text.
+fn completion_failure_reason(message: &str) -> HealthFailureReason {
+    if message.contains("was cancelled") {
+        HealthFailureReason::Cancelled
+    } else if message.contains("did not answer within") {
+        HealthFailureReason::Timeout
+    } else if message.contains("exceeds the") && message.contains("-byte limit") {
+        HealthFailureReason::OutputLimit
+    } else {
+        // Transport, serialization, and read failures: malformed-traffic
+        // family, matching the Io mapping in `process_failure_reason`.
+        HealthFailureReason::MalformedOutput
+    }
+}
+
 fn completion_request(port: u16) -> Result<(u16, Vec<u8>), (HealthFailureReason, String)> {
     let pin = crate::core::pinned_model_load_pin();
     // The health run launches its own plaintext loopback server; the request
-    // still goes through the centralized local client (audit MT-06) so
+    // still goes through the centralized local client so
     // framing (including chunked bodies), size bounds and the whole-operation
     // deadline always apply.
     let client =
@@ -739,10 +793,10 @@ fn completion_request(port: u16) -> Result<(u16, Vec<u8>), (HealthFailureReason,
             MODEL_OPERATION_TIMEOUT,
             &AtomicBool::new(false),
         )
-        .map_err(|_| {
+        .map_err(|error| {
             (
-                HealthFailureReason::Timeout,
-                "The bounded loopback completion request failed.".into(),
+                completion_failure_reason(&error),
+                format!("The bounded loopback completion request failed: {error}"),
             )
         })?;
     Ok((status, body))
@@ -752,6 +806,48 @@ fn health_listener_is_owned(port: u16, expected_pid: u32) -> Result<bool, String
     crate::listener_is_owned_by_at(
         std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port)),
         expected_pid,
+    )
+}
+
+/// Decide the reported outcome when a health stage fails after the server
+/// was terminated: a tree that survived termination is an unresolved
+/// cleanup, never a silent side note on the earlier failure.
+fn health_termination_outcome(
+    tree_stopped: bool,
+    outcome: (HealthFailureReason, String),
+) -> (HealthFailureReason, String) {
+    if tree_stopped {
+        outcome
+    } else {
+        (
+            HealthFailureReason::Unresolved,
+            format!(
+                "The health server process tree survived termination after the failure ({}); its cleanup is unresolved.",
+                outcome.1
+            ),
+        )
+    }
+}
+
+/// Fail a stage that owns the managed health server: terminate first, then
+/// report the original outcome only when the tree actually stopped.
+#[allow(clippy::too_many_arguments)]
+fn fail_health_stage(
+    context: &ManagedHealthContext,
+    started_at: u64,
+    stages: Vec<HealthStageResult>,
+    stage: HealthStage,
+    stage_started: Instant,
+    outcome: (HealthFailureReason, String),
+    tree_stopped: bool,
+) -> HealthRunResult {
+    fail_stage(
+        context,
+        started_at,
+        stages,
+        stage,
+        stage_started,
+        health_termination_outcome(tree_stopped, outcome),
     )
 }
 
@@ -772,11 +868,27 @@ fn fail_stage(
     finish_run(context, started_at, stages)
 }
 
+/// Build the loopback readiness client: no redirects, no proxy.
+///
+/// The readiness probe speaks to exactly one loopback server. Redirects are
+/// never followed - a 3xx is a failure, not a hop - matching the `local_client`
+/// loopback policy (R15). The probe runs before the server is trusted, so a
+/// redirect must not reroute it.
+fn loopback_readiness_client() -> Result<reqwest::blocking::Client, String> {
+    reqwest::blocking::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(Duration::from_millis(250))
+        .timeout(Duration::from_secs(2))
+        .build()
+        .map_err(|error| error.to_string())
+}
+
 pub(crate) fn run_managed_health(
     context: ManagedHealthContext,
     cancel: &AtomicBool,
 ) -> HealthRunResult {
-    // The execution lease (audit RT-04) lives with the context for the whole
+    // The execution lease lives with the context for the whole
     // run: its read-shared handles pin the verified runtime content across the
     // CLI, benchmark, and server launches below. Hold an explicit reference so
     // the guarantee is visible at the health entry point.
@@ -857,10 +969,15 @@ pub(crate) fn run_managed_health(
             );
         }
     };
+    let enumeration_detail = if context.backend == "cpu" {
+        "Bounded device enumeration confirmed the CPU backend needs no adapter."
+    } else {
+        "Bounded device enumeration identified the approved backend and exact adapter."
+    };
     stages.push(HealthStageResult::passed(
         HealthStage::DeviceEnumeration,
         elapsed_millis(stage_started),
-        "Bounded device enumeration identified the approved backend and exact adapter.",
+        enumeration_detail,
     ));
 
     let stage_started = Instant::now();
@@ -1079,16 +1196,11 @@ pub(crate) fn run_managed_health(
             );
         }
     };
-    let readiness_client = match reqwest::blocking::Client::builder()
-        .no_proxy()
-        .connect_timeout(Duration::from_millis(250))
-        .timeout(Duration::from_secs(2))
-        .build()
-    {
+    let readiness_client = match loopback_readiness_client() {
         Ok(client) => client,
         Err(_) => {
-            child.terminate_and_wait();
-            return fail_stage(
+            let tree_stopped = child.terminate_and_wait();
+            return fail_health_stage(
                 &context,
                 started_at,
                 stages,
@@ -1098,14 +1210,15 @@ pub(crate) fn run_managed_health(
                     HealthFailureReason::Spawn,
                     "The loopback readiness client did not start.".into(),
                 ),
+                tree_stopped,
             );
         }
     };
     let mut ready = false;
     while stage_started.elapsed() < MODEL_OPERATION_TIMEOUT {
         if cancel.load(Ordering::Relaxed) {
-            child.terminate_and_wait();
-            return fail_stage(
+            let tree_stopped = child.terminate_and_wait();
+            return fail_health_stage(
                 &context,
                 started_at,
                 stages,
@@ -1115,12 +1228,13 @@ pub(crate) fn run_managed_health(
                     HealthFailureReason::Cancelled,
                     "Loopback readiness was cancelled.".into(),
                 ),
+                tree_stopped,
             );
         }
         match child.try_wait() {
             Ok(Some(_)) | Err(_) => {
-                child.terminate_and_wait();
-                return fail_stage(
+                let tree_stopped = child.terminate_and_wait();
+                return fail_health_stage(
                     &context,
                     started_at,
                     stages,
@@ -1130,6 +1244,7 @@ pub(crate) fn run_managed_health(
                         HealthFailureReason::NonzeroExit,
                         "The managed loopback health server stopped before readiness.".into(),
                     ),
+                    tree_stopped,
                 );
             }
             Ok(None) => {}
@@ -1157,8 +1272,8 @@ pub(crate) fn run_managed_health(
             match health_listener_is_owned(port, child.id()) {
                 Ok(true) => break,
                 Ok(false) => {
-                    child.terminate_and_wait();
-                    return fail_stage(
+                    let tree_stopped = child.terminate_and_wait();
+                    return fail_health_stage(
                         &context,
                         started_at,
                         stages,
@@ -1169,11 +1284,12 @@ pub(crate) fn run_managed_health(
                             "The loopback listener is not owned by the managed health process."
                                 .into(),
                         ),
+                        tree_stopped,
                     );
                 }
                 Err(error) => {
-                    child.terminate_and_wait();
-                    return fail_stage(
+                    let tree_stopped = child.terminate_and_wait();
+                    return fail_health_stage(
                         &context,
                         started_at,
                         stages,
@@ -1183,6 +1299,7 @@ pub(crate) fn run_managed_health(
                             HealthFailureReason::TrustFailure,
                             format!("The loopback listener owner could not be verified: {error}"),
                         ),
+                        tree_stopped,
                     );
                 }
             }
@@ -1190,8 +1307,8 @@ pub(crate) fn run_managed_health(
         std::thread::sleep(Duration::from_millis(100));
     }
     if !ready {
-        child.terminate_and_wait();
-        return fail_stage(
+        let tree_stopped = child.terminate_and_wait();
+        return fail_health_stage(
             &context,
             started_at,
             stages,
@@ -1202,6 +1319,7 @@ pub(crate) fn run_managed_health(
                 "The managed loopback health server did not become ready before its deadline."
                     .into(),
             ),
+            tree_stopped,
         );
     }
     stages.push(HealthStageResult::passed(
@@ -1212,8 +1330,8 @@ pub(crate) fn run_managed_health(
 
     let stage_started = Instant::now();
     if cancel.load(Ordering::Relaxed) {
-        child.terminate_and_wait();
-        return fail_stage(
+        let tree_stopped = child.terminate_and_wait();
+        return fail_health_stage(
             &context,
             started_at,
             stages,
@@ -1223,6 +1341,7 @@ pub(crate) fn run_managed_health(
                 HealthFailureReason::Cancelled,
                 "Deterministic completion was cancelled.".into(),
             ),
+            tree_stopped,
         );
     }
     let response = completion_request_supervised(
@@ -1230,20 +1349,24 @@ pub(crate) fn run_managed_health(
         cancel,
         stage_started + MODEL_OPERATION_TIMEOUT,
         || {
+            // The supervised join below reports a surviving worker as
+            // unresolved, and the final cleanup stage re-checks the tree:
+            // this termination needs no outcome of its own.
             child.terminate_and_wait();
         },
     );
     let (status, body) = match response {
         Ok(value) => value,
         Err(error) => {
-            child.terminate_and_wait();
-            return fail_stage(
+            let tree_stopped = child.terminate_and_wait();
+            return fail_health_stage(
                 &context,
                 started_at,
                 stages,
                 HealthStage::DeterministicCompletion,
                 stage_started,
                 error,
+                tree_stopped,
             );
         }
     };
@@ -1259,8 +1382,8 @@ pub(crate) fn run_managed_health(
         .and_then(|value| u32::try_from(value).ok());
     let pin = crate::core::pinned_model_load_pin();
     let Some(content) = content else {
-        child.terminate_and_wait();
-        return fail_stage(
+        let tree_stopped = child.terminate_and_wait();
+        return fail_health_stage(
             &context,
             started_at,
             stages,
@@ -1270,6 +1393,7 @@ pub(crate) fn run_managed_health(
                 HealthFailureReason::MalformedOutput,
                 "The deterministic completion response omitted its content.".into(),
             ),
+            tree_stopped,
         );
     };
     let observed_output_sha256 = format!("{:x}", Sha256::digest(content.as_bytes()));
@@ -1281,8 +1405,8 @@ pub(crate) fn run_managed_health(
         observed_output_sha256,
     };
     if status != 200 || content != pin.expected_completion || !completion_matches(&completion) {
-        child.terminate_and_wait();
-        return fail_stage(
+        let tree_stopped = child.terminate_and_wait();
+        return fail_health_stage(
             &context,
             started_at,
             stages,
@@ -1292,6 +1416,7 @@ pub(crate) fn run_managed_health(
                 HealthFailureReason::Mismatch,
                 "The deterministic completion did not match every approved field.".into(),
             ),
+            tree_stopped,
         );
     }
     stages.push(HealthStageResult::passed_completion(
@@ -1322,11 +1447,7 @@ pub(crate) fn run_managed_health(
 
     let stage_started = Instant::now();
     let child_stopped = child.try_wait().ok().flatten().is_some();
-    let port_closed = std::net::TcpStream::connect_timeout(
-        &std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port)),
-        Duration::from_millis(250),
-    )
-    .is_err();
+    let port_closed = loopback_port_is_closed(port);
     let temporary_files_removed = health_temp.cleanup();
     if !child_stopped || !tree_stopped || !port_closed || !temporary_files_removed {
         return fail_stage(
@@ -1350,9 +1471,160 @@ pub(crate) fn run_managed_health(
     finish_run(&context, started_at, stages)
 }
 
+/// Probe a loopback port for the cleanup conjunction: a failed connect reads
+/// as closed, a successful connect as still-open. Measured platform note:
+/// this host reports closed loopback ports (including never-bound ones) as
+/// `TimedOut`, not `ConnectionRefused` (probe2, 2026-09-25), so refusing
+/// only on `ConnectionRefused` would fail cleanup everywhere here. The port
+/// leg is corroborating evidence only — it conjoins with the process-exit
+/// legs (`child_stopped`, `tree_stopped`), never stands alone.
+fn loopback_port_is_closed(port: u16) -> bool {
+    std::net::TcpStream::connect_timeout(
+        &std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port)),
+        Duration::from_millis(250),
+    )
+    .is_err()
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn termination_outcome_reports_a_surviving_tree_as_unresolved() {
+        let original = (
+            HealthFailureReason::Timeout,
+            "The server was slow.".to_string(),
+        );
+        assert_eq!(health_termination_outcome(true, original.clone()), original);
+        let (reason, detail) = health_termination_outcome(false, original);
+        assert_eq!(reason, HealthFailureReason::Unresolved);
+        assert!(detail.contains("survived termination"));
+        assert!(detail.contains("The server was slow."));
+    }
+
+    #[test]
+    fn failing_health_exits_route_through_the_termination_check() {
+        // Every termination on a failing exit must capture its outcome: a
+        // discarded bool lets a surviving tree hide behind an earlier error.
+        // Exactly one bare call survives: the supervised-completion cleanup
+        // closure, whose outcome the join and the final cleanup stage own.
+        let source = include_str!("health.rs");
+        let bare = source
+            .lines()
+            .filter(|line| line.trim() == "child.terminate_and_wait();")
+            .count();
+        assert_eq!(
+            bare, 1,
+            "a failing health exit discards a termination outcome"
+        );
+    }
+
+    #[test]
+    fn completion_failure_preserves_the_client_cause() {
+        // Completion errors must not all read as timeouts: cancellation,
+        // output limits, and transport failures keep their own reasons and
+        // the client message survives in the detail.
+        assert_eq!(
+            completion_failure_reason("The local request was cancelled"),
+            HealthFailureReason::Cancelled
+        );
+        assert_eq!(
+            completion_failure_reason("llama-server did not answer within 120 seconds"),
+            HealthFailureReason::Timeout
+        );
+        assert_eq!(
+            completion_failure_reason("The local response exceeds the 100-byte limit"),
+            HealthFailureReason::OutputLimit
+        );
+        assert_eq!(
+            completion_failure_reason("The local request failed: connection refused"),
+            HealthFailureReason::MalformedOutput
+        );
+    }
+
+    #[test]
+    fn finish_run_fails_closed_on_a_broken_stage_contract() {
+        // The evidence/order contract must hold in release builds too, not
+        // only under debug assertions: an invalid stage list fails the run.
+        let context = ManagedHealthContext {
+            runtime_id: "test".into(),
+            install_root: PathBuf::new(),
+            server_path: PathBuf::new(),
+            backend: "cpu".into(),
+            adapter_id: None,
+            adapter_name: None,
+            expected_model: String::new(),
+            model_path: PathBuf::new(),
+            execution_lease: None,
+        };
+        let result = finish_run(
+            &context,
+            0,
+            vec![HealthStageResult::passed(
+                HealthStage::Cancellation,
+                0,
+                "out of order",
+            )],
+        );
+        assert!(!result.passed);
+    }
+
+    #[test]
+    fn closed_loopback_port_counts_but_a_live_listener_does_not() {
+        // A failed connect reads as closed; a listener that accepts the
+        // probe reads as still-open, never as PASS.
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let freed = probe.local_addr().unwrap().port();
+        drop(probe);
+        assert!(loopback_port_is_closed(freed));
+        let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        assert!(!loopback_port_is_closed(held.local_addr().unwrap().port()));
+    }
+
+    #[test]
+    fn the_loopback_readiness_client_never_follows_redirects() {
+        // port of the R15 redirect test for the health
+        // readiness client. A 3xx is a failure, never a hop: the redirect
+        // target must never receive the request.
+        use std::io::{Read, Write};
+        use std::sync::Arc;
+        let reached = Arc::new(AtomicBool::new(false));
+        let second = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let second_port = second.local_addr().unwrap().port();
+        let hit = Arc::clone(&reached);
+        std::thread::spawn(move || {
+            if let Ok((_stream, _)) = second.accept() {
+                hit.store(true, Ordering::SeqCst);
+            }
+        });
+        let first = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let first_port = first.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = first.accept() {
+                let mut buffer = [0_u8; 8192];
+                let _ = stream.read(&mut buffer);
+                let redirect = format!(
+                    "HTTP/1.1 302 Found\nlocation: http://127.0.0.1:{second_port}/steal\ncontent-length: 0\nconnection: close\n\n"
+                );
+                let _ = stream.write_all(redirect.as_bytes());
+            }
+        });
+        let client = loopback_readiness_client().expect("the readiness client builds");
+        let response = client
+            .get(format!("http://127.0.0.1:{first_port}/health"))
+            .send()
+            .expect("the readiness call completes");
+        assert_eq!(
+            response.status().as_u16(),
+            302,
+            "the redirect status is returned, not followed"
+        );
+        std::thread::sleep(Duration::from_millis(250));
+        assert!(
+            !reached.load(Ordering::SeqCst),
+            "the redirect target must never receive the request"
+        );
+    }
 
     #[cfg(windows)]
     #[test]
@@ -1635,6 +1907,18 @@ mod tests {
     }
 
     #[test]
+    fn cpu_enumeration_requires_the_device_list_header() {
+        // The CPU branch must examine the enumeration output: empty or
+        // unrelated output from an exit-zero process must not pass.
+        assert!(resolve_runtime_device(b"", "cpu", None).is_err());
+        assert!(resolve_runtime_device(b"some unrelated log line\n", "cpu", None).is_err());
+        assert_eq!(
+            resolve_runtime_device(b"Available devices:\n  (none)\n", "cpu", None).unwrap(),
+            None
+        );
+    }
+
+    #[test]
     fn benchmark_requires_both_workloads_on_the_expected_backend() {
         let output = br#"[
           {"backend":"HIP","n_prompt":32,"n_gen":0},
@@ -1809,7 +2093,7 @@ mod tests {
     }
 
     /// A loopback fixture that accepts one completion request, reads it, and
-    /// deliberately withholds the response until `release` is set (audit RT-03).
+    /// deliberately withholds the response until `release` is set.
     fn serve_withheld_completion() -> (u16, std::sync::Arc<AtomicBool>, std::thread::JoinHandle<()>)
     {
         use std::io::{Read as _, Write as _};
@@ -1854,11 +2138,49 @@ mod tests {
     }
 
     #[test]
-    fn rt03_cancel_terminates_a_pending_completion_within_the_bound() {
+    fn a_completion_worker_that_survives_termination_is_unresolved() {
+        // the supervisor must join the nested worker with a
+        // deadline instead of abandoning it. A worker still blocked past the
+        // deadline - its server ignored termination - reports Unresolved, not
+        // the success-shaped Cancelled kind.
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buffer = [0_u8; 4096];
+                let _ = stream.read(&mut buffer);
+                let _ = stream.write_all(b""); // hold the connection open forever
+                std::thread::sleep(Duration::from_secs(120));
+            }
+        });
+        let cancel = AtomicBool::new(true);
+        let terminated = AtomicBool::new(false);
+        let started = Instant::now();
+        let error = completion_request_supervised(
+            port,
+            &cancel,
+            Instant::now() + Duration::from_secs(30),
+            || {
+                terminated.store(true, Ordering::Relaxed);
+            },
+        )
+        .expect_err("a surviving worker must report failure");
+        assert!(terminated.load(Ordering::Relaxed));
+        assert_eq!(error.0, HealthFailureReason::Unresolved);
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "the worker join must be bounded, took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn cancel_terminates_a_pending_completion_within_the_bound() {
         // A server that accepts /completion and never answers must not hold a
         // cancelled health run for the 120-second request deadline: the
         // supervisor returns Cancelled, terminates the server, and does so
-        // promptly (audit RT-03).
+        // promptly.
         let (port, release, fixture) = serve_withheld_completion();
         let cancel = std::sync::Arc::new(AtomicBool::new(false));
         let terminated = std::sync::Arc::new(AtomicBool::new(false));
@@ -1869,6 +2191,7 @@ mod tests {
                 setter.store(true, Ordering::Relaxed);
             });
             let terminate_flag = std::sync::Arc::clone(&terminated);
+            let release_flag = std::sync::Arc::clone(&release);
             let started = Instant::now();
             let result = completion_request_supervised(
                 port,
@@ -1876,6 +2199,10 @@ mod tests {
                 Instant::now() + Duration::from_secs(30),
                 move || {
                     terminate_flag.store(true, Ordering::Relaxed);
+                    // a real termination closes the server socket, so
+                    // the worker's pending read ends. Release the fixture for
+                    // the same effect: its thread exits and drops the stream.
+                    release_flag.store(true, Ordering::Relaxed);
                 },
             );
             let error = result.expect_err("a withheld response must report failure");
@@ -1895,10 +2222,10 @@ mod tests {
     }
 
     #[test]
-    fn rt03_a_completion_finishing_at_cancellation_is_never_reported_as_passed() {
+    fn a_completion_finishing_at_cancellation_is_never_reported_as_passed() {
         // The response-versus-cancel race resolves toward Cancelled: a
         // complete, valid response arriving while the flag is set must not
-        // become a passed completion stage (audit RT-03).
+        // become a passed completion stage.
         let body: &'static [u8] = br#"{"content":"ok","tokens_predicted":4}"#;
         let (port, fixture) = serve_one_completion_response(body);
         let cancel = AtomicBool::new(true);
@@ -1919,7 +2246,7 @@ mod tests {
     }
 
     #[test]
-    fn rt03_the_supervised_request_still_returns_normal_responses() {
+    fn the_supervised_request_still_returns_normal_responses() {
         // Positive control: without cancellation the supervisor is transparent
         // and does not terminate the server.
         let body: &'static [u8] = br#"{"content":"ok","tokens_predicted":4}"#;

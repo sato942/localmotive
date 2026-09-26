@@ -17,6 +17,22 @@ import { ATTESTATION_RECORDS, buildQualificationManifest } from "../build_qualif
 import { verifyReleasePromotion, promisedAssetNames } from "../verify_release_promotion.mjs";
 import { loadWorkflows } from "../verify_workflow_gates.mjs";
 
+test("workflow app stops kill the whole started process tree", () => {
+  // P1-5 (REL-10): killing only the parent orphans the app's children
+  // (llama-server, WebView2). Each stop uses taskkill /T on the owned PID;
+  // native exit codes are checked at once so a stray LASTEXITCODE cannot
+  // flip the step outcome.
+  const ci = readFileSync(join(process.cwd(), ".github", "workflows", "ci.yml"), "utf8");
+  assert.match(ci, /taskkill \/PID \$process\.Id \/T \/F/);
+  assert.doesNotMatch(ci, /Stop-Process -Id \$process\.Id/);
+  const lab = readFileSync(
+    join(process.cwd(), ".github", "workflows", "hardware-qualify.yml"),
+    "utf8",
+  );
+  assert.match(lab, /taskkill \/PID \$targetPid \/T \/F/);
+  assert.match(lab, /taskkill \/PID \$proc\.Id \/T \/F/);
+  assert.doesNotMatch(lab, /\$proc\.Kill\(\)/);
+});
 const RELEASE = "0.6.0";
 const SOURCE = "a".repeat(40);
 const TAG = `v${RELEASE}`;

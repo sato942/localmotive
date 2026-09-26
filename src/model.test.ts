@@ -32,7 +32,6 @@ import {
   applySuggestedPort,
   profileIdentity,
   profileNumberError,
-  legacyBenchmarkInputError,
   tuningWorkloadError,
   profileNumberLimits,
   type ProfileNumberField,
@@ -63,26 +62,6 @@ import {
   type StorageVolumeEvidence,
   type Workload,
 } from "./model";
-
-describe("legacy benchmark workload input", () => {
-  it("keeps every supported integer endpoint and a non-multiple of 64", () => {
-    for (const tokens of [64, 65, 4096]) {
-      for (const repeats of [1, 10]) expect(legacyBenchmarkInputError(tokens, repeats)).toBeNull();
-    }
-  });
-
-  it("rejects invalid token counts", () => {
-    for (const tokens of [63, 4097, 64.5, NaN, Infinity, -Infinity]) {
-      expect(legacyBenchmarkInputError(tokens, 1)).toContain("Forced output tokens");
-    }
-  });
-
-  it("rejects invalid repeat counts", () => {
-    for (const repeats of [0, 11, 1.5, NaN, Infinity, -Infinity]) {
-      expect(legacyBenchmarkInputError(64, repeats)).toContain("Measured repeats");
-    }
-  });
-});
 
 describe("tuning workload input", () => {
   const valid = { targetContext: 8192, maxTrials: 6, tokens: 256, repeats: 2 };

@@ -1,4 +1,5 @@
 import type { Dispatch, KeyboardEvent, RefObject, SetStateAction } from "react";
+import { useEffect } from "react";
 import {
   Activity, KeyRound, LogIn, RefreshCw, Save, Settings2, Sparkles, Square, SquareTerminal, Trophy, Unplug,
 } from "lucide-react";
@@ -170,6 +171,11 @@ export function TuneScreen(props: TuneScreenProps) {
     tuning,
     useAdvisor,
   } = props;
+  // FE-01: the typed key must not outlive this screen. Unmount (leaving
+  // the tune view) clears the draft; a failed save clears it in App.
+  useEffect(() => () => {
+    setKeyDraft("");
+  }, [setKeyDraft]);
   return (
     <section className="screen tune-screen">
       <div className="section-heading">
@@ -345,7 +351,7 @@ export function TuneScreen(props: TuneScreenProps) {
                   <small>Best measured in this session — never optimal. Any measured row below can be adopted, not only the winner.</small>
                   {(tuneReport.modelLabel || tuneReport.hardwareLabel || tuneReport.runtimeBuild) && <small>Measured on {[tuneReport.modelLabel, tuneReport.hardwareLabel, tuneReport.runtimeBuild ? `runtime B${tuneReport.runtimeBuild}` : ""].filter(Boolean).join(" · ")}</small>}
                   <small>{tuneReport.objective ?? "Measured objective: short-prompt decode throughput at the allocated context."}</small>
-                  {tuneReport.finalVerification ? <small>Final verification: baseline {tuneReport.finalVerification.baselineTps.toFixed(2)} tok/s, winner {tuneReport.finalVerification.winnerTps.toFixed(2)} tok/s, required +{(tuneReport.finalVerification.requiredImprovement * 100).toFixed(1)}% — {tuneReport.finalVerification.confirmed ? "confirmed" : "not confirmed"}.</small> : null}
+                  {tuneReport.finalVerification ? <small>Final verification: baseline {tuneReport.finalVerification.baselineTps.toFixed(2)} tok/s, winner {tuneReport.finalVerification.winnerTps.toFixed(2)} tok/s, required +{(tuneReport.finalVerification.requiredImprovement * 100).toFixed(1)}% — {tuneReport.finalVerification.confirmed ? "reproduced on the fixed harness prompt (same-prompt re-measurement, not independent confirmation)" : "did not reproduce on the fixed harness prompt (same-prompt re-measurement)"}.</small> : null}
                   {tuneReport.qualityAffectingChanges && tuneReport.qualityAffectingChanges.length > 0 ? <small>Quality not measured for: {tuneReport.qualityAffectingChanges.join(", ")}. Review model output before adopting these changes.</small> : null}</div>}
               </>
             ) : (

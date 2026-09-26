@@ -104,7 +104,7 @@ jobs:
           - CPU: $($env:CPU)
           - GPU: $($env:GPU)
           - Runner: self-hosted `DESKTOP-HPTF57N-zen5-blackwell`; the historical night-only window (01:00-06:00 Asia/Dubai) no longer gates CI or release jobs
-          - Main Release build/publish stays on GitHub-hosted windows-latest
+          - Main Release build/publish runs on the self-hosted `localmotive-release` runner (P1-12); this job only records host match, it never builds the candidate
           - This job records host match for Zen 5 + Blackwell; full packaged L4 PASS still needs the packaged verifier once artifacts exist
           "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8
 
@@ -239,7 +239,7 @@ jobs:
                 if ($ready.Count -gt 0) { break }
               } catch { }
               if ((Get-Date) -gt $deadline) {
-                try { $proc.Kill() } catch { }
+                & taskkill /PID $proc.Id /T /F | Out-Null
                 throw "Lab candidate did not expose a page CDP target in 90s (port $Port)"
               }
               Start-Sleep -Seconds 2
@@ -248,7 +248,10 @@ jobs:
           }
           function Stop-LabApp($proc) {
             if (-not $proc) { return }
-            try { $proc.Kill() } catch { }
+            $targetPid = 0
+            try { $targetPid = $proc.Id } catch { return }
+            & taskkill /PID $targetPid /T /F | Out-Null
+            if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 128) { throw "Lab candidate tree stop failed with code $LASTEXITCODE" }
             if (-not $proc.WaitForExit(15000)) { throw "Lab candidate pid $($proc.Id) still alive after kill" }
             Start-Sleep -Seconds 5
           }

@@ -1,9 +1,9 @@
-//! Measurement command family (audit S-27 I1, slice 3b).
+//! Measurement command family.
 //! operation coordinator and the measurement/evidence authorities stay in
 //! their modules and are consumed here.
-use crate::core::{BenchmarkSummary, LaunchProfile};
+use crate::core::LaunchProfile;
 use crate::local_client::LocalHttpClient;
-use crate::server_service::{validated_server_snapshot, ValidatedServerSnapshot};
+use crate::server_service::{start_server, validated_server_snapshot, ValidatedServerSnapshot};
 use crate::LaunchValidation;
 use crate::{
     artifact, calibration, core, evidence, local_client, measurement, reserve_operation, runtime,
@@ -12,7 +12,7 @@ use crate::{
 use crate::{spawn_server, wait_until_healthy_cancellable};
 
 /// Slack above the workload's own request deadline before a worker drain is
-/// considered abnormal (R16 follow-up). A cancellable worker can never outlive
+/// considered abnormal. A cancellable worker can never outlive
 /// its request deadline by more than process teardown, so the drain bound is
 /// derived from the deadline the run actually used instead of a fixed value:
 /// the previous fixed 300 s ceiling sat BELOW the default 600 s request
@@ -31,14 +31,25 @@ pub(crate) fn benchmark_drain_ceiling(workload: &evidence::Workload) -> Duration
 /// the request deadline. The run - and the command that owns it - must not
 /// finalize a record, clear its slot, or release the operations reservation
 /// while such a worker can still be inferring: replacement work would overlap
-/// it (R04/R16). The ceiling is the expected bound; if it is exceeded, the
-/// worker outlived its own request deadline - an unexpected state - and the
-/// wait still continues rather than releasing ownership while work continues.
-pub(crate) fn drain_owned_workers(client: &LocalHttpClient, ceiling: Duration) {
+/// it. The ceiling derives from the workload's own request deadline
+/// plus teardown slack; a worker owned past it is anomalous, so the wait is
+/// bounded there and the outcome is reported as [`DrainOutcome::Unresolved`]
+/// instead of holding the slot permanently.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DrainOutcome {
+    /// Every owned worker exited within the ceiling.
+    Drained,
+    /// A worker was still owned past the ceiling. The caller records the
+    /// unresolved state so replacement work is informed.
+    Unresolved,
+}
+
+pub(crate) fn drain_owned_workers(client: &LocalHttpClient, ceiling: Duration) -> DrainOutcome {
     if client.wait_for_worker_drain(ceiling) {
-        return;
+        DrainOutcome::Drained
+    } else {
+        DrainOutcome::Unresolved
     }
-    while !client.wait_for_worker_drain(Duration::from_secs(1)) {}
 }
 
 use serde::Serialize;
@@ -49,86 +60,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tauri::Manager;
 
-#[tauri::command]
-pub(crate) async fn benchmark_server(
-    tokens: u32,
-    repeats: u16,
-    state: tauri::State<'_, AppState>,
-) -> Result<BenchmarkSummary, String> {
-    run_legacy_benchmark(tokens, repeats, &state).await
-}
-
-/// Final gate (review deleg_16c0e72a): a cancel that arrives after the final
-/// response was accepted but before the command returns must not produce Ok.
-/// The frontend stores Ok as success, so finalization turns it into a
-/// cancellation error instead. A replaced server still discards the record.
-fn finalize_legacy_benchmark(
-    result: Result<BenchmarkSummary, String>,
-    cancelled: &AtomicBool,
-    reservation_current: bool,
-) -> Result<BenchmarkSummary, String> {
-    let summary = result?;
-    if cancelled.load(Ordering::Relaxed) {
-        return Err("The local request was cancelled".into());
-    }
-    if !reservation_current {
-        return Err(
-            "The managed server changed during the benchmark; the result was discarded.".into(),
-        );
-    }
-    Ok(summary)
-}
-
-async fn run_legacy_benchmark(
-    tokens: u32,
-    repeats: u16,
-    state: &AppState,
-) -> Result<BenchmarkSummary, String> {
-    core::validate_benchmark_options(tokens, repeats)?;
-    let reservation = reserve_operation(&state.operations, OperationOwner::Benchmark)?;
-    let server = {
-        let mut slot = state
-            .server
-            .lock()
-            .map_err(|_| "Server state is unavailable".to_string())?;
-        validated_server_snapshot(&mut slot, "benchmarking")?
-    };
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let final_cancel = cancelled.clone();
-    let slot = state.benchmark.clone();
-    let signal = cancelled.clone();
-    // Client construction, requests, drain and final client drop must stay
-    // off the async executor. The slot is published before construction so a
-    // Cancel during construction lands on this run's flag.
-    let client = tauri::async_runtime::spawn_blocking(move || {
-        publish_benchmark_slot(&slot, signal, || local_client(&server.profile))
-    })
-    .await
-    .map_err(|error| format!("Benchmark client task failed: {error}"))??;
-    let run_client = client.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        core::benchmark_server_cancellable(&run_client, tokens, repeats, &cancelled)
-    })
-    .await
-    .map_err(|error| format!("Benchmark task failed: {error}"));
-    // Keep both ownership slots until every request exits, including when
-    // the measurement task fails. Cancellation alone does not end its worker.
-    tauri::async_runtime::spawn_blocking(move || {
-        drain_owned_workers(
-            &client,
-            core::LEGACY_BENCH_TIMEOUT.saturating_add(WORKER_TEARDOWN_SLACK),
-        );
-    })
-    .await
-    .map_err(|error| format!("Benchmark drain task failed: {error}"))?;
-    *state
-        .benchmark
-        .lock()
-        .map_err(|_| "Benchmark state is unavailable")? = None;
-    let inner = result?;
-    finalize_legacy_benchmark(inner, &final_cancel, reservation.is_current())
-}
-
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct BenchmarkRunResult {
@@ -138,6 +69,26 @@ pub(crate) struct BenchmarkRunResult {
     compatibility_key: String,
     result_class: evidence::FitClass,
     failure: Option<String>,
+    /// Cold runs take the user's server for a quiet machine.
+    /// True when the same profile was relaunched after the run; false when
+    /// this run never took a server or the relaunch failed (see
+    /// `server_restore_error`).
+    #[serde(default)]
+    server_restored: bool,
+    /// The relaunch failure, when the benchmark record survived but the
+    /// server did not come back. Never replaces the benchmark result.
+    #[serde(default)]
+    server_restore_error: Option<String>,
+}
+
+/// Record a cold-run server relaunch without touching the measurements:
+/// success marks the server restored, failure keeps the benchmark record
+/// and names the restore error instead of discarding the run.
+fn cold_restore_outcome(outcome: Result<(), String>) -> (bool, Option<String>) {
+    match outcome {
+        Ok(()) => (true, None),
+        Err(error) => (false, Some(error)),
+    }
 }
 
 pub(crate) fn benchmark_file_fact(file: &artifact::ArtifactFileFact) -> evidence::FileFact {
@@ -221,7 +172,7 @@ pub(crate) fn benchmark_execution_snapshot_from_profile(
     let (adapter_ids, driver_versions): (Vec<String>, Vec<String>) = adapters.into_iter().unzip();
 
     // Content identities for file-backed influences: a changed file under
-    // the same name must change the key (audit MT-07 I2).
+    // the same name must change the key.
     let file_sha = |path: &str| -> Result<String, String> {
         let trimmed = path.trim();
         if trimmed.is_empty() {
@@ -247,7 +198,7 @@ pub(crate) fn benchmark_execution_snapshot_from_profile(
     let host_cpu_model = String::new();
 
     // Material facts this machine cannot observe make reuse insufficiently
-    // supported and are named explicitly (audit MT-07 I3).
+    // supported and are named explicitly.
     let mut unknown_identities = Vec::new();
     for (adapter, driver) in adapter_ids.iter().zip(driver_versions.iter()) {
         let normalized = driver.trim().to_ascii_lowercase();
@@ -275,7 +226,7 @@ pub(crate) fn benchmark_execution_snapshot_from_profile(
 
     // The scope is part of the identity: `launch` snapshots carry no
     // workload digest and identify a launch configuration, while
-    // `launch+workload` snapshots identify a measured run (audit MT-09).
+    // `launch+workload` snapshots identify a measured run.
     let (scope, workload_sha256) = match workload {
         Some(workload) => (
             calibration::SNAPSHOT_SCOPE_LAUNCH_WORKLOAD,
@@ -317,8 +268,37 @@ pub(crate) fn benchmark_execution_snapshot_from_profile(
     })
 }
 
+/// One tuning-trial measurement through the v2 evidence contract: a warmup
+/// plus `repeats` measured completions against the trial server, with prompt
+/// accounting and generated-token checks on every response. This replaces the
+/// legacy `benchmark_server_cancellable`, which accepted a positive
+/// server-reported rate without checking the generated token count. The trial
+/// workload keeps the established v2 default shape (deterministic
+/// server-prepared prompt, seed 42, 600 s request bound); only the generation
+/// length and trial count follow the tuning request.
+pub(crate) fn measure_trial_summary(
+    client: &LocalHttpClient,
+    tokens: u32,
+    repeats: u16,
+    cancelled: &AtomicBool,
+) -> Result<measurement::BenchmarkSummaryV2, String> {
+    let workload = evidence::Workload {
+        id: "tune-trial-v1".into(),
+        generation_tokens: tokens,
+        trials: repeats,
+        ..Default::default()
+    };
+    let run = measurement::run_workload_with(&workload, cancelled, || {
+        measurement::completion_request_cancellable(client, &workload, cancelled)
+    })?;
+    if run.terminal_outcome == Some(evidence::AttemptOutcome::Cancelled) {
+        return Err("The local request was cancelled".into());
+    }
+    measurement::summarize_observations(&run.observations)
+}
+
 /// Everything one measured attempt needs, grouped so the run signature stays
-/// readable as the ownership requirements grow (R16 added the shared client).
+/// readable as the ownership requirements grow.
 pub(crate) struct BenchmarkRunContext<'a> {
     pub server_pid: u32,
     pub profile: LaunchProfile,
@@ -402,18 +382,6 @@ pub(crate) fn run_benchmark_snapshot(
         Some(&workload),
     )?;
     let compatibility_key = snapshot_outcome.compatibility_key.clone();
-    // The launch-scope identity records the same configuration without a
-    // workload (audit MT-09).
-    let launch_compatibility_key = benchmark_execution_snapshot_from_profile(
-        &profile,
-        &validation,
-        &artifacts,
-        &runtime_identity,
-        &executable_sha256,
-        &hardware,
-        None,
-    )?
-    .compatibility_key;
     let launch_fact = evidence::LaunchFact {
         requested_context: profile.context,
         effective_context: validation.effective_context.clone(),
@@ -435,7 +403,7 @@ pub(crate) fn run_benchmark_snapshot(
             .collect(),
     };
     launch_fact.validate().map_err(|error| error.to_string())?;
-    // R04 (follow-up review db548c8): the whole run shares one client - the
+    // The whole run shares one client - the
     // command creates it and passes it to preparation and to this function -
     // so every cancellable worker of this benchmark is observable on it; the
     // run drains those workers before it returns.
@@ -454,8 +422,8 @@ pub(crate) fn run_benchmark_snapshot(
                 return Err("Benchmark cancelled before fresh runtime launch".into());
             }
             // The lease binding pins the verified runtime content for the whole
-            // cold attempt (audit RT-04); it drops with this scope.
-            let (mut child, _, log_path, _lease, _drains) =
+            // cold attempt; it drops with this scope.
+            let (mut child, _, log_path, _lease, drains) =
                 spawn_server(&profile, "benchmark-cold")?;
             let attempt = wait_until_healthy_cancellable(
                 &mut child,
@@ -475,7 +443,11 @@ pub(crate) fn run_benchmark_snapshot(
                 Ok(timing)
             });
             let cleanup = child.terminate_and_wait();
-            match (attempt, cleanup) {
+            // The log drains are part of cleanup: join them on the same
+            // bounded policy as managed-server stop, so a run never reports
+            // finished while its launch evidence is still unwritten.
+            let drains_settled = crate::server_service::join_log_drains(drains);
+            match (attempt, cleanup && drains_settled) {
                 (Ok(timing), true) => Ok(timing),
                 (Err(error), true) => Err(error),
                 (Ok(_), false) => {
@@ -498,18 +470,17 @@ pub(crate) fn run_benchmark_snapshot(
             Ok(timing)
         })?
     };
-    // R04/R16: a cancelled attempt abandons its worker, which keeps its
+    // A cancelled attempt abandons its worker, which keeps its
     // request until the operation deadline. The run holds ownership until
-    // every such worker has exited: the ceiling derives from THIS workload's
-    // request deadline, and a worker that outlives even that keeps being
-    // waited for instead of being discarded under unknown ownership.
-    drain_owned_workers(&client, benchmark_drain_ceiling(&workload));
+    // the ceiling derives from THIS workload's request deadline; a worker
+    // still owned past it is reported Unresolved instead of holding
+    // the slot forever.
+    let drain = drain_owned_workers(&client, benchmark_drain_ceiling(&workload));
     let mut manifest = evidence::BenchmarkManifest {
         schema: evidence::BENCHMARK_SCHEMA_VERSION,
         harness_version,
         scope_note: evidence::WORKLOAD_SCOPE_NOTE.into(),
         compatibility_key: Some(compatibility_key.clone()),
-        launch_compatibility_key: Some(launch_compatibility_key),
         execution_snapshot_schema: snapshot_outcome.schema_version.clone(),
         execution_snapshot_unknowns: snapshot_outcome.unknown_identities.clone(),
         runtime: Some(evidence::RuntimeFact {
@@ -547,6 +518,23 @@ pub(crate) fn run_benchmark_snapshot(
         ),
         (Err(error), _) => (None, evidence::FitClass::Failed, Some(error)),
     };
+    // an unresolved drain means a worker may still be inferring. The
+    // record keeps its observations, but the run is Failed so unsettled work
+    // never feeds fit as Measured, and the note tells replacement work why.
+    let (result_class, failure) = match drain {
+        DrainOutcome::Drained => (result_class, failure),
+        DrainOutcome::Unresolved => (
+            evidence::FitClass::Failed,
+            Some(match failure {
+                Some(note) => {
+                    format!("Benchmark workers did not drain within the workload deadline; {note}")
+                }
+                None => "Benchmark workers did not drain within the workload deadline; \
+                    a worker may still be inferring"
+                    .into(),
+            }),
+        ),
+    };
     let manifest_path = measurement::persist_manifest(directory, &manifest)?;
     Ok(BenchmarkRunResult {
         manifest: std::mem::take(&mut manifest),
@@ -555,10 +543,12 @@ pub(crate) fn run_benchmark_snapshot(
         compatibility_key,
         result_class,
         failure,
+        server_restored: false,
+        server_restore_error: None,
     })
 }
 
-/// F9-02 with construction-window cancel (review deleg_16c0e72a): the slot is
+/// with construction-window cancel (review deleg_16c0e72a): the slot is
 /// published before the fallible client is constructed, so a Cancel during
 /// construction lands on this run's flag instead of reporting "No benchmark
 /// is running". A construction failure clears only our own flag, so the slot
@@ -571,11 +561,11 @@ fn publish_benchmark_slot<T>(
     construct: impl FnOnce() -> Result<T, String>,
 ) -> Result<T, String> {
     // Early publication: the frontend shows Cancel as soon as
-    // benchmark_server is dispatched, so the slot must exist during
+    // benchmark_v2 is dispatched, so the slot must exist during
     // construction for the cancel to land on this run's own flag (review
     // deleg_16c0e72a). Occupancy is checked first so a refused caller never
     // overwrites the occupant; a construction failure clears only our own
-    // flag, so the slot stays free (F9-02) without clearing a replacement.
+    // flag, so the slot stays free without clearing a replacement.
     {
         let mut active = slot.lock().map_err(|_| "Benchmark state is unavailable")?;
         if active.is_some() {
@@ -609,7 +599,7 @@ pub(crate) async fn benchmark_v2(
     workload.validate().map_err(|error| error.to_string())?;
     // One machine owner: a benchmark cannot start while a server or tuning
     // session owns the operations slot, and a cold attempt is its own owner
-    // kind (audit MT-05).
+    // kind.
     let owner = if workload.cache_mode == evidence::CacheMode::Cold {
         OperationOwner::ColdBenchmark
     } else {
@@ -628,11 +618,19 @@ pub(crate) async fn benchmark_v2(
             .map_err(|_| "Server state is unavailable")?;
         validated_server_snapshot(&mut slot, "benchmarking")?
     };
+    // a cold run takes the user's server for a quiet machine. Keep
+    // the profile aside so the same server is relaunched after the finalized
+    // record below.
+    let cold_profile = if workload.cache_mode == evidence::CacheMode::Cold {
+        Some(server.profile.clone())
+    } else {
+        None
+    };
     let cancelled = Arc::new(AtomicBool::new(false));
-    // F9-02: the fallible client is built BEFORE the active slot is published.
+    // the fallible client is built BEFORE the active slot is published.
     // One client owns every request of this run: prompt preparation and the
     // measured attempts share it, so a cancellation during preparation is
-    // covered by the same worker drain as the measured attempts (R16). A
+    // covered by the same worker drain as the measured attempts. A
     // construction failure here reports truthfully and leaves no occupied
     // benchmark state behind.
     let client = publish_benchmark_slot(&state.benchmark, cancelled.clone(), || {
@@ -706,29 +704,64 @@ pub(crate) async fn benchmark_v2(
         .map_err(|error| format!("Benchmark task failed: {error}"))?
     }
     .await;
-    // R16: ownership is released only after every owned request and worker
+    // Ownership is released only after every owned request and worker
     // has actually terminated. This covers the boundaries the run's own drain
     // cannot - a cancellation during prompt preparation, an ordinary error
     // before the run, a cleanup failure, and a worker that outlived even its
     // own request deadline. The slot and the operations reservation stay held
     // for the whole wait, so replacement work is refused while the abandoned
     // request can still be inferring; a discarded result never releases
-    // ownership early. The ceiling derives from this workload's deadline.
-    drain_owned_workers(&client, drain_ceiling);
-    let mut active = state
-        .benchmark
-        .lock()
-        .map_err(|_| "Benchmark state is unavailable")?;
-    *active = None;
-    let result = benchmark_result?;
+    // ownership early. The ceiling derives from this workload's deadline; a
+    // worker still owned past it is reported Unresolved.
+    let command_drain = drain_owned_workers(&client, drain_ceiling);
+    {
+        let mut active = state
+            .benchmark
+            .lock()
+            .map_err(|_| "Benchmark state is unavailable")?;
+        *active = None;
+    }
+    let mut result = benchmark_result?;
     // A replaced or stopped server invalidates the whole record: results must
     // never be finalized under an identity that no longer exists
-    // (audit MT-05 I3).
+    //.
     if !reservation.is_current() {
         return Err(
             "The managed server was stopped or replaced during the benchmark; the record was discarded."
                 .into(),
         );
+    }
+    // an unresolved command drain means a worker may still be
+    // inferring. Mark the run Failed so unsettled work never feeds fit as
+    // Measured, and skip the server relaunch: starting replacement work over
+    // a still-inferring worker is the overlap the drain guards against.
+    if command_drain == DrainOutcome::Unresolved {
+        result.result_class = evidence::FitClass::Failed;
+        let note = "Benchmark workers did not drain within the workload deadline; \
+            a worker may still be inferring";
+        result.failure = Some(match result.failure.take() {
+            Some(previous) => format!("{note}; {previous}"),
+            None => note.into(),
+        });
+        if cold_profile.is_some() {
+            result.server_restored = false;
+            result.server_restore_error = Some(
+                "Server restore skipped: benchmark workers did not drain, so the \
+                relaunched server could overlap a still-inferring worker"
+                    .into(),
+            );
+        }
+    }
+    // the record above is finalized; now give the user their server
+    // back. The benchmark reservation is released first so the relaunch can
+    // own the machine through the normal start path. A relaunch failure is
+    // recorded on the result, never substituted for the benchmark outcome.
+    if let Some(profile) = cold_profile.filter(|_| command_drain == DrainOutcome::Drained) {
+        drop(reservation);
+        let outcome = start_server(app.clone(), profile, state).await.map(|_| ());
+        let (restored, error) = cold_restore_outcome(outcome);
+        result.server_restored = restored;
+        result.server_restore_error = error;
     }
     Ok(result)
 }
@@ -764,7 +797,7 @@ pub(crate) async fn replay_benchmark_manifest(
         validated_server_snapshot(&mut slot, "replaying a benchmark manifest")?
     };
     // Replay re-hashes artifacts and the runtime executable: blocking worker
-    // (audit IPC-01 I4).
+    //.
     tauri::async_runtime::spawn_blocking(move || replay_benchmark_manifest_worker(manifest, server))
         .await
         .map_err(|error| format!("Replay task failed: {error}"))?
@@ -789,7 +822,7 @@ pub(crate) fn replay_benchmark_manifest_worker(
     let runtime_identity = runtime::describe_runtime(Path::new(&server.profile.runtime));
     let executable_sha256 = artifact::sha256_path(Path::new(&server.profile.runtime))?;
     let hardware = runtime::detect_hardware();
-    let current_compatibility_key = benchmark_execution_snapshot_from_profile(
+    let current_snapshot = benchmark_execution_snapshot_from_profile(
         &server.profile,
         &server.validation,
         &artifacts,
@@ -797,13 +830,13 @@ pub(crate) fn replay_benchmark_manifest_worker(
         &executable_sha256,
         &hardware,
         Some(&manifest.workload),
-    )?
-    .compatibility_key;
+    )?;
     measurement::validate_replay_compatibility(
         &manifest,
         logical_id,
         &server.validation.arguments.effective_args,
-        &current_compatibility_key,
+        &current_snapshot.compatibility_key,
+        &current_snapshot.unknown_identities,
     )?;
     Ok(manifest.workload)
 }
@@ -915,6 +948,21 @@ mod lora_identity_tests {
             None,
         )
         .map(|outcome| outcome.compatibility_key)
+    }
+
+    #[test]
+    fn cold_restore_outcome_lands_in_the_record() {
+        // the cold benchmark relaunches the profile it took,
+        // and the relaunch outcome is recorded without touching the
+        // measurements. Success marks the server restored; a relaunch
+        // failure keeps the benchmark record and names the restore error
+        // instead of discarding the run.
+        let (restored, error) = super::cold_restore_outcome(Ok(()));
+        assert!(restored);
+        assert_eq!(error, None);
+        let (restored, error) = super::cold_restore_outcome(Err("the port was taken".to_string()));
+        assert!(!restored);
+        assert_eq!(error.as_deref(), Some("the port was taken"));
     }
 
     #[test]
@@ -1043,7 +1091,7 @@ mod lora_identity_tests {
 }
 
 #[cfg(test)]
-mod r16_ownership_tests {
+mod ownership_tests {
     use super::*;
     use crate::local_client::tests::serve_slow_body;
     use std::sync::atomic::Ordering;
@@ -1061,8 +1109,8 @@ mod r16_ownership_tests {
     }
 
     #[test]
-    fn f9_02_a_client_construction_failure_leaves_the_benchmark_slot_free() {
-        // F9-02: the previous order published the active slot and THEN called
+    fn a_client_construction_failure_leaves_the_benchmark_slot_free() {
+        // the previous order published the active slot and THEN called
         // the fallible `local_client(&server.profile)?`. A certificate or
         // API-key file that became invalid after the server launched returned
         // an error while the slot stayed occupied, so no benchmark had started
@@ -1096,7 +1144,7 @@ mod r16_ownership_tests {
     }
 
     #[test]
-    fn f9_02_a_refused_caller_never_replaces_the_occupants_state() {
+    fn a_refused_caller_never_replaces_the_occupants_state() {
         // The occupant's slot and its cancellation flag stay exactly as the
         // occupant left them. The fallible dependency is deliberately built
         // before occupancy is known (that ordering is what keeps a
@@ -1127,9 +1175,9 @@ mod r16_ownership_tests {
     }
 
     #[test]
-    fn legacy_cancel_is_observable_while_the_client_is_constructed() {
+    fn cancel_is_observable_while_the_client_is_constructed() {
         // Review deleg_16c0e72a: the frontend shows Cancel as soon as
-        // benchmark_server is dispatched, but the backend published the slot
+        // the command is dispatched, but the backend published the slot
         // only after local_client construction succeeded. A cancel in that
         // window received "No benchmark is running" while construction
         // continued and the benchmark ran anyway. The slot must exist during
@@ -1182,60 +1230,8 @@ mod r16_ownership_tests {
     }
 
     #[test]
-    fn legacy_success_is_discarded_when_cancel_arrives_before_finalization() {
-        // Review deleg_16c0e72a: a cancel after the final response was
-        // accepted but before the command returned still produced Ok, and the
-        // frontend stored it as success. A set flag at finalization must turn
-        // an Ok result into a cancellation error, while an unset flag and a
-        // current reservation keep the success.
-        let summary = crate::core::BenchmarkSummary {
-            samples: vec![100.0],
-            mean_tps: 100.0,
-            median_tps: 100.0,
-            min_tps: 100.0,
-            max_tps: 100.0,
-            tokens: 64,
-            repeats: 1,
-        };
-        let cancelled = AtomicBool::new(true);
-        let discarded = finalize_legacy_benchmark(Ok(summary), &cancelled, true);
-        assert_eq!(discarded.unwrap_err(), "The local request was cancelled");
-        let summary = crate::core::BenchmarkSummary {
-            samples: vec![100.0],
-            mean_tps: 100.0,
-            median_tps: 100.0,
-            min_tps: 100.0,
-            max_tps: 100.0,
-            tokens: 64,
-            repeats: 1,
-        };
-        let quiet = AtomicBool::new(false);
-        let kept = finalize_legacy_benchmark(Ok(summary), &quiet, true);
-        assert!(
-            kept.is_ok(),
-            "an uncancelled current run keeps its success: {kept:?}"
-        );
-        let summary = crate::core::BenchmarkSummary {
-            samples: vec![100.0],
-            mean_tps: 100.0,
-            median_tps: 100.0,
-            min_tps: 100.0,
-            max_tps: 100.0,
-            tokens: 64,
-            repeats: 1,
-        };
-        let replaced = finalize_legacy_benchmark(Ok(summary), &quiet, false);
-        assert!(
-            replaced
-                .unwrap_err()
-                .contains("changed during the benchmark"),
-            "a replaced server still discards the record"
-        );
-    }
-
-    #[test]
-    fn r16_the_drain_bound_follows_the_workload_request_deadline() {
-        // R16: the previous fixed 300 s ceiling sat BELOW the default 600 s
+    fn the_drain_bound_follows_the_workload_request_deadline() {
+        // The previous fixed 300 s ceiling sat BELOW the default 600 s
         // request deadline, so a cancelled slow request could outlive the
         // ceiling while ownership was already released. The bound is derived
         // from the deadline the run actually uses.
@@ -1257,11 +1253,10 @@ mod r16_ownership_tests {
     }
 
     #[test]
-    fn r16_cancellation_during_preparation_leaves_an_owned_worker_the_drain_waits_for() {
-        // The cold path prepares the exact prompt before any measured trial.
-        // A cancellation during that preparation abandons the tokenize worker
-        // exactly like a cancelled trial; the run shares one client, so the
-        // command's drain must observe it and hold ownership until it exits.
+    fn bounded_drain_reports_an_unresolved_worker() {
+        // the ownership drain is bounded by its ceiling. A
+        // worker still owned past the ceiling is reported Unresolved instead
+        // of holding the benchmark slot forever; a settled client drains.
         let fixture = serve_slow_body(Duration::from_millis(1_200), 12);
         let client = LocalHttpClient::plain("127.0.0.1", fixture.port).unwrap();
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -1287,355 +1282,40 @@ mod r16_ownership_tests {
             work.join().unwrap().is_err(),
             "the cancelled preparation reports the cancellation"
         );
-        assert!(
-            client.active_cancellable_workers() > 0,
-            "the abandoned preparation worker is still in flight after the cancellation"
-        );
-        // A ceiling below the worker's own deadline must not report the
-        // ownership resolved, and the drain must keep waiting past it instead
-        // of releasing ownership while the request is still running.
-        assert!(
-            !client.wait_for_worker_drain(Duration::from_millis(50)),
-            "the drain must report the worker still owned"
-        );
-        let started = Instant::now();
-        drain_owned_workers(&client, Duration::from_millis(50));
-        let waited = started.elapsed();
+        let outcome = drain_owned_workers(&client, Duration::from_millis(50));
         assert_eq!(
-            client.active_cancellable_workers(),
-            0,
-            "the drain returns only after the worker exited"
+            outcome,
+            DrainOutcome::Unresolved,
+            "a worker owned past the ceiling must not hold the slot forever"
         );
         assert!(
-            waited >= Duration::from_millis(500),
-            "the drain kept waiting past the exceeded ceiling ({waited:?})"
+            settle_until(
+                || client.active_cancellable_workers() == 0,
+                Duration::from_secs(30)
+            ),
+            "the abandoned worker winds down on its own"
         );
-    }
-}
-
-#[cfg(test)]
-mod legacy_ownership_tests {
-    use super::*;
-    use crate::{proc, ManagedServer};
-    use std::fs;
-    use std::io::{BufReader, Read, Write};
-    use std::net::TcpListener;
-    use std::path::PathBuf;
-    use std::process::Stdio;
-    use std::sync::atomic::AtomicUsize;
-    use std::sync::mpsc::{self, Receiver};
-    use std::time::Instant;
-
-    const FIXTURE_ROOT: &str = "LOCALMOTIVE_BENCH_FIXTURE_ROOT";
-    const WAIT: Duration = Duration::from_secs(30);
-
-    fn wait_until(mut ready: impl FnMut() -> bool) {
-        let start = Instant::now();
-        while !ready() {
-            assert!(start.elapsed() < WAIT, "fixture transition timed out");
-            std::thread::sleep(Duration::from_millis(10));
-        }
-    }
-
-    // Parent tests invoke this entry point as their contained child. It owns
-    // the listener, so the process and HTTP lifetime are the same resource.
-    #[test]
-    #[ignore = "contained HTTP fixture; invoked explicitly by legacy ownership tests"]
-    fn fixture_server() {
-        let root = PathBuf::from(std::env::var_os(FIXTURE_ROOT).expect("fixture root"));
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        listener.set_nonblocking(true).unwrap();
-        fs::write(
-            root.join("port.tmp"),
-            listener.local_addr().unwrap().port().to_string(),
-        )
-        .unwrap();
-        fs::rename(root.join("port.tmp"), root.join("port")).unwrap();
-        let count = AtomicUsize::new(0);
-        std::thread::scope(|scope| {
-            let mut connections = Vec::new();
-            while !root.join("shutdown").exists() {
-                let (mut stream, _) = match listener.accept() {
-                    Ok(connection) => connection,
-                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                        std::thread::sleep(Duration::from_millis(10));
-                        continue;
-                    }
-                    Err(error) => panic!("fixture accept: {error}"),
-                };
-                assert!(connections.len() < 64, "fixture request budget exceeded");
-                let root = &root;
-                let count = &count;
-                connections.push(scope.spawn(move || {
-                    stream.set_nonblocking(false).unwrap();
-                    stream.set_read_timeout(Some(WAIT)).unwrap();
-                    stream.set_write_timeout(Some(WAIT)).unwrap();
-                    let mut reader = BufReader::new(stream.try_clone().unwrap());
-                    let mut header = Vec::new();
-                    while header.len() < 16 * 1024 && !header.ends_with(b"\r\n\r\n") {
-                        let mut byte = [0];
-                        if reader.read_exact(&mut byte).is_err() {
-                            return;
-                        }
-                        header.push(byte[0]);
-                    }
-                    assert!(header.ends_with(b"\r\n\r\n"));
-                    let header = String::from_utf8(header).unwrap();
-                    assert!(header.starts_with("POST /completion HTTP/1.1\r\n"));
-                    let length = header.lines().find_map(|line| {
-                        let (name, value) = line.split_once(':')?;
-                        name.eq_ignore_ascii_case("content-length")
-                            .then(|| value.trim().parse::<usize>().unwrap())
-                    }).unwrap();
-                    assert!(length <= 16 * 1024);
-                    let mut body = vec![0; length];
-                    reader.read_exact(&mut body).unwrap();
-                    let _: serde_json::Value = serde_json::from_slice(&body).unwrap();
-                    let index = count.fetch_add(1, Ordering::SeqCst) + 1;
-                    fs::write(root.join(format!("request-{index}")), b"read").unwrap();
-                    while !root.join("release").exists() && !root.join("shutdown").exists() {
-                        std::thread::sleep(Duration::from_millis(10));
-                    }
-                    if root.join("shutdown").exists() {
-                        return;
-                    }
-                    let body = r#"{"timings":{"predicted_per_second":100.0}}"#;
-                    let response = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                        body.len()
-                    );
-                    // Cancellation can close the receiving socket first.
-                    let _ = stream.write_all(response.as_bytes());
-                }));
-            }
-            for connection in connections {
-                connection.join().unwrap();
-            }
-        });
-    }
-
-    struct Fixture {
-        state: Arc<AppState>,
-        root: PathBuf,
-    }
-
-    impl Fixture {
-        fn new() -> Self {
-            let root = (0..16)
-                .find_map(|_| {
-                    let path = std::env::temp_dir().join(format!(
-                        "localmotive-benchmark-owner-{}-{}",
-                        std::process::id(),
-                        rand::random::<u64>()
-                    ));
-                    match fs::create_dir(&path) {
-                        Ok(()) => Some(path),
-                        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
-                        Err(error) => panic!("fixture directory: {error}"),
-                    }
-                })
-                .expect("unique fixture directory");
-            let fixture = Self {
-                state: Arc::new(AppState::default()),
-                root,
-            };
-            let log = fs::File::create(fixture.root.join("child.log")).unwrap();
-            let mut command = proc::hidden_command(std::env::current_exe().unwrap());
-            command
-                .args([
-                    "--exact",
-                    "measurement_service::legacy_ownership_tests::fixture_server",
-                    "--ignored",
-                    "--nocapture",
-                ])
-                .env(FIXTURE_ROOT, &fixture.root)
-                .stdout(Stdio::from(log.try_clone().unwrap()))
-                .stderr(Stdio::from(log));
-            let mut child = proc::spawn_contained_process(&mut command).unwrap();
-            wait_until(|| {
-                if fixture.root.join("port").exists() {
-                    return true;
-                }
-                assert!(
-                    child.try_wait().unwrap().is_none(),
-                    "fixture child exited before readiness"
-                );
-                false
-            });
-            let port = fs::read_to_string(fixture.root.join("port"))
-                .unwrap()
-                .parse()
-                .unwrap();
-            *fixture.state.server.lock().unwrap() = Some(ManagedServer {
-                child,
-                profile: LaunchProfile {
-                    port,
-                    alias: "ownership-fixture".into(),
-                    ..LaunchProfile::default()
-                },
-                command: "contained test fixture".into(),
-                validation: crate::release_security_tests::launch_validation_fixture(),
-                log_path: fixture
-                    .root
-                    .join("child.log")
-                    .to_string_lossy()
-                    .into_owned(),
-                started_at: 0,
-                runtime_lease: None,
-                log_drains: Vec::new(),
-            });
-            fixture
-        }
-
-        fn run(
-            &self,
-        ) -> (
-            tauri::async_runtime::JoinHandle<()>,
-            Receiver<Result<BenchmarkSummary, String>>,
-        ) {
-            let state = self.state.clone();
-            let (sender, receiver) = mpsc::channel();
-            let task = tauri::async_runtime::spawn(async move {
-                let result = run_legacy_benchmark(64, 1, &state).await;
-                let _ = sender.send(result);
-            });
-            (task, receiver)
-        }
-
-        fn release(&self) {
-            fs::write(self.root.join("release"), b"release").unwrap();
-        }
-
-        fn shutdown(&self) {
-            fs::write(self.root.join("shutdown"), b"shutdown").unwrap();
-            if let Some(mut server) = self.state.server.lock().unwrap().take() {
-                wait_until(|| server.child.try_wait().unwrap().is_some());
-                assert!(server.child.terminate_and_wait());
-            }
-        }
-    }
-
-    impl Drop for Fixture {
-        fn drop(&mut self) {
-            let _ = fs::write(self.root.join("shutdown"), b"shutdown");
-            if let Ok(mut slot) = self.state.server.lock() {
-                // ContainedProcess drop terminates only this fixture tree,
-                // including when a failing assertion unwinds the parent test.
-                slot.take();
-            }
-            let _ = fs::remove_dir_all(&self.root);
-        }
-    }
-
-    #[test]
-    fn legacy_cancellation_holds_ownership_until_the_request_drains() {
-        let fixture = Fixture::new();
-        let (task, result) = fixture.run();
-        wait_until(|| fixture.root.join("request-1").exists());
-        let cancelled = request_benchmark_cancellation(&fixture.state);
-        // The fixture holds the response beyond the caller's cancellation
-        // slice. Returning now would release ownership of a live request.
-        let early = result.recv_timeout(Duration::from_secs(2));
-        let held = crate::active_operation_owner(&fixture.state.operations);
-        let stop_conflict = crate::stop_owner_conflict(held);
-        let replacement_refused =
-            reserve_operation(&fixture.state.operations, OperationOwner::Tuning).is_err();
-        fixture.release();
-        let finished_early = early.is_ok();
-        let outcome = early.unwrap_or_else(|_| result.recv_timeout(WAIT).unwrap());
-        tauri::async_runtime::block_on(task).unwrap();
-        let extra_request = fixture.root.join("request-2").exists();
-        let slot_cleared = fixture.state.benchmark.lock().unwrap().is_none();
-        let owner_cleared = crate::active_operation_owner(&fixture.state.operations).is_none();
-        let (retry, retry_result) = fixture.run();
-        let recovered = retry_result.recv_timeout(WAIT).unwrap();
-        tauri::async_runtime::block_on(retry).unwrap();
-        fixture.shutdown();
-        assert!(
-            cancelled.is_ok(),
-            "legacy cancellation failed: {cancelled:?}"
-        );
-        assert!(
-            !finished_early,
-            "cancellation released a request before drain"
-        );
-        assert_eq!(held, Some(OperationOwner::Benchmark));
-        assert!(stop_conflict.is_some() && replacement_refused);
-        assert!(outcome.unwrap_err().contains("cancelled"));
-        assert!(
-            !extra_request,
-            "cancellation dispatched another measurement"
-        );
-        assert!(slot_cleared && owner_cleared);
-        assert!(
-            recovered.is_ok(),
-            "a cancelled run must permit a later run: {recovered:?}"
+        assert_eq!(
+            drain_owned_workers(&client, Duration::from_millis(50)),
+            DrainOutcome::Drained
         );
     }
 
     #[test]
-    fn legacy_client_failure_does_not_publish_a_slot_or_keep_ownership() {
-        let fixture = Fixture::new();
-        let key_path = fixture.root.join("removed-key");
-        fs::write(&key_path, b"fixture-only").unwrap();
-        fixture
-            .state
-            .server
-            .lock()
-            .unwrap()
-            .as_mut()
-            .unwrap()
-            .profile
-            .api_key_file = key_path.to_string_lossy().into_owned();
-        fs::remove_file(key_path).unwrap();
-        let (task, result) = fixture.run();
-        let failure = result.recv_timeout(WAIT).unwrap().unwrap_err();
-        tauri::async_runtime::block_on(task).unwrap();
-        assert!(failure.contains("API key"), "{failure}");
-        assert!(fixture.state.benchmark.lock().unwrap().is_none());
-        assert!(crate::active_operation_owner(&fixture.state.operations).is_none());
-        assert!(!fixture.root.join("request-1").exists());
-        fixture
-            .state
-            .server
-            .lock()
-            .unwrap()
-            .as_mut()
-            .unwrap()
-            .profile
-            .api_key_file
-            .clear();
-        fixture.release();
-        let (retry, result) = fixture.run();
-        let recovered = result.recv_timeout(WAIT).unwrap();
-        tauri::async_runtime::block_on(retry).unwrap();
-        fixture.shutdown();
-        assert!(recovered.is_ok(), "{recovered:?}");
-    }
-
-    #[test]
-    fn legacy_command_rejects_an_overlapping_request_before_http() {
-        let fixture = Fixture::new();
-        let (first, first_result) = fixture.run();
-        wait_until(|| fixture.root.join("request-1").exists());
-        let (second, second_result) = fixture.run();
-        let mut refused = None;
-        wait_until(|| {
-            refused = second_result.try_recv().ok();
-            refused.is_some() || fixture.root.join("request-2").exists()
-        });
-        let overlapped = fixture.root.join("request-2").exists();
-        fixture.release();
-        let first_result = first_result.recv_timeout(WAIT).unwrap();
-        let second_result = refused.unwrap_or_else(|| second_result.recv_timeout(WAIT).unwrap());
-        tauri::async_runtime::block_on(first).unwrap();
-        tauri::async_runtime::block_on(second).unwrap();
-        fixture.shutdown();
-        assert!(first_result.is_ok(), "{first_result:?}");
-        assert!(
-            !overlapped,
-            "a second legacy command reached HTTP while the first response was held"
+    fn cancellation_during_preparation_leaves_an_owned_worker_the_drain_waits_for() {
+        // supersedes the infinite wait this test once pinned: the
+        // abandoned-worker scenario now lives in
+        // bounded_drain_reports_an_unresolved_worker, which asserts the
+        // ceiling bounds the drain and the straggler is reported Unresolved.
+        // This test keeps the derivation pin: the bound follows the
+        // workload's own request deadline.
+        let short = evidence::Workload {
+            timeout_ms: 5_000,
+            ..evidence::Workload::default()
+        };
+        assert_eq!(
+            benchmark_drain_ceiling(&short),
+            Duration::from_millis(35_000)
         );
-        assert!(second_result.unwrap_err().contains("already active"));
     }
 }

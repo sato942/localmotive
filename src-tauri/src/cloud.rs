@@ -9,8 +9,6 @@
 //! All traffic is OpenAI-compatible `chat/completions`, so Anthropic, Gemini,
 //! OpenAI, DeepSeek, xAI, and OpenRouter share one code path.
 
-use std::io::Read as _;
-
 use crate::tune::{Advisor, Proposal, TuningBrief};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -60,7 +58,7 @@ pub const PROVIDERS: &[Provider] = &[
         // The documented OpenAI compatibility layer covers chat completions
         // (Bearer `authorization`, `choices[].message.content`, `retry-after`);
         // it documents no `GET /models`, so the picker offers the fixed model
-        // instead of guessing at an undocumented route (audit S-21.I3,
+        // instead of guessing at an undocumented route (see
         // platform.claude.com/docs/en/cli-sdks-libraries/libraries/openai-sdk).
         lists_models: false,
     },
@@ -233,6 +231,11 @@ pub fn save_credential<S: SecretStore>(
     if trimmed.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return Err("API key contains whitespace or control characters".into());
     }
+    if trimmed.len() > MAX_CREDENTIAL_BYTES {
+        return Err(format!(
+            "API key is too long (maximum {MAX_CREDENTIAL_BYTES} bytes)."
+        ));
+    }
     store.set(&account_for(provider_id), trimmed)?;
     credential_status(store, provider_id)
 }
@@ -304,7 +307,7 @@ fn percent_encode(value: &str) -> String {
     out
 }
 
-/// Limits for the loopback callback (audit CLD-01): a request line, a code
+/// Limits for the loopback callback: a request line, a code
 /// value, and the number of stray connections one login may tolerate.
 pub const MAX_CALLBACK_REQUEST_LINE_BYTES: usize = 8 * 1024;
 pub const MAX_CALLBACK_CODE_BYTES: usize = 512;
@@ -430,7 +433,7 @@ fn callback_page(title: &str, accent: &str, message: &str) -> String {
 
 /// Read one bounded request line from an accepted stream. The deadline is
 /// enforced per chunk, so a steady byte trickle cannot extend the login
-/// beyond its overall budget (audit CLD-01 I1).
+/// beyond its overall budget.
 fn read_bounded_request_line(
     stream: &mut std::net::TcpStream,
     deadline: std::time::Instant,
@@ -483,7 +486,7 @@ fn read_bounded_request_line(
 /// Wait (bounded) for the browser to hit the callback, answer it, and return
 /// the authorization code. Stray probes are answered and ignored; malformed
 /// callback attempts get an explicit 400 without ending the login before the
-/// deadline or the request budget is exhausted (audit CLD-01).
+/// deadline or the request budget is exhausted.
 pub fn wait_for_code(listener: &TcpListener, timeout: Duration) -> Result<String, String> {
     let deadline = std::time::Instant::now() + timeout;
     listener
@@ -604,7 +607,8 @@ pub fn exchange_code_for_key(code: &str, verifier: &str) -> Result<String, Strin
         .send()
         .map_err(|error| format!("OpenRouter key exchange failed: {error}"))?;
     let status = response.status();
-    let text = response.text().map_err(|error| error.to_string())?;
+    // the exchange answer is read bounded, never buffered unbounded.
+    let text = read_bounded_body(response, MAX_KEY_EXCHANGE_BYTES)?;
     if !status.is_success() {
         return Err(format!(
             "OpenRouter key exchange returned {status}: {}",
@@ -623,10 +627,17 @@ pub fn exchange_code_for_key(code: &str, verifier: &str) -> Result<String, Strin
 fn http_client(timeout: Duration) -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
         .user_agent(format!("Localmotive/{}", env!("CARGO_PKG_VERSION")))
+        .redirect(redirect_policy())
         .connect_timeout(Duration::from_secs(20))
         .timeout(timeout)
         .build()
         .map_err(|error| error.to_string())
+}
+
+/// Cloud API calls never follow redirects: a 3xx from a JSON API is an
+/// error to surface, never a hop to take with credentials attached.
+pub(crate) fn redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::none()
 }
 
 fn authed(
@@ -676,26 +687,28 @@ pub fn parse_models(body: &str) -> Result<Vec<CloudModel>, String> {
 }
 
 /// Hard caps on what a provider response may make this process buffer
-/// (audit S-21.I1). Model lists are small; a chat completion can carry a
+///. Model lists are small; a chat completion can carry a
 /// long proposal, but not an unbounded body.
 pub const MAX_MODEL_LIST_BYTES: usize = 512 * 1024;
 pub const MAX_CHAT_BYTES: usize = 2 * 1024 * 1024;
-/// One bounded retry after a 429: at most this many seconds of waiting
-/// (audit S-21.I1 — visible, never an unlimited invisible retry loop).
-pub const MAX_RETRY_AFTER_SECS: u64 = 30;
-
+/// The key-exchange answer is one short JSON object (`{"key": "..."}`), so
+/// its cap is far below the model-list and chat caps.
+pub const MAX_KEY_EXCHANGE_BYTES: usize = 16 * 1024;
+/// Request-side input bounds. UI controls are hints only: a compromised
+/// webview can send any JSON, so oversize input is rejected in Rust before a
+/// keyring write or a request body is built. All generous: no legitimate
+/// API key, model id, or tuning prompt hits them.
+pub const MAX_CREDENTIAL_BYTES: usize = 4 * 1024;
+pub const MAX_CHAT_MODEL_BYTES: usize = 256;
+pub const MAX_CHAT_PROMPT_BYTES: usize = 256 * 1024;
 /// Read a response body with a hard byte cap. Exceeding the cap is an error
 /// naming the limit, not a silent truncation and not an unbounded buffer.
-fn read_bounded_body(
-    mut response: reqwest::blocking::Response,
-    cap: usize,
-) -> Result<String, String> {
+/// Takes any reader so the cap is unit-testable without network access.
+fn read_bounded_body(mut body: impl std::io::Read, cap: usize) -> Result<String, String> {
     let mut bytes: Vec<u8> = Vec::new();
     let mut chunk = [0_u8; 64 * 1024];
     loop {
-        let read = response
-            .read(&mut chunk)
-            .map_err(|error| error.to_string())?;
+        let read = body.read(&mut chunk).map_err(|error| error.to_string())?;
         if read == 0 {
             break;
         }
@@ -711,22 +724,13 @@ fn read_bounded_body(
 }
 
 /// The bounded wait named by a `Retry-After` header (numeric seconds or an
-/// HTTP date), clamped to 1..=MAX_RETRY_AFTER_SECS. `None` means no usable
-/// header.
+/// HTTP date) under the one shared download-side policy. `None` means no
+/// usable header.
 pub fn retry_after_secs(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    // One policy only: the shared download-side parser owns numeric, date,
+    // and horizon rules, so both request paths wait the same way.
     let raw = headers.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?;
-    let raw = raw.trim();
-    let secs = if let Ok(value) = raw.parse::<u64>() {
-        value
-    } else {
-        let target = crate::download::httpdate_secs(raw)? as i64;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .ok()?
-            .as_secs() as i64;
-        (target - now).max(0) as u64
-    };
-    Some(secs.clamp(1, MAX_RETRY_AFTER_SECS))
+    crate::download::bounded_retry_after_secs(Some(raw))
 }
 
 /// The one place both request paths turn an HTTP status into the same user
@@ -856,7 +860,7 @@ pub fn chat<S: SecretStore>(
 }
 
 /// The chat call with an optional deadline: the request timeout never
-/// outlives the remaining tuning budget (audit S-21.I1), so one slow request
+/// outlives the remaining tuning budget, so one slow request
 /// cannot overrun a run that is almost out of time.
 pub fn chat_with_deadline<S: SecretStore>(
     store: &S,
@@ -868,6 +872,16 @@ pub fn chat_with_deadline<S: SecretStore>(
 ) -> Result<String, String> {
     let provider = provider(provider_id)?;
     let secret = require_secret(store, provider_id)?;
+    if model.len() > MAX_CHAT_MODEL_BYTES {
+        return Err(format!(
+            "Model id is too long (maximum {MAX_CHAT_MODEL_BYTES} bytes)."
+        ));
+    }
+    if system.len() > MAX_CHAT_PROMPT_BYTES || user.len() > MAX_CHAT_PROMPT_BYTES {
+        return Err(format!(
+            "Chat prompt is too long (maximum {MAX_CHAT_PROMPT_BYTES} bytes)."
+        ));
+    }
     chat_via(
         provider,
         provider.base_url,
@@ -964,9 +978,8 @@ pub struct CloudAdvisor<'a, S: SecretStore> {
     pub store: &'a S,
     pub provider_id: String,
     pub model: String,
-    pub last_raw_reply: String,
     /// The tuning run's remaining time; each request timeout is clamped to
-    /// it so one slow request cannot outlive the run (audit S-21.I1).
+    /// it so one slow request cannot outlive the run.
     pub deadline: Option<std::time::Instant>,
 }
 
@@ -984,7 +997,6 @@ impl<S: SecretStore> Advisor for CloudAdvisor<'_, S> {
             &user,
             self.deadline,
         )?;
-        self.last_raw_reply = reply.clone();
         crate::tune::parse_proposal(&reply)
     }
 }
@@ -992,6 +1004,73 @@ impl<S: SecretStore> Advisor for CloudAdvisor<'_, S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cloud_api_calls_do_not_follow_redirects() {
+        // A 302 must come back as a 302, never followed: credentials stay
+        // on the API host. The redirect target is a closed port, so a
+        // following client would fail instead of returning the 302.
+        let probe = TcpListener::bind("127.0.0.1:0").unwrap();
+        let closed = probe.local_addr().unwrap().port();
+        drop(probe);
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            use std::io::{Read, Write};
+            let mut head = [0_u8; 1024];
+            let _ = stream.read(&mut head);
+            let _ = stream.write_all(
+                format!(
+                    "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{closed}/x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                )
+                .as_bytes(),
+            );
+        });
+        let status = http_client(Duration::from_secs(10))
+            .unwrap()
+            .get(format!("http://127.0.0.1:{port}/models"))
+            .send()
+            .unwrap()
+            .status();
+        assert_eq!(status.as_u16(), 302);
+    }
+
+    #[test]
+    fn bounded_body_refuses_an_oversized_response() {
+        // response bodies are read with a hard cap, never
+        // buffered unbounded. A body one byte over the cap is an error
+        // naming the limit.
+        let big = vec![b'x'; 1024];
+        let body: &[u8] = &big;
+        let error = read_bounded_body(body, 64).unwrap_err();
+        assert!(
+            error.contains("exceeded the 64 byte limit"),
+            "oversized bodies must be refused, got: {error}"
+        );
+        let small: &[u8] = b"{\"key\":\"abc\"}";
+        assert_eq!(read_bounded_body(small, 64).unwrap(), "{\"key\":\"abc\"}");
+    }
+
+    #[test]
+    fn key_exchange_reads_bounded() {
+        // the OAuth key exchange must read through
+        // the bounded helper with its own cap. The unbounded buffering call
+        // must not appear anywhere in this module (the gate forbids live
+        // network in tests, so the guard pins the call site). The guard
+        // spells the call below in two parts so this comment does not trip
+        // it.
+        let source = include_str!("cloud.rs");
+        let banned = ["response", ".text()"].concat();
+        assert!(
+            !source.contains(&banned),
+            "exchange_code_for_key must not buffer unbounded"
+        );
+        assert!(
+            source.contains("MAX_KEY_EXCHANGE_BYTES"),
+            "the key exchange needs its own byte cap"
+        );
+    }
     use std::cell::RefCell;
     use std::collections::HashMap;
 
@@ -1052,6 +1131,25 @@ mod tests {
     }
 
     #[test]
+    fn oversize_cloud_inputs_are_rejected_before_any_write_or_request() {
+        let store = MemoryStore::default();
+        let big_key = "k".repeat(MAX_CREDENTIAL_BYTES + 1);
+        assert!(save_credential(&store, "openrouter", &big_key).is_err());
+        assert!(store.get("cloud:openrouter").unwrap().is_none());
+        save_credential(&store, "openrouter", "sk-or-test").unwrap();
+        let big_model = "m".repeat(MAX_CHAT_MODEL_BYTES + 1);
+        let error = chat_with_deadline(&store, "openrouter", &big_model, "", "", None).unwrap_err();
+        assert!(error.contains("too long"), "{error}");
+        let big_prompt = "p".repeat(MAX_CHAT_PROMPT_BYTES + 1);
+        let error =
+            chat_with_deadline(&store, "openrouter", "model", &big_prompt, "", None).unwrap_err();
+        assert!(error.contains("too long"), "{error}");
+        let error =
+            chat_with_deadline(&store, "openrouter", "model", "", &big_prompt, None).unwrap_err();
+        assert!(error.contains("too long"), "{error}");
+    }
+
+    #[test]
     fn pkce_challenge_is_s256_of_verifier_and_auth_url_is_encoded() {
         // RFC 7636 appendix B test vector.
         let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
@@ -1081,7 +1179,7 @@ mod tests {
     }
 
     #[test]
-    fn cld01_request_line_contract_is_strict_and_decoded() {
+    fn request_line_contract_is_strict_and_decoded() {
         assert_eq!(
             parse_callback_request_line("GET /callback?code=abc123 HTTP/1.1"),
             CallbackRequest::Code("abc123".into())
@@ -1129,7 +1227,7 @@ mod tests {
     }
 
     #[test]
-    fn cld01_probes_and_bad_requests_do_not_end_the_login() {
+    fn probes_and_bad_requests_do_not_end_the_login() {
         let (listener, url) = bind_callback().unwrap();
         let port: u16 = url
             .rsplit(':')
@@ -1170,7 +1268,7 @@ mod tests {
     }
 
     #[test]
-    fn cld01_successive_probes_are_bounded_by_the_request_budget() {
+    fn successive_probes_are_bounded_by_the_request_budget() {
         let (listener, url) = bind_callback().unwrap();
         let port: u16 = url
             .rsplit(':')
@@ -1204,7 +1302,7 @@ mod tests {
     }
 
     #[test]
-    fn cld01_a_byte_trickle_cannot_extend_the_overall_deadline() {
+    fn a_byte_trickle_cannot_extend_the_overall_deadline() {
         let (listener, url) = bind_callback().unwrap();
         let port: u16 = url
             .rsplit(':')
@@ -1283,7 +1381,7 @@ mod tests {
         }
         assert!(response.starts_with("HTTP/1.1 200"));
         // The browser page must not claim the connection succeeded before
-        // the key exchange and credential write finish (audit CLD-01 I4).
+        // the key exchange and credential write finish.
         assert!(response.contains("CALLBACK RECEIVED"), "{response}");
         assert!(
             response.contains("confirms the connection when the key exchange finishes")
@@ -1319,7 +1417,7 @@ mod tests {
     }
 
     #[test]
-    fn s21_contract_fixtures_cover_every_provider_and_case() {
+    fn contract_fixtures_cover_every_provider_and_case() {
         let raw = include_str!("../../scripts/tests/fixtures/cloud-contracts.json");
         let fixture: serde_json::Value = serde_json::from_str(raw).unwrap();
         let entries = fixture["providers"].as_object().unwrap();
@@ -1393,7 +1491,7 @@ mod tests {
             let wait = quota["retryAfter"]
                 .as_u64()
                 .or_else(|| quota["retryAfter"].as_str().and_then(|s| s.parse().ok()))
-                .map(|secs: u64| secs.clamp(1, MAX_RETRY_AFTER_SECS));
+                .map(|secs: u64| secs.clamp(1, 30));
             let message = status_outcome(
                 provider,
                 reqwest::StatusCode::from_u16(quota["status"].as_u64().unwrap() as u16).unwrap(),
@@ -1423,7 +1521,7 @@ mod tests {
     }
 
     #[test]
-    fn s21_retry_after_is_bounded_and_tolerant() {
+    fn retry_after_is_bounded_and_tolerant() {
         let header = |value: &str| {
             let mut headers = reqwest::header::HeaderMap::new();
             headers.insert(
@@ -1433,18 +1531,16 @@ mod tests {
             headers
         };
         assert_eq!(retry_after_secs(&header("7")), Some(7));
-        // Anything above the cap clamps to the cap; anything unusable is None.
-        assert_eq!(
-            retry_after_secs(&header("9999")),
-            Some(MAX_RETRY_AFTER_SECS)
-        );
+        // Above the 86_400 s horizon the shared policy refuses the wait and
+        // the caller falls back to backoff; the old cloud-local clamp slept.
+        assert_eq!(retry_after_secs(&header("99999")), None);
         assert_eq!(retry_after_secs(&header("0")), Some(1));
         assert_eq!(retry_after_secs(&header("soon")), None);
         assert_eq!(retry_after_secs(&reqwest::header::HeaderMap::new()), None);
         // An HTTP-date an hour in the future clamps to the cap too.
         let future = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
         let date = httpdate_format(future);
-        assert_eq!(retry_after_secs(&header(&date)), Some(MAX_RETRY_AFTER_SECS));
+        assert_eq!(retry_after_secs(&header(&date)), Some(30));
     }
 
     /// Minimal IMF-fixdate formatter for the retry-after date case.
@@ -1511,7 +1607,7 @@ mod tests {
     }
 
     #[test]
-    fn s21_oversized_response_terminates_with_the_cap_error() {
+    fn oversized_response_terminates_with_the_cap_error() {
         let huge = vec![b'x'; MAX_CHAT_BYTES + 1];
         let (base, server) = fixture_server(vec![fixture_http(200, "", &huge)]);
         let provider = provider("openai").unwrap();
@@ -1533,7 +1629,7 @@ mod tests {
     }
 
     #[test]
-    fn s21_one_bounded_retry_after_a_429_then_success() {
+    fn one_bounded_retry_after_a_429_then_success() {
         let retry = fixture_http(
             429,
             "Retry-After: 1\r\n",
@@ -1562,7 +1658,7 @@ mod tests {
     }
 
     #[test]
-    fn s21_a_hung_request_ends_at_the_deadline() {
+    fn a_hung_request_ends_at_the_deadline() {
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
         let _hang = std::thread::spawn(move || {

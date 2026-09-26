@@ -1,6 +1,7 @@
 # Build artifacts
 /dist
 /src-tauri/target
+*.tsbuildinfo
 node_modules
 /localmotive.exe
 

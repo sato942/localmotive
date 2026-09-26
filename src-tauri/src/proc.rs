@@ -57,6 +57,10 @@ pub enum ProcessFailureKind {
     Cancelled,
     OutputLimit,
     Io,
+    /// The operation ended but the process tree survived termination: the
+    /// caller must not treat this like a finished Timeout/Cancelled run
+    ///.
+    Unresolved,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -101,7 +105,7 @@ impl ContainedProcess {
     }
 
     /// Take the child's piped stdout/stderr so a drain thread can copy them
-    /// into a bounded sink without the child ever blocking (audit OPS-01).
+    /// into a bounded sink without the child ever blocking.
     /// Both are `None` when the command did not request pipes.
     pub fn take_pipes(
         &mut self,
@@ -209,6 +213,86 @@ mod containment {
         }
     }
 
+    /// Resume every thread of a process that was created suspended.
+    /// children start suspended so the job assignment
+    /// happens before they run; this releases them afterwards. Returns
+    /// an error when no thread could be resumed, so the caller refuses
+    /// to leave a permanently suspended child behind.
+    pub fn resume_process(pid: u32) -> Result<(), String> {
+        use windows_sys::Win32::Foundation::{
+            CloseHandle, GetLastError, ERROR_NO_MORE_FILES, HANDLE, INVALID_HANDLE_VALUE,
+        };
+        use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
+        };
+        use windows_sys::Win32::System::Threading::{
+            OpenThread, ResumeThread, THREAD_SUSPEND_RESUME,
+        };
+        struct SnapshotGuard(HANDLE);
+        impl Drop for SnapshotGuard {
+            fn drop(&mut self) {
+                unsafe {
+                    let _ = CloseHandle(self.0);
+                }
+            }
+        }
+        unsafe {
+            let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+            if snapshot == INVALID_HANDLE_VALUE {
+                return Err(format!(
+                    "process containment could not list threads: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            let _guard = SnapshotGuard(snapshot);
+            let mut entry: THREADENTRY32 = std::mem::zeroed();
+            entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
+            if Thread32First(snapshot, &mut entry) == 0 {
+                return Err(format!(
+                    "process containment could not list threads: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            let mut resumed = false;
+            loop {
+                if entry.th32OwnerProcessID == pid {
+                    let thread = OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID);
+                    if thread.is_null() {
+                        return Err(format!(
+                            "process containment could not open a thread: {}",
+                            std::io::Error::last_os_error()
+                        ));
+                    }
+                    let previous = ResumeThread(thread);
+                    let _ = CloseHandle(thread);
+                    if previous == u32::MAX {
+                        return Err(format!(
+                            "process containment could not resume a thread: {}",
+                            std::io::Error::last_os_error()
+                        ));
+                    }
+                    if previous > 0 {
+                        resumed = true;
+                    }
+                }
+                if Thread32Next(snapshot, &mut entry) == 0 {
+                    if GetLastError() != ERROR_NO_MORE_FILES {
+                        return Err(format!(
+                            "process containment could not list threads: {}",
+                            std::io::Error::last_os_error()
+                        ));
+                    }
+                    break;
+                }
+            }
+            if resumed {
+                Ok(())
+            } else {
+                Err("process containment resumed no thread; refusing a suspended child".into())
+            }
+        }
+    }
+
     #[cfg(test)]
     pub fn process_in_job(process: std::os::windows::io::RawHandle, job: HANDLE) -> bool {
         use windows_sys::Win32::System::JobObjects::IsProcessInJob;
@@ -283,23 +367,24 @@ impl ContainedChild {
 #[cfg(windows)]
 fn spawn_contained(command: &mut Command) -> Result<ContainedChild, ProcessFailure> {
     use process_wrap::std::{CommandWrap, CreationFlags};
-    use windows::Win32::System::Threading::CREATE_NO_WINDOW as WINDOWS_CREATE_NO_WINDOW;
+    use windows::Win32::System::Threading::{
+        CREATE_NO_WINDOW as WINDOWS_CREATE_NO_WINDOW, CREATE_SUSPENDED,
+    };
 
     let job = containment::JobHandle::create()
         .map_err(|message| ProcessFailure::new(ProcessFailureKind::Spawn, message))?;
     let command = std::mem::replace(command, Command::new(""));
     let mut wrapped = CommandWrap::from(command);
-    wrapped.wrap(CreationFlags(WINDOWS_CREATE_NO_WINDOW));
+    // the child starts suspended, so the job assignment
+    // below happens before it runs. A child that spawns descendants before
+    // the assignment would strand them outside the job.
+    wrapped.wrap(CreationFlags(WINDOWS_CREATE_NO_WINDOW | CREATE_SUSPENDED));
     let mut child = wrapped.spawn().map_err(|error| {
         ProcessFailure::new(
             ProcessFailureKind::Spawn,
             format!("Contained child process could not start: {error}"),
         )
     })?;
-    // Assign immediately after spawn; the job is fresh for this child and the
-    // crate's non-kill-on-close job wrapper is not used, so no nested-job
-    // conflict arises. A child we cannot contain is terminated, not leaked
-    // (G-05 packaged finding).
     match child.process_handle() {
         Some(handle) => {
             if let Err(message) = job.assign(&handle) {
@@ -316,6 +401,13 @@ fn spawn_contained(command: &mut Command) -> Result<ContainedChild, ProcessFailu
                 "Child process handle was unavailable; refusing an uncontained child",
             ));
         }
+    }
+    // Assigned while suspended: release it now. A child we cannot resume is
+    // terminated, not left suspended (fail closed).
+    if let Err(message) = containment::resume_process(child.id()) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(ProcessFailure::new(ProcessFailureKind::Spawn, message));
     }
     Ok(ContainedChild { inner: child, job })
 }
@@ -355,7 +447,7 @@ fn take_stderr(child: &mut ContainedChild) -> Option<ChildStderr> {
 }
 
 /// How long cleanup waits for an exit confirmation before reporting the
-/// outcome as unresolved (audit S-01). A blocking `wait()` would hide an
+/// outcome as unresolved. A blocking `wait()` would hide an
 /// unkillable process forever and make every caller's deadline a lie.
 pub const TERMINATION_DEADLINE: Duration = Duration::from_secs(10);
 const TERMINATION_POLL: Duration = Duration::from_millis(50);
@@ -428,33 +520,35 @@ pub fn output_with_timeout_and_cancel(
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if cancel.load(Ordering::Relaxed) => {
-                terminate_and_wait(&mut child);
-                let _ = stdout_reader.join();
-                let _ = stderr_reader.join();
-                return Err(ProcessFailure::new(
+                let terminated = terminate_and_wait(&mut child);
+                let _ = join_reader_with_deadline(stdout_reader, READER_JOIN_GRACE);
+                let _ = join_reader_with_deadline(stderr_reader, READER_JOIN_GRACE);
+                return Err(cleanup_outcome(
                     ProcessFailureKind::Cancelled,
                     "Child process was cancelled and terminated",
+                    terminated,
                 ));
             }
             Ok(None) if started.elapsed() < timeout => {
                 std::thread::sleep(Duration::from_millis(10));
             }
             Ok(None) => {
-                terminate_and_wait(&mut child);
-                let _ = stdout_reader.join();
-                let _ = stderr_reader.join();
-                return Err(ProcessFailure::new(
+                let terminated = terminate_and_wait(&mut child);
+                let _ = join_reader_with_deadline(stdout_reader, READER_JOIN_GRACE);
+                let _ = join_reader_with_deadline(stderr_reader, READER_JOIN_GRACE);
+                return Err(cleanup_outcome(
                     ProcessFailureKind::Timeout,
-                    format!(
+                    &format!(
                         "Child process timed out after {} milliseconds",
                         timeout.as_millis()
                     ),
+                    terminated,
                 ));
             }
             Err(error) => {
                 terminate_and_wait(&mut child);
-                let _ = stdout_reader.join();
-                let _ = stderr_reader.join();
+                let _ = join_reader_with_deadline(stdout_reader, READER_JOIN_GRACE);
+                let _ = join_reader_with_deadline(stderr_reader, READER_JOIN_GRACE);
                 return Err(ProcessFailure::new(
                     ProcessFailureKind::Io,
                     format!("Child process status failed: {error}"),
@@ -463,20 +557,28 @@ pub fn output_with_timeout_and_cancel(
         }
     };
     if !terminate_and_wait(&mut child) {
-        let _ = stdout_reader.join();
-        let _ = stderr_reader.join();
+        let _ = join_reader_with_deadline(stdout_reader, READER_JOIN_GRACE);
+        let _ = join_reader_with_deadline(stderr_reader, READER_JOIN_GRACE);
         return Err(ProcessFailure::new(
-            ProcessFailureKind::Io,
+            ProcessFailureKind::Unresolved,
             "Child process tree did not stop within the cleanup limit",
         ));
     }
-    let (stdout, stdout_exceeded) = stdout_reader
-        .join()
-        .map_err(|_| ProcessFailure::new(ProcessFailureKind::Io, "Child stdout reader failed"))?
+    let (stdout, stdout_exceeded) = join_reader_with_deadline(stdout_reader, READER_JOIN_GRACE)
+        .ok_or_else(|| {
+            ProcessFailure::new(
+                ProcessFailureKind::Io,
+                "Child stdout reader did not finish within the grace period",
+            )
+        })?
         .map_err(|error| ProcessFailure::new(ProcessFailureKind::Io, error))?;
-    let (stderr, stderr_exceeded) = stderr_reader
-        .join()
-        .map_err(|_| ProcessFailure::new(ProcessFailureKind::Io, "Child stderr reader failed"))?
+    let (stderr, stderr_exceeded) = join_reader_with_deadline(stderr_reader, READER_JOIN_GRACE)
+        .ok_or_else(|| {
+            ProcessFailure::new(
+                ProcessFailureKind::Io,
+                "Child stderr reader did not finish within the grace period",
+            )
+        })?
         .map_err(|error| ProcessFailure::new(ProcessFailureKind::Io, error))?;
     if stdout_exceeded || stderr_exceeded {
         return Err(ProcessFailure::new(
@@ -491,6 +593,49 @@ pub fn output_with_timeout_and_cancel(
     })
 }
 
+/// Classify a cleanup exit by whether termination actually stopped the tree.
+///
+/// A timeout or cancel whose tree survives `terminate_and_wait` returns
+/// `Unresolved` instead of the success-shaped Timeout/Cancelled kind, so
+/// callers can distinguish "the operation ended" from "the operation ended
+/// and its process is gone".
+fn cleanup_outcome(kind: ProcessFailureKind, detail: &str, terminated: bool) -> ProcessFailure {
+    if terminated {
+        ProcessFailure::new(kind, detail)
+    } else {
+        ProcessFailure::new(
+            ProcessFailureKind::Unresolved,
+            format!("{detail}, but the process tree survived cleanup and may still be running"),
+        )
+    }
+}
+
+/// Grace period for pipe-reader threads to observe EOF after the child is
+/// gone. A reader that is still blocked past the deadline belongs to a child
+/// that survived termination; its handle is detached instead of joined
+/// forever, so one unkillable child cannot hang a bounded operation
+///. The detached thread exits on its own when the child
+/// finally releases the pipes.
+const READER_JOIN_GRACE: Duration = Duration::from_secs(5);
+
+/// Join a pipe-reader thread, giving up after `deadline`.
+///
+/// Returns `None` when the thread is still blocked past the deadline (its
+/// handle is detached) or when it panicked.
+pub(crate) fn join_reader_with_deadline<T>(
+    handle: std::thread::JoinHandle<T>,
+    deadline: Duration,
+) -> Option<T> {
+    let give_up = Instant::now() + deadline;
+    while !handle.is_finished() {
+        if Instant::now() >= give_up {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    handle.join().ok()
+}
+
 /// Run one child process with finite time and per-stream output limits.
 pub fn output_with_timeout(
     command: &mut Command,
@@ -503,6 +648,95 @@ pub fn output_with_timeout(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn reader_join_returns_finished_threads() {
+        // cleanup paths must not join pipe readers forever.
+        let handle = std::thread::spawn(|| 42);
+        let started = Instant::now();
+        let result = join_reader_with_deadline(handle, Duration::from_millis(100));
+        assert_eq!(result, Some(42));
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "a finished reader must join promptly"
+        );
+    }
+
+    #[test]
+    fn reader_join_gives_up_on_a_blocked_thread() {
+        // A thread parked forever (the analogue of a reader blocked on the
+        // pipes of a child that survived termination) detaches after the
+        // deadline instead of hanging the bounded operation.
+        let handle = std::thread::spawn(|| {
+            std::thread::park();
+            42
+        });
+        let started = Instant::now();
+        let result = join_reader_with_deadline(handle, Duration::from_millis(100));
+        assert_eq!(result, None);
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "a blocked reader must detach after the deadline"
+        );
+    }
+
+    #[test]
+    fn cleanup_outcome_reports_unresolved_termination() {
+        // a timeout or cancel whose tree survives cleanup
+        // must not return the success-shaped Timeout/Cancelled kind.
+        let failure = cleanup_outcome(
+            ProcessFailureKind::Timeout,
+            "Child process timed out after 100 milliseconds",
+            false,
+        );
+        assert_eq!(failure.kind, ProcessFailureKind::Unresolved);
+        assert!(
+            failure.message.contains("survived"),
+            "the message must say the tree survived: {}",
+            failure.message
+        );
+        let finished = cleanup_outcome(ProcessFailureKind::Timeout, "detail", true);
+        assert_eq!(finished.kind, ProcessFailureKind::Timeout);
+        let cancelled = cleanup_outcome(ProcessFailureKind::Cancelled, "detail", true);
+        assert_eq!(cancelled.kind, ProcessFailureKind::Cancelled);
+    }
+
+    #[test]
+    fn failed_tree_cleanup_names_the_unresolved_kind() {
+        // The post-loop branch (the tree ignored termination) must surface
+        // Unresolved instead of the generic Io kind.
+        let source = include_str!("proc.rs");
+        let runner = source
+            .find("pub fn output_with_timeout_and_cancel(")
+            .expect("the bounded runner present");
+        let body = &source[runner..runner + 6_000];
+        assert!(
+            body.contains("ProcessFailureKind::Unresolved"),
+            "the bounded runner must surface unresolved termination"
+        );
+    }
+
+    #[test]
+    fn cleanup_paths_never_join_readers_without_a_deadline() {
+        // The bounded runner must not contain a bare reader join: every
+        // cleanup path (cancel, timeout, status error, failed termination)
+        // goes through the deadline helper.
+        let source = include_str!("proc.rs");
+        let runner = source
+            .find("pub fn output_with_timeout_and_cancel(")
+            .expect("the bounded runner present");
+        let body = &source[runner..runner + 6_000];
+        assert!(
+            !body.contains("stdout_reader.join()") && !body.contains("stderr_reader.join()"),
+            "reader joins must go through join_reader_with_deadline"
+        );
+        assert!(
+            body.contains("join_reader_with_deadline"),
+            "the bounded runner must join readers with a deadline"
+        );
+    }
+
     #[cfg(windows)]
     #[test]
     fn contained_children_are_members_of_the_kill_on_close_job() {
@@ -530,6 +764,35 @@ mod tests {
             "contained child must belong to its kill-on-close job"
         );
         assert!(process.terminate_and_wait(), "cleanup must succeed");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn suspended_children_are_assigned_before_they_run() {
+        // the spawn-assign gap let a fast child spawn
+        // descendants outside the job. The child starts suspended (it must
+        // not exit while held), joins the job, then resumes to its exit.
+        use std::os::windows::io::{AsRawHandle, BorrowedHandle};
+        use std::os::windows::process::CommandExt;
+        use windows::Win32::System::Threading::{CREATE_NO_WINDOW, CREATE_SUSPENDED};
+        let mut command = super::hidden_command("cmd.exe");
+        command.args(["/C", "exit 42"]);
+        command.creation_flags((CREATE_NO_WINDOW | CREATE_SUSPENDED).0);
+        let mut child = command.spawn().expect("suspended spawn");
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(
+            child.try_wait().expect("poll").is_none(),
+            "a suspended child must not run before assignment"
+        );
+        let job = super::containment::JobHandle::create().expect("job");
+        let borrowed = unsafe { BorrowedHandle::borrow_raw(child.as_raw_handle()) };
+        job.assign(&borrowed).expect("assign while suspended");
+        assert!(
+            super::containment::process_in_job(child.as_raw_handle(), job.handle()),
+            "assigned-while-suspended child must belong to the job"
+        );
+        super::containment::resume_process(child.id()).expect("resume");
+        assert_eq!(child.wait().expect("wait").code(), Some(42));
     }
 
     use std::path::{Path, PathBuf};
@@ -560,7 +823,7 @@ mod tests {
     #[test]
     fn no_module_constructs_a_raw_command() {
         // Discover every production module instead of trusting a fixed list
-        // (audit S-01.I3): a new module cannot silently bypass the invariant.
+        //: a new module cannot silently bypass the invariant.
         // proc.rs itself is the one module allowed to build commands, and only
         // inside `hidden_command`; assert that exception stays small.
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -610,6 +873,27 @@ mod tests {
         assert!(source.contains("containment::JobHandle::create()"));
         assert!(source.contains("JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE"));
         assert_eq!(source.matches("ProcessTree::assign").count(), 1);
+        // assignment after a running start still leaves a
+        // gap where the child spawns descendants outside the job. The spawn
+        // must order suspended create, job assignment, then resume.
+        let start = source
+            .find("fn spawn_contained(command: &mut Command)")
+            .expect("spawn_contained");
+        let after = &source[start..];
+        let body = &after[..after
+            .find("#[cfg(not(windows))]")
+            .expect("windows spawn end")];
+        let suspended = body
+            .find("WINDOWS_CREATE_NO_WINDOW | CREATE_SUSPENDED")
+            .expect("suspended create");
+        let assigned = body.find("job.assign").expect("job assignment");
+        let resumed = body
+            .find("resume_process")
+            .expect("resume after assignment");
+        assert!(
+            suspended < assigned && assigned < resumed,
+            "spawn must order suspended create, job assignment, then resume"
+        );
     }
 
     #[cfg(windows)]

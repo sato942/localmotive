@@ -85,7 +85,7 @@ pub fn process_peak_working_set(process_id: u32) -> Evidence<u64> {
         )
     };
     // Capture the failure status before `CloseHandle` can clobber the
-    // thread's last error (audit RT-08).
+    // thread's last error.
     let failure = (measured == 0).then(io::Error::last_os_error);
     // SAFETY: `process` is an owned handle returned by `OpenProcess`.
     unsafe { CloseHandle(process) };
@@ -146,19 +146,6 @@ pub struct GithubAsset {
     pub digest: Option<String>,
 }
 
-#[cfg(test)]
-impl GithubAsset {
-    #[allow(dead_code)]
-    fn sample(name: &str) -> Self {
-        Self {
-            name: name.into(),
-            browser_download_url: format!("https://example.invalid/{name}"),
-            size: 1,
-            digest: None,
-        }
-    }
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HardwareInfo {
@@ -173,7 +160,7 @@ pub struct HardwareInfo {
     pub adapters: Vec<GpuAdapterInfo>,
     pub manual_overrides: Vec<HardwareOverride>,
     /// NVIDIA telemetry that could not be joined to a specific adapter by a
-    /// trustworthy physical mapping (audit RT-09 I3).
+    /// trustworthy physical mapping.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unassigned_nvidia: Vec<UnassignedNvidiaObservation>,
 }
@@ -376,7 +363,7 @@ pub struct GpuAdapterInfo {
     pub available_for_reservation_bytes: Evidence<u64>,
     pub capacity_observations: Vec<CapacityObservation>,
     /// The device's stable physical identity (NVIDIA UUID when available),
-    /// recorded when a trustworthy join established it (audit RT-09 I1).
+    /// recorded when a trustworthy join established it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub physical_id: Option<Evidence<String>>,
 }
@@ -773,11 +760,11 @@ pub struct ManagedRuntimeRecord {
     pub install_root: String,
     /// Discovery never asserts cryptographically verified status: this stays
     /// false until a selection, description, or launch verifies the content
-    /// (audit RT-06 I1).
+    ///.
     pub content_verified: bool,
 }
 
-/// Process-wide verification instrumentation (audit RT-06 I4): jobs run,
+/// Process-wide verification instrumentation: jobs run,
 /// requests coalesced onto a running job, payload bytes hashed, and jobs that
 /// stopped for cancellation. Repeated verification work becomes visible here.
 #[derive(Clone, Copy, Debug, Default, Serialize, PartialEq)]
@@ -971,7 +958,7 @@ fn read_manifest(dir: &Path) -> Option<RuntimeManifest> {
     // The record is opened first and every size/type check runs on the
     // opened handle, and at most the limit plus one detection byte is read
     // before parsing, so a sparse or growing file can never be allocated
-    // whole just to be rejected (audit RT-05 I2).
+    // whole just to be rejected.
     let mut file = fs::File::open(&path).ok()?;
     let metadata = file.metadata().ok()?;
     if !metadata.is_file() || metadata.len() > MAX_MANIFEST_BYTES {
@@ -996,6 +983,20 @@ fn safe_directory(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|metadata| {
         metadata.is_dir() && !metadata.file_type().is_symlink() && !is_reparse_point(&metadata)
     })
+}
+
+/// Validate the managed install root before the first write.
+///
+/// Ancestor validation runs before creation (missing components are skipped
+/// by `validate_no_reparse_ancestors`), and an already-existing root must be
+/// a safe directory: otherwise creation would write through a planted link
+/// before the post-creation check could reject it.
+fn validate_install_root_before_create(root: &Path) -> Result<(), String> {
+    validate_no_reparse_ancestors("Managed runtime root", root)?;
+    if fs::symlink_metadata(root).is_ok() && !safe_directory(root) {
+        return Err("Managed runtime root is a link or reparse point".into());
+    }
+    Ok(())
 }
 
 fn manifest_runtime_path(dir: &Path, runtime: &str) -> Option<PathBuf> {
@@ -1109,7 +1110,7 @@ pub fn list_managed_runtimes_in(root: &Path) -> Vec<ManagedRuntimeRecord> {
 /// Cheap installation discovery: a listing reads install records and checks
 /// them against compiled approval, but never hashes payload content.
 /// `content_verified` stays false until a selection, description, or launch
-/// runs verification (audit RT-06 I1).
+/// runs verification.
 pub(crate) fn list_managed_runtimes_in_with(
     root: &Path,
     approval: ManagedApprovalSource<'_>,
@@ -1207,7 +1208,7 @@ struct NvidiaProbeRow {
     driver: String,
     total_bytes: Option<u64>,
     used_bytes: Option<u64>,
-    /// Stable physical identity from nvidia-smi (audit RT-09): the GPU UUID
+    /// Stable physical identity from nvidia-smi: the GPU UUID
     /// and PCI bus location identify the device beyond its display name.
     uuid: String,
     pci_bus_id: String,
@@ -1215,7 +1216,7 @@ struct NvidiaProbeRow {
 
 /// An NVIDIA observation that could not be joined to one DXGI adapter with
 /// confidence. Kept explicit rather than attached to an arbitrary device
-/// (audit RT-09 I3).
+///.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct UnassignedNvidiaObservation {
@@ -1269,7 +1270,7 @@ fn merge_nvidia_probe_observations(
     for row in rows {
         // A name joins only when it identifies exactly one DXGI adapter and
         // exactly one NVIDIA row. Identical names are ambiguous, and
-        // enumeration order is not identity (audit RT-09 I2/I3): the
+        // enumeration order is not identity: the
         // observation stays unassigned instead of attaching to an arbitrary
         // LUID.
         let adapter_matches = adapters
@@ -2356,7 +2357,7 @@ pub fn managed_runtime_relative_path(tag: &str, backend: &str) -> PathBuf {
 ///
 /// New approved installs always publish into the primary `Localmotive` root,
 /// even when only the legacy product directory exists. The audited defect
-/// (RT-01) published installs into the legacy root while launch validation
+/// published installs into the legacy root while launch validation
 /// rejected every legacy path, producing an unrecoverable install/launch loop.
 /// Discovery of existing installs is a separate policy: see
 /// `list_managed_runtimes_in` and `runtime_install_roots_in`.
@@ -2447,7 +2448,7 @@ fn runtime_catalog_client(timeout: Duration) -> Result<reqwest::Client, RuntimeC
         .user_agent(format!("Localmotive/{}", env!("CARGO_PKG_VERSION")))
         .default_headers(headers)
         // The same documented redirect policy as catalog downloads
-        // (audit S-08): https-only production hosts plus loopback fixtures.
+        //: https-only production hosts plus loopback fixtures.
         .redirect(crate::download::redirect_policy())
         .connect_timeout(timeout.min(Duration::from_secs(5)))
         .timeout(timeout)
@@ -2495,7 +2496,7 @@ async fn fetch_catalog_http(
         // rate-limit error so the UI can show the reset guidance. The body
         // is read through the same 2 MiB streaming bound as success bodies,
         // and only a short excerpt is ever retained in messages (audit
-        // RT-05 I1).
+        // I1).
         if response.status() == reqwest::StatusCode::FORBIDDEN {
             let body = read_runtime_catalog_body_bounded(response).await?;
             if String::from_utf8_lossy(&body)
@@ -2555,7 +2556,7 @@ async fn fetch_catalog_http(
 
 /// One bounded streaming reader for runtime catalog bodies, for success and
 /// error statuses alike: the 2 MiB limit is enforced while reading, before
-/// anything oversized is retained or formatted (audit RT-05 I1).
+/// anything oversized is retained or formatted.
 async fn read_runtime_catalog_body_bounded(
     mut response: reqwest::Response,
 ) -> Result<Vec<u8>, RuntimeCatalogError> {
@@ -2627,7 +2628,7 @@ fn catalog_from_release(
 }
 
 /// Serve the runtime catalog from the compiled approval in
-/// `approved_runtimes.json` (P0-1: RT-05, REL-06, LAB-02).
+/// `approved_runtimes.json`.
 ///
 /// Setup never touches the network: a fresh or offline profile gets the
 /// same approved `b10816` catalog. The compiled manifest is the trust
@@ -2749,10 +2750,10 @@ pub async fn fetch_catalog(hardware: &HardwareInfo) -> Result<RuntimeCatalog, Ru
     compiled_runtime_catalog(hardware)
 }
 
-/// Shared outcome of one runtime catalog load (P0-2, RT-06).
+/// Shared outcome of one runtime catalog load.
 type CatalogLoadResult = Result<RuntimeCatalog, RuntimeCatalogError>;
 
-/// Which side of the gate a catalog caller takes (P0-2, RT-06).
+/// Which side of the gate a catalog caller takes.
 enum GateRole {
     /// The first caller runs the fetch and publishes its outcome.
     Leader(tokio::sync::watch::Sender<Option<CatalogLoadResult>>),
@@ -2760,7 +2761,7 @@ enum GateRole {
     Follower(tokio::sync::watch::Receiver<Option<CatalogLoadResult>>),
 }
 
-/// Single-flight gate for runtime catalog loads (P0-2, RT-06).
+/// Single-flight gate for runtime catalog loads.
 ///
 /// Concurrent callers share one in-flight load instead of failing with
 /// `Busy`. The first caller leads and runs `fetch`; followers await the
@@ -2939,7 +2940,7 @@ fn open_verified_capability_directory(path: &Path, label: &str) -> Result<CapDir
 ///
 /// All extraction paths share this body so traversal, alternate-stream,
 /// symlink, duplicate-path, size and cancellation protections cannot diverge
-/// between the installer and its regressions (audit RT-07).
+/// between the installer and its regressions.
 fn extract_zip_from_reader<R: Read + Seek>(
     reader: R,
     destination: &Path,
@@ -3081,7 +3082,7 @@ fn extract_zip_with_limits(
 /// (`FILE_SHARE_READ` on Windows), its size and SHA-256 are checked through
 /// that same handle, and the same handle is then parsed and extracted.
 /// Reopening by path between the check and the extraction would leave a
-/// check/use gap (audit RT-07); the protected handle also stops a concurrent
+/// check/use gap; the protected handle also stops a concurrent
 /// writer from replacing the path for the duration of the operation.
 fn extract_zip_with_limits_and_identity_and_cancel(
     archive_path: &Path,
@@ -3142,7 +3143,7 @@ fn extract_zip(
 /// Traversal budgets for managed-install discovery. Every visited entry,
 /// including empty directories, counts against `max_entries`; recursion is
 /// capped by `max_depth` so work is rejected before the pending traversal
-/// can grow without limit (audit RT-05 I3).
+/// can grow without limit.
 struct ScanLimits {
     max_depth: usize,
     max_entries: u64,
@@ -3491,7 +3492,7 @@ fn reject_managed_file_alternate_streams(path: &Path) -> Result<(), String> {
     let has_second =
         unsafe { FindNextStreamW(handle, (&mut second as *mut WIN32_FIND_STREAM_DATA).cast()) };
     // Capture the terminating status before any other call can clobber the
-    // thread's last error (audit RT-08): `FindClose` is an API call too.
+    // thread's last error: `FindClose` is an API call too.
     let last_error = unsafe { GetLastError() };
     // SAFETY: `handle` came from `FindFirstStreamW` and is closed exactly once.
     unsafe { FindClose(handle) };
@@ -3629,6 +3630,7 @@ fn collect_install_files(root: &Path) -> Result<Vec<String>, String> {
 }
 
 fn write_runtime_install_record(
+    staging: &CapDir,
     root: &Path,
     install: &ResolvedRuntimeInstall,
     runtime: &Path,
@@ -3652,8 +3654,9 @@ fn write_runtime_install_record(
     };
     let bytes = serde_json::to_vec_pretty(&record)
         .map_err(|error| format!("Could not encode runtime install record: {error}"))?;
-    fs::write(root.join("runtime.json"), bytes)
-        .map_err(|error| format!("Could not write runtime install record: {error}"))
+    // the record goes through the retained staging capability with
+    // handle verification, never through a replaceable path write.
+    crate::download::write_trusted_record(staging, root, "runtime.json", &bytes)
 }
 
 fn validate_content_manifest_authority(
@@ -3766,7 +3769,7 @@ fn validate_record_identity(
 }
 
 /// Cancellation and progress hooks for expensive managed verification
-/// (audit RT-06 I2). Production callers pass a real flag; the default keeps
+///. Production callers pass a real flag; the default keeps
 /// the pre-existing behavior for paths that do not yet carry one.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct VerificationControl<'a> {
@@ -3851,7 +3854,7 @@ fn verify_installed_runtime_with(
 /// Coalesce simultaneous verification for the same installation. One leader
 /// runs the job; every waiting request receives the same freshly computed
 /// outcome, so equivalent work is never repeated concurrently, while
-/// different installations never share a job (audit RT-06 I3). The entry
+/// different installations never share a job. The entry
 /// lives only while the job runs: completed results are not cached, because
 /// a stale verified label must never outlive the bytes it describes.
 #[derive(Default)]
@@ -3943,10 +3946,10 @@ fn path_is_under(candidate: &Path, root: &Path) -> bool {
 
 /// A content-verified managed installation located under one root.
 struct VerifiedInstallation {
-    #[allow(dead_code)] // consumed by RT-04's execution-identity lease work
+    #[allow(dead_code)] // consumed by execution-identity lease work
     install_dir: PathBuf,
     server_path: PathBuf,
-    #[allow(dead_code)] // kept for RT-04's execution-identity lease work
+    #[allow(dead_code)] // kept for execution-identity lease work
     install: ResolvedRuntimeInstall,
 }
 
@@ -4011,7 +4014,7 @@ fn verified_installation_in_with(
     let content = (approval.content_manifest)(&located.install.install_key)?;
     // Simultaneous verifications of one installation share a single job; the
     // key separates installations and the compiled-manifest anchor, and the
-    // entry vanishes when the job finishes (audit RT-06 I3).
+    // entry vanishes when the job finishes.
     let key = format!(
         "{}|{}|{}",
         located.install_dir.to_string_lossy(),
@@ -4039,14 +4042,36 @@ fn verified_installation_in_with(
 /// (explanation on Windows: `FILE_SHARE_READ` mode). While the lease lives,
 /// the approved bytes cannot be modified and the file names cannot be
 /// replaced, so a process created from this installation loads exactly the
-/// content the lease verified (audit RT-04). Drop the lease when the launched
+/// content the lease verified. Drop the lease when the launched
 /// process no longer loads from the installation.
+#[derive(Debug)]
 pub(crate) struct ManagedExecutionLease {
     // Never read: the handles exist purely to keep the content pinned.
     #[allow(dead_code)]
     files: Vec<File>,
     #[allow(dead_code)]
     install_dir: PathBuf,
+    expected_files: Vec<String>,
+}
+
+impl ManagedExecutionLease {
+    /// Re-check the directory inventory against the acquisition-time list.
+    ///
+    /// The open handles pin the approved files, but they cannot stop a new
+    /// file from appearing in the installation directory while the lease is
+    /// held. Every execution boundary calls this after acquiring (or while
+    /// holding) the lease, so a planted sibling (for example a hostile DLL
+    /// the launched server would load) refuses the execution instead of
+    /// running beside approved bytes.
+    pub(crate) fn revalidate_inventory(&self) -> Result<(), String> {
+        let actual_files = collect_install_files(&self.install_dir)?;
+        if actual_files != self.expected_files {
+            return Err(
+                "Managed runtime file inventory changed under a held execution lease".into(),
+            );
+        }
+        Ok(())
+    }
 }
 
 /// Open the complete compiled inventory of a verified installation and hash
@@ -4054,10 +4079,26 @@ pub(crate) struct ManagedExecutionLease {
 ///
 /// The bytes that pass this check are the bytes the returned lease pins: there
 /// is no reopen between verification and protection.
+/// The acquisition-time file list a lease pins: the compiled content
+/// manifest's paths, in the same order `collect_install_files` produces.
+fn expected_inventory(
+    install: &ResolvedRuntimeInstall,
+    approval: ManagedApprovalSource<'_>,
+) -> Result<Vec<String>, String> {
+    let content = (approval.content_manifest)(&install.install_key)?;
+    let trusted = validate_content_manifest_authority(install, content)?;
+    Ok(trusted
+        .files
+        .iter()
+        .map(|file| file.path.clone())
+        .collect::<Vec<_>>())
+}
+
 fn lease_verified_installation(
     install: &ResolvedRuntimeInstall,
     install_dir: &Path,
     approval: ManagedApprovalSource<'_>,
+    expected_files: Vec<String>,
 ) -> Result<ManagedExecutionLease, String> {
     let content = (approval.content_manifest)(&install.install_key)?;
     let trusted = validate_content_manifest_authority(install, content)?;
@@ -4077,14 +4118,20 @@ fn lease_verified_installation(
     Ok(ManagedExecutionLease {
         files,
         install_dir: install_dir.to_path_buf(),
+        expected_files,
     })
 }
 
 /// Verify a managed installation and retain an execution-identity lease.
 ///
+/// Every code path that starts a managed llama binary -- `--version`, `--help`,
+/// `--list-devices`, health, benchmarks, or the server -- must pass this
+/// boundary first. The complete compiled installation inventory (including
+/// llama-cli.exe and approved DLLs) is verified before any byte executes.
+///
 /// Returns `Ok(None)` for a deliberately selected external runtime, which
 /// keeps the separate external-runtime policy and no compiled-content lease.
-fn authorize_managed_execution_lease_with(
+pub(crate) fn authorize_managed_execution_lease_with(
     executable: &Path,
     primary: &Path,
     legacy: &Path,
@@ -4094,23 +4141,24 @@ fn authorize_managed_execution_lease_with(
         let Some(located) = locate_installation_in_with(executable, root, approval)? else {
             continue;
         };
-        let content = (approval.content_manifest)(&located.install.install_key)?;
-        let trusted = validate_content_manifest_authority(&located.install, content)?;
+        // `expected_inventory` below re-loads and re-validates the compiled
+        // content manifest, so no separate copy is kept here.
         validate_record_identity(
             &located.record,
             &located.install,
             &located.install.content_manifest_sha256,
         )?;
         let actual_files = collect_install_files(&located.install_dir)?;
-        let expected_files = trusted
-            .files
-            .iter()
-            .map(|file| file.path.clone())
-            .collect::<Vec<_>>();
+        let expected_files = expected_inventory(&located.install, approval)?;
         if actual_files != expected_files {
             return Err("Managed runtime file inventory does not match compiled approval".into());
         }
-        let lease = lease_verified_installation(&located.install, &located.install_dir, approval)?;
+        let lease = lease_verified_installation(
+            &located.install,
+            &located.install_dir,
+            approval,
+            expected_files,
+        )?;
         return Ok(Some(lease));
     }
     Ok(None)
@@ -4149,39 +4197,6 @@ fn managed_runtime_verified_in(runtime_path: &Path, root: &Path) -> Result<bool,
     managed_runtime_verified_in_with(runtime_path, root, ManagedApprovalSource::compiled())
 }
 
-/// Authorize executing a managed binary for any probe or launch.
-///
-/// Every code path that starts a managed llama binary -- `--version`, `--help`,
-/// `--list-devices`, health, benchmarks, or the server -- must pass this
-/// boundary first. The complete compiled installation inventory (including
-/// llama-cli.exe and approved DLLs) is verified before any byte executes, and
-/// no caller can bypass it by invoking runtime inspection directly (audit
-/// RT-02). Paths outside both managed roots are deliberately selected external
-/// runtimes: they stay governed by the caller's explicit regular-file checks
-/// and are not covered by compiled-content approval.
-pub(crate) fn authorize_managed_execution(executable: &Path) -> Result<(), String> {
-    authorize_managed_execution_with(
-        executable,
-        &runtime_data_dir("Localmotive"),
-        &runtime_data_dir("GGUF Pilot"),
-        ManagedApprovalSource::compiled(),
-    )
-}
-
-pub(crate) fn authorize_managed_execution_with(
-    executable: &Path,
-    primary: &Path,
-    legacy: &Path,
-    approval: ManagedApprovalSource<'_>,
-) -> Result<(), String> {
-    for root in [primary, legacy] {
-        if verified_installation_in_with(executable, root, approval)?.is_some() {
-            return Ok(());
-        }
-    }
-    Ok(())
-}
-
 pub fn managed_runtime_verified(runtime_path: &Path) -> Result<bool, String> {
     managed_runtime_verified_in(runtime_path, &runtime_data_dir("Localmotive"))
 }
@@ -4197,7 +4212,7 @@ fn verify_managed_runtime_for_launch_with(
     }
     if path_is_under(runtime_path, legacy) {
         // A legacy location is accepted only when the content itself passes
-        // compiled-content verification. The audited defect (RT-01) rejected
+        // compiled-content verification. The audited defect rejected
         // by location, which made an installation result returned by this same
         // application categorically unusable. Every failure mode keeps the
         // same repair instruction.
@@ -4357,7 +4372,15 @@ fn ensure_installation_replaceable(directory: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn replace_verified_runtime_directory(staging: &Path, destination: &Path) -> Result<(), String> {
+/// Publish verified staging over the destination and return the rollback
+/// copy, if a previous install existed. the caller keeps the
+/// backup until the final verification of the PUBLISHED destination passes,
+/// then passes it to `finalize_runtime_replacement`. Deleting it here would
+/// strand a failed publish with no way back.
+fn replace_verified_runtime_directory(
+    staging: &Path,
+    destination: &Path,
+) -> Result<Option<PathBuf>, String> {
     let root = staging
         .parent()
         .ok_or_else(|| "Managed runtime staging directory has no parent".to_string())?;
@@ -4386,6 +4409,7 @@ fn replace_verified_runtime_directory(staging: &Path, destination: &Path) -> Res
     if directory.symlink_metadata(destination_relative).is_err() {
         return directory
             .rename(staging_relative, &directory, destination_relative)
+            .map(|_| None)
             .map_err(|error| error.to_string());
     }
 
@@ -4407,10 +4431,40 @@ fn replace_verified_runtime_directory(staging: &Path, destination: &Path) -> Res
             )),
         };
     }
-    directory
-        .remove_dir_all(&backup_relative)
-        .map_err(|error| format!("Could not remove the replaced runtime backup: {error}"))?;
-    Ok(())
+    Ok(Some(root.join(&backup_relative)))
+}
+
+/// Keep or restore the rollback copy around the final verification of a
+/// published runtime. On success the backup goes away; on failure the
+/// failed destination is replaced with the previous runtime and the
+/// verification error (plus any rollback error) comes back.
+fn finalize_runtime_replacement(
+    destination: &Path,
+    backup: Option<PathBuf>,
+    verified: Result<PathBuf, String>,
+) -> Result<PathBuf, String> {
+    match (verified, backup) {
+        (Ok(runtime), Some(backup)) => {
+            fs::remove_dir_all(&backup).map_err(|error| {
+                format!("Could not remove the replaced runtime backup: {error}")
+            })?;
+            Ok(runtime)
+        }
+        (Ok(runtime), None) => Ok(runtime),
+        (Err(error), Some(backup)) => {
+            if destination.exists() {
+                fs::remove_dir_all(destination)
+                    .map_err(|error| format!("Could not clear the failed runtime: {error}"))?;
+            }
+            match fs::rename(&backup, destination) {
+                Ok(()) => Err(error),
+                Err(rollback_error) => Err(format!(
+                    "{error}; rollback of the previous runtime also failed: {rollback_error}"
+                )),
+            }
+        }
+        (Err(error), None) => Err(error),
+    }
 }
 
 pub fn install_runtime(
@@ -4431,7 +4485,7 @@ pub fn install_runtime(
     validate_content_manifest_authority(&option, trusted_content)?;
     // New installs publish only into the primary root; reuse may still return a
     // compiled-content-verified install that an older release left in the
-    // legacy directory (audit RT-01).
+    // legacy directory.
     let (root, reuse_roots) = runtime_install_roots_in(
         &managed_runtime_install_root(),
         &runtime_data_dir("GGUF Pilot"),
@@ -4441,6 +4495,9 @@ pub fn install_runtime(
     {
         return Ok(reused);
     }
+    // the root is validated before the first write, so a planted link
+    // is refused before creation can write through it.
+    validate_install_root_before_create(&root)?;
     fs::create_dir_all(&root).map_err(|error| error.to_string())?;
     validate_no_reparse_ancestors("Managed runtime root", &root)?;
     let root_metadata = fs::symlink_metadata(&root)
@@ -4456,7 +4513,7 @@ pub fn install_runtime(
 
     // Replacing an existing installation requires that no running process
     // (server, benchmark, health, or tuning) still holds its content open
-    // through an execution lease (audit RT-04). Report that outcome as a clear
+    // through an execution lease. Report that outcome as a clear
     // repair instruction instead of a bare filesystem error.
     ensure_installation_replaceable(&final_dir)?;
 
@@ -4521,6 +4578,7 @@ pub fn install_runtime(
             .map_err(|error| error.to_string())?
             .to_path_buf();
         write_runtime_install_record(
+            &staging_guard,
             &staging,
             &option,
             &relative_runtime,
@@ -4532,14 +4590,17 @@ pub fn install_runtime(
             trusted_content,
             &option.content_manifest_sha256,
         )?;
-        drop(staging_guard);
-        replace_verified_runtime_directory(&staging, &final_dir)?;
-        let runtime = verify_installed_runtime(
+        let backup = replace_verified_runtime_directory(&staging, &final_dir)?;
+        let verified = verify_installed_runtime(
             &final_dir,
             &option,
             trusted_content,
             &option.content_manifest_sha256,
-        )?;
+        );
+        let runtime = finalize_runtime_replacement(&final_dir, backup, verified)?;
+        // the staging capability stays open through publication; only
+        // the finalized install releases it.
+        drop(staging_guard);
         Ok(InstalledRuntime {
             tag: tag.clone(),
             backend: option.backend.clone(),
@@ -4589,7 +4650,7 @@ pub(crate) fn ensure_pinned_health_model(
     if !metadata.is_dir() || metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
         return Err("The health model directory is a link or reparse point".into());
     }
-    // RT-04.V2 verification seam: inside the verifier profile the fetch can
+    // Verification seam: inside the verifier profile the fetch can
     // be pointed at a loopback fixture (same gate as the catalog downloads,
     // loopback-only), which lets a controlled delay be injected between
     // context preparation and runtime execution. Production runs take the
@@ -4610,7 +4671,7 @@ pub(crate) fn ensure_pinned_health_model(
 }
 
 /// The immutable description of the pinned health model, split out so the
-/// repair path can be exercised against fixtures (audit S-04).
+/// repair path can be exercised against fixtures.
 pub(crate) struct HealthModelSpec<'a> {
     pub url: &'a str,
     pub repository: &'a str,
@@ -4621,7 +4682,7 @@ pub(crate) struct HealthModelSpec<'a> {
 
 /// Quarantine an invalid cached health model and download the pinned
 /// immutable revision through the existing size/hash authorization checks
-/// (audit S-04). The corrupt bytes are preserved beside the live path with a
+///. The corrupt bytes are preserved beside the live path with a
 /// diagnostics note; the cache is never labeled healthy after a failed or
 /// cancelled repair.
 pub(crate) fn repair_health_model_with(
@@ -4738,11 +4799,17 @@ fn managed_health_context_with(
         .map_err(|error| format!("Managed runtime health trust verification failed: {error}"))?;
     // Retain protected handles from now until the health run ends so the
     // pinned-model download interval cannot reopen a modification window
-    // before the CLI, benchmark, and server launches (audit RT-04).
+    // before the CLI, benchmark, and server launches.
     let execution_lease = Some(
-        lease_verified_installation(&install, &install_root, approval).map_err(|error| {
-            format!("Managed runtime health trust verification failed: {error}")
-        })?,
+        lease_verified_installation(
+            &install,
+            &install_root,
+            approval,
+            expected_inventory(&install, approval).map_err(|error| {
+                format!("Managed runtime health trust verification failed: {error}")
+            })?,
+        )
+        .map_err(|error| format!("Managed runtime health trust verification failed: {error}"))?,
     );
     let model_path = pinned_health_model_path()?;
     let pin = crate::core::pinned_model_load_pin();
@@ -4839,7 +4906,11 @@ pub(crate) mod test_fixtures {
         fs::write(bin.join("llama-cli.exe"), b"trusted cli").unwrap();
         fs::write(bin.join("ggml-cpu.dll"), b"trusted backend").unwrap();
         let install = fixture_install();
+        let staging =
+            open_verified_capability_directory(directory, "fixture installation directory")
+                .unwrap();
         write_runtime_install_record(
+            &staging,
             directory,
             &install,
             Path::new("bin/llama-server.exe"),
@@ -5030,7 +5101,7 @@ mod tests {
         assert!(hardware.manual_overrides.is_empty());
     }
 
-    fn rt09_adapter_fixture(id: &str, name: &str, at: u64) -> GpuAdapterInfo {
+    fn adapter_fixture(id: &str, name: &str, at: u64) -> GpuAdapterInfo {
         let source = EvidenceSource {
             kind: EvidenceSourceKind::WindowsApi,
             detail: "DXGI adapter description".into(),
@@ -5070,7 +5141,7 @@ mod tests {
         }
     }
 
-    fn rt09_row(name: &str, uuid: &str, used_mib: u64) -> NvidiaProbeRow {
+    fn row(name: &str, uuid: &str, used_mib: u64) -> NvidiaProbeRow {
         NvidiaProbeRow {
             name: name.into(),
             driver: "610.74".into(),
@@ -5082,11 +5153,11 @@ mod tests {
     }
 
     #[test]
-    fn rt08_last_error_is_captured_before_cleanup_calls() {
+    fn last_error_is_captured_before_cleanup_calls() {
         // Windows only guarantees the last-error value immediately after the
         // failing call; `FindClose` and `CloseHandle` are API calls too, so a
         // behavioral test cannot force them to clobber the value. This guard
-        // pins the capture order in the source instead (audit RT-08).
+        // pins the capture order in the source instead.
         let source = include_str!("runtime.rs");
         let stream_fn = source
             .find("fn reject_managed_file_alternate_streams(path: &Path) -> Result<(), String> {")
@@ -5120,18 +5191,18 @@ mod tests {
     }
 
     #[test]
-    fn rt09_identical_names_never_receive_another_devices_telemetry() {
+    fn identical_names_never_receive_another_devices_telemetry() {
         // Two adapters share one reported name and the NVIDIA rows arrive in
-        // the opposite order with different usage values (audit RT-09 V1).
+        // the opposite order with different usage values.
         // No trustworthy mapping exists, so every row stays unassigned and no
         // adapter gains a wrong physical usage observation.
         let mut adapters = vec![
-            rt09_adapter_fixture("luid:aa", "NVIDIA GeForce RTX 5090", 1),
-            rt09_adapter_fixture("luid:bb", "NVIDIA GeForce RTX 5090", 1),
+            adapter_fixture("luid:aa", "NVIDIA GeForce RTX 5090", 1),
+            adapter_fixture("luid:bb", "NVIDIA GeForce RTX 5090", 1),
         ];
         let rows = vec![
-            rt09_row("NVIDIA GeForce RTX 5090", "GPU-bbbb", 900),
-            rt09_row("NVIDIA GeForce RTX 5090", "GPU-aaaa", 200),
+            row("NVIDIA GeForce RTX 5090", "GPU-bbbb", 900),
+            row("NVIDIA GeForce RTX 5090", "GPU-aaaa", 200),
         ];
         let unassigned = merge_nvidia_probe_observations(&mut adapters, &rows, 42);
         assert_eq!(unassigned.len(), 2, "both rows stay unassigned");
@@ -5157,13 +5228,13 @@ mod tests {
     }
 
     #[test]
-    fn rt09_one_adapter_with_duplicate_rows_stays_unassigned() {
+    fn one_adapter_with_duplicate_rows_stays_unassigned() {
         // One DXGI adapter but two same-name NVIDIA rows: the row set itself
-        // is ambiguous, so no row may attach (audit RT-09 I3).
-        let mut adapters = vec![rt09_adapter_fixture("luid:aa", "NVIDIA X", 1)];
+        // is ambiguous, so no row may attach.
+        let mut adapters = vec![adapter_fixture("luid:aa", "NVIDIA X", 1)];
         let rows = vec![
-            rt09_row("NVIDIA X", "GPU-aaaa", 200),
-            rt09_row("NVIDIA X", "GPU-aaaa", 300),
+            row("NVIDIA X", "GPU-aaaa", 200),
+            row("NVIDIA X", "GPU-aaaa", 300),
         ];
         let unassigned = merge_nvidia_probe_observations(&mut adapters, &rows, 42);
         assert_eq!(unassigned.len(), 2);
@@ -5174,16 +5245,16 @@ mod tests {
     }
 
     #[test]
-    fn rt09_distinct_names_map_each_row_to_its_own_adapter() {
+    fn distinct_names_map_each_row_to_its_own_adapter() {
         // Distinct names are unambiguous even when the enumeration orders
         // differ: each adapter receives only its own row.
         let mut adapters = vec![
-            rt09_adapter_fixture("luid:aa", "NVIDIA A", 1),
-            rt09_adapter_fixture("luid:bb", "NVIDIA B", 1),
+            adapter_fixture("luid:aa", "NVIDIA A", 1),
+            adapter_fixture("luid:bb", "NVIDIA B", 1),
         ];
         let rows = vec![
-            rt09_row("NVIDIA B", "GPU-bbbb", 900),
-            rt09_row("NVIDIA A", "GPU-aaaa", 200),
+            row("NVIDIA B", "GPU-bbbb", 900),
+            row("NVIDIA A", "GPU-aaaa", 200),
         ];
         let unassigned = merge_nvidia_probe_observations(&mut adapters, &rows, 42);
         assert!(unassigned.is_empty());
@@ -5215,7 +5286,7 @@ mod tests {
     }
 
     #[test]
-    fn rt09_probe_parser_reads_uuid_and_pci_location() {
+    fn probe_parser_reads_uuid_and_pci_location() {
         let rows = parse_nvidia_probe_rows(
             "NVIDIA RTX 5090, 610.74, 24564, 1024, GPU-abc123, 00000000:01:00.0\n",
         );
@@ -5409,7 +5480,7 @@ mod tests {
 
     #[test]
     fn compiled_catalog_serves_the_approved_release_without_network_or_cache() {
-        // P0-1 (RT-05, REL-06, LAB-02): runtime setup must not depend on a
+        // runtime setup must not depend on a
         // live api.github.com call or on a populated catalog cache. A fresh
         // profile with an empty cache gets the approved b10816 catalog that
         // ships in `approved_runtimes.json`. The constructor under test makes
@@ -5497,7 +5568,7 @@ mod tests {
 
     #[test]
     fn concurrent_catalog_loads_share_one_slow_fetch() {
-        // P0-2 (RT-06): two concurrent callers share one in-flight catalog
+        // two concurrent callers share one in-flight catalog
         // load. Neither caller gets `Busy`, both receive the same catalog,
         // and the slow double runs exactly once.
         use std::sync::atomic::AtomicUsize;
@@ -5580,7 +5651,7 @@ mod tests {
 
     #[test]
     fn concurrent_catalog_loads_share_the_production_fetch() {
-        // P0-2 (RT-06): two concurrent loads through the production fetcher
+        // two concurrent loads through the production fetcher
         // both succeed with the same compiled catalog. No overlap timing
         // applies here; both outcomes must be equal regardless of order.
         let gate = Arc::new(CatalogLoadGate::default());
@@ -6178,7 +6249,7 @@ mod tests {
     /// refresh on a shared machine or in captured traffic.
 
     #[test]
-    fn s04_repair_quarantines_a_corrupt_cache_and_records_diagnostics() {
+    fn repair_quarantines_a_corrupt_cache_and_records_diagnostics() {
         let root = std::env::temp_dir().join(format!(
             "localmotive-s04-repair-{}-{}",
             std::process::id(),
@@ -6256,7 +6327,7 @@ mod tests {
     }
 
     #[test]
-    fn s04_a_healthy_cache_needs_no_repair_and_no_network() {
+    fn a_healthy_cache_needs_no_repair_and_no_network() {
         let root = std::env::temp_dir().join(format!(
             "localmotive-s04-healthy-{}-{}",
             std::process::id(),
@@ -6718,18 +6789,71 @@ Connection: close
         fs::write(destination.join("runtime.bin"), b"corrupt").unwrap();
         fs::write(staging.join("runtime.bin"), b"approved").unwrap();
 
-        replace_verified_runtime_directory(&staging, &destination).unwrap();
+        let backup = replace_verified_runtime_directory(&staging, &destination).unwrap();
 
         assert_eq!(
             fs::read(destination.join("runtime.bin")).unwrap(),
             b"approved"
         );
         assert!(!staging.exists());
+        // the rollback copy survives the publish; only the
+        // final verification of the published destination may release it.
+        let backup = backup.expect("replacing an existing runtime keeps a backup");
+        assert!(backup.exists());
+        let runtime = finalize_runtime_replacement(
+            &destination,
+            Some(backup),
+            Ok(destination.join("runtime.bin")),
+        )
+        .unwrap();
+        assert_eq!(runtime, destination.join("runtime.bin"));
         let names = fs::read_dir(&root)
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
             .collect::<Vec<_>>();
         assert!(!names.iter().any(|name| name.starts_with(".replacing-")));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_final_verification_restores_the_previous_runtime() {
+        // when the final verification of the published
+        // destination fails, the previous runtime comes back in place and
+        // the verification error surfaces. Before the fix the backup was
+        // deleted at publish time, so a failed verification stranded the
+        // broken destination with no way back.
+        let root = std::env::temp_dir().join(format!(
+            "localmotive-runtime-rollback-{}-{}",
+            std::process::id(),
+            observed_at_ms()
+        ));
+        let destination = root.join("b10816").join("cpu");
+        let staging = root.join(".installing-cpu");
+        fs::create_dir_all(&destination).unwrap();
+        fs::create_dir_all(&staging).unwrap();
+        fs::write(destination.join("runtime.bin"), b"previous").unwrap();
+        fs::write(staging.join("runtime.bin"), b"failed").unwrap();
+
+        let backup = replace_verified_runtime_directory(&staging, &destination)
+            .unwrap()
+            .expect("replacing an existing runtime keeps a backup");
+        let error = finalize_runtime_replacement(
+            &destination,
+            Some(backup),
+            Err("simulated final verification failure".to_string()),
+        )
+        .unwrap_err();
+        assert!(error.contains("simulated final verification failure"));
+
+        assert_eq!(
+            fs::read(destination.join("runtime.bin")).unwrap(),
+            b"previous"
+        );
+        assert!(!fs::read_dir(&root).unwrap().any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".replacing-")));
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -6773,7 +6897,10 @@ Connection: close
             companion_asset: None,
             content_manifest_sha256: trusted_digest.clone(),
         };
+        let staging =
+            open_verified_capability_directory(&root, "fixture staging directory").unwrap();
         write_runtime_install_record(
+            &staging,
             &root,
             &resolved,
             Path::new("bin/llama-server.exe"),
@@ -6795,6 +6922,7 @@ Connection: close
         );
         let forged_digest = hex::encode(Sha256::digest(forged_content.as_bytes()));
         write_runtime_install_record(
+            &staging,
             &root,
             &resolved,
             Path::new("bin/llama-server.exe"),
@@ -6808,6 +6936,7 @@ Connection: close
             &trusted_digest
         )
         .is_err());
+        drop(staging);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -7532,7 +7661,7 @@ Connection: close
     }
 
     #[test]
-    fn rt01_new_installs_publish_into_the_primary_root_even_with_only_a_legacy_directory() {
+    fn new_installs_publish_into_the_primary_root_even_with_only_a_legacy_directory() {
         let base = std::env::temp_dir().join(format!(
             "localmotive-rt01-root-{}-{}",
             std::process::id(),
@@ -7547,7 +7676,7 @@ Connection: close
 
         let (publish_root, reuse_roots) = runtime_install_roots_in(&primary, &legacy);
 
-        // Audited defect RT-01: the old selector returned `legacy` here and the
+        // the old selector returned `legacy` here and the
         // installation was then rejected by the launch policy. The publish root
         // must never fall back to the directory the launcher used to reject.
         assert_eq!(publish_root, primary);
@@ -7556,8 +7685,8 @@ Connection: close
     }
 
     #[test]
-    fn rt06_simultaneous_verifications_share_one_job_per_installation() {
-        // (audit RT-06 V1) Two concurrent verifications for one installation
+    fn simultaneous_verifications_share_one_job_per_installation() {
+        // Two concurrent verifications for one installation
         // share a single job: the leader computes, the follower receives the
         // same result and never runs the compute closure; a different key
         // never shares work. Global counters are compared as deltas because
@@ -7620,8 +7749,8 @@ Connection: close
     }
 
     #[test]
-    fn rt06_cancellation_and_progress_report_truthfully_during_verification() {
-        // (audit RT-06 V2) Every file reports progress; a cancelled job
+    fn cancellation_and_progress_report_truthfully_during_verification() {
+        // Every file reports progress; a cancelled job
         // returns a truthful unverified result and is counted; changed bytes
         // can never inherit a verified label.
         let root = std::env::temp_dir().join(format!(
@@ -7691,12 +7820,12 @@ Connection: close
     }
 
     #[test]
-    fn rt05_a_chunked_403_body_at_and_beyond_the_limit_is_bounded() {
+    fn a_chunked_403_body_at_and_beyond_the_limit_is_bounded() {
         use std::io::{Read, Write};
 
         // (a) At the 2 MiB boundary with no rate-limit marker the typed Http
         // error keeps only a short excerpt; one byte beyond the limit is
-        // rejected while reading (audit RT-05 V1).
+        // rejected while reading.
         for (excess, body_too_large) in [(0_usize, false), (1_usize, true)] {
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             let address = listener.local_addr().unwrap();
@@ -7765,7 +7894,7 @@ Connection: close
     }
 
     #[test]
-    fn rt05_sparse_and_boundary_runtime_records_are_bounded() {
+    fn sparse_and_boundary_runtime_records_are_bounded() {
         let base = std::env::temp_dir().join(format!(
             "localmotive-rt05-manifest-{}-{:016x}",
             std::process::id(),
@@ -7799,7 +7928,7 @@ Connection: close
         );
 
         // One byte beyond the boundary is rejected even though the content
-        // alone would parse (audit RT-05 V2).
+        // alone would parse.
         let beyond_dir = base.join("beyond");
         std::fs::create_dir_all(&beyond_dir).unwrap();
         let mut beyond = exact.clone();
@@ -7820,7 +7949,7 @@ Connection: close
     }
 
     #[test]
-    fn rt05_discovery_rejects_excessive_trees_and_keeps_valid_boundaries() {
+    fn discovery_rejects_excessive_trees_and_keeps_valid_boundaries() {
         let base = std::env::temp_dir().join(format!(
             "localmotive-rt05-scan-{}-{:016x}",
             std::process::id(),
@@ -7891,7 +8020,7 @@ Connection: close
     }
 
     #[test]
-    fn rt01_installation_result_passes_the_launch_trust_gate_and_reuse_in_both_roots() {
+    fn installation_result_passes_the_launch_trust_gate_and_reuse_in_both_roots() {
         let base = std::env::temp_dir().join(format!(
             "localmotive-rt01-compose-{}-{}",
             std::process::id(),
@@ -7963,7 +8092,7 @@ Connection: close
     }
 
     #[test]
-    fn rt01_corrupt_legacy_records_do_not_reproduce_the_reinstall_loop() {
+    fn corrupt_legacy_records_do_not_reproduce_the_reinstall_loop() {
         let base = std::env::temp_dir().join(format!(
             "localmotive-rt01-repair-{}-{}",
             std::process::id(),
@@ -8010,7 +8139,7 @@ Connection: close
     }
 
     #[test]
-    fn rt02_execution_authorization_accepts_only_content_verified_managed_binaries() {
+    fn execution_authorization_accepts_only_content_verified_managed_binaries() {
         let base = std::env::temp_dir().join(format!(
             "localmotive-rt02-guard-{}-{}",
             std::process::id(),
@@ -8024,37 +8153,62 @@ Connection: close
         let (server, cli) = test_fixtures::place_fixture_install(&primary);
 
         // A verified installation authorizes the server and its approved
-        // companion CLI, because probes execute both.
-        authorize_managed_execution_with(&server, &primary, &legacy, source).unwrap();
-        authorize_managed_execution_with(&cli, &primary, &legacy, source).unwrap();
+        // companion CLI, because probes execute both. The lease guard is the
+        // same check the probe path holds across the child.
+        assert!(
+            authorize_managed_execution_lease_with(&server, &primary, &legacy, source)
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            authorize_managed_execution_lease_with(&cli, &primary, &legacy, source)
+                .unwrap()
+                .is_some()
+        );
 
         // A tampered DLL is rejected even though the server EXE is unchanged.
         let dll = server.parent().unwrap().join("ggml-cpu.dll");
         std::fs::write(&dll, b"hostile backend").unwrap();
         let error =
-            authorize_managed_execution_with(&server, &primary, &legacy, source).unwrap_err();
-        assert!(error.contains("content verification"), "{error}");
+            authorize_managed_execution_lease_with(&server, &primary, &legacy, source).unwrap_err();
+        assert!(error.contains("execution-identity"), "{error}");
         std::fs::write(&dll, b"trusted backend").unwrap();
 
         // A replaced server EXE is rejected, and approved bytes restore access.
         std::fs::write(&server, b"hostile executable").unwrap();
-        assert!(authorize_managed_execution_with(&server, &primary, &legacy, source).is_err());
+        assert!(
+            authorize_managed_execution_lease_with(&server, &primary, &legacy, source).is_err()
+        );
         std::fs::write(&server, b"trusted executable").unwrap();
-        authorize_managed_execution_with(&server, &primary, &legacy, source).unwrap();
+        assert!(
+            authorize_managed_execution_lease_with(&server, &primary, &legacy, source)
+                .unwrap()
+                .is_some()
+        );
 
         // An extra unapproved file changes the inventory and is rejected.
         let extra = server.parent().unwrap().join("extra.dll");
         std::fs::write(&extra, b"x").unwrap();
-        assert!(authorize_managed_execution_with(&server, &primary, &legacy, source).is_err());
+        assert!(
+            authorize_managed_execution_lease_with(&server, &primary, &legacy, source).is_err()
+        );
         std::fs::remove_file(&extra).unwrap();
-        authorize_managed_execution_with(&server, &primary, &legacy, source).unwrap();
+        assert!(
+            authorize_managed_execution_lease_with(&server, &primary, &legacy, source)
+                .unwrap()
+                .is_some()
+        );
 
         // Paths outside both managed roots keep the deliberate external-runtime
-        // policy: compiled-content approval does not apply.
+        // policy: compiled-content approval does not apply, so no lease.
         let external = base.join("external").join("llama-server.exe");
         std::fs::create_dir_all(external.parent().unwrap()).unwrap();
         std::fs::write(&external, b"external runtime").unwrap();
-        authorize_managed_execution_with(&external, &primary, &legacy, source).unwrap();
+        assert!(
+            authorize_managed_execution_lease_with(&external, &primary, &legacy, source)
+                .unwrap()
+                .is_none()
+        );
 
         // A legacy path without compiled approval stays rejected.
         let legacy_dir = legacy.join("b00000").join("cpu");
@@ -8067,14 +8221,15 @@ Connection: close
         let legacy_server = legacy_dir.join("llama-server.exe");
         std::fs::write(&legacy_server, b"legacy runtime").unwrap();
         assert!(
-            authorize_managed_execution_with(&legacy_server, &primary, &legacy, source).is_err()
+            authorize_managed_execution_lease_with(&legacy_server, &primary, &legacy, source)
+                .is_err()
         );
 
         let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
-    fn rt04_execution_lease_pins_approved_content_through_repair_and_launch() {
+    fn execution_lease_pins_approved_content_through_repair_and_launch() {
         let base = std::env::temp_dir().join(format!(
             "localmotive-rt04-lease-{}-{}",
             std::process::id(),
@@ -8105,7 +8260,7 @@ Connection: close
 
         // The interval that matters is not instantaneous: after a delay that
         // simulates the pinned-health-model preparation, the protection still
-        // holds (audit RT-04: no time-based release).
+        // holds.
         std::thread::sleep(std::time::Duration::from_millis(25));
         assert!(std::fs::write(&server, b"replaced executable").is_err());
 
@@ -8138,7 +8293,7 @@ Connection: close
     }
 
     #[test]
-    fn rt04_managed_health_context_carries_the_execution_lease_across_preparation() {
+    fn managed_health_context_carries_the_execution_lease_across_preparation() {
         let base = std::env::temp_dir().join(format!(
             "localmotive-rt04-health-{}-{}",
             std::process::id(),
@@ -8357,7 +8512,7 @@ Connection: close
     }
 
     #[test]
-    fn rt07_archive_extraction_rejects_replaced_bytes_through_the_installer_path() {
+    fn archive_extraction_rejects_replaced_bytes_through_the_installer_path() {
         use std::io::Write;
 
         let root = scratch("archive-identity");
@@ -8444,7 +8599,7 @@ Connection: close
 
     #[cfg(windows)]
     #[test]
-    fn rt07_protected_archive_handle_blocks_path_replacement_for_its_lifetime() {
+    fn protected_archive_handle_blocks_path_replacement_for_its_lifetime() {
         use std::io::Write;
 
         let root = scratch("archive-handle");
@@ -8471,8 +8626,8 @@ Connection: close
 
     #[cfg(windows)]
     #[test]
-    fn rt07_path_and_reparse_replacement_leave_the_protected_handle_authoritative() {
-        // RT-07.V2: attempt a symlink/reparse replacement and a path change
+    fn path_and_reparse_replacement_leave_the_protected_handle_authoritative() {
+        // attempt a symlink/reparse replacement and a path change
         // after the archive is opened; the protected original handle must
         // remain authoritative for the verified bytes, or the attempt must
         // fail safely. The installer verifies and extracts through one
@@ -8602,6 +8757,174 @@ Connection: close
             error.contains("malformed path"),
             "unexpected error: {error}"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn lease_revalidate_rejects_a_file_planted_after_acquisition() {
+        // acquisition checks actual == expected, but a file
+        // planted while the lease is held must fail the pre-execution recheck.
+        let base = std::env::temp_dir().join(format!(
+            "localmotive-lease-plant-{}-{}",
+            std::process::id(),
+            observed_at_ms()
+        ));
+        let _ = fs::remove_dir_all(&base);
+        let primary = base.join("Localmotive").join("runtimes");
+        let legacy = base.join("GGUF Pilot").join("runtimes");
+        fs::create_dir_all(&primary).unwrap();
+        fs::create_dir_all(&legacy).unwrap();
+        let source = test_fixtures::fixture_source();
+        let (server, _cli) = test_fixtures::place_fixture_install(&primary);
+        let lease = authorize_managed_execution_lease_with(&server, &primary, &legacy, source)
+            .unwrap()
+            .expect("the fixture install authorizes");
+        let install_dir = server.parent().unwrap().parent().unwrap().to_path_buf();
+        fs::write(install_dir.join("evil.dll"), b"planted").unwrap();
+        let error = lease
+            .revalidate_inventory()
+            .expect_err("a file planted under a held lease must fail revalidation");
+        assert!(
+            error.contains("inventory"),
+            "the recheck must name the inventory: {error}"
+        );
+        drop(lease);
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn install_root_precheck_rejects_an_existing_file() {
+        // validation must run before the first write. A root
+        // that already exists as a file (or link) is refused instead of
+        // reaching creation.
+        let base = std::env::temp_dir().join(format!(
+            "localmotive-install-root-{}-{}",
+            std::process::id(),
+            observed_at_ms()
+        ));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        let file = base.join("root");
+        fs::write(&file, b"not a directory").unwrap();
+        let error = validate_install_root_before_create(&file)
+            .expect_err("an existing file is not a safe install root");
+        assert!(
+            error.contains("link or reparse point"),
+            "the precheck must name the hazard: {error}"
+        );
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn install_root_precheck_allows_a_clean_missing_destination() {
+        // A missing root under clean ancestors passes: creation may proceed.
+        let base = std::env::temp_dir().join(format!(
+            "localmotive-install-root-clean-{}-{}",
+            std::process::id(),
+            observed_at_ms()
+        ));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        validate_install_root_before_create(&base.join("runtimes"))
+            .expect("a clean missing root must pass the precheck");
+        validate_install_root_before_create(&base)
+            .expect("a clean existing directory must pass the precheck");
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn install_runtime_validates_the_root_before_creating_it() {
+        // The creation call must come after the precheck in the source: a
+        // planted link must be refused before the first write.
+        let source = include_str!("runtime.rs");
+        let install_fn = source
+            .find("pub fn install_runtime(")
+            .expect("install_runtime present");
+        let body = &source[install_fn..install_fn + 3_000];
+        let precheck = body
+            .find("validate_install_root_before_create(&root)")
+            .expect("install_runtime must pre-validate the root");
+        let create = body
+            .find("fs::create_dir_all(&root)")
+            .expect("install_runtime creates the root");
+        assert!(
+            precheck < create,
+            "root validation must run before the first write"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn install_record_refuses_a_hard_linked_entry_and_keeps_the_victim() {
+        // the install record must never be written through an
+        // attacker-planted link. A hard-linked `runtime.json` is refused and
+        // the linked victim keeps its bytes.
+        let root = std::env::temp_dir().join(format!(
+            "localmotive-record-hard-link-{}-{}",
+            std::process::id(),
+            observed_at_ms()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let victim = root.join("victim.txt");
+        fs::write(&victim, b"victim bytes").unwrap();
+        fs::hard_link(&victim, root.join("runtime.json")).unwrap();
+        let staging =
+            open_verified_capability_directory(&root, "fixture staging directory").unwrap();
+        let install = test_fixtures::fixture_install();
+
+        let result = write_runtime_install_record(
+            &staging,
+            &root,
+            &install,
+            Path::new("bin/llama-server.exe"),
+            &install.content_manifest_sha256,
+        );
+
+        assert!(result.is_err(), "linked record entry must be refused");
+        assert_eq!(fs::read(&victim).unwrap(), b"victim bytes");
+        drop(staging);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn install_record_overwrites_a_regular_entry_it_owns() {
+        // The legitimate rewrite path (record refresh with a new digest) keeps
+        // working: a regular `runtime.json` the installer owns is replaced.
+        let root = std::env::temp_dir().join(format!(
+            "localmotive-record-rewrite-{}-{}",
+            std::process::id(),
+            observed_at_ms()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let staging =
+            open_verified_capability_directory(&root, "fixture staging directory").unwrap();
+        let install = test_fixtures::fixture_install();
+
+        write_runtime_install_record(
+            &staging,
+            &root,
+            &install,
+            Path::new("bin/llama-server.exe"),
+            &install.content_manifest_sha256,
+        )
+        .unwrap();
+        write_runtime_install_record(
+            &staging,
+            &root,
+            &install,
+            Path::new("bin/llama-server.exe"),
+            &install.content_manifest_sha256,
+        )
+        .unwrap();
+
+        let record: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("runtime.json")).unwrap()).unwrap();
+        assert_eq!(record["installKey"], "rt-fixture");
+        drop(staging);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(windows)]
@@ -9135,7 +9458,7 @@ Connection: close
         // Phase 1: local discovery stays independent of the remote catalog.
         // `load_runtime_setup` collects `list_managed_runtimes()` BEFORE the
         // catalog fetch (lib.rs), so existing installs stay visible during
-        // a GitHub outage. Under the RT-06 policy, discovery is cheap and
+        // a GitHub outage. Under this policy, discovery is cheap and
         // explicitly unverified: the install lists when its record matches
         // compiled approval, without hashing payloads, and selection
         // verifies content on demand. This test pins both halves with
@@ -9167,6 +9490,7 @@ Connection: close
             fs::write(&full, &bytes).unwrap();
         }
         write_runtime_install_record(
+            &open_verified_capability_directory(&dir, "fixture discovery directory").unwrap(),
             &dir,
             &install,
             Path::new("llama-server.exe"),
@@ -9175,7 +9499,7 @@ Connection: close
         .unwrap();
 
         // No catalog fetch happens here: listing reads only the local root.
-        // Discovery is cheap (audit RT-06 I1): the install lists because its
+        // Discovery is cheap: the install lists because its
         // record matches compiled approval, with explicit unverified status,
         // and listing must not hash a single payload byte.
         // Thread-local accounting: parallel tests hash other fixtures on

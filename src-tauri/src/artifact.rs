@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const HASH_BUFFER_BYTES: usize = 1024 * 1024;
 
@@ -26,7 +26,7 @@ pub enum ArtifactProblemCode {
     ConflictingHeader,
     UnreadableHeader,
     /// A grouped file is not a consistent shard name; discovery and launch
-    /// validation must refuse it identically (audit MT-15).
+    /// validation must refuse it identically.
     MalformedShardName,
 }
 
@@ -37,7 +37,7 @@ pub struct ArtifactProblem {
     pub message: String,
 }
 
-/// How a shard's own header metadata relates to the filename plan (S-02).
+/// How a shard's own header metadata relates to the filename plan.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SplitVerdict {
     /// The header records the same index and count as the filename plan.
@@ -63,7 +63,17 @@ pub fn split_metadata_verdict(
     match (recorded_no, recorded_count) {
         (Some(no), Some(count)) => {
             let planned = (shard_index, shard_count);
-            let recorded = (no + 1, count);
+            // `split.no` is hostile file metadata. A plain `no + 1`
+            // panics in debug and wraps in release (u64::MAX becomes shard 0,
+            // a false agreement). Reject the overflow as untrustworthy and
+            // keep the raw value for diagnosis.
+            let Some(recorded_no) = no.checked_add(1) else {
+                return SplitVerdict::Mismatch {
+                    recorded: (u64::MAX, count),
+                    planned,
+                };
+            };
+            let recorded = (recorded_no, count);
             if planned == recorded {
                 SplitVerdict::Agree { no, count }
             } else {
@@ -286,20 +296,112 @@ pub(crate) fn validate_regular_non_reparse_file(label: &str, path: &Path) -> Res
     validate_no_reparse_ancestors(label, path)
 }
 
-pub fn sha256_path(path: &Path) -> Result<String, String> {
-    let link_metadata = fs::symlink_metadata(path)
-        .map_err(|error| format!("Could not inspect {}: {error}", path.display()))?;
-    if link_metadata.file_type().is_symlink() || is_reparse_point(&link_metadata) {
+/// Open a file for reading and verify the OPENED HANDLE, not the path
+///. A path check followed by a separate open leaves a
+/// plant-between-check-and-open window: a swapped symlink, reparse point,
+/// or second hard link passes the check and diverts the open. Here the
+/// link count (exactly one), the regular-file bit, and the handle's final
+/// path are all read from the handle itself, so anything planted after the
+/// pre-check is refused instead of read.
+pub fn open_verified_read_file(label: &str, path: &Path) -> Result<File, String> {
+    // Fast pre-check with the established messages; the handle check below
+    // is authoritative.
+    validate_regular_non_reparse_file(label, path)?;
+    let file =
+        File::open(path).map_err(|error| format!("Could not open {}: {error}", path.display()))?;
+    verify_open_read_handle(label, path, &file)?;
+    Ok(file)
+}
+
+#[cfg(windows)]
+fn verify_open_read_handle(label: &str, path: &Path, file: &File) -> Result<(), String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, GetFinalPathNameByHandleW, BY_HANDLE_FILE_INFORMATION,
+        FILE_ATTRIBUTE_DIRECTORY,
+    };
+    let mut information: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut information) };
+    if ok == 0 {
         return Err(format!(
-            "Artifact path cannot be a symlink or reparse point: {}",
+            "{label} handle could not be inspected: {}",
             path.display()
         ));
     }
-    if !link_metadata.is_file() {
-        return Err(format!("Artifact path is not a file: {}", path.display()));
+    if information.nNumberOfLinks != 1 {
+        return Err(format!(
+            "{label} has multiple hard links: {}",
+            path.display()
+        ));
     }
-    let mut file =
-        File::open(path).map_err(|error| format!("Could not open {}: {error}", path.display()))?;
+    if information.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
+        return Err(format!("{label} is not a regular file: {}", path.display()));
+    }
+    // The final path comes from the handle, never from a fresh resolution:
+    // a link planted after the open resolves through the handle to the
+    // original target and mismatches the (possibly re-resolving) path.
+    let mut buffer = vec![0u16; 32_768];
+    let length = unsafe {
+        GetFinalPathNameByHandleW(
+            file.as_raw_handle() as _,
+            buffer.as_mut_ptr(),
+            buffer.len() as u32,
+            0,
+        )
+    };
+    if length == 0 || length as usize >= buffer.len() {
+        return Err(format!(
+            "{label} handle identity could not be confirmed: {}",
+            path.display()
+        ));
+    }
+    let normalize = |value: String| {
+        let value = value
+            .strip_prefix(r"\\?\UNC\")
+            .map(|tail| format!(r"\\{tail}"))
+            .or_else(|| value.strip_prefix(r"\\?\").map(str::to_string))
+            .unwrap_or(value);
+        value.to_ascii_lowercase()
+    };
+    let opened = normalize(String::from_utf16_lossy(&buffer[..length as usize]));
+    let expected = normalize(
+        std::fs::canonicalize(path)
+            .unwrap_or_else(|_| path.to_path_buf())
+            .to_string_lossy()
+            .into_owned(),
+    );
+    if opened != expected {
+        return Err(format!(
+            "{label} resolved away from the requested file: {}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn verify_open_read_handle(label: &str, path: &Path, file: &File) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = file
+        .metadata()
+        .map_err(|error| format!("Could not inspect open file {}: {error}", path.display()))?;
+    if !metadata.is_file() {
+        return Err(format!("{label} is not a regular file: {}", path.display()));
+    }
+    if metadata.nlink() != 1 {
+        return Err(format!(
+            "{label} has multiple hard links: {}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+pub fn sha256_path(path: &Path) -> Result<String, String> {
+    // the file is opened through the verified handle (link count,
+    // regular bit, final path), so a link planted between any path check
+    // and the open is refused instead of hashed.
+    let mut file = open_verified_read_file("Artifact", path)?;
     let before = file
         .metadata()
         .map_err(|error| format!("Could not inspect open file {}: {error}", path.display()))?;
@@ -328,8 +430,8 @@ pub fn sha256_path(path: &Path) -> Result<String, String> {
 }
 
 fn sha256_prefix_path(path: &Path, byte_count: u64) -> Result<String, String> {
-    let mut file =
-        File::open(path).map_err(|error| format!("Could not open {}: {error}", path.display()))?;
+    // same verified-handle open as `sha256_path`.
+    let mut file = open_verified_read_file("Artifact", path)?;
     let mut remaining = byte_count;
     let mut hasher = Sha256::new();
     let mut buffer = vec![0_u8; HASH_BUFFER_BYTES];
@@ -411,6 +513,54 @@ fn content_id(shards: &[ArtifactFileFact], companions: &[ArtifactFileFact]) -> O
         hasher.update(digest.as_bytes());
     }
     Some(hex::encode(hasher.finalize()))
+}
+
+/// First shard of the set that contains `path`, plus the set's own name
+/// record. Launch profiles must point at the first shard: only `-m` receives
+/// the model path, and the runtime assembles the remaining shards from it.
+/// Names that do not parse as shards have no set, so they yield `None` and
+/// pass: the model path itself carries no extension requirement.
+pub fn first_shard_for_model(path: &Path) -> Result<Option<(PathBuf, ShardName)>, String> {
+    let name = path
+        .file_name()
+        .ok_or_else(|| format!("Artifact has no file name: {}", path.display()))?
+        .to_string_lossy()
+        .to_string();
+    let Ok(selected) = parse_shard_name(&name) else {
+        return Ok(None);
+    };
+    if !selected.split {
+        return Ok(Some((path.to_path_buf(), selected)));
+    }
+    let directory = path
+        .parent()
+        .ok_or_else(|| format!("Artifact has no parent: {}", path.display()))?;
+    let mut first: Option<(usize, PathBuf)> = None;
+    for entry in fs::read_dir(directory)
+        .map_err(|error| format!("Could not read {}: {error}", directory.display()))?
+    {
+        let sibling = entry.map_err(|error| error.to_string())?.path();
+        let Some(sibling_name) = sibling
+            .file_name()
+            .map(|value| value.to_string_lossy().to_string())
+        else {
+            continue;
+        };
+        let Ok(candidate) = parse_shard_name(&sibling_name) else {
+            continue;
+        };
+        if candidate.logical_name == selected.logical_name
+            && first
+                .as_ref()
+                .is_none_or(|(index, _)| candidate.index < *index)
+        {
+            first = Some((candidate.index, sibling));
+        }
+    }
+    let first_path = first
+        .map(|(_, path)| path)
+        .unwrap_or_else(|| path.to_path_buf());
+    Ok(Some((first_path, selected)))
 }
 
 pub fn inspect_artifact(
@@ -527,7 +677,7 @@ fn sum_file_bytes(files: &[ArtifactFileFact], label: &str) -> Result<u64, String
 mod tests {
 
     #[test]
-    fn s02_split_verdict_agrees_or_reports_mismatch_and_unknown() {
+    fn split_verdict_agrees_or_reports_mismatch_and_unknown() {
         // Agree: filename says shard 3 of 4; the header records no=2, count=4
         // (split.no is zero-based).
         assert_eq!(
@@ -562,6 +712,21 @@ mod tests {
         assert_eq!(
             split_metadata_verdict(1, 4, None, Some(4)),
             SplitVerdict::Unknown
+        );
+    }
+
+    #[test]
+    fn split_verdict_rejects_an_overflowing_split_number() {
+        // a hostile header `split.no` of u64::MAX must not
+        // panic (debug) or wrap to 0 and agree (release). The set is not
+        // trustworthy, so the verdict is Mismatch and the raw value is kept
+        // for diagnosis.
+        assert_eq!(
+            split_metadata_verdict(0, 1, Some(u64::MAX), Some(1)),
+            SplitVerdict::Mismatch {
+                recorded: (u64::MAX, 1),
+                planned: (0, 1)
+            }
         );
     }
     use super::*;
@@ -669,6 +834,99 @@ mod tests {
             .problems
             .iter()
             .any(|problem| problem.code == ArtifactProblemCode::DuplicateShard));
+    }
+
+    #[test]
+    fn open_verified_read_refuses_a_symlink() {
+        // validate-then-open leaves a plant-between-check-and-
+        // open window. The read helper verifies the opened handle, so a link
+        // planted at (or before) the check is refused instead of followed.
+        let directory = std::env::temp_dir().join(format!(
+            "localmotive-artifact-proc10-link-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+        let target = directory.join("real.gguf");
+        fs::write(&target, b"real").unwrap();
+        let link = directory.join("link.gguf");
+        #[cfg(windows)]
+        let planted = std::os::windows::fs::symlink_file(&target, &link).is_ok();
+        #[cfg(not(windows))]
+        let planted = std::os::unix::fs::symlink(&target, &link).is_ok();
+        if !planted {
+            let _ = fs::remove_dir_all(&directory);
+            return;
+        }
+        let error = super::open_verified_read_file("Artifact", &link).unwrap_err();
+        assert!(
+            error.contains("regular file") || error.contains("reparse") || error.contains("link"),
+            "a symlink must be refused, got: {error}"
+        );
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn open_verified_read_refuses_a_hard_link() {
+        // two names for one inode defeat path checks
+        // entirely (both names look regular). Only the handle's link count
+        // catches it.
+        let directory = std::env::temp_dir().join(format!(
+            "localmotive-artifact-proc10-hard-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+        let first = directory.join("first.gguf");
+        fs::write(&first, b"shared").unwrap();
+        let second = directory.join("second.gguf");
+        if fs::hard_link(&first, &second).is_err() {
+            let _ = fs::remove_dir_all(&directory);
+            return;
+        }
+        let error = super::open_verified_read_file("Artifact", &second).unwrap_err();
+        assert!(
+            error.contains("hard link"),
+            "a second link must be refused, got: {error}"
+        );
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn open_verified_read_opens_a_regular_file() {
+        // the good path still opens and reads.
+        use std::io::Read as _;
+        let directory = std::env::temp_dir().join(format!(
+            "localmotive-artifact-proc10-good-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("plain.gguf");
+        fs::write(&path, b"content").unwrap();
+        let mut file = super::open_verified_read_file("Artifact", &path).unwrap();
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes, b"content");
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn readers_verify_the_open_handle() {
+        // every file-content read site opens through
+        // the verified-handle helper. Execution sites (probes, spawns) stay
+        // under the managed-execution lease, not this helper.
+        for (name, source) in [
+            ("artifact.rs", include_str!("artifact.rs")),
+            ("gguf.rs", include_str!("gguf.rs")),
+            ("local_client.rs", include_str!("local_client.rs")),
+            ("health.rs", include_str!("health.rs")),
+        ] {
+            assert!(
+                source.contains("open_verified_read_file"),
+                "{name} must read through open_verified_read_file"
+            );
+        }
     }
 
     #[test]

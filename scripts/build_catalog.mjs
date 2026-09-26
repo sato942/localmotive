@@ -161,7 +161,7 @@ for (const author of ALLOWLIST) {
         architecture: meta.gguf?.architecture ?? "",
         lastModified: meta.lastModified ?? "",
         createdAt: meta.createdAt ?? "",
-        files: files.sort((a, b) => a.sizeBytes - b.sizeBytes),
+        files: files.sort((a, b) => a.sizeBytes - b.sizeBytes || (a.filename < b.filename ? -1 : a.filename > b.filename ? 1 : 0)),
       });
     } catch (error) {
       problems.push(`${repo}: ${error.message}`);
@@ -172,7 +172,7 @@ for (const author of ALLOWLIST) {
 }
 
 if (DRY_RUN) {
-  for (const entry of pending.sort((a, b) => b.downloads - a.downloads)) {
+  for (const entry of pending.sort((a, b) => b.downloads - a.downloads || (a.repo < b.repo ? -1 : a.repo > b.repo ? 1 : 0))) {
     const kept = [];
     for (const file of entry.files) {
       const key = file.filename.toLowerCase();
@@ -212,7 +212,7 @@ if (DRY_RUN) {
 // shared folder, so the second write would clobber or race the first. Sort
 // repos by downloads first so the most-used publisher wins each filename,
 // then drop colliding files from later repos.
-for (const entry of pending.sort((a, b) => b.downloads - a.downloads)) {
+for (const entry of pending.sort((a, b) => b.downloads - a.downloads || (a.repo < b.repo ? -1 : a.repo > b.repo ? 1 : 0))) {
   const kept = [];
   for (const file of entry.files) {
     const key = file.filename.toLowerCase();
@@ -243,7 +243,7 @@ const catalog = {
     cutoffDays: CUTOFF_DAYS,
     allowlist: ALLOWLIST,
   },
-  models: entries.sort((a, b) => b.downloads - a.downloads),
+  models: entries.sort((a, b) => b.downloads - a.downloads || (a.repo < b.repo ? -1 : a.repo > b.repo ? 1 : 0)),
 };
 const rendered = JSON.stringify(catalog, null, 2) + "\n";
 console.error(

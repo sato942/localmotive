@@ -48,7 +48,6 @@ function status(overrides: Partial<ServerStatus> = {}): ServerStatus {
 
 function props(overrides: Partial<DashboardScreenProps> = {}): DashboardScreenProps {
   return {
-    benchmark: null,
     busy: "",
     evidenceRun: null,
     log: "",

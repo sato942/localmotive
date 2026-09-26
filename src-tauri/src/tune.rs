@@ -8,8 +8,9 @@
 //! application, and the measure-propose-measure loop. Networking and process
 //! supervision are injected so the loop is unit-testable without a GPU.
 
-use crate::core::{BenchmarkSummary, LaunchProfile, RuntimeCapabilities};
+use crate::core::{LaunchProfile, RuntimeCapabilities};
 use crate::gguf::GgufSummary;
+use crate::measurement::BenchmarkSummaryV2;
 use crate::runtime::HardwareInfo;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -55,12 +56,12 @@ pub const TUNABLE_FIELDS: &[(&str, &str)] = &[
 /// Hard cap on how many profile fields one proposal may change. The system
 /// prompt states this policy; the loop enforces it in Rust too, because a
 /// model that ignores instructions must not turn one paid reply into an
-/// unattributable multi-field measurement (audit MT-03).
+/// unattributable multi-field measurement.
 pub const MAX_CHANGED_FIELDS_PER_PROPOSAL: usize = 3;
 
 /// Overall wall-clock budget for one tuning session, so no combination of
 /// slow measurements and talkative advisors can keep a session alive
-/// indefinitely (audit MT-03, MT-04).
+/// indefinitely.
 pub const TUNING_DEADLINE_SECS: u64 = 45 * 60;
 
 /// Independent loop budgets. All three bound different resources: total
@@ -85,16 +86,16 @@ impl Default for TuningBudgets {
 }
 
 /// Fields whose changes can alter generated output quality rather than only
-/// speed; the session reports them with the winner (audit MT-11 I4).
+/// speed; the session reports them with the winner.
 pub const QUALITY_AFFECTING_FIELDS: &[&str] = &["cacheTypeK", "cacheTypeV", "specType"];
 
 /// One measurement as the bench saw it: the summary, the command that ran,
 /// and the observed effective per-slot context from the running server. The
 /// observed value is what the requested-capacity objective is checked against
-/// (audit MT-11).
+///.
 #[derive(Clone, Debug)]
 pub struct TrialMeasurement {
-    pub summary: BenchmarkSummary,
+    pub summary: BenchmarkSummaryV2,
     pub command: String,
     pub effective_context: Option<u32>,
 }
@@ -107,6 +108,12 @@ pub struct FinalVerification {
     /// Relative improvement the winner had to beat (2x the baseline drift,
     /// floored at [`MIN_MATERIAL_IMPROVEMENT`]).
     pub required_improvement: f64,
+    /// True when the winner beat the re-measured baseline by the required
+    /// margin on the SAME fixed harness prompt. This is a
+    /// same-prompt re-measurement, not an independent confirmation: it
+    /// re-checks the numbers, it does not test new work. The wire name stays
+    /// `confirmed` so reports stored by older builds still load; user-facing
+    /// text must say re-measured/reproduced, never confirmed.
     pub confirmed: bool,
 }
 
@@ -130,11 +137,12 @@ pub struct TuningTrial {
     pub error: Option<String>,
     pub command: String,
     /// Observed effective per-slot context of the trial server, when the
-    /// runtime reported it (audit MT-11 I1/I3).
+    /// runtime reported it.
     #[serde(default)]
     pub effective_context: Option<u32>,
-    /// Standard deviation of the trial samples, so improvement claims can be
-    /// checked against observed variation (audit MT-11 I4).
+    /// Population standard deviation of the trial samples (divides by n),
+    /// read from the v2 summary so improvement claims can be checked
+    /// against observed variation under one convention.
     #[serde(default)]
     pub std_dev: Option<f64>,
     /// What happened to this trial. Failures stay in the table with their
@@ -190,7 +198,7 @@ pub struct Proposal {
     pub done: bool,
 }
 
-/// How much detail the cloud brief carries (audit S-20.I2).
+/// How much detail the cloud brief carries.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum BriefDisclosure {
@@ -203,7 +211,7 @@ pub enum BriefDisclosure {
     Minimal,
 }
 
-/// One line of the data-sent disclosure shown before cloud tuning (S-20.I1).
+/// One line of the data-sent disclosure shown before cloud tuning.
 /// The `fields` list names the top-level brief keys this line covers; a test
 /// keeps the list and the struct in sync so the disclosure cannot drift.
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -256,6 +264,38 @@ pub fn disclosure_sections() -> Vec<DisclosureSection> {
     ]
 }
 
+/// Replace every case-insensitive occurrence of `needle`: minimal mode
+/// promises user names removed, so the account name must go wherever it
+/// appears, not only inside the home path.
+fn replace_case_insensitive(text: &str, needle: &str, replacement: &str) -> String {
+    if needle.is_empty() {
+        return text.to_string();
+    }
+    let needle_lower: Vec<char> = needle.to_lowercase().chars().collect();
+    // Case folding can change char counts; only map positions when the
+    // lowered text stays aligned with the original.
+    if needle.to_lowercase().chars().count() != needle.chars().count() {
+        return text.replace(needle, replacement);
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let text_lower: Vec<char> = text.to_lowercase().chars().collect();
+    if chars.len() != text_lower.len() {
+        return text.replace(needle, replacement);
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut index = 0;
+    while index < chars.len() {
+        if text_lower[index..].starts_with(&needle_lower) {
+            out.push_str(replacement);
+            index += needle_lower.len();
+        } else {
+            out.push(chars[index]);
+            index += 1;
+        }
+    }
+    out
+}
+
 /// Redact one string for minimal disclosure: replace every occurrence of the
 /// user's home directory, then reduce remaining path-looking values to their
 /// file name (the name still tells the model which model/quant/companion is
@@ -268,6 +308,11 @@ fn redact_string(value: &str, home: Option<&str>) -> String {
             let normalized = home.replace('\\', "/");
             if normalized != home {
                 text = text.replace(&normalized, "<local>");
+            }
+            // The home directory basename is usually the account name:
+            // remove it in any letter case, even outside path strings.
+            if let Some(name) = home.rsplit(['\\', '/']).find(|segment| !segment.is_empty()) {
+                text = replace_case_insensitive(&text, name, "<local>");
             }
         }
     }
@@ -348,11 +393,33 @@ pub struct TuningBrief<'a> {
 impl<'a> TuningBrief<'a> {
     /// Apply the disclosure to this brief and store the wire form.
     pub fn apply_disclosure(&mut self, disclosure: BriefDisclosure, home: Option<&str>) {
-        let raw = serde_json::to_value(&*self).unwrap_or(serde_json::Value::Null);
+        let mut raw = serde_json::to_value(&*self).unwrap_or(serde_json::Value::Null);
+        // the disclosure never lists adapter identifiers, so
+        // they leave the machine in neither mode. Names, VRAM and driver
+        // versions stay: they carry the tuning signal.
+        strip_adapter_identifiers(&mut raw);
         self.wire = match disclosure {
             BriefDisclosure::Full => raw,
             BriefDisclosure::Minimal => redact_for_cloud(&raw, home),
         };
+    }
+}
+
+/// Remove machine-stable adapter identifiers from a serialised brief.
+/// Keeps the wire shape identical in both disclosure modes.
+fn strip_adapter_identifiers(wire: &mut serde_json::Value) {
+    if let Some(adapters) = wire
+        .get_mut("hardware")
+        .and_then(|hardware| hardware.get_mut("adapters"))
+        .and_then(|adapters| adapters.as_array_mut())
+    {
+        for adapter in adapters {
+            if let Some(object) = adapter.as_object_mut() {
+                object.remove("adapterId");
+                object.remove("compatibilityId");
+                object.remove("physicalId");
+            }
+        }
     }
 }
 
@@ -651,7 +718,7 @@ fn config_hash(changes: &BTreeMap<String, serde_json::Value>) -> String {
 
 /// Name the outcome of a failed measurement from its error text. Cancellation
 /// maps here when a bench reports it, but the loop still treats a set Stop
-/// flag as terminal and records no candidate row for it (audit MT-04).
+/// flag as terminal and records no candidate row for it.
 fn classify_error(error: &str) -> TrialOutcome {
     let lower = error.to_ascii_lowercase();
     if lower.contains("cancel") {
@@ -786,7 +853,7 @@ pub struct TuningReport {
     pub best_profile: LaunchProfile,
     pub trials: Vec<TuningTrial>,
     pub stopped_reason: String,
-    /// The measured objective, stated plainly (audit MT-11 I1/I2): the
+    /// The measured objective, stated plainly: the
     /// retained harness measures short-prompt decode throughput at an
     /// allocated context, not a filled full-context workload.
     #[serde(default)]
@@ -799,7 +866,7 @@ pub struct TuningReport {
     #[serde(default)]
     pub final_verification: Option<FinalVerification>,
     /// Winner changes that can alter output quality and were NOT quality
-    /// gated in this session (audit MT-11 I4).
+    /// gated in this session.
     #[serde(default)]
     pub quality_affecting_changes: Vec<String>,
     /// The profile the session started from, so any history-table row can be
@@ -829,16 +896,16 @@ pub struct TuningInputs<'a> {
     pub capabilities: &'a RuntimeCapabilities,
     pub companions: &'a [String],
     pub max_trials: u32,
-    /// The workload the retained harness measures (audit MT-11 I1): generated
+    /// The workload the retained harness measures: generated
     /// token count and repeats go into the objective label and the brief.
     pub measured_tokens: u32,
     pub measured_repeats: u16,
     pub budgets: TuningBudgets,
     /// The user's Stop signal. Checked before and after every advisor call
     /// and before every measurement; cancellation is a terminal outcome, not
-    /// a candidate failure (audit MT-04).
+    /// a candidate failure.
     pub cancel: Option<&'a std::sync::atomic::AtomicBool>,
-    /// What the cloud brief carries (audit S-20.I2).
+    /// What the cloud brief carries.
     pub disclosure: BriefDisclosure,
     /// Test seam for the home directory redacted by minimal disclosure;
     /// production reads `USERPROFILE`.
@@ -857,7 +924,7 @@ pub struct TuningInputs<'a> {
 
 /// Record one bounded rejection (no-op, duplicate, invalid, or oversized) as
 /// a failed trial so the reason stays visible to the advisor and the user
-/// without spending a measurement (audit MT-03).
+/// without spending a measurement.
 fn push_rejection(
     trials: &mut Vec<TuningTrial>,
     on_trial: &mut dyn FnMut(&TuningTrial),
@@ -903,12 +970,12 @@ fn score_outcome(
     match outcome {
         Ok(measurement) => match measurement.effective_context {
             Some(observed) if observed >= required_context => ScoredOutcome {
-                mean_tps: Some(measurement.summary.mean_tps),
-                median_tps: Some(measurement.summary.median_tps),
+                mean_tps: Some(measurement.summary.decode_tps.mean),
+                median_tps: Some(measurement.summary.decode_tps.median),
                 error: None,
                 command: measurement.command.clone(),
                 effective_context: Some(observed),
-                std_dev: Some(sample_std_dev(&measurement.summary.samples)),
+                std_dev: Some(measurement.summary.decode_tps.standard_deviation),
                 outcome: TrialOutcome::Ok,
             },
             Some(observed) => ScoredOutcome {
@@ -973,28 +1040,13 @@ fn build_trial(
     }
 }
 
-/// The measured objective, stated plainly (audit MT-11 I1/I2): the retained
+/// The measured objective, stated plainly: the retained
 /// harness scores short-prompt decode throughput at the allocated context.
 fn objective_label(inputs: &TuningInputs) -> String {
     format!(
         "Short-prompt decode throughput: {} repeats × {} generated tokens on the fixed harness prompt (prompt occupancy is a few dozen tokens) at an allocated context of {} tokens; output quality and latency are not measured",
         inputs.measured_repeats, inputs.measured_tokens, inputs.target_context
     )
-}
-
-/// Sample standard deviation of validated positive throughput; zero for fewer than two samples.
-fn sample_std_dev(samples: &[f64]) -> f64 {
-    if samples.len() < 2 {
-        return 0.0;
-    }
-    let scale = samples.iter().copied().fold(0.0, f64::max);
-    let mean = samples.iter().map(|sample| sample / scale).sum::<f64>() / samples.len() as f64;
-    let variance = samples
-        .iter()
-        .map(|sample| (sample / scale - mean).powi(2))
-        .sum::<f64>()
-        / (samples.len() as f64 - 1.0);
-    variance.sqrt() * scale
 }
 
 /// Identity of what a session measured, fixed for the whole history table:
@@ -1174,14 +1226,14 @@ pub fn run_tuning<B: Bench, A: Advisor>(
     // Every effective configuration seen so far, canonicalized AFTER coercion
     // and companion resolution, starting with the baseline. Comparing raw
     // proposal maps misses nonempty maps that normalize to an earlier
-    // configuration (audit MT-03).
+    // configuration.
     let mut seen_effective: Vec<BTreeMap<String, serde_json::Value>> = vec![BTreeMap::new()];
     let mut stopped_reason = "Trial budget exhausted".to_string();
     let mut consecutive_rejections = 0_u32;
     let mut consecutive_advisor_failures = 0_u32;
     let mut advisor_calls = 0_u32;
     // Measured trials only: rejection rows are recorded in the history but
-    // must not silently spend the measurement budget (audit MT-03).
+    // must not silently spend the measurement budget.
     let mut measured_trials = 1_u32;
     // Local search first: the short grid, then one-axis nudges from the best
     // so far. The cloud advisor never proposes before this table exists.
@@ -1415,7 +1467,7 @@ pub fn run_tuning<B: Bench, A: Advisor>(
             break;
         }
         // The advertised three-fields-per-trial policy is a hard limit here
-        // (audit MT-03 I4). `draftModel` is tuner-owned noise, not a field the
+        //. `draftModel` is tuner-owned noise, not a field the
         // model actually chose.
         let changed_fields = proposal
             .changes
@@ -1474,7 +1526,7 @@ pub fn run_tuning<B: Bench, A: Advisor>(
         };
         // A proposal that leaves the effective configuration unchanged is a
         // bounded rejection with its reason in the history, never an
-        // unbounded continuation (audit MT-03).
+        // unbounded continuation.
         if applied.is_empty() {
             consecutive_rejections += 1;
             push_rejection(
@@ -1524,7 +1576,7 @@ pub fn run_tuning<B: Bench, A: Advisor>(
         let outcome = bench.measure(&candidate);
         if is_cancelled(inputs) {
             // Cancellation during a measurement is terminal and is never
-            // recorded as a candidate failure or success (audit MT-04).
+            // recorded as a candidate failure or success.
             stopped_reason = "Cancelled by the user during a measurement".into();
             break;
         }
@@ -1548,7 +1600,7 @@ pub fn run_tuning<B: Bench, A: Advisor>(
     }
 
     let mut quality_affecting_changes: Vec<String> = Vec::new();
-    // Final verification (audit MT-11 I4): remeasure the baseline and the
+    // Final verification: remeasure the baseline and the
     // finalist, and require a material improvement beyond the observed
     // baseline drift. A winner that cannot clear it is not reported.
     let mut final_verification: Option<FinalVerification> = None;
@@ -1582,7 +1634,7 @@ pub fn run_tuning<B: Bench, A: Advisor>(
                 bench.measure(&winner_profile)
             };
             // Both re-measurements are history-table rows, even when they
-            // fail: the table shows the confirmation attempt, not just its
+            // fail: the table shows the verification attempt, not just its
             // verdict.
             record_confirm(
                 &mut trials,
@@ -1605,8 +1657,8 @@ pub fn run_tuning<B: Bench, A: Advisor>(
             );
             match (remeasure_baseline, remeasure_winner) {
                 (Ok(baseline_again), Ok(winner_again)) => {
-                    let b = baseline_again.summary.mean_tps;
-                    let w = winner_again.summary.mean_tps;
+                    let b = baseline_again.summary.decode_tps.mean;
+                    let w = winner_again.summary.decode_tps.mean;
                     let drift = if b.abs() > f64::EPSILON {
                         (b - baseline_tps.unwrap_or(b)).abs() / b.abs()
                     } else {
@@ -1629,7 +1681,7 @@ pub fn run_tuning<B: Bench, A: Advisor>(
                         confirmed_winner_tps = Some((index, w, winner_profile.clone()));
                     } else if cancelled_during_verification {
                         stopped_reason = format!(
-                            "{stopped_reason}; cancellation was requested during final verification, so the winner stays unconfirmed"
+                            "{stopped_reason}; cancellation was requested during final verification, so the check records no verdict"
                         );
                     } else {
                         stopped_reason = format!(
@@ -1677,41 +1729,18 @@ pub fn run_tuning<B: Bench, A: Advisor>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::summarize_benchmark;
+    use crate::measurement::summarize_fixture_tps;
 
     #[test]
-    fn trial_std_dev_keeps_constant_extreme_samples_at_zero() {
-        // Finite equal samples must not acquire noise from an overflowing mean.
-        for value in [f64::MAX, f64::from_bits(1)] {
-            assert_eq!(sample_std_dev(&[value, value, value]), 0.0);
-        }
-        assert_eq!(sample_std_dev(&[]), 0.0);
-        assert_eq!(sample_std_dev(&[f64::MAX]), 0.0);
-    }
-
-    #[test]
-    fn trial_std_dev_retains_sample_variance_across_scales() {
-        // Squaring before normalization overflows large spreads and erases
-        // tiny ones. The fixed vector also distinguishes sample from population SD.
-        for scale in [1.0, 1e200, 1e-200] {
-            let normalized = sample_std_dev(&[scale, 3.0 * scale]) / scale;
-            assert!(
-                (normalized - std::f64::consts::SQRT_2).abs() <= 8.0 * f64::EPSILON,
-                "scale={scale}, normalized sample deviation={normalized}"
-            );
-        }
-    }
-
-    #[test]
-    fn trial_std_dev_near_equal_samples_has_bounded_absolute_roundoff() {
-        // Mean rounding dominates relative error at a one-ULP separation.
-        // Bound absolute error for this pair without claiming relative precision.
-        let adjacent = f64::from_bits(1.0_f64.to_bits() - 1);
-        let gap = 1.0 - adjacent;
-        let reference = gap / std::f64::consts::SQRT_2;
-        let actual = sample_std_dev(&[1.0, adjacent]);
-        assert!(actual > 0.0);
-        assert!((actual - reference).abs() <= gap / 2.0);
+    fn tuner_spread_shares_the_population_deviation_vector() {
+        // The tuner reads its spread from the v2 summary, so the shared
+        // [130, 131] vector must spread 0.5 here too: one convention.
+        let summary = summarize_fixture_tps(&[130.0, 131.0]);
+        let spread = summary.decode_tps.standard_deviation;
+        assert!(
+            (spread - 0.5).abs() <= 8.0 * f64::EPSILON,
+            "tuner spread of [130, 131] must be 0.5, got {spread}"
+        );
     }
 
     #[test]
@@ -1721,17 +1750,17 @@ mod tests {
             vec![f64::MAX, f64::MAX],
             vec![f64::from_bits(1), f64::from_bits(1)],
         ] {
-            let summary = summarize_benchmark(samples, 256, 2).unwrap();
+            let summary = crate::measurement::summarize_fixture_tps(&samples);
             let trial = TuningTrial {
                 index: 0,
                 changes: BTreeMap::new(),
                 rationale: "Numeric boundary fixture".into(),
-                mean_tps: Some(summary.mean_tps),
-                median_tps: Some(summary.median_tps),
+                mean_tps: Some(summary.decode_tps.mean),
+                median_tps: Some(summary.decode_tps.median),
                 error: None,
                 command: String::new(),
                 effective_context: Some(2048),
-                std_dev: Some(sample_std_dev(&summary.samples)),
+                std_dev: Some(summary.decode_tps.standard_deviation),
                 outcome: TrialOutcome::Ok,
                 chosen: TrialChoice::Baseline,
                 timestamp_ms: 0,
@@ -1993,7 +2022,7 @@ mod tests {
                 }
                 + if profile.draft_max == 5 { 15.0 } else { 0.0 };
             Ok(TrialMeasurement {
-                summary: summarize_benchmark(vec![tps, tps + 1.0], 256, 2).unwrap(),
+                summary: summarize_fixture_tps(&[tps, tps + 1.0]),
                 command: format!(
                     "cmd draft={} fa={}",
                     profile.draft_max, profile.flash_attention
@@ -2195,6 +2224,75 @@ mod tests {
     }
 
     #[test]
+    fn wire_brief_omits_adapter_identifiers_in_both_modes() {
+        // the disclosure lists hardware names, VRAM and driver
+        // versions, never adapter IDs. Before the fix the wire payload sent
+        // adapterId, compatibilityId and physicalId in both modes.
+        use crate::evidence::{Evidence, EvidenceLevel, EvidenceSource, EvidenceSourceKind};
+        let src = || EvidenceSource {
+            kind: EvidenceSourceKind::WindowsApi,
+            detail: "test".into(),
+        };
+        let id = |value: &str| {
+            Evidence::known(
+                value.to_string(),
+                EvidenceLevel::Observed,
+                src(),
+                1,
+                Vec::new(),
+            )
+            .unwrap()
+        };
+        let num = |value: u64| {
+            Evidence::known(value, EvidenceLevel::Observed, src(), 1, Vec::new()).unwrap()
+        };
+        let mut hw = hardware();
+        hw.adapters.push(crate::runtime::GpuAdapterInfo {
+            adapter_id: "luid:aaaa".into(),
+            compatibility_id: "compat:bbbb".into(),
+            name: "Test GPU".into(),
+            vendor: "nvidia".into(),
+            driver: id("1"),
+            backend: id("cuda"),
+            dedicated_bytes: num(8 << 30),
+            shared_bytes: num(0),
+            budget_bytes: num(8 << 30),
+            current_usage_bytes: num(0),
+            available_budget_bytes: num(8 << 30),
+            available_for_reservation_bytes: num(8 << 30),
+            capacity_observations: Vec::new(),
+            physical_id: Some(id("GPU-uuid-cccc")),
+        });
+        let caps = caps();
+        for disclosure in [BriefDisclosure::Full, BriefDisclosure::Minimal] {
+            let mut brief = TuningBrief {
+                objective: "o",
+                target_context: 8192,
+                hardware: &hw,
+                system_ram_bytes: None,
+                gguf: None,
+                runtime_build: &caps.build,
+                spec_types: &caps.spec_types,
+                companions: &[],
+                tunable_fields: tunable_fields(),
+                baseline_profile: serde_json::json!({}),
+                trials: &[],
+                remaining_trials: 4,
+                wire: serde_json::Value::Null,
+            };
+            brief.apply_disclosure(disclosure, None);
+            let adapter = &brief.wire["hardware"]["adapters"][0];
+            assert!(
+                adapter.get("adapterId").is_none()
+                    && adapter.get("compatibilityId").is_none()
+                    && adapter.get("physicalId").is_none(),
+                "wire still carries adapter identifiers in {disclosure:?}: {adapter}"
+            );
+            assert_eq!(adapter["name"], "Test GPU");
+        }
+    }
+
+    #[test]
     fn brief_serialises_with_camel_case_and_every_tunable_field() {
         let caps = caps();
         let hw = hardware();
@@ -2269,12 +2367,12 @@ mod tests {
     }
 
     #[test]
-    fn mt03_repeated_effective_noops_terminate_within_the_advisor_call_budget() {
+    fn repeated_effective_noops_terminate_within_the_advisor_call_budget() {
         // The audited defect: a valid proposal that changes nothing reset the
         // rejection counter and looped forever. A deterministic advisor that
         // always proposes the existing value must now terminate inside the
         // independent advisor-call budget, with every no-op preserved as a
-        // bounded rejection (audit MT-03 V1).
+        // bounded rejection.
         let base = base_profile(); // threads defaults to -1 in LaunchProfile::default()
         let hw = hardware();
         let cap = caps();
@@ -2324,10 +2422,10 @@ mod tests {
     }
 
     #[test]
-    fn mt03_noop_rejections_are_also_bounded_by_the_consecutive_rejection_limit() {
+    fn noop_rejections_are_also_bounded_by_the_consecutive_rejection_limit() {
         // With a generous call budget the terminal outcome must come from the
         // rejection counter itself: repeated no-ops end the session long
-        // before the advisor-call budget (audit MT-03 I3).
+        // before the advisor-call budget.
         let base = base_profile();
         let hw = hardware();
         let cap = caps();
@@ -2358,10 +2456,10 @@ mod tests {
     }
 
     #[test]
-    fn mt03_coercions_echoes_and_oversize_proposals_are_bounded_rejections() {
+    fn coercions_echoes_and_oversize_proposals_are_bounded_rejections() {
         // Numeric-string coercion to the existing value, a bare draftModel
         // echo, and a four-field change are all rejected with a recorded
-        // reason; the fourth consecutive rejection ends the session (MT-03 V2).
+        // reason; the fourth consecutive rejection ends the session.
         let base = base_profile();
         let hw = hardware();
         let cap = caps();
@@ -2397,10 +2495,10 @@ mod tests {
     }
 
     #[test]
-    fn mt03_a_reordered_duplicate_of_a_measured_configuration_is_rejected() {
+    fn a_reordered_duplicate_of_a_measured_configuration_is_rejected() {
         // Comparing canonicalized effective changes (not raw maps) catches a
         // nonempty proposal that normalizes to an already-measured
-        // configuration (audit MT-03 I2).
+        // configuration.
         let base = base_profile();
         let hw = hardware();
         let cap = caps();
@@ -2433,9 +2531,9 @@ mod tests {
     }
 
     #[test]
-    fn mt03_cancellation_during_a_noop_sequence_stops_before_the_next_advisor_call() {
+    fn cancellation_during_a_noop_sequence_stops_before_the_next_advisor_call() {
         // Combined with the lifecycle cancellation: once Stop arrives, a
-        // talkative no-op advisor never gets another paid call (MT-03 V3).
+        // talkative no-op advisor never gets another paid call.
         let base = base_profile();
         let hw = hardware();
         let cap = caps();
@@ -2459,7 +2557,7 @@ mod tests {
     }
 
     #[test]
-    fn mt03_the_overall_deadline_stops_the_loop_with_the_documented_reason() {
+    fn the_overall_deadline_stops_the_loop_with_the_documented_reason() {
         let base = base_profile();
         let hw = hardware();
         let cap = caps();
@@ -2504,7 +2602,7 @@ mod tests {
                 return Err("server exited with code 1".into());
             }
             Ok(TrialMeasurement {
-                summary: summarize_benchmark(vec![100.0], 256, 1).unwrap(),
+                summary: summarize_fixture_tps(&[100.0]),
                 command: "cmd".into(),
                 effective_context: Some(4096),
             })
@@ -2530,7 +2628,7 @@ mod tests {
                 self.flag.store(true, std::sync::atomic::Ordering::Relaxed);
             }
             Ok(TrialMeasurement {
-                summary: summarize_benchmark(vec![tps, tps + 1.0], 256, 2).unwrap(),
+                summary: summarize_fixture_tps(&[tps, tps + 1.0]),
                 command: "cmd".into(),
                 effective_context: Some(4096),
             })
@@ -2549,7 +2647,7 @@ mod tests {
             self.calls.push(profile.clone());
             let (tps, ctx) = self.script[index];
             Ok(TrialMeasurement {
-                summary: summarize_benchmark(vec![tps, tps + 1.0], 256, 2).unwrap(),
+                summary: summarize_fixture_tps(&[tps, tps + 1.0]),
                 command: "cmd".into(),
                 effective_context: ctx,
             })
@@ -2557,7 +2655,7 @@ mod tests {
     }
 
     #[test]
-    fn mt11_reduced_or_unobserved_effective_context_cannot_win() {
+    fn reduced_or_unobserved_effective_context_cannot_win() {
         // V1: a candidate whose parallelism divides the context below target
         // (4096/4 = 1024) must not silently win, even at a much higher mean.
         let base = base_profile();
@@ -2614,7 +2712,7 @@ mod tests {
     }
 
     #[test]
-    fn mt11_winner_needs_material_improvement_beyond_observed_variation() {
+    fn winner_needs_material_improvement_beyond_observed_variation() {
         // V3: a winner that only edges past the baseline inside the observed
         // drift is not reported; the final verification records why.
         let base = base_profile();
@@ -2644,7 +2742,7 @@ mod tests {
         assert!(!verification.confirmed);
         assert_eq!(
             report.best_index, None,
-            "an unconfirmed winner is not reported"
+            "an unverified winner is not reported"
         );
         assert!(
             report.stopped_reason.contains("material-improvement"),
@@ -2652,7 +2750,7 @@ mod tests {
             report.stopped_reason
         );
 
-        // A large, clear improvement is confirmed by the re-measurement.
+        // A large, clear improvement is reproduced by the re-measurement.
         let mut bench = ScriptedBench {
             calls: vec![],
             script: vec![
@@ -2677,7 +2775,7 @@ mod tests {
     }
 
     #[test]
-    fn r03_a_cancel_during_final_verification_withholds_the_winner() {
+    fn a_cancel_during_final_verification_withholds_the_winner() {
         // R03 (follow-up review db548c8): the winner check happened BEFORE
         // the finalist measurement; a Stop arriving DURING that measurement
         // (whose response completes successfully) must not confirm a winner.
@@ -2715,7 +2813,7 @@ mod tests {
     }
 
     #[test]
-    fn mt11_objective_label_and_quality_affecting_changes_are_reported() {
+    fn objective_label_and_quality_affecting_changes_are_reported() {
         // I1/I2/I4: the report states the retained short-prompt objective
         // and the per-slot requirement.
         let base = base_profile();
@@ -2757,9 +2855,9 @@ mod tests {
             serde_json::json!(["cacheTypeK"]),
             "Retiring the quality suite must not hide unmeasured tuning changes"
         );
-        // Sample standard deviation of [130, 131] is sqrt(1/2); compare
-        // against the computed value instead of a magic literal.
-        let expected = (0.5_f64).sqrt();
+        // Population standard deviation of [130, 131] is 0.5: the v2 contract
+        // divides by n, where the legacy builder divided by n-1.
+        let expected = 0.5;
         let std_dev = report.trials[1]
             .std_dev
             .expect("a scored trial records its spread");
@@ -2770,9 +2868,9 @@ mod tests {
     }
 
     #[test]
-    fn mt04_cancellation_during_a_measurement_is_terminal_not_a_candidate_failure() {
+    fn cancellation_during_a_measurement_is_terminal_not_a_candidate_failure() {
         // A cancelled candidate must never appear as a failed configuration,
-        // and the loop must stop proposing instead of continuing (MT-04 V1).
+        // and the loop must stop proposing instead of continuing.
         let base = base_profile();
         let hw = hardware();
         let cap = caps();
@@ -2803,10 +2901,10 @@ mod tests {
         );
     }
     #[test]
-    fn s20_disclosure_sections_cover_every_brief_field() {
+    fn disclosure_sections_cover_every_brief_field() {
         // Build one brief exactly like run_tuning does, then assert the
         // disclosure list and the wire shape name the same top-level fields:
-        // an added field cannot ship without a disclosure line (S-20.I1).
+        // an added field cannot ship without a disclosure line.
         let base = base_profile();
         let base_json = serde_json::to_value(&base).unwrap();
         let trials: Vec<TuningTrial> = Vec::new();
@@ -2847,7 +2945,25 @@ mod tests {
     }
 
     #[test]
-    fn s20_minimal_disclosure_redacts_paths_and_user_identifiers() {
+    fn minimal_disclosure_removes_a_bare_account_name_outside_paths() {
+        // The UI promises user names removed, but redaction only replaced
+        // the home path: a bare account name in prose, in any letter case,
+        // must go too.
+        let home = "C:\\Users\\Canary-User";
+        let value = serde_json::json!({
+            "rationale": "CANARY-USER tuned this profile after canary-user login failed"
+        });
+
+        let redacted = redact_for_cloud(&value, Some(home));
+        let text = serde_json::to_string(&redacted).unwrap();
+        assert!(
+            !text.to_lowercase().contains("canary-user"),
+            "bare account name survived: {text}"
+        );
+    }
+
+    #[test]
+    fn minimal_disclosure_redacts_paths_and_user_identifiers() {
         let canary_home = "C:\\Users\\canary-user";
         let canary_model = "C:\\Users\\canary-user\\models\\alpha-Q4_K_M.gguf";
         let base_json = serde_json::json!({
@@ -2942,7 +3058,7 @@ mod tests {
     }
 
     #[test]
-    fn s20_run_tuning_sends_the_minimal_wire_when_asked() {
+    fn run_tuning_sends_the_minimal_wire_when_asked() {
         let mut base = base_profile();
         base.model = "C:\\Users\\canary-user\\models\\alpha-Q4_K_M.gguf".into();
         let inputs = TuningInputs {
@@ -3021,7 +3137,7 @@ mod tests {
                     0.0
                 };
             Ok(TrialMeasurement {
-                summary: summarize_benchmark(vec![tps, tps + 1.0], 256, 2).unwrap(),
+                summary: summarize_fixture_tps(&[tps, tps + 1.0]),
                 command: format!("cmd batch={} fa={}", profile.batch, profile.flash_attention),
                 effective_context: Some(4096),
             })

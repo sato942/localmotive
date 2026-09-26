@@ -24,6 +24,8 @@ pub struct MetricStats {
     pub p95: f64,
     pub min: f64,
     pub max: f64,
+    /// Population standard deviation (divides by n). The tuner spread
+    /// shares this convention; the [130, 131] vector pins it at 0.5.
     pub standard_deviation: f64,
 }
 
@@ -96,7 +98,7 @@ fn validate_observation(observation: &BenchmarkObservation) -> Result<(), String
 /// Bound one acquisition-time failure string so a rich launch error (which
 /// can carry a runtime log tail) can never make the final manifest fail
 /// validation and discard the whole run, including earlier successes
-/// (audit MT-12). The cut is Unicode-safe and the truncation is explicit.
+/// The cut is Unicode-safe and the truncation is explicit.
 pub const MAX_OBSERVATION_ERROR_BYTES: usize = 4_096;
 
 pub fn bound_observation_error(error: &str) -> String {
@@ -113,10 +115,33 @@ pub fn bound_observation_error(error: &str) -> String {
     format!("{}{MARKER}", &error[..cut])
 }
 
-/// Test-only access to the statistics builder for the S-19 numeric campaign.
+/// Test-only access to the statistics builder for the numeric campaign.
 #[cfg(test)]
 pub fn metric_stats_for_test(values: impl Iterator<Item = f64>) -> Option<MetricStats> {
     metric_stats(values)
+}
+
+/// Test-only v2 summary over plain decode-throughput values: one succeeded
+/// observation per value, summarized through the same contract production
+/// trials use. Tuning fixtures build on this instead of the deleted legacy
+/// statistics builder.
+#[cfg(test)]
+pub(crate) fn summarize_fixture_tps(tps_values: &[f64]) -> BenchmarkSummaryV2 {
+    let observations = tps_values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| crate::evidence::BenchmarkObservation {
+            trial: index as u16 + 1,
+            started_at_ms: 42 + index as u64,
+            duration_ms: 100.0,
+            prompt_tokens: 32,
+            generated_tokens: 16,
+            decode_tps: Some(*value),
+            outcome: crate::evidence::AttemptOutcome::Succeeded,
+            ..Default::default()
+        })
+        .collect::<Vec<_>>();
+    summarize_observations(&observations).unwrap()
 }
 
 fn metric_stats(values: impl Iterator<Item = f64>) -> Option<MetricStats> {
@@ -221,7 +246,7 @@ pub struct CompletionTiming {
     /// Prompt tokens restored from the runtime prompt cache (`cache_n`,
     /// b10816 semantics). The requested prompt is complete when
     /// `prompt_tokens + cached_prompt_tokens` equals the requested size
-    /// (audit MT-01).
+    ///.
     pub cached_prompt_tokens: u32,
     pub generated_tokens: u32,
     pub prefill_tps: f64,
@@ -291,13 +316,24 @@ pub fn parse_completion_timing(body: &str) -> Result<CompletionTiming, String> {
     };
     let prompt_ms = positive("prompt_ms")?;
     let predicted_per_token_ms = positive("predicted_per_token_ms")?;
-    let first_token_ms = timings
-        .get("first_token_ms")
-        .and_then(serde_json::Value::as_f64)
-        .filter(|value| value.is_finite() && *value > 0.0);
+    let first_token_ms = match timings.get("first_token_ms") {
+        // Only an absent or null field means the runtime omitted the metric;
+        // a present field must carry a usable positive finite value.
+        None | Some(serde_json::Value::Null) => None,
+        Some(value) => Some(
+            value
+                .as_f64()
+                .filter(|sample| sample.is_finite() && *sample > 0.0)
+                .ok_or("llama-server timing first_token_ms must be a positive finite number")?,
+        ),
+    };
     // `cache_n` is absent on runtimes without prompt caching: treat the
     // whole prompt as processed in that case, and reject a present value
     // that is not a token count.
+    let derived_ttft_ms = prompt_ms + predicted_per_token_ms;
+    if !derived_ttft_ms.is_finite() {
+        return Err("llama-server derived TTFT overflowed the finite range".into());
+    }
     let cached_prompt_tokens = match timings.get("cache_n") {
         None | Some(serde_json::Value::Null) => 0,
         Some(value) => value
@@ -312,7 +348,7 @@ pub fn parse_completion_timing(body: &str) -> Result<CompletionTiming, String> {
         prefill_tps: positive("prompt_per_second")?,
         decode_tps: positive("predicted_per_second")?,
         first_token_ms,
-        derived_ttft_ms: prompt_ms + predicted_per_token_ms,
+        derived_ttft_ms,
         peak_process_rss_bytes: unknown_process_peak_rss_bytes(),
     })
 }
@@ -432,7 +468,7 @@ where
                 // The declared prompt count is the accounted total: warm
                 // trials restore part of the prompt from the cache, and the
                 // evidence contract requires the declared count, not just the
-                // newly evaluated slice (audit MT-01 / MT-13).
+                // newly evaluated slice.
                 prompt_tokens: timing
                     .prompt_tokens
                     .saturating_add(timing.cached_prompt_tokens),
@@ -449,7 +485,7 @@ where
             Err(error) => {
                 let outcome = failed_outcome(&error);
                 // Bounded at acquisition: outcome/category first, then the
-                // visible truncation marker (audit MT-12).
+                // visible truncation marker.
                 BenchmarkObservation {
                     trial,
                     started_at_ms,
@@ -503,7 +539,7 @@ fn post_json(
             "Benchmark request exceeds the {MAX_HTTP_REQUEST_BYTES}-byte limit"
         ));
     }
-    // The centralized local client (audit MT-06) owns framing (including
+    // The centralized local client owns framing (including
     // chunked responses), size bounds, the whole-operation deadline and the
     // profile's TLS/API-key configuration.
     let value: serde_json::Value = serde_json::from_str(body).map_err(|error| error.to_string())?;
@@ -587,7 +623,7 @@ fn completion_request_with_prompt_tokens_inner(
     // b10816 reports newly evaluated prompt tokens separately from tokens
     // restored from the prompt cache; the requested prompt is fully accounted
     // for when both counts sum to the requested size. This keeps cached warm
-    // trials valid without accepting a genuinely wrong workload (audit MT-01).
+    // trials valid without accepting a genuinely wrong workload.
     let accounted_prompt_tokens = timing
         .prompt_tokens
         .checked_add(timing.cached_prompt_tokens)
@@ -705,6 +741,7 @@ pub fn validate_replay_compatibility(
     logical_model_id: &str,
     current_raw_args: &[String],
     current_compatibility_key: &str,
+    current_unknown_identities: &[String],
 ) -> Result<(), String> {
     let model = manifest
         .model
@@ -712,6 +749,24 @@ pub fn validate_replay_compatibility(
         .ok_or("Replay manifest does not contain a model identity")?;
     if model.logical_id != logical_model_id {
         return Err("Replay model identity does not match the running server".into());
+    }
+    // the compatibility key embeds "unknown" for unobserved drivers,
+    // so two machines with unknown drivers produce equal keys. Refuse replay
+    // while either side has unobserved execution identity instead of
+    // comparing the unknown-bearing keys; re-measure on the current machine.
+    let mut unknowns: Vec<&str> = manifest
+        .execution_snapshot_unknowns
+        .iter()
+        .map(String::as_str)
+        .collect();
+    unknowns.extend(current_unknown_identities.iter().map(String::as_str));
+    unknowns.sort_unstable();
+    unknowns.dedup();
+    if !unknowns.is_empty() {
+        return Err(format!(
+            "Replay refused: unobserved execution identity ({}); re-measure on this machine instead",
+            unknowns.join(", ")
+        ));
     }
     let launch = manifest
         .launch
@@ -725,7 +780,7 @@ pub fn validate_replay_compatibility(
         .as_deref()
         .ok_or("Replay manifest does not contain a compatibility identity")?;
     // Compatibility keys carry the execution-snapshot schema prefix; legacy
-    // keys are rejected explicitly (audit MT-07 I4).
+    // keys are rejected explicitly.
     crate::calibration::validate_compatibility_key(recorded_compatibility_key)
         .map_err(|error| format!("Recorded compatibilityKey: {error}"))?;
     crate::calibration::validate_compatibility_key(current_compatibility_key)
@@ -841,6 +896,24 @@ mod tests {
     }
 
     #[test]
+    fn metric_summary_uses_population_standard_deviation() {
+        // The product convention is population SD (divides by n): [130, 131]
+        // spreads 0.5, not sqrt(0.5). Both the v2 summary and the tuner
+        // spread share this vector, so a future statistics change cannot
+        // silently swap the meaning.
+        let stats = metric_stats([130.0, 131.0].into_iter()).unwrap();
+        assert!(
+            (stats.standard_deviation - 0.5).abs() <= 4.0 * f64::EPSILON,
+            "population spread of [130, 131] must be 0.5, got {}",
+            stats.standard_deviation
+        );
+        assert!(
+            (stats.standard_deviation - std::f64::consts::FRAC_1_SQRT_2).abs() > 0.1,
+            "spread must not be the sample convention sqrt(0.5)"
+        );
+    }
+
+    #[test]
     fn metric_summary_preserves_subnormal_medians() {
         // Halving both smallest subnormals before adding rounds each to zero.
         let tiny = f64::from_bits(1);
@@ -918,6 +991,32 @@ mod tests {
         assert_eq!(timing.decode_tps, 80.0);
         assert_eq!(timing.derived_ttft_ms, 92.5);
         assert!(timing.first_token_ms.is_none());
+    }
+
+    #[test]
+    fn completion_timing_rejects_a_present_but_invalid_first_token() {
+        // A runtime that sends the field must send a usable value: only an
+        // absent or null field means "the runtime omitted this metric".
+        for body in [
+            r#"{"timings":{"prompt_n":32,"prompt_ms":80.0,"prompt_per_second":400.0,"predicted_n":16,"predicted_ms":200.0,"predicted_per_second":80.0,"predicted_per_token_ms":12.5,"first_token_ms":-5.0}}"#,
+            r#"{"timings":{"prompt_n":32,"prompt_ms":80.0,"prompt_per_second":400.0,"predicted_n":16,"predicted_ms":200.0,"predicted_per_second":80.0,"predicted_per_token_ms":12.5,"first_token_ms":0.0}}"#,
+            r#"{"timings":{"prompt_n":32,"prompt_ms":80.0,"prompt_per_second":400.0,"predicted_n":16,"predicted_ms":200.0,"predicted_per_second":80.0,"predicted_per_token_ms":12.5,"first_token_ms":"fast"}}"#,
+        ] {
+            let error = parse_completion_timing(body).unwrap_err();
+            assert!(
+                error.contains("first_token_ms"),
+                "unexpected error: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn completion_timing_rejects_an_overflowing_derived_ttft() {
+        let error = parse_completion_timing(
+            r#"{"timings":{"prompt_n":32,"prompt_ms":1.0e308,"prompt_per_second":400.0,"predicted_n":16,"predicted_ms":200.0,"predicted_per_second":80.0,"predicted_per_token_ms":1.0e308}}"#,
+        )
+        .unwrap_err();
+        assert!(error.contains("derived"), "unexpected error: {error}");
     }
 
     #[test]
@@ -1069,7 +1168,7 @@ mod tests {
     }
 
     #[test]
-    fn r03_a_cancel_during_the_only_warmup_discards_the_accepted_success() {
+    fn a_cancel_during_the_only_warmup_discards_the_accepted_success() {
         // R03 warmup sibling: a Stop that arrives while the last warmup is
         // completing must not record a Succeeded warmup or a clean run.
         let workload = Workload {
@@ -1102,7 +1201,7 @@ mod tests {
     }
 
     #[test]
-    fn r03_a_cancel_during_the_final_trial_discards_the_accepted_success() {
+    fn a_cancel_during_the_final_trial_discards_the_accepted_success() {
         // R03 (follow-up review db548c8): the LAST trial has no next
         // iteration to observe cancellation. The request returns
         // successfully after the Stop flag was set; the accepted response
@@ -1557,7 +1656,7 @@ mod tests {
                 ..LaunchFact::default()
             }),
             // The workload declares exactly what the observation measured
-            // (audit MT-13): one 32-token prompt generating 16 tokens.
+            //: one 32-token prompt generating 16 tokens.
             workload: crate::evidence::Workload {
                 prompt_tokens: 32,
                 generation_tokens: 16,
@@ -1580,6 +1679,7 @@ mod tests {
             "fixture",
             &raw_args,
             loaded.compatibility_key.as_deref().unwrap(),
+            &[],
         )
         .unwrap();
         assert_eq!(fs::read(&path).unwrap(), before);
@@ -1613,28 +1713,33 @@ mod tests {
                 ..BenchmarkManifest::default()
             };
             let before = serde_json::to_vec(&manifest).unwrap();
-            let result = validate_replay_compatibility(&manifest, "model-a", &raw, &key);
+            let result = validate_replay_compatibility(&manifest, "model-a", &raw, &key, &[]);
             assert!(
                 result.is_ok(),
                 "same current arguments rejected: {result:?}"
             );
             assert_eq!(serde_json::to_vec(&manifest).unwrap(), before);
             assert!(
-                validate_replay_compatibility(&manifest, "other-model", &raw, &key)
+                validate_replay_compatibility(&manifest, "other-model", &raw, &key, &[])
                     .unwrap_err()
                     .contains("model identity")
             );
             for invalid in ["legacy".to_string(), format!("v2:{}", "b".repeat(64))] {
                 assert!(
-                    validate_replay_compatibility(&manifest, "model-a", &raw, &invalid).is_err()
+                    validate_replay_compatibility(&manifest, "model-a", &raw, &invalid, &[])
+                        .is_err()
                 );
                 let mut changed = manifest.clone();
                 changed.compatibility_key = Some(invalid);
-                assert!(validate_replay_compatibility(&changed, "model-a", &raw, &key).is_err());
+                assert!(
+                    validate_replay_compatibility(&changed, "model-a", &raw, &key, &[]).is_err()
+                );
             }
             let mut missing_key = manifest.clone();
             missing_key.compatibility_key = None;
-            assert!(validate_replay_compatibility(&missing_key, "model-a", &raw, &key).is_err());
+            assert!(
+                validate_replay_compatibility(&missing_key, "model-a", &raw, &key, &[]).is_err()
+            );
         }
     }
 
@@ -1661,10 +1766,67 @@ mod tests {
             "model-a",
             &["--ctx-size".into(), "8192".into()],
             &format!("v2:{}", "a".repeat(64)),
+            &[],
         )
         .unwrap_err();
 
         assert!(error.contains("launch arguments"));
+    }
+
+    #[test]
+    fn replay_refuses_unknown_execution_identity() {
+        // the compatibility key embeds "unknown" for
+        // unobserved drivers, so two machines with unknown drivers produce
+        // equal keys. Replay must refuse while either side has unobserved
+        // identity instead of comparing the unknown-bearing keys.
+        let key = format!("v2:{}", "a".repeat(64));
+        let manifest = BenchmarkManifest {
+            compatibility_key: Some(key.clone()),
+            execution_snapshot_unknowns: vec!["driverVersion:unobserved-adapter".into()],
+            model: Some(ModelFact {
+                logical_id: "model-a".into(),
+                ..ModelFact::default()
+            }),
+            launch: Some(LaunchFact {
+                command_args: vec!["--ctx-size".into(), "4096".into()],
+                effective_context: observed_context(4_096),
+                batch: 512,
+                ubatch: 128,
+                ..LaunchFact::default()
+            }),
+            ..BenchmarkManifest::default()
+        };
+
+        let error = validate_replay_compatibility(
+            &manifest,
+            "model-a",
+            &["--ctx-size".into(), "4096".into()],
+            &key,
+            &[],
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("unobserved execution identity"),
+            "the recorded unknowns refuse replay, got: {error}"
+        );
+        assert!(error.contains("driverVersion:unobserved-adapter"));
+
+        let known_manifest = BenchmarkManifest {
+            execution_snapshot_unknowns: Vec::new(),
+            ..manifest.clone()
+        };
+        let error = validate_replay_compatibility(
+            &known_manifest,
+            "model-a",
+            &["--ctx-size".into(), "4096".into()],
+            &key,
+            &["hostCpuModel".to_string()],
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("unobserved execution identity"),
+            "the current-machine unknowns refuse replay, got: {error}"
+        );
     }
 
     #[test]
@@ -1690,6 +1852,7 @@ mod tests {
             "model-a",
             &["--ctx-size".into(), "4096".into()],
             &format!("v2:{}", "b".repeat(64)),
+            &[],
         )
         .unwrap_err();
 
@@ -1742,10 +1905,10 @@ mod tests {
     }
 
     #[test]
-    fn mt01_warm_cache_reuse_is_counted_against_processed_plus_cached_tokens() {
+    fn warm_cache_reuse_is_counted_against_processed_plus_cached_tokens() {
         // b10816: the first request processes the whole prompt, later requests
         // restore it from cache. The default warm protocol must accept the
-        // cached hit (audit MT-01 V1).
+        // cached hit.
         let bodies = vec![
             cached_timing_body(512, 0, 256),
             cached_timing_body(1, 511, 256),
@@ -1780,7 +1943,7 @@ mod tests {
             );
             // The observation carries the accounted total (processed + cached)
             // so the declared workload count holds for warm trials too; the
-            // evaluated slice stays derivable as prompt - cached (audit MT-01).
+            // evaluated slice stays derivable as prompt - cached.
             assert_eq!(observation.prompt_tokens, 512);
             assert_eq!(observation.cached_prompt_tokens, 511);
             assert_eq!(
@@ -1804,7 +1967,7 @@ mod tests {
     }
 
     #[test]
-    fn mt01_inconsistent_or_missing_cache_accounting_is_rejected() {
+    fn inconsistent_or_missing_cache_accounting_is_rejected() {
         // (a) A runtime without cache_n still works: absent means 0 cached.
         let bodies = vec![
             r#"{"timings":{"prompt_n":512,"prompt_ms":80.0,"prompt_per_second":50.0,"predicted_n":256,"predicted_ms":40.0,"predicted_per_second":50.0,"predicted_per_token_ms":20.0}}"#.to_string(),
@@ -1897,10 +2060,10 @@ mod tests {
     }
 
     #[test]
-    fn mt12_oversize_failure_text_is_bounded_at_acquisition_with_a_visible_marker() {
+    fn oversize_failure_text_is_bounded_at_acquisition_with_a_visible_marker() {
         // A rich cold-start failure (structured evidence plus a runtime log
         // tail) must not turn into a manifest-validation rejection that
-        // discards the run (audit MT-12). The bound happens at acquisition.
+        // discards the run. The bound happens at acquisition.
         let huge = format!(
             "cold start failed: {}é{}",
             "x".repeat(5_000),
@@ -1952,9 +2115,9 @@ mod tests {
     }
 
     #[test]
-    fn mt12_successful_observations_survive_a_later_oversize_failure() {
+    fn successful_observations_survive_a_later_oversize_failure() {
         // Two good trials plus one oversized failure: the summary and the
-        // earlier measurements must survive finalization (audit MT-12 V2).
+        // earlier measurements must survive finalization.
         let huge = "z".repeat(9_000);
         let attempts = AtomicBool::new(false);
         let workload = Workload {

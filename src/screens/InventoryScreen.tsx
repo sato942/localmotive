@@ -1,5 +1,4 @@
 import type { Dispatch, SetStateAction } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { CircleStop, FolderOpen, HardDrive, RefreshCw, TriangleAlert } from "lucide-react";
 import { PathText } from "./PathText";
 import {
@@ -13,6 +12,7 @@ import {
 /// `App.tsx`; the component renders and reports.
 export interface InventoryScreenProps {
   busy: string;
+  cancelScan: () => void;
   chooseModelFolder: () => void;
   invalidCount: number;
   lastScan: ScanReport | null;
@@ -29,6 +29,7 @@ export interface InventoryScreenProps {
 export function InventoryScreen(props: InventoryScreenProps) {
   const {
     busy,
+    cancelScan,
     chooseModelFolder,
     invalidCount,
     lastScan,
@@ -52,7 +53,7 @@ export function InventoryScreen(props: InventoryScreenProps) {
           <RefreshCw size={16} className={busy === "scan" ? "spin" : ""} /> Rescan
         </button>
         {busy === "scan" && (
-          <button className="button danger" onClick={() => void invoke("cancel_scan")}>
+          <button className="button danger" onClick={cancelScan}>
             <CircleStop size={15} /> Cancel scan
           </button>
         )}

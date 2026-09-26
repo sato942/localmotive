@@ -55,8 +55,8 @@ vi.mock("@tauri-apps/api/core", () => ({
       return Promise.resolve({ authors: [], licenses: [], pipeline_tags: [], architectures: [] });
     }
     if (command === "catalog_fit_budget") return Promise.resolve({ budgetBytes: 0, source: "unknown" });
-    // The app path uses the bounded report command (audit S-15); the legacy
-    // array handlers stay the source for tests.
+    // The app path uses the bounded report command (audit S-15); the array
+    // fixtures below stay the source for tests.
     if (command === "scan_models_report") {
       const legacy = handlers.get("scan_models");
       if (legacy) {
@@ -152,7 +152,7 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
-  (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+  window.__TAURI_INTERNALS__ = {};
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);

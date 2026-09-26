@@ -115,7 +115,7 @@ pub fn estimate_kv_cache_bytes(inputs: &KvCacheInputs) -> Evidence<u64> {
         };
     }
     // Impossible dimensions must never produce an authoritative-looking
-    // number (audit S-03): zero blocks/heads/widths would silently estimate
+    // number: zero blocks/heads/widths would silently estimate
     // a near-zero cache, and absurd magnitudes indicate corrupt metadata.
     const MAX_PLAUSIBLE_DIMENSION: u64 = 1 << 20;
     let dimensions = [
@@ -918,7 +918,7 @@ mod tests {
     }
 
     #[test]
-    fn s03_impossible_kv_dimensions_are_rejected_and_overflow_stays_unknown() {
+    fn impossible_kv_dimensions_are_rejected_and_overflow_stays_unknown() {
         let base = |block_count: u64,
                     head_count_kv: u64,
                     key_length: u64,

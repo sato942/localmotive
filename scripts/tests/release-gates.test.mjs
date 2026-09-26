@@ -35,6 +35,8 @@ async function versionFixture(overrides = {}) {
 /// The S-27.I2 extraction moves JSX into src/screens/*.tsx; guards that read
 /// App.tsx alone silently stop matching. Splits find real component bodies
 /// before any test-text mention because the screens come first.
+/// App-side hook extractions (FE-04) must register here too so the FE-03 and
+/// FE-06 pins keep seeing the moved acquisition code.
 /// Line endings are normalized to LF first: a CRLF checkout (for example the
 /// default GitHub-hosted windows-latest image) must not change what the
 /// LF-anchored guard regexes match (GH-01.V1 follow-up: pr-check failed on
@@ -60,6 +62,13 @@ async function frontendSources() {
     }
   }
   parts.push((await readFile(join(process.cwd(), "src", "App.tsx"), "utf8")).replace(/\r\n/g, "\n"));
+  for (const name of ["useCloudCredentials.ts"]) {
+    try {
+      parts.push((await readFile(join(process.cwd(), "src", name), "utf8")).replace(/\r\n/g, "\n"));
+    } catch {
+      // A hook module that does not exist yet contributes nothing.
+    }
+  }
   return parts.join("\n");
 }
 
@@ -1148,7 +1157,7 @@ test("R10: TLS transport validation parses real structures and matches the pair"
   assert.match(client, /subject_public_key_info_from_private_key/, "the key SPKI is derived structurally");
   assert.match(client, /do not belong together/, "a mismatched pair fails");
   assert.match(client, /rustls_pemfile::certs|rustls_pemfile::private_key/, "PEM decoding is strict");
-  assert.match(client, /r10_transport_validation_parses_real_x509_and_matches_the_pair/);
+  assert.match(client, /transport_validation_parses_real_x509_and_matches_the_pair/);
 });
 
 test("R15: the loopback client never hops, and its bounds are structural", async () => {
@@ -1159,9 +1168,9 @@ test("R15: the loopback client never hops, and its bounds are structural", async
   assert.doesNotMatch(client, /serde_json::to_vec\(value\)/, "no unbounded pre-check serialization");
   assert.match(client, /file\.take\(limit \+ 1\)/, "file reads are bounded by the handle");
   for (const name of [
-    "r15_a_redirect_is_not_followed_and_the_client_fails_the_call",
-    "r15_the_request_body_serializes_through_a_bounded_writer",
-    "r15_bounded_file_reads_are_enforced_by_the_read_not_a_metadata_precheck",
+    "a_redirect_is_not_followed_and_the_client_fails_the_call",
+    "the_request_body_serializes_through_a_bounded_writer",
+    "bounded_file_reads_are_enforced_by_the_read_not_a_metadata_precheck",
   ]) {
     assert.match(client, new RegExp(name));
   }
@@ -1454,6 +1463,8 @@ test("workflow gate policy covers the hardware qualify night path", async () => 
 });
 
 test("release ship gates default to the self-hosted runner, never windows-latest", async () => {
+  // P1-12: release jobs need only the release label, never the hardware host
+  // labels; hardware-qualify keeps the hardware labels.
   const verify = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
   assert.doesNotMatch(verify, /runs-on:\s*windows-latest/);
   for (const job of ["resolve", "rust-audit", "verify"]) {
@@ -1461,7 +1472,8 @@ test("release ship gates default to the self-hosted runner, never windows-latest
     const found = verify.match(pattern);
     assert.ok(found, `${job} runs-on is missing`);
     assert.match(found[1], /self-hosted/);
-    assert.match(found[1], /localmotive-hw/);
+    assert.match(found[1], /localmotive-release/);
+    assert.doesNotMatch(found[1], /zen5|blackwell|localmotive-hw/);
   }
   const promote = await readFile(join(process.cwd(), ".github", "workflows", "release-promote.yml"), "utf8");
   assert.doesNotMatch(promote, /runs-on:\s*windows-latest/);
@@ -1470,6 +1482,14 @@ test("release ship gates default to the self-hosted runner, never windows-latest
     const found = promote.match(pattern);
     assert.ok(found, `${job} runs-on is missing`);
     assert.match(found[1], /self-hosted/);
+    assert.match(found[1], /localmotive-release/);
+    assert.doesNotMatch(found[1], /zen5|blackwell|localmotive-hw/);
+  }
+  const qualify = await readFile(join(process.cwd(), ".github", "workflows", "hardware-qualify.yml"), "utf8");
+  for (const job of ["hardware-qualify", "runtime-probe", "lab-legs"]) {
+    const pattern = new RegExp(`^  ${job}:[\\s\\S]*?runs-on:\\s*(.+)$`, "m");
+    const found = qualify.match(pattern);
+    assert.ok(found, `${job} runs-on is missing`);
     assert.match(found[1], /localmotive-hw/);
   }
 });
@@ -1707,17 +1727,56 @@ test("a tag push verifies without publishing and publication needs explicit auth
   assert.doesNotMatch(promote, /tauri build|npm run build/, "promotion never rebuilds the candidate");
 });
 
-test("branding history set covers the archived docs layout", async () => {
-  const source = await readFile(join(process.cwd(), "scripts", "verify_branding.mjs"), "utf8");
-  // Docs cleanup moves design/product/branding/llama-server notes under
-  // docs/ and completed TODOs under docs/history/. The branding gate
-  // must keep covering those paths after the move.
-  // RED: HISTORICAL_FILES pins root paths that will no longer exist.
-  assert.match(source, /docs\/history\/TODO-0\.4\.1\.md/);
-  // The universal 0.6 tracker lives at the repository root; the gate must
-  // cover it too, since it imports the RT-01 legacy-migration criterion text.
-  assert.match(source, /"TODO-0\.6\.md"/);
+test("opener allowlist carries no unused origins (CORE-09)", async () => {
+  // CORE-09: least privilege. No in-app URL targets the Tauri/React doc
+  // origins, so the allowlist must not open them.
+  // RED: the two doc origins are still allowlisted.
+  const cap = await readFile(join(process.cwd(), "src-tauri", "capabilities", "default.json"), "utf8");
+  assert.doesNotMatch(cap, /tauri\.app/);
+  assert.doesNotMatch(cap, /react\.dev/);
 });
+
+test("catalog builder sorts carry deterministic tie-breakers (LAB-12)", async () => {
+  // LAB-12: equal download/size keys must not inherit upstream order, or
+  // every publication rewrites the file with semantic-looking diffs.
+  // RED: the three sorts have no secondary key.
+  const builder = await readFile(join(process.cwd(), "scripts", "build_catalog.mjs"), "utf8");
+  assert.match(builder, /files\.sort\(\(a, b\) => a\.sizeBytes - b\.sizeBytes \|\|/);
+  assert.match(builder, /pending\.sort\(\(a, b\) => b\.downloads - a\.downloads \|\|/);
+  assert.match(builder, /entries\.sort\(\(a, b\) => b\.downloads - a\.downloads \|\|/);
+});
+
+test("hardware summary names the self-hosted release runner (REL-16)", async () => {
+  // REL-16: the job summary must state the actual runner class. P1-12 moved
+  // release jobs to [self-hosted, Windows, X64, localmotive-release]; the old
+  // hosted-runner sentence sent operators to the wrong runner class.
+  // RED: the summary still claims the hosted runner.
+  const hw = await readFile(join(process.cwd(), ".github", "workflows", "hardware-qualify.yml"), "utf8");
+  assert.doesNotMatch(hw, /Main Release build\/publish stays on GitHub-hosted/);
+  assert.match(hw, /localmotive-release/);
+});
+
+test("branding history set names only files present in the tree (P2-11)", async () => {
+  // P2-11: closed trackers live in git history, not in the working tree.
+  // Allowlist entries for absent files are dead weight, so every history
+  // entry must resolve to a file that exists.
+  // RED: ten entries name files that do not exist.
+  const source = await readFile(join(process.cwd(), "scripts", "verify_branding.mjs"), "utf8");
+  const setBody = source.slice(source.indexOf("HISTORICAL_FILES = new Set([") + 1, source.indexOf("]);"));
+  const entries = [...setBody.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(entries.length > 0, "the history set must be non-empty");
+  for (const path of entries) {
+    let exists = false;
+    try {
+      await readFile(join(process.cwd(), path), "utf8");
+      exists = true;
+    } catch {
+      exists = false;
+    }
+    assert.ok(exists, `${path} is allowlisted but absent from the tree`);
+  }
+});
+
 
 test("local catalog SQLite mirror stores verified models with migrations and controlled recovery", async () => {
   const mirror = await readFile(join(process.cwd(), "src-tauri", "src", "catalog_db.rs"), "utf8");
@@ -1803,7 +1862,7 @@ test("FE-07 cancellation state is separate from the run lifecycle", async () => 
     join(process.cwd(), "src", "evidence-adapter.ts"),
     "utf8",
   );
-  assert.match(adapterSource, /invoke\("cancel_benchmark"\)/);
+  assert.match(adapterSource, /invoke(<[A-Za-z]+>)?\("cancel_benchmark"\)/);
   assert.match(panel, /busy !== "benchmark" \|\| cancelPending/);
 });
 
@@ -2048,6 +2107,141 @@ test("the cancellable local client never re-issues a slow-but-healthy response (
   assert.match(source, /recv_timeout\(CANCEL_ATTEMPT_SLICE\)/);
   assert.match(source, /a_cancellable_response_that_outlives_the_cancel_slice_still_completes/);
   assert.match(source, /fn run_local_request\(/);
+});
+
+test("every g05 lab driver is referenced or deleted", async () => {
+  // P1-14 (LAB-05): fifteen one-off g05 drivers had zero references from any
+  // workflow, test, or script. A driver nobody runs is deleted; the survivors
+  // are named by the automation that runs them.
+  const scriptsDir = join(process.cwd(), "scripts");
+  const names = (await readdir(scriptsDir)).filter((name) => name.startsWith("g05_") && name.endsWith(".mjs"));
+  assert.ok(names.length > 0, "expected g05 drivers to exist");
+  const dead = [];
+  for (const name of names) {
+    const stem = name.replace(/\.mjs$/, "");
+    // The driver's own file mentions its own stem; a live driver is named by
+    // at least one other file (workflow, test, or sibling script).
+    let external = 0;
+    for (const root of [".github/workflows", "scripts/tests"]) {
+      for (const other of await readdir(join(process.cwd(), root))) {
+        if (!other.endsWith(".yml") && !other.endsWith(".mjs")) continue;
+        if ((await readFile(join(process.cwd(), root, other), "utf8")).includes(stem)) external += 1;
+      }
+    }
+    for (const other of await readdir(scriptsDir)) {
+      if (!other.endsWith(".mjs") || other === name) continue;
+      if ((await readFile(join(scriptsDir, other), "utf8")).includes(stem)) external += 1;
+    }
+    if (external === 0) dead.push(name);
+  }
+  assert.deepStrictEqual(dead, []);
+});
+
+test("rust source carries behavior descriptions, not ticket labels", async () => {
+  // P2-5: audit-finding labels (PROC-01, RT-04, P1-30, R16, F9-02, ...) once
+  // named the reason for a comment. The reason now reads as behavior; the
+  // labels are gone so a future reader is not sent ticket-hunting.
+  const dir = join(process.cwd(), "src-tauri", "src");
+  const ticket = /\b(?:PROC|RT|DL|MT|IPC|FE|QD|GH|DOC|REL|LAB|CORE|F9)-[0-9]+|\bP1-[0-9]+|\bR16\b|\bR04\b|\bS-[0-9]+/;
+  const fnPrefix = /\bfn (?:proc[0-9]+|mt[0-9]+|rt[0-9]+|ipc[0-9]+|dl[0-9]+|dc[0-9]+|cld[0-9]+|fe[0-9]+|gh[0-9]+|s[0-9]{2}|r[0-9]{2}|f9_02|p19|g07)_/;
+  const hits = [];
+  for (const name of await readdir(dir)) {
+    if (!name.endsWith(".rs")) continue;
+    const text = await readFile(join(dir, name), "utf8");
+    text.split("\n").forEach((line, index) => {
+      if (ticket.test(line) || fnPrefix.test(line)) hits.push(`${name}:${index + 1}: ${line.trim().slice(0, 80)}`);
+    });
+  }
+  assert.deepStrictEqual(hits, []);
+});
+
+test("every automation script is referenced or deleted", async () => {
+  // P2-2 (LAB-05): beyond the g05 drivers, any script that no package.json
+  // script, workflow, kept test, or sibling script names is dead weight and
+  // is deleted. A live script is named by at least one other file.
+  const scriptsDir = join(process.cwd(), "scripts");
+  async function collect(dir) {
+    const out = [];
+    for (const name of await readdir(dir)) {
+      const full = join(dir, name);
+      const rel = full.slice(process.cwd().length + 1).replace(/\\/g, "/");
+      if ((await stat(full)).isDirectory()) {
+        if (name === "tests") continue;
+        out.push(...(await collect(full)));
+      } else if (/\.(mjs|ps1|py)$/.test(name)) {
+        out.push(rel);
+      }
+    }
+    return out;
+  }
+  const names = await collect(scriptsDir);
+  assert.ok(names.length > 0, "expected automation scripts to exist");
+  const roots = [".github/workflows", "scripts/tests"];
+  const dead = [];
+  for (const rel of names) {
+    const stem = rel.split("/").pop().replace(/\.(mjs|ps1|py)$/, "");
+    let external = 0;
+    const haystacks = [];
+    for (const root of roots) {
+      for (const other of await readdir(join(process.cwd(), root))) {
+        if (!other.endsWith(".yml") && !other.endsWith(".mjs")) continue;
+        haystacks.push(join(process.cwd(), root, other));
+      }
+    }
+    haystacks.push(join(process.cwd(), "package.json"));
+    for (const other of names) {
+      if (other === rel) continue;
+      haystacks.push(join(process.cwd(), other));
+    }
+    for (const hay of haystacks) {
+      if ((await readFile(hay, "utf8")).includes(stem)) {
+        external += 1;
+        break;
+      }
+    }
+    if (external === 0) dead.push(rel);
+  }
+  assert.deepStrictEqual(dead, []);
+});
+
+test("the CDP WebSocket is constructed in exactly one place", async () => {
+  // P1-13 (LAB-03): the packaged drivers each carried an inline CDP
+  // WebSocket client (the third inline client was deleted in P2-2).
+  // All packaged driving goes through scripts/lib/cdp_client.mjs so protocol
+  // fixes land once.
+  const roots = ["scripts", join("scripts", "lib")];
+  const owners = [];
+  for (const root of roots) {
+    for (const name of await readdir(join(process.cwd(), root))) {
+      if (!name.endsWith(".mjs")) continue;
+      const source = await readFile(join(process.cwd(), root, name), "utf8");
+      if (/new WebSocket\(/.test(source)) owners.push(join(root, name));
+    }
+  }
+  assert.deepStrictEqual(owners, [join("scripts", "lib", "cdp_client.mjs")]);
+});
+
+test("no harness script stops processes by name or by port", async () => {
+  // P1-4 (LAB-04): scripts/g05_vitems_c.mjs swept every llama-server and
+  // localmotive process by name. Dead and dangerous, so it is deleted; the
+  // survivors stop only PIDs they own (taskkill /PID, Stop-Process -Id).
+  assert.ok(
+    await stat(join(process.cwd(), "scripts", "g05_vitems_c.mjs")).then(
+      () => false,
+      () => true,
+    ),
+    "scripts/g05_vitems_c.mjs still stops processes by name",
+  );
+  const nameKill =
+    /Get-Process\s+[A-Za-z][\w.-]*(?:\s*,\s*[A-Za-z][\w.-]*)*\s*[^|\n]*\|\s*Stop-Process|Stop-Process\s+-Name|taskkill\s+(?:\/F\s+)?\/IM/i;
+  const roots = ["scripts", join("scripts", "sandbox")];
+  for (const root of roots) {
+    for (const name of await readdir(join(process.cwd(), root))) {
+      if (!name.endsWith(".mjs") && !name.endsWith(".ps1")) continue;
+      const source = await readFile(join(process.cwd(), root, name), "utf8");
+      assert.doesNotMatch(source, nameKill, `${root}/${name} stops a process by name`);
+    }
+  }
 });
 
 test("FE-16 and FE-05.V3 packaged walks drive the real routes", async () => {
@@ -2325,12 +2519,12 @@ test("QD-06 local doc links resolve in every active document", async () => {
 
 test("public docs name v0.6.5 latest published; earlier 0.6.x stays unpublished", async () => {
   // P0-10: v0.6.5 is the first published 0.6 release. README, CHANGELOG,
-  // SUPPORT-MATRIX, and EVIDENCE-MATRIX must agree that v0.6.5 is latest
-  // and the earlier 0.6.x tags never shipped.
+  // SUPPORT-MATRIX, and the merged version evidence must agree that v0.6.5
+  // is latest and the earlier 0.6.x tags never shipped.
   const readme = await readFile(join(process.cwd(), "README.md"), "utf8");
   const changelog = await readFile(join(process.cwd(), "CHANGELOG.md"), "utf8");
   const support = await readFile(join(process.cwd(), "docs", "SUPPORT-MATRIX.md"), "utf8");
-  const evidence = await readFile(join(process.cwd(), "docs", "EVIDENCE-MATRIX.md"), "utf8");
+  const evidence = support;
   assert.match(readme, /the latest published release is v0\.6\.5/i);
   assert.doesNotMatch(readme, /0\.6\.[01] ships/);
   assert.doesNotMatch(readme, /In this 0\.6\.0 source build/);
@@ -2343,14 +2537,34 @@ test("public docs name v0.6.5 latest published; earlier 0.6.x stays unpublished"
   assert.match(evidence, /\| 0\.6\.5 \| Public release \|/);
 });
 
+test("EVIDENCE-MATRIX is merged into SUPPORT-MATRIX (P2-9)", async () => {
+  // RED for P2-9: one matrix only. The version table and the audit notes live
+  // in SUPPORT-MATRIX.md; the old file and its backlinks are gone.
+  let gone = false;
+  try {
+    await readFile(join(process.cwd(), "docs", "EVIDENCE-MATRIX.md"), "utf8");
+  } catch {
+    gone = true;
+  }
+  assert.ok(gone, "docs/EVIDENCE-MATRIX.md must be merged away");
+  const support = await readFile(join(process.cwd(), "docs", "SUPPORT-MATRIX.md"), "utf8");
+  assert.match(support, /\| 0\.6\.5 \| Public release \|/);
+  for (const doc of ["README.md", "CHANGELOG.md", "docs/SUPPORT-MATRIX.md"]) {
+    const text = await readFile(join(process.cwd(), doc), "utf8");
+    assert.ok(!text.includes("EVIDENCE-MATRIX"), doc + " must not reference the merged file");
+  }
+});
+
 test("GH-07 the evidence matrix exists and the README reads it", async () => {
-  const matrix = await readFile(join(process.cwd(), "docs", "EVIDENCE-MATRIX.md"), "utf8");
+  // P2-9: the version table merged into SUPPORT-MATRIX.md; the old file is
+  // gone and the README points at the surviving matrix.
+  const matrix = await readFile(join(process.cwd(), "docs", "SUPPORT-MATRIX.md"), "utf8");
   for (const cell of ["CPU packaged lifecycle", "Accelerator (CUDA) packaged", "Clean-account Sandbox"]) {
     assert.ok(matrix.includes(cell), `the matrix must define ${cell}`);
   }
   assert.ok(matrix.includes("assets"), "evidence assets must be named");
   const readme = await readFile(join(process.cwd(), "README.md"), "utf8");
-  assert.ok(readme.includes("docs/EVIDENCE-MATRIX.md"), "the README points at the matrix");
+  assert.ok(readme.includes("docs/SUPPORT-MATRIX.md"), "the README points at the matrix");
   // The README must state what 0.6.0 actually established and explicitly
   // refuse to generalize it; the accelerator caveat wording moved when the
   // support matrix was introduced, so accept either explicit phrasing.
@@ -2956,17 +3170,23 @@ test("R04: the benchmark run owns its cancelled workers until they exit", async 
   const v2 = service.split("pub(crate) async fn benchmark_v2(")[1].split("#[cfg(test)]")[0];
   const v2Drain = v2.indexOf("drain_owned_workers(&client, drain_ceiling);");
   const slotRelease = v2.indexOf("*active = None;");
-  const resultRead = v2.indexOf("let result = benchmark_result?;");
+  const resultRead = v2.search(/let (mut )?result = benchmark_result\?;/);
   assert.ok(v2Drain > 0, "the command drains its owned workers on every exit path");
   assert.ok(slotRelease > v2Drain, "the benchmark slot is held until the drain returns");
   assert.ok(resultRead > v2Drain, "a discarded result cannot release ownership before the drain");
-  // The drain never gives up and releases ownership while work continues: an
-  // exceeded bound continues waiting instead of dropping the worker.
+  // MT-06 supersedes the infinite wait: the drain is bounded by the ceiling
+  // and reports its outcome, so a stuck worker cannot hold the slot forever.
+  assert.match(service, /pub\(crate\) enum DrainOutcome/);
   assert.match(
     service,
-    /pub\(crate\) fn drain_owned_workers\(client: &LocalHttpClient, ceiling: Duration\) \{[\s\S]*?while !client\.wait_for_worker_drain\(Duration::from_secs\(1\)\) \{\}/,
-    "an expired drain bound keeps waiting instead of releasing ownership",
+    /pub\(crate\) fn drain_owned_workers\(client: &LocalHttpClient, ceiling: Duration\) -> DrainOutcome/,
+    "the drain must report whether its workers exited",
   );
+  assert.ok(
+    !service.includes("while !client.wait_for_worker_drain"),
+    "the unbounded drain loop must not return",
+  );
+  assert.match(service, /DrainOutcome::Unresolved/, "the exceeded bound must be reported");
   // The ownership accessor and the drain are production code, not test-only.
   const cfgTest = client.split("#[cfg(test)]");
   assert.match(client, /pub\(crate\) fn wait_for_worker_drain\(&self, ceiling: Duration\) -> bool/);
@@ -2974,16 +3194,69 @@ test("R04: the benchmark run owns its cancelled workers until they exit", async 
     !cfgTest.some((part) => part.slice(0, 200).includes("fn active_cancellable_workers")),
     "the worker counter is not gated to tests",
   );
-  // The R04 regression proves the drain waits for the slow worker, and the
-  // R16 regressions pin the derived bound and the every-exit-path hold.
-  assert.match(client, /r04_worker_drain_waits_for_the_abandoned_slow_request_to_exit/);
-  assert.match(service, /r16_the_drain_bound_follows_the_workload_request_deadline/);
-  const lib = await readFile(join(process.cwd(), "src-tauri", "src", "lib.rs"), "utf8");
+  // The abandoned-worker regression proves the drain waits for the slow
+  // worker, and the derivation regressions pin the derived bound and the
+  // every-exit-path hold.
+  assert.match(client, /worker_drain_waits_for_the_abandoned_slow_request_to_exit/);
+  assert.match(service, /the_drain_bound_follows_the_workload_request_deadline/);
   assert.match(
-    lib,
-    /r16_the_benchmark_command_releases_ownership_only_after_its_workers_exit/,
+    service,
+    /cancellation_during_preparation_leaves_an_owned_worker_the_drain_waits_for/,
     "the command-level ownership test must exist",
   );
+});
+
+test("the legacy benchmark system is removed (MT-09/FE-05)", async () => {
+  // RED for P1-33: the legacy command, screen half, and service path are
+  // deleted; the v2 evidence panel is the only benchmark runner.
+  const service = await readFile(join(process.cwd(), "src-tauri", "src", "measurement_service.rs"), "utf8");
+  assert.ok(!service.includes("async fn benchmark_server("), "the legacy command must be gone");
+  assert.ok(!service.includes("fn run_legacy_benchmark("), "the legacy service path must be gone");
+  assert.ok(!service.includes("fn finalize_legacy_benchmark("), "the legacy finalizer must be gone");
+  const lib = await readFile(join(process.cwd(), "src-tauri", "src", "lib.rs"), "utf8");
+  assert.ok(!lib.includes("measurement_service::benchmark_server,"), "the legacy registration must be gone");
+  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  assert.ok(!app.includes('"benchmark_server"'), "the frontend must not invoke the legacy command");
+  assert.ok(!app.includes("runBenchmark"), "the legacy runner must be gone");
+  const screen = await readFile(join(process.cwd(), "src", "screens", "BenchmarkScreen.tsx"), "utf8");
+  assert.ok(!screen.includes("runBenchmark"), "the screen must not offer the legacy run");
+  assert.ok(!screen.includes("BenchmarkSummary"), "the screen must not render the legacy result");
+  // RED for P2-6: the tuner half of MT-09. The V1 core block
+  // (benchmark_server_cancellable and friends) must be gone and the tuner
+  // must measure through the v2 contract.
+  const core = await readFile(join(process.cwd(), "src-tauri", "src", "core.rs"), "utf8");
+  assert.ok(!core.includes("benchmark_server_cancellable"), "the V1 cancellable runner must be gone");
+  assert.ok(!core.includes("struct BenchmarkSummary {"), "the V1 summary struct must be gone");
+  assert.ok(!core.includes("fn parse_tps("), "the V1 throughput parser must be gone");
+  assert.ok(!core.includes("fn summarize_benchmark("), "the V1 statistics builder must be gone");
+  const tuneService = await readFile(join(process.cwd(), "src-tauri", "src", "tune_service.rs"), "utf8");
+  assert.ok(!tuneService.includes("benchmark_server_cancellable"), "tune trials must not use the V1 runner");
+  const tune = await readFile(join(process.cwd(), "src-tauri", "src", "tune.rs"), "utf8");
+  assert.ok(!tune.includes("summarize_benchmark("), "tune fixtures must not use the V1 statistics builder");
+  assert.ok(tune.includes("pub summary: BenchmarkSummaryV2"), "trial measurements must carry the v2 summary");
+});
+
+test("cloud credentials live in a hook, not in App state (FE-04)", async () => {
+  // RED for P2-8: the cloud-credential cluster (provider list, credential
+  // status, key draft, model list, probe state) moves to
+  // `src/useCloudCredentials.ts`; App.tsx keeps only the hook call and the
+  // values the screens render.
+  const app = await readFile(join(process.cwd(), "src", "App.tsx"), "utf8");
+  assert.ok(!app.includes("const [keyDraft, setKeyDraft]"), "the key draft must not live in App state");
+  assert.ok(!app.includes("const [cloudCheck, setCloudCheck]"), "the probe state must not live in App state");
+  assert.ok(app.includes("useCloudCredentials("), "App must consume the credentials hook");
+  const hook = await readFile(join(process.cwd(), "src", "useCloudCredentials.ts"), "utf8");
+  assert.match(hook, /cloud_save_credential/, "the hook must own the save command");
+  assert.match(hook, /cloud_clear_credential/, "the hook must own the clear command");
+  assert.match(hook, /cloud_credential_status/, "the hook must own the status command");
+});
+
+test("the inventory screen routes cancellation through props (FE-06)", async () => {
+  // RED for P1-35: acquisition stays in `App.tsx`; the screen reports through
+  // a callback prop instead of invoking the backend directly.
+  const screen = await readFile(join(process.cwd(), "src", "screens", "InventoryScreen.tsx"), "utf8");
+  assert.ok(!screen.includes("invoke("), "the screen must not invoke the backend directly");
+  assert.ok(screen.includes("cancelScan"), "the screen must offer a cancellation callback prop");
 });
 
 test("the stalled-fetch deadline stays injectable and bounded in tests (CI cancellation fix)", async () => {

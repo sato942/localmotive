@@ -201,7 +201,8 @@ Accepted evidence remains under `release-evidence/0.6.0/`.
 ### Qualification limitations
 
 Localmotive 0.6.0 targets Windows 10 and Windows 11 x64; the target scope is
-not a tested compatibility claim. Read `docs/EVIDENCE-MATRIX.md` for what was
+not a tested compatibility claim. Read the version evidence in
+`docs/SUPPORT-MATRIX.md` for what was
 actually exercised per version: v0.6.0 CPU packaged lifecycle checks are
 recorded there when the candidate checks complete, accelerator coverage
 remains unestablished, and the 0.4.1/0.5.0 qualification limits carry
