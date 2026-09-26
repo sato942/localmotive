@@ -90,7 +90,7 @@ type View = "dashboard" | "models" | "catalog" | "runtime" | "profile" | "tune" 
 
 const MODEL_ROOT = readSetting("model-root");
 const RUNTIME = readSetting("runtime");
-const inTauri = () => Boolean((window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+const inTauri = () => Boolean(window.__TAURI_INTERNALS__);
 const idleStatus: ServerStatus = {
   running: false,
   phase: "idle",

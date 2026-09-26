@@ -37,7 +37,7 @@ impl tune::Bench for LiveBench<'_> {
         );
         // The lease binding pins the verified runtime content for the whole
         // tuning session; it drops when the session ends.
-        let (mut child, mut validation, log_path, _lease, _drains) =
+        let (mut child, mut validation, log_path, _lease, drains) =
             spawn_server(profile, "tuning")?;
         let command = validation.arguments.command.clone();
         let result = (|| {
@@ -98,8 +98,9 @@ impl tune::Bench for LiveBench<'_> {
         })();
         // Cleanup failures must be visible: a measured result may not be
         // reported as a clean success when the trial server could not be
-        // stopped.
-        let cleanup = child.terminate_and_wait();
+        // stopped. The log drains are part of cleanup: a trial whose log
+        // never settled withholds its result the same way.
+        let cleanup = child.terminate_and_wait() && crate::server_service::join_log_drains(drains);
         wait_for_port_release(&profile.host, profile.port, Duration::from_secs(5));
         combine_trial_outcome(result, cleanup, command)
     }
@@ -364,7 +365,6 @@ pub(crate) async fn start_tuning(
                 store: &store,
                 provider_id: request.provider.clone(),
                 model: request.model.clone(),
-                last_raw_reply: String::new(),
                 deadline: Some(std::time::Instant::now() + Duration::from_secs(tune::TUNING_DEADLINE_SECS)),
             };
             tune::run_tuning(

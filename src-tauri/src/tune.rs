@@ -140,8 +140,9 @@ pub struct TuningTrial {
     /// runtime reported it.
     #[serde(default)]
     pub effective_context: Option<u32>,
-    /// Standard deviation of the trial samples, so improvement claims can be
-    /// checked against observed variation.
+    /// Population standard deviation of the trial samples (divides by n),
+    /// read from the v2 summary so improvement claims can be checked
+    /// against observed variation under one convention.
     #[serde(default)]
     pub std_dev: Option<f64>,
     /// What happened to this trial. Failures stay in the table with their
@@ -263,6 +264,38 @@ pub fn disclosure_sections() -> Vec<DisclosureSection> {
     ]
 }
 
+/// Replace every case-insensitive occurrence of `needle`: minimal mode
+/// promises user names removed, so the account name must go wherever it
+/// appears, not only inside the home path.
+fn replace_case_insensitive(text: &str, needle: &str, replacement: &str) -> String {
+    if needle.is_empty() {
+        return text.to_string();
+    }
+    let needle_lower: Vec<char> = needle.to_lowercase().chars().collect();
+    // Case folding can change char counts; only map positions when the
+    // lowered text stays aligned with the original.
+    if needle.to_lowercase().chars().count() != needle.chars().count() {
+        return text.replace(needle, replacement);
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let text_lower: Vec<char> = text.to_lowercase().chars().collect();
+    if chars.len() != text_lower.len() {
+        return text.replace(needle, replacement);
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut index = 0;
+    while index < chars.len() {
+        if text_lower[index..].starts_with(&needle_lower) {
+            out.push_str(replacement);
+            index += needle_lower.len();
+        } else {
+            out.push(chars[index]);
+            index += 1;
+        }
+    }
+    out
+}
+
 /// Redact one string for minimal disclosure: replace every occurrence of the
 /// user's home directory, then reduce remaining path-looking values to their
 /// file name (the name still tells the model which model/quant/companion is
@@ -275,6 +308,11 @@ fn redact_string(value: &str, home: Option<&str>) -> String {
             let normalized = home.replace('\\', "/");
             if normalized != home {
                 text = text.replace(&normalized, "<local>");
+            }
+            // The home directory basename is usually the account name:
+            // remove it in any letter case, even outside path strings.
+            if let Some(name) = home.rsplit(['\\', '/']).find(|segment| !segment.is_empty()) {
+                text = replace_case_insensitive(&text, name, "<local>");
             }
         }
     }
@@ -1011,22 +1049,6 @@ fn objective_label(inputs: &TuningInputs) -> String {
     )
 }
 
-/// Sample standard deviation of validated positive throughput; zero for fewer than two samples.
-#[cfg(test)]
-fn sample_std_dev(samples: &[f64]) -> f64 {
-    if samples.len() < 2 {
-        return 0.0;
-    }
-    let scale = samples.iter().copied().fold(0.0, f64::max);
-    let mean = samples.iter().map(|sample| sample / scale).sum::<f64>() / samples.len() as f64;
-    let variance = samples
-        .iter()
-        .map(|sample| (sample / scale - mean).powi(2))
-        .sum::<f64>()
-        / (samples.len() as f64 - 1.0);
-    variance.sqrt() * scale
-}
-
 /// Identity of what a session measured, fixed for the whole history table:
 /// the runtime build, the hardware, and the profile's model.
 fn session_identities(base: &LaunchProfile, inputs: &TuningInputs) -> (String, String, String) {
@@ -1710,38 +1732,15 @@ mod tests {
     use crate::measurement::summarize_fixture_tps;
 
     #[test]
-    fn trial_std_dev_keeps_constant_extreme_samples_at_zero() {
-        // Finite equal samples must not acquire noise from an overflowing mean.
-        for value in [f64::MAX, f64::from_bits(1)] {
-            assert_eq!(sample_std_dev(&[value, value, value]), 0.0);
-        }
-        assert_eq!(sample_std_dev(&[]), 0.0);
-        assert_eq!(sample_std_dev(&[f64::MAX]), 0.0);
-    }
-
-    #[test]
-    fn trial_std_dev_retains_sample_variance_across_scales() {
-        // Squaring before normalization overflows large spreads and erases
-        // tiny ones. The fixed vector also distinguishes sample from population SD.
-        for scale in [1.0, 1e200, 1e-200] {
-            let normalized = sample_std_dev(&[scale, 3.0 * scale]) / scale;
-            assert!(
-                (normalized - std::f64::consts::SQRT_2).abs() <= 8.0 * f64::EPSILON,
-                "scale={scale}, normalized sample deviation={normalized}"
-            );
-        }
-    }
-
-    #[test]
-    fn trial_std_dev_near_equal_samples_has_bounded_absolute_roundoff() {
-        // Mean rounding dominates relative error at a one-ULP separation.
-        // Bound absolute error for this pair without claiming relative precision.
-        let adjacent = f64::from_bits(1.0_f64.to_bits() - 1);
-        let gap = 1.0 - adjacent;
-        let reference = gap / std::f64::consts::SQRT_2;
-        let actual = sample_std_dev(&[1.0, adjacent]);
-        assert!(actual > 0.0);
-        assert!((actual - reference).abs() <= gap / 2.0);
+    fn tuner_spread_shares_the_population_deviation_vector() {
+        // The tuner reads its spread from the v2 summary, so the shared
+        // [130, 131] vector must spread 0.5 here too: one convention.
+        let summary = summarize_fixture_tps(&[130.0, 131.0]);
+        let spread = summary.decode_tps.standard_deviation;
+        assert!(
+            (spread - 0.5).abs() <= 8.0 * f64::EPSILON,
+            "tuner spread of [130, 131] must be 0.5, got {spread}"
+        );
     }
 
     #[test]
@@ -2942,6 +2941,24 @@ mod tests {
                 .iter()
                 .any(|section| !section.sent_in_minimal),
             "at least one section must say what minimal mode removes"
+        );
+    }
+
+    #[test]
+    fn minimal_disclosure_removes_a_bare_account_name_outside_paths() {
+        // The UI promises user names removed, but redaction only replaced
+        // the home path: a bare account name in prose, in any letter case,
+        // must go too.
+        let home = "C:\\Users\\Canary-User";
+        let value = serde_json::json!({
+            "rationale": "CANARY-USER tuned this profile after canary-user login failed"
+        });
+
+        let redacted = redact_for_cloud(&value, Some(home));
+        let text = serde_json::to_string(&redacted).unwrap();
+        assert!(
+            !text.to_lowercase().contains("canary-user"),
+            "bare account name survived: {text}"
         );
     }
 

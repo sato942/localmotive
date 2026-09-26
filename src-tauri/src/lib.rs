@@ -4279,8 +4279,12 @@ mod tuning_lifecycle_source_tests {
             .next()
             .unwrap();
         assert!(
-            tail.contains("let cleanup = child.terminate_and_wait();"),
+            tail.contains("child.terminate_and_wait()"),
             "the cleanup result must be captured"
+        );
+        assert!(
+            tail.contains("join_log_drains(drains)"),
+            "the trial log drains are part of cleanup"
         );
         assert!(
             tail.contains("could not be stopped cleanly"),

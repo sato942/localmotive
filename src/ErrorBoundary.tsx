@@ -20,6 +20,21 @@ function clearApplicationStorage() {
   }
 }
 
+/// Reset the saved state and reload: storage cleanup must never block the
+/// reload, so a denied-storage failure still leaves the error screen
+/// instead of throwing a second UI error. The reload is injectable for tests.
+export function resetSavedState(reload: () => void = () => window.location.reload()) {
+  try {
+    clearApplicationStorage();
+  } catch (error) {
+    // The reload below still runs: report the leftover keys instead of
+    // throwing a second UI error from the reset button.
+    console.error("Localmotive could not clear saved state before reload", error);
+  } finally {
+    reload();
+  }
+}
+
 export class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryState> {
   state: ErrorBoundaryState = { error: null };
 
@@ -47,8 +62,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBound
           type="button"
           className="button secondary"
           onClick={() => {
-            clearApplicationStorage();
-            window.location.reload();
+            resetSavedState();
           }}
         >
           Reset saved state and reload

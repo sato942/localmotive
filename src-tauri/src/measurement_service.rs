@@ -382,18 +382,6 @@ pub(crate) fn run_benchmark_snapshot(
         Some(&workload),
     )?;
     let compatibility_key = snapshot_outcome.compatibility_key.clone();
-    // The launch-scope identity records the same configuration without a
-    // workload.
-    let launch_compatibility_key = benchmark_execution_snapshot_from_profile(
-        &profile,
-        &validation,
-        &artifacts,
-        &runtime_identity,
-        &executable_sha256,
-        &hardware,
-        None,
-    )?
-    .compatibility_key;
     let launch_fact = evidence::LaunchFact {
         requested_context: profile.context,
         effective_context: validation.effective_context.clone(),
@@ -435,7 +423,7 @@ pub(crate) fn run_benchmark_snapshot(
             }
             // The lease binding pins the verified runtime content for the whole
             // cold attempt; it drops with this scope.
-            let (mut child, _, log_path, _lease, _drains) =
+            let (mut child, _, log_path, _lease, drains) =
                 spawn_server(&profile, "benchmark-cold")?;
             let attempt = wait_until_healthy_cancellable(
                 &mut child,
@@ -455,7 +443,11 @@ pub(crate) fn run_benchmark_snapshot(
                 Ok(timing)
             });
             let cleanup = child.terminate_and_wait();
-            match (attempt, cleanup) {
+            // The log drains are part of cleanup: join them on the same
+            // bounded policy as managed-server stop, so a run never reports
+            // finished while its launch evidence is still unwritten.
+            let drains_settled = crate::server_service::join_log_drains(drains);
+            match (attempt, cleanup && drains_settled) {
                 (Ok(timing), true) => Ok(timing),
                 (Err(error), true) => Err(error),
                 (Ok(_), false) => {
@@ -489,7 +481,6 @@ pub(crate) fn run_benchmark_snapshot(
         harness_version,
         scope_note: evidence::WORKLOAD_SCOPE_NOTE.into(),
         compatibility_key: Some(compatibility_key.clone()),
-        launch_compatibility_key: Some(launch_compatibility_key),
         execution_snapshot_schema: snapshot_outcome.schema_version.clone(),
         execution_snapshot_unknowns: snapshot_outcome.unknown_identities.clone(),
         runtime: Some(evidence::RuntimeFact {

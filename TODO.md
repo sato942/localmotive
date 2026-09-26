@@ -733,7 +733,75 @@ Fix these after P0 and before the next feature.
     (real dir opens) proves everywhere.
   - DL-16 REFUTED: resume identity is same-source string equality;
     mismatch direction is safe (full re-download, never a wrong resume).
-  - DL-09 OPEN: rotation protocol doc for `catalog/README.md` (next).
+  - DL-09 FIXED 2026-09-26: `catalog/README.md` gains a `Key rotation`
+    section — sequenced single-key rollover (new-key release with
+    new-signed bundle while the old-signed catalog is still served, then
+    switch the publish signing + `CATALOG_SIGNING_KEY_PEM`, then destroy
+    the old key); schema v2 has no dual-signature support, so a
+    dual-signed transition needs an owner-approved schema change first.
+  Part 6 done 2026-09-26 (MT-02/04/11..15):
+  - MT-02 (present-but-invalid `first_token_ms` silently dropped):
+    VERIFIED + fixed — strict parse now errors on a present invalid
+    value (`completion_timing_rejects_a_present_but_invalid_first_token`
+    RED→GREEN); finite-range guard on derived TTFT (mutant-proven).
+  - MT-04 (evidence persistence weaker than acquisition): VERIFIED +
+    fixed — `validate_complete` rejects zero observation metrics and
+    enforces requested-context identity + exact warmup counts
+    (`manifest_rejects_a_zero_observation_metric` etc. RED→GREEN→mutant).
+  - MT-11 (redaction misses non-path secrets): VERIFIED + fixed —
+    case-insensitive bare-account-name redaction everywhere, not just
+    home-path prefix (`minimal_disclosure_removes_a_bare_account_name_outside_paths`
+    RED→GREEN). Residual: arbitrary non-path names stay in evidence text
+    (accepted: bounded to the operator's own machine).
+  - MT-12 (cloud timeouts): ACCEPT — bounded (180 s clamp, one bounded
+    429 retry, tuning deadline); Stop latency documented.
+  - MT-13 (unknown dead fields): SPLIT — unknowns REFUTED (consumed by
+    the P1-32 replay gate); dead `launch_compatibility_key` and
+    `last_raw_reply` plumbing deleted (cargo check clean); narration
+    CLOSED by P2-5.
+  - MT-14 (log drains detached from Stop): VERIFIED + fixed — bounded
+    `join_log_drains` (2 s deadline, lingering drains reported) called
+    in managed stop, cold-bench cleanup, and trial cleanup
+    (`log_drains_join_before_the_deadline...` RED→GREEN→mutant).
+  - MT-15 (two std-dev conventions): VERIFIED + fixed — population SD
+    documented on both live fields; shared [130, 131] → 0.5 vector pins
+    it on both sides; dead `sample_std_dev` + its 3 tests deleted
+    (overflow-robustness retained via `metric_summary_remains_finite` +
+    extremes tests).
+  Part 7 done 2026-09-26 (FE-01/07..13):
+  - FE-01 (credential drafts linger): CLOSED — P1-7 stands: both screens
+    clear drafts on save success, guarded failed save, and unmount
+    (verified in source).
+  - FE-07 (stale owner callback): VERIFIED + fixed — owner callback
+    through a ref; mid-run swap test (`owner.test.tsx`) RED→GREEN→mutant
+    (old effect fails it); eslint-disable removed.
+  - FE-08 (reset throws on denied storage): VERIFIED + fixed — exported
+    `resetSavedState` (try/catch-report/finally-reload, injectable
+    reload); 2 tests RED→GREEN→mutant. Caught a vacuous-test trap:
+    jsdom storage does not route through `Storage.prototype`, so the
+    denied-storage test uses `vi.stubGlobal` (the prototype-spy version
+    passed the mutant).
+  - FE-09 (lamp shadows vs flat rule): CLOSED — only the two lamp
+    shadows exist; DESIGN.md now names the lamp-only exception.
+  - FE-10 (production casts): FIXED — `Window.__TAURI_INTERNALS__`
+    augmentation in `vite-env.d.ts` (App.tsx + 6 test sites simplified);
+    fingerprint is a typed projection (no cast); explicit
+    `invoke<ResultType>` generics in the adapter; `tsc` clean. Remaining
+    casts are test-fixture partial shapes (accepted residual).
+  - FE-11 (brittle UI tests): ACCEPT — exact-copy IPC assertions are
+    release-gate contract, class assertions pin status semantics,
+    real-timer waits are bounded and green.
+  - FE-12 (ts-expect-error in vite.config): FIXED — `@types/node`
+    devDependency + `types: ["node"]` in tsconfig.node.json; node tsc
+    clean. Lockfile churn 19 lines.
+  - FE-13 (token parallel sources): FIXED — DESIGN.md gains an Evidence
+    Panel section (bars/actions/status grammar from the real code) and a
+    source-of-truth note (`src/App.css` wins; theme.css/tokens.json are
+    reference mirrors); design lint 0 errors 0 warnings.
+  Gate-test fallout from the above, both intent-preserving: the
+  `release-gates` FE-07 adapter regex now tolerates the explicit generic
+  (command pin unchanged); the lib.rs tuning-lifecycle pin follows the
+  drain-join cleanup spelling.
   Part 4 done 2026-09-25 (PROC-09..22):
   - PROC-09 (cleanup port-closed): REFUTED with measured evidence — this
     host reports closed loopback ports (even never-bound ones) as `TimedOut`,
@@ -912,3 +980,4 @@ To restore one file: `git show 9b09857:<path> > <path>`.
 - `L-22 | 2026-09-24 | 357cb2f | npm run check (node tests incl. new stays-deleted guard); full gate at L-24 | local logs | PASS` — D4: owner authorized deletion over publication. RED: new `the deleted 0.4.0 corrective note stays deleted` failed on the old tree (file present). GREEN: file deleted; CHANGELOG link replaced with the D4 decision record (L2 test repinned); REVIEW D4 section and file-table row updated; TODO D4 checked.
 - `L-23 | 2026-09-24 | 998557d | stays-deleted guard + qualification_manifest 27 of 27; full gate at L-24 | local logs | PASS` — D5: owner granted the frozen-evidence exception. RED: new `the deleted 0.6.0 history stays deleted` failed (85 files present). GREEN: `release-evidence/0.6.0/history/` deleted (453K); no live reader outside carry-forward fixture labels (the fixture writes its own files, 27 of 27 still pass); REVIEW row and TODO D5 updated.
 - `L-24 | 2026-09-24 | 8b3ff64 + PR #60 merge 020b16a (pr-check SUCCESS) | npm run check; npm audit; four workflow verifiers; cleanup matrix | local logs | PASS` — D3+P2-1: owner chose plain removal over history rewrite. RED: new `the tracked artifacts directory stays removed` failed (5,494 tracked files). GREEN: `git rm -r artifacts` (0 tracked remain; 34M untracked local outputs stay ignored); `/artifacts/` ignore rule (5-line diff); four `.gitattributes` LF rules removed; the one fixture reader rewired to byte-identical `release-evidence/0.6.1/` copies (mutation back to `artifacts/` fails, restored); both historical manifest tests stage committed bytes at recorded paths (`root`+`workflowRoot`, digests MATCH). GREEN: node tests 290 of 290, Vitest 284 of 284, audit 0 vulnerabilities, versions/pins/gates/syntax pass, cleanup 12 of 12. Rust checks carried (no Rust file changed). No packaged matrix: evidence-removal only; the 0.6.5 binaries are unchanged and published.
+- `L-25 | 2026-09-26 | ef18931 plus uncommitted lane changes (P2-12 MT/FE/DL-09) | npm run check; npm audit --audit-level=moderate; four workflow verifiers; verify_cleanup_matrix.ps1; cargo fmt --check; cargo clippy --locked --all-targets -- -D warnings; RUSTDOCFLAGS='-D warnings' cargo test --locked; tsc app+node; designmd lint | local logs (/tmp/npmcheck2.log, /tmp/cargotest2.log) | PASS` — MT-02/04/11/14/15 + MT-13 deletions, FE-07/08/10/12/13 + FE-09 doc, DL-09 rotation doc, two intent-preserving gate-test repins (release-gates adapter regex, lib.rs lifecycle pin). RED→GREEN→mutant for every behavioral fix (incl. a caught vacuous jsdom storage-spy test). GREEN: node tests 303/0, Vitest 268/268, audit 0 vulnerabilities, four workflow verifiers pass, cleanup 12/12, fmt clean, clippy 0 warnings, Rust 686 passed 0 failed 6 ignored (default parallelism), tsc clean both projects, design lint 0 errors 0 warnings. Watch: one `dropping_a_contained_process_terminates_descendants` failure in an earlier full-suite run under parallel load; passes solo and 14/0 ×3 in isolation plus this full green run — recorded, not a blocker. EOL hygiene: three tool-touched files normalized back to HEAD LF convention. New dep `@types/node ^22` (lockfile +19 lines).

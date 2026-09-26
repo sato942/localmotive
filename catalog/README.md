@@ -134,6 +134,31 @@ Live dry-run: `node scripts/dryrun_catalog.mjs`.
 Never invent repositories, filenames, sizes, download counts, licence status,
 or benchmark claims. If the API cannot verify a value, omit the candidate.
 
+## Key rotation
+
+The client trusts exactly one key: `CATALOG_VERIFYING_KEY` embedded in
+`src-tauri/src/catalog.rs`. The served signature is a single detached
+`catalog/catalog.json.sig`. Schema v2 has no dual-signature support, so a
+rotation is a sequenced single-key rollover, not a dual-signed transition
+(a dual-sign transition needs an owner-approved schema change first):
+
+1. Generate the new Ed25519 keypair offline. Keep the private key out of
+   the tree, as today.
+2. Cut an app release that embeds the new verifying key and bundles a
+   catalog signed with the new key. Keep serving the old-signed catalog:
+   new clients fall back to their (new-signed) bundle, old clients keep
+   refreshing against the old signature. Nothing breaks either side.
+3. After the adoption window, switch the publish workflow to sign with the
+   new key and replace `CATALOG_SIGNING_KEY_PEM`. Clients that have not
+   upgraded stop refreshing (invalid signature falls back to their last
+   signed cache) until they upgrade: a frozen list, never a broken app.
+4. Retire and destroy the old private key once the served document is
+   new-signed and the previous release is superseded.
+
+If the old key is compromised, run the same sequence on an emergency
+timetable and disclose that not-yet-upgraded clients still accept
+old-key-signed documents until they upgrade.
+
 ## Operating alternatives
 
 - **Current recommendation:** this repository + raw GitHub CDN. No infrastructure.

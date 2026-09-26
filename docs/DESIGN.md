@@ -550,6 +550,14 @@ A bordered strip of equal-width 40 px tabs (`#1d2122`, 10 px condensed uppercase
 
 The tuning log is a terminal well (`#111514`) of 12 px-padded entries divided by `#1f2526` rules. Each entry heads with a 26 × 20 px bordered index chip (`T0`, `T1`…), the changed fields as `key=value` mono, and the measured tok/s as a 15 px condensed figure in signal green. The best entry lifts to `#14201a` with a green index chip; a failed entry prints `FAILED` in stop red and its error in a red-plated mono block capped at 120 px. Below the rationale, a meta row carries the outcome tag (green when measured, amber otherwise — amber means the operator looks, per the One Meaning Rule), the untoned choice tag (`BASELINE`, `GRID`, `NUDGE`, `CONFIRM`, `ADVISOR`), spread and effective context, and an `Apply this trial` text-link on measured rows. Trial bars reuse the benchmark bars: best in green, others in `#5d6a61`, failures as a red-deep stub. The ledger is evidence — nothing in it is summarized away.
 
+### Evidence Panel
+
+The v2 benchmark surface is a machine panel with one primary action, run state in words, and a replay path. Idle shows **Run v2 benchmark** (primary); an active run shows **Benchmarking…** plus a danger **Cancel** that stays mounted until the backend settles, then a **Replay manifest** action for the retained bundle. Status rides in state tags with words, never in color alone.
+
+Throughput samples render as `sample-bars` rows: a 28 px label, a bar scaled to the best sample, and a 62 px tabular value. Trial rows (`trial-bars`) reuse this grid: the best bar is signal green, the rest are `#5d6a61`, and a failed trial is a red-deep stub at minimum width with a `FAIL` label in stop red. The Tune screen reuses the same bars with `T0`, `T1`… index labels. Bars compare magnitudes only; verdicts stay in the ledger text.
+
+**Source of truth:** the runtime stylesheet is `src/App.css`. `docs/theme.css` and `docs/tokens.json` are reference mirrors for tooling; no build or test reads them. When values disagree, `src/App.css` wins.
+
 ## Do's and Don'ts
 
 ### Do:
@@ -568,7 +576,7 @@ The tuning log is a terminal well (`#111514`) of 12 px-padded entries divided by
 
 ### Don't:
 
-- **Don't** add `box-shadow` to a panel, button, input, or hover state; the cabinet is flat.
+- **Don't** add `box-shadow` to a panel, button, input, or hover state; the cabinet is flat. Status lamps (`.signal`, `.plate-light`) are the only exception: a 1 px inset ring and the live glow stay on the lamp, never on a surface.
 - **Don't** introduce a fourth signal color, or reuse green, amber, or red for decoration or emphasis.
 - **Don't** set body prose in condensed uppercase, or set labels and readouts in `Public Sans`.
 - **Don't** hide a disabled control; drop it to `opacity: .42` and leave it readable — except a satisfied state (`is-current`), which stays at full opacity as a lamp.

@@ -978,7 +978,6 @@ pub struct CloudAdvisor<'a, S: SecretStore> {
     pub store: &'a S,
     pub provider_id: String,
     pub model: String,
-    pub last_raw_reply: String,
     /// The tuning run's remaining time; each request timeout is clamped to
     /// it so one slow request cannot outlive the run.
     pub deadline: Option<std::time::Instant>,
@@ -998,7 +997,6 @@ impl<S: SecretStore> Advisor for CloudAdvisor<'_, S> {
             &user,
             self.deadline,
         )?;
-        self.last_raw_reply = reply.clone();
         crate::tune::parse_proposal(&reply)
     }
 }

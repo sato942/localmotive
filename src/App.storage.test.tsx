@@ -170,7 +170,7 @@ let root: Root;
 
 beforeEach(() => {
   localStorage.clear();
-  (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+  window.__TAURI_INTERNALS__ = {};
   // jsdom does not implement Element.scrollTo; the tuning log effect calls it
   // through the production code path.
   (Element.prototype as unknown as { scrollTo: (options?: unknown) => void }).scrollTo = () => {};

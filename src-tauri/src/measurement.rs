@@ -24,6 +24,8 @@ pub struct MetricStats {
     pub p95: f64,
     pub min: f64,
     pub max: f64,
+    /// Population standard deviation (divides by n). The tuner spread
+    /// shares this convention; the [130, 131] vector pins it at 0.5.
     pub standard_deviation: f64,
 }
 
@@ -314,13 +316,24 @@ pub fn parse_completion_timing(body: &str) -> Result<CompletionTiming, String> {
     };
     let prompt_ms = positive("prompt_ms")?;
     let predicted_per_token_ms = positive("predicted_per_token_ms")?;
-    let first_token_ms = timings
-        .get("first_token_ms")
-        .and_then(serde_json::Value::as_f64)
-        .filter(|value| value.is_finite() && *value > 0.0);
+    let first_token_ms = match timings.get("first_token_ms") {
+        // Only an absent or null field means the runtime omitted the metric;
+        // a present field must carry a usable positive finite value.
+        None | Some(serde_json::Value::Null) => None,
+        Some(value) => Some(
+            value
+                .as_f64()
+                .filter(|sample| sample.is_finite() && *sample > 0.0)
+                .ok_or("llama-server timing first_token_ms must be a positive finite number")?,
+        ),
+    };
     // `cache_n` is absent on runtimes without prompt caching: treat the
     // whole prompt as processed in that case, and reject a present value
     // that is not a token count.
+    let derived_ttft_ms = prompt_ms + predicted_per_token_ms;
+    if !derived_ttft_ms.is_finite() {
+        return Err("llama-server derived TTFT overflowed the finite range".into());
+    }
     let cached_prompt_tokens = match timings.get("cache_n") {
         None | Some(serde_json::Value::Null) => 0,
         Some(value) => value
@@ -335,7 +348,7 @@ pub fn parse_completion_timing(body: &str) -> Result<CompletionTiming, String> {
         prefill_tps: positive("prompt_per_second")?,
         decode_tps: positive("predicted_per_second")?,
         first_token_ms,
-        derived_ttft_ms: prompt_ms + predicted_per_token_ms,
+        derived_ttft_ms,
         peak_process_rss_bytes: unknown_process_peak_rss_bytes(),
     })
 }
@@ -883,6 +896,24 @@ mod tests {
     }
 
     #[test]
+    fn metric_summary_uses_population_standard_deviation() {
+        // The product convention is population SD (divides by n): [130, 131]
+        // spreads 0.5, not sqrt(0.5). Both the v2 summary and the tuner
+        // spread share this vector, so a future statistics change cannot
+        // silently swap the meaning.
+        let stats = metric_stats([130.0, 131.0].into_iter()).unwrap();
+        assert!(
+            (stats.standard_deviation - 0.5).abs() <= 4.0 * f64::EPSILON,
+            "population spread of [130, 131] must be 0.5, got {}",
+            stats.standard_deviation
+        );
+        assert!(
+            (stats.standard_deviation - std::f64::consts::FRAC_1_SQRT_2).abs() > 0.1,
+            "spread must not be the sample convention sqrt(0.5)"
+        );
+    }
+
+    #[test]
     fn metric_summary_preserves_subnormal_medians() {
         // Halving both smallest subnormals before adding rounds each to zero.
         let tiny = f64::from_bits(1);
@@ -960,6 +991,32 @@ mod tests {
         assert_eq!(timing.decode_tps, 80.0);
         assert_eq!(timing.derived_ttft_ms, 92.5);
         assert!(timing.first_token_ms.is_none());
+    }
+
+    #[test]
+    fn completion_timing_rejects_a_present_but_invalid_first_token() {
+        // A runtime that sends the field must send a usable value: only an
+        // absent or null field means "the runtime omitted this metric".
+        for body in [
+            r#"{"timings":{"prompt_n":32,"prompt_ms":80.0,"prompt_per_second":400.0,"predicted_n":16,"predicted_ms":200.0,"predicted_per_second":80.0,"predicted_per_token_ms":12.5,"first_token_ms":-5.0}}"#,
+            r#"{"timings":{"prompt_n":32,"prompt_ms":80.0,"prompt_per_second":400.0,"predicted_n":16,"predicted_ms":200.0,"predicted_per_second":80.0,"predicted_per_token_ms":12.5,"first_token_ms":0.0}}"#,
+            r#"{"timings":{"prompt_n":32,"prompt_ms":80.0,"prompt_per_second":400.0,"predicted_n":16,"predicted_ms":200.0,"predicted_per_second":80.0,"predicted_per_token_ms":12.5,"first_token_ms":"fast"}}"#,
+        ] {
+            let error = parse_completion_timing(body).unwrap_err();
+            assert!(
+                error.contains("first_token_ms"),
+                "unexpected error: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn completion_timing_rejects_an_overflowing_derived_ttft() {
+        let error = parse_completion_timing(
+            r#"{"timings":{"prompt_n":32,"prompt_ms":1.0e308,"prompt_per_second":400.0,"predicted_n":16,"predicted_ms":200.0,"predicted_per_second":80.0,"predicted_per_token_ms":1.0e308}}"#,
+        )
+        .unwrap_err();
+        assert!(error.contains("derived"), "unexpected error: {error}");
     }
 
     #[test]

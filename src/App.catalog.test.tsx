@@ -152,7 +152,7 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
-  (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+  window.__TAURI_INTERNALS__ = {};
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);

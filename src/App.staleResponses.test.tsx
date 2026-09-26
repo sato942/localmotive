@@ -158,7 +158,7 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.useFakeTimers();
   localStorage.clear();
-  (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+  window.__TAURI_INTERNALS__ = {};
   (Element.prototype as unknown as { scrollTo: (options?: unknown) => void }).scrollTo = () => {};
   container = document.createElement("div");
   document.body.appendChild(container);

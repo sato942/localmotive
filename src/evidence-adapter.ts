@@ -34,11 +34,11 @@ export interface EvidenceAdapter {
 
 /// The real adapter used by the packaged application.
 export const tauriEvidenceAdapter: EvidenceAdapter = {
-  detectHardware: () => invoke("detect_hardware"),
-  inspectModelArtifact: (args) => invoke("inspect_model_artifact", args),
-  preflightModel: (args) => invoke("preflight_model", { request: args }),
-  benchmarkV2: (workload) => invoke("benchmark_v2", { workload }),
-  cancelBenchmark: () => invoke("cancel_benchmark"),
+  detectHardware: () => invoke<HardwareInfo>("detect_hardware"),
+  inspectModelArtifact: (args) => invoke<ArtifactInspection>("inspect_model_artifact", args),
+  preflightModel: (args) => invoke<PreflightResult>("preflight_model", { request: args }),
+  benchmarkV2: (workload) => invoke<BenchmarkRunResult>("benchmark_v2", { workload }),
+  cancelBenchmark: () => invoke<void>("cancel_benchmark"),
   replayBenchmarkManifest: (manifest) =>
-    invoke("replay_benchmark_manifest", { manifest }),
+    invoke<Workload>("replay_benchmark_manifest", { manifest }),
 };

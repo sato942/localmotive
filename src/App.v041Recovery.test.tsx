@@ -137,7 +137,7 @@ let App: (typeof import("./App"))["default"];
 
 beforeEach(async () => {
   localStorage.clear();
-  (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+  window.__TAURI_INTERNALS__ = {};
   (Element.prototype as unknown as { scrollTo: (options?: unknown) => void }).scrollTo = () => {};
   container = document.createElement("div");
   document.body.appendChild(container);

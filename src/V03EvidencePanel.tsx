@@ -69,13 +69,18 @@ function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
 }
 
 // Audit FE-06: the full launch-profile fingerprint used for preflight-input
-// identity. Every field that can change a preflight verdict is included.
+// identity. Every field that can change a preflight verdict is included;
+// only the display name is excluded. New profile fields join the fingerprint
+// automatically, and no cast can smuggle unknown fields in.
 function profileFingerprintOf(profile: LaunchProfile): Record<string, unknown> {
-  const record = profile as unknown as Record<string, unknown>;
-  const keys = Object.keys(record)
-    .filter((key) => key !== "name")
-    .sort();
-  return Object.fromEntries(keys.map((key) => [key, record[key]]));
+  const { name: _excludedDisplayName, ...verdictFields } = profile;
+  void _excludedDisplayName;
+  const keys = Object.keys(verdictFields).sort();
+  const fingerprint: Record<string, unknown> = {};
+  for (const key of keys) {
+    fingerprint[key] = verdictFields[key as keyof typeof verdictFields];
+  }
+  return fingerprint;
 }
 
 function hardwareSignatureOf(hardware: HardwareInfo | null): string | null {
@@ -224,17 +229,19 @@ export function V03EvidencePanel({
     inputRevisionRef.current += 1;
   }, [preflightInputs]);
 
+  // The owner callback is a prop and may be replaced while a run is
+  // active: always notify the latest owner through a ref, never the
+  // callback that happened to be installed when the run started.
+  const runOwnerRef = useRef(onRunStateChange);
+  runOwnerRef.current = onRunStateChange;
   useEffect(() => {
     // FE-05 I2: navigation must not orphan a dispatched measurement; the app
     // keeps this run's status and cancel handle visible everywhere.
     if (busy === "benchmark") {
-      onRunStateChange?.({ kind: "benchmark", cancel: () => void cancelBenchmark() });
-      return () => onRunStateChange?.(null);
+      runOwnerRef.current?.({ kind: "benchmark", cancel: () => void cancelBenchmark() });
+      return () => runOwnerRef.current?.(null);
     }
-    onRunStateChange?.(null);
-    // `onRunStateChange` is a stable setState; the run state only depends on
-    // which action is busy.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    runOwnerRef.current?.(null);
   }, [busy]);
 
   async function runAction<T>(name: string, action: () => Promise<T>): Promise<T | null> {

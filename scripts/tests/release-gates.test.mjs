@@ -1862,7 +1862,7 @@ test("FE-07 cancellation state is separate from the run lifecycle", async () => 
     join(process.cwd(), "src", "evidence-adapter.ts"),
     "utf8",
   );
-  assert.match(adapterSource, /invoke\("cancel_benchmark"\)/);
+  assert.match(adapterSource, /invoke(<[A-Za-z]+>)?\("cancel_benchmark"\)/);
   assert.match(panel, /busy !== "benchmark" \|\| cancelPending/);
 });
 
