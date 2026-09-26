@@ -625,6 +625,20 @@ export const profileNumberLimits = {
   verbosity: ["Log verbosity", 0, 5, 1],
 } satisfies Record<ProfileNumberField, [string, number, number, 1 | "any"]>;
 
+/** Parse raw numeric-field text without eating incomplete input.
+ * Blank stays NaN (distinct from an explicit zero); a lone "-" or other
+ * unparseable text stays NaN so the field keeps showing what was typed and
+ * the bounds validator reports the problem as text. Bounds are enforced
+ * downstream by profileNumberError/tuningWorkloadError/validateWorkload,
+ * never here. */
+export function parseNumericText(text: string, step: 1 | "any"): number {
+  if (text.trim() === "") return NaN;
+  const value = Number(text);
+  if (!Number.isFinite(value)) return NaN;
+  if (step === 1 && !Number.isSafeInteger(value)) return NaN;
+  return value;
+}
+
 export function profileNumberError(profile: LaunchProfile): string | null {
   for (const field of Object.keys(profileNumberLimits) as ProfileNumberField[]) {
     const [label, min, max, step] = profileNumberLimits[field];

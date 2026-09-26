@@ -266,7 +266,7 @@ describe("benchmark workload editing", () => {
     expect(runButton().disabled).toBe(true);
     const input = await setWorkloadInput(label, value);
     expect(input.value).toBe(value);
-    expect(input.checkValidity()).toBe(true);
+    expect(input.inputMode).toBe("numeric");
     expect(runButton().disabled).toBe(false);
     expect(container.querySelector('[aria-label="Workload validation errors"]')).toBeNull();
     act(() => clickByText("Run v2 benchmark"));
@@ -288,7 +288,8 @@ describe("benchmark workload editing", () => {
     expect(runButton().disabled).toBe(false);
     const input = await setWorkloadInput(label, value);
     expect(input.value).toBe(value);
-    expect(input.checkValidity()).toBe(false);
+    expect(input.inputMode).toBe("numeric");
+    expect(container.querySelector('[aria-label="Workload validation errors"]')).not.toBeNull();
     act(() => clickByText("Run v2 benchmark"));
     await flush();
     expect(benchmark).not.toHaveBeenCalled();

@@ -1,4 +1,4 @@
-import type { ChangeEvent, Dispatch, SetStateAction } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import { Braces, Play, Save } from "lucide-react";
 import {
   formatExtraArgs,
@@ -14,6 +14,7 @@ import {
   type ServerStatus,
 } from "../model";
 import type { EvidenceRun } from "./evidence-run";
+import { useNumericText } from "../useNumericText";
 
 /// Presentational contract for the launch-profile editor (audit S-27.I2).
 /// Acquisition, persistence and preview composition stay in `App.tsx`.
@@ -35,6 +36,30 @@ export interface ProfileScreenProps {
   start: () => void;
   tuning: boolean;
   status: ServerStatus;
+}
+
+/// One numeric profile field (bounded UI input): the input shows exactly
+/// what was typed — blank stays blank — while only parsed numbers reach the
+/// profile validators and IPC. Module level, so one mounted instance per
+/// field keeps its text state (an inner component would remount and drop
+/// focus on every keystroke).
+function ProfileNumberInput({ field, profile, setProfile }: {
+  field: ProfileNumberField;
+  profile: LaunchProfile;
+  setProfile: Dispatch<SetStateAction<LaunchProfile | null>>;
+}) {
+  const [, , , step] = profileNumberLimits[field];
+  const [text, onTextChange] = useNumericText(profile[field], (next) =>
+    setProfile((current) => (current === null ? current : { ...current, [field]: next })), step);
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      required
+      value={text}
+      onChange={(event) => onTextChange(event.target.value)}
+    />
+  );
 }
 
 export function ProfileScreen(props: ProfileScreenProps) {
@@ -59,15 +84,6 @@ export function ProfileScreen(props: ProfileScreenProps) {
   const inputError = profileNumberError(profile);
   const specType = typeof profile.specType === "string" ? profile.specType : "";
   const specTypes = ["none", ...(runtime?.specTypes ?? []).filter((type) => type !== "none")];
-  const numberInput = (field: ProfileNumberField) => {
-    const [, min, max, step] = profileNumberLimits[field];
-    return {
-      type: "number", min, max, step, required: true,
-      value: Number.isFinite(profile[field]) ? profile[field] : "",
-      onChange: (event: ChangeEvent<HTMLInputElement>) =>
-        setProfile({ ...profile, [field]: event.target.valueAsNumber }),
-    };
-  };
   return (
     <section className="screen profile-screen">
       <div className="section-heading">
@@ -118,17 +134,17 @@ export function ProfileScreen(props: ProfileScreenProps) {
             }} /></label>
             <button className="inline-action" onClick={() => inspect()} disabled={busy === "runtime"}>Inspect selected runtime</button>
             <label>Host<input value={profile.host} onChange={(e) => setProfile({ ...profile, host: e.target.value })} /></label>
-            <label>Port<input {...numberInput("port")} /></label>
+            <label>Port<ProfileNumberInput field="port" profile={profile} setProfile={setProfile} /></label>
             <label className="wide">API alias<input value={profile.alias} onChange={(e) => setProfile({ ...profile, alias: e.target.value })} /></label>
           </fieldset>
 
           <fieldset>
             <legend>Everyday performance</legend>
             <p className="group-note">The settings most likely to affect whether a model fits and how fast it runs.</p>
-            <label>Context tokens<input {...numberInput("context")} /><small className="field-help">Shared by prompt and output.</small></label>
-            <label>Parallel slots<input {...numberInput("parallel")} /><small className="field-help">Use 1 for best single-user latency.</small></label>
+            <label>Context tokens<ProfileNumberInput field="context" profile={profile} setProfile={setProfile} /><small className="field-help">Shared by prompt and output.</small></label>
+            <label>Parallel slots<ProfileNumberInput field="parallel" profile={profile} setProfile={setProfile} /><small className="field-help">Use 1 for best single-user latency.</small></label>
             <label>GPU layers<input value={profile.gpuLayers} onChange={(e) => setProfile({ ...profile, gpuLayers: e.target.value })} /><small className="field-help">auto, all, or a layer count.</small></label>
-            <label>CPU MoE layers<input {...numberInput("cpuMoe")} /><small className="field-help">Useful for large mixture-of-experts models.</small></label>
+            <label>CPU MoE layers<ProfileNumberInput field="cpuMoe" profile={profile} setProfile={setProfile} /><small className="field-help">Useful for large mixture-of-experts models.</small></label>
             <label>Flash attention
               <select value={profile.flashAttention} onChange={(e) => setProfile({ ...profile, flashAttention: e.target.value as LaunchProfile["flashAttention"] })}>
                 <option value="auto">Automatic</option><option value="on">On</option><option value="off">Off</option>
@@ -180,7 +196,7 @@ export function ProfileScreen(props: ProfileScreenProps) {
               })()}
               <small className="field-help">Required by DSpark, DFlash, EAGLE-3, and simple draft models.{(selected?.companions ?? []).filter((c) => c.role !== "mmproj").length > 1 ? ` This family ships ${(selected?.companions ?? []).filter((c) => c.role !== "mmproj").length} drafts; the closest quantisation to ${selected?.quant ?? "the target"} is listed first.` : ""}</small>
             </label>
-            <label>Maximum draft tokens<input {...numberInput("draftMax")} /></label>
+            <label>Maximum draft tokens<ProfileNumberInput field="draftMax" profile={profile} setProfile={setProfile} /></label>
             <label>Vision projector<input value={profile.mmproj ?? ""} onChange={(e) => setProfile({ ...profile, mmproj: e.target.value || null })} /></label>
           </fieldset>
 
@@ -202,12 +218,12 @@ export function ProfileScreen(props: ProfileScreenProps) {
               <details className="option-group">
                 <summary>CPU, batching & throughput</summary>
                 <div className="option-grid">
-                  <label>Generation threads<input {...numberInput("threads")} /><small className="field-help">-1 lets llama.cpp decide.</small></label>
-                  <label>Prompt threads<input {...numberInput("threadsBatch")} /></label>
-                  <label>Batch size<input {...numberInput("batch")} /></label>
-                  <label>Physical uBatch<input {...numberInput("ubatch")} /></label>
-                  <label>Dense CPU FFN layers<input {...numberInput("cpuFfn")} /></label>
-                  <label>HTTP threads<input {...numberInput("threadsHttp")} /></label>
+                  <label>Generation threads<ProfileNumberInput field="threads" profile={profile} setProfile={setProfile} /><small className="field-help">-1 lets llama.cpp decide.</small></label>
+                  <label>Prompt threads<ProfileNumberInput field="threadsBatch" profile={profile} setProfile={setProfile} /></label>
+                  <label>Batch size<ProfileNumberInput field="batch" profile={profile} setProfile={setProfile} /></label>
+                  <label>Physical uBatch<ProfileNumberInput field="ubatch" profile={profile} setProfile={setProfile} /></label>
+                  <label>Dense CPU FFN layers<ProfileNumberInput field="cpuFfn" profile={profile} setProfile={setProfile} /></label>
+                  <label>HTTP threads<ProfileNumberInput field="threadsHttp" profile={profile} setProfile={setProfile} /></label>
                   <label className="toggle-line"><input type="checkbox" checked={profile.continuousBatching} onChange={(e) => setProfile({ ...profile, continuousBatching: e.target.checked })} /> Continuous batching</label>
                   <label className="toggle-line"><input type="checkbox" checked={profile.warmup} onChange={(e) => setProfile({ ...profile, warmup: e.target.checked })} /> Startup warmup</label>
                 </div>
@@ -218,10 +234,10 @@ export function ProfileScreen(props: ProfileScreenProps) {
                 <div className="option-grid">
                   <label>Split mode<select value={profile.splitMode} onChange={(e) => setProfile({ ...profile, splitMode: e.target.value })}><option value="none">Single GPU</option><option value="layer">Layer split</option><option value="row">Row split</option><option value="tensor">Tensor split (experimental)</option></select></label>
                   <label>Tensor split<input value={profile.tensorSplit} onChange={(e) => setProfile({ ...profile, tensorSplit: e.target.value })} placeholder="e.g. 3,1" /></label>
-                  <label>Main GPU<input {...numberInput("mainGpu")} /></label>
+                  <label>Main GPU<ProfileNumberInput field="mainGpu" profile={profile} setProfile={setProfile} /></label>
                   <label>Devices<input value={profile.device} onChange={(e) => setProfile({ ...profile, device: e.target.value })} placeholder="blank = automatic" /></label>
                   <label>Fit margin MiB<input value={profile.fitTarget} onChange={(e) => setProfile({ ...profile, fitTarget: e.target.value })} /></label>
-                  <label>Minimum fit context<input {...numberInput("fitCtx")} /></label>
+                  <label>Minimum fit context<ProfileNumberInput field="fitCtx" profile={profile} setProfile={setProfile} /></label>
                   {runtime?.supportedFlags.includes("--lazy-mode") && <label>Lazy tensor loading<select value={profile.lazyMode} onChange={(e) => setProfile({ ...profile, lazyMode: e.target.value })}><option value="auto">Automatic</option><option value="on">On</option><option value="off">Off</option></select></label>}
                 </div>
               </details>
@@ -229,12 +245,12 @@ export function ProfileScreen(props: ProfileScreenProps) {
               <details className="option-group">
                 <summary>Prompt cache & server lifecycle</summary>
                 <div className="option-grid">
-                  <label>Cache RAM MiB<input {...numberInput("cacheRam")} /></label>
-                  <label>Cache reuse chunk<input {...numberInput("cacheReuse")} /></label>
-                  <label>Context checkpoints<input {...numberInput("contextCheckpoints")} /></label>
-                  <label>Sleep after idle seconds<input {...numberInput("sleepIdleSeconds")} /></label>
-                  <label>Request timeout seconds<input {...numberInput("timeout")} /></label>
-                  <label>SSE ping seconds<input {...numberInput("ssePingInterval")} /></label>
+                  <label>Cache RAM MiB<ProfileNumberInput field="cacheRam" profile={profile} setProfile={setProfile} /></label>
+                  <label>Cache reuse chunk<ProfileNumberInput field="cacheReuse" profile={profile} setProfile={setProfile} /></label>
+                  <label>Context checkpoints<ProfileNumberInput field="contextCheckpoints" profile={profile} setProfile={setProfile} /></label>
+                  <label>Sleep after idle seconds<ProfileNumberInput field="sleepIdleSeconds" profile={profile} setProfile={setProfile} /></label>
+                  <label>Request timeout seconds<ProfileNumberInput field="timeout" profile={profile} setProfile={setProfile} /></label>
+                  <label>SSE ping seconds<ProfileNumberInput field="ssePingInterval" profile={profile} setProfile={setProfile} /></label>
                   <label className="toggle-line"><input type="checkbox" checked={profile.contextShift} onChange={(e) => setProfile({ ...profile, contextShift: e.target.checked })} /> Infinite-generation context shift</label>
                   <label className="toggle-line"><input type="checkbox" checked={profile.slots} onChange={(e) => setProfile({ ...profile, slots: e.target.checked })} /> Slots monitoring endpoint</label>
                   <label className="toggle-line"><input type="checkbox" checked={profile.metrics} onChange={(e) => setProfile({ ...profile, metrics: e.target.checked })} /> Prometheus metrics</label>
@@ -245,37 +261,37 @@ export function ProfileScreen(props: ProfileScreenProps) {
               <details className="option-group">
                 <summary>Speculative fine tuning</summary>
                 <div className="option-grid">
-                  <label>Minimum draft tokens<input {...numberInput("draftMin")} /></label>
-                  <label>Draft probability floor<input {...numberInput("draftPMin")} /></label>
-                  <label>Draft split probability<input {...numberInput("draftPSplit")} /></label>
+                  <label>Minimum draft tokens<ProfileNumberInput field="draftMin" profile={profile} setProfile={setProfile} /></label>
+                  <label>Draft probability floor<ProfileNumberInput field="draftPMin" profile={profile} setProfile={setProfile} /></label>
+                  <label>Draft split probability<ProfileNumberInput field="draftPSplit" profile={profile} setProfile={setProfile} /></label>
                   <label>Draft GPU layers<input value={profile.draftGpuLayers} onChange={(e) => setProfile({ ...profile, draftGpuLayers: e.target.value })} /></label>
                   <label>Draft cache K<select value={profile.draftCacheTypeK} onChange={(e) => setProfile({ ...profile, draftCacheTypeK: e.target.value })}>{["f16","bf16","q8_0","q4_0","q4_1"].map((type) => <option key={type}>{type}</option>)}</select></label>
                   <label>Draft cache V<select value={profile.draftCacheTypeV} onChange={(e) => setProfile({ ...profile, draftCacheTypeV: e.target.value })}>{["f16","bf16","q8_0","q4_0","q4_1"].map((type) => <option key={type}>{type}</option>)}</select></label>
-                  <label>N-gram match length<input {...numberInput("ngramMatch")} /></label>
+                  <label>N-gram match length<ProfileNumberInput field="ngramMatch" profile={profile} setProfile={setProfile} /></label>
                   <div className="paired-inputs">
-                    <label>N-gram draft min<input {...numberInput("ngramMin")} /></label>
-                    <label>N-gram draft max<input {...numberInput("ngramMax")} /></label>
+                    <label>N-gram draft min<ProfileNumberInput field="ngramMin" profile={profile} setProfile={setProfile} /></label>
+                    <label>N-gram draft max<ProfileNumberInput field="ngramMax" profile={profile} setProfile={setProfile} /></label>
                   </div>
                   <div className="paired-inputs">
-                    <label>N-gram map size n<input {...numberInput("ngramSizeN")} /></label>
-                    <label>N-gram map size m<input {...numberInput("ngramSizeM")} /></label>
+                    <label>N-gram map size n<ProfileNumberInput field="ngramSizeN" profile={profile} setProfile={setProfile} /></label>
+                    <label>N-gram map size m<ProfileNumberInput field="ngramSizeM" profile={profile} setProfile={setProfile} /></label>
                   </div>
-                  <label>Map minimum hits<input {...numberInput("ngramMinHits")} /></label>
+                  <label>Map minimum hits<ProfileNumberInput field="ngramMinHits" profile={profile} setProfile={setProfile} /></label>
                 </div>
               </details>
 
               <details className="option-group">
                 <summary>Sampling defaults</summary>
                 <div className="option-grid">
-                  <label>Temperature<input {...numberInput("temperature")} /></label>
-                  <label>Top K<input {...numberInput("topK")} /></label>
-                  <label>Top P<input {...numberInput("topP")} /></label>
-                  <label>Min P<input {...numberInput("minP")} /></label>
-                  <label>Repeat penalty<input {...numberInput("repeatPenalty")} /></label>
-                  <label>Repeat window<input {...numberInput("repeatLastN")} /></label>
-                  <label>Seed<input {...numberInput("seed")} /></label>
-                  <label>DRY multiplier<input {...numberInput("dryMultiplier")} /></label>
-                  <label>DRY base<input {...numberInput("dryBase")} /></label>
+                  <label>Temperature<ProfileNumberInput field="temperature" profile={profile} setProfile={setProfile} /></label>
+                  <label>Top K<ProfileNumberInput field="topK" profile={profile} setProfile={setProfile} /></label>
+                  <label>Top P<ProfileNumberInput field="topP" profile={profile} setProfile={setProfile} /></label>
+                  <label>Min P<ProfileNumberInput field="minP" profile={profile} setProfile={setProfile} /></label>
+                  <label>Repeat penalty<ProfileNumberInput field="repeatPenalty" profile={profile} setProfile={setProfile} /></label>
+                  <label>Repeat window<ProfileNumberInput field="repeatLastN" profile={profile} setProfile={setProfile} /></label>
+                  <label>Seed<ProfileNumberInput field="seed" profile={profile} setProfile={setProfile} /></label>
+                  <label>DRY multiplier<ProfileNumberInput field="dryMultiplier" profile={profile} setProfile={setProfile} /></label>
+                  <label>DRY base<ProfileNumberInput field="dryBase" profile={profile} setProfile={setProfile} /></label>
                 </div>
               </details>
 
@@ -284,8 +300,8 @@ export function ProfileScreen(props: ProfileScreenProps) {
                 <div className="option-grid">
                   <label className="toggle-line"><input type="checkbox" checked={profile.mmprojOffload} onChange={(e) => setProfile({ ...profile, mmprojOffload: e.target.checked })} /> Offload projector to GPU</label>
                   <label>Projector device<input value={profile.mmprojDevice} onChange={(e) => setProfile({ ...profile, mmprojDevice: e.target.value })} /></label>
-                  <label>Minimum image tokens<input {...numberInput("imageMinTokens")} /></label>
-                  <label>Maximum image tokens<input {...numberInput("imageMaxTokens")} /></label>
+                  <label>Minimum image tokens<ProfileNumberInput field="imageMinTokens" profile={profile} setProfile={setProfile} /></label>
+                  <label>Maximum image tokens<ProfileNumberInput field="imageMaxTokens" profile={profile} setProfile={setProfile} /></label>
                 </div>
               </details>
 
@@ -303,14 +319,14 @@ export function ProfileScreen(props: ProfileScreenProps) {
               <details className="option-group">
                 <summary>Templates, adapters & low-level overrides</summary>
                 <div className="option-grid">
-                  <label>Reasoning token budget<input {...numberInput("reasoningBudget")} /></label>
+                  <label>Reasoning token budget<ProfileNumberInput field="reasoningBudget" profile={profile} setProfile={setProfile} /></label>
                   <label className="toggle-line"><input type="checkbox" checked={profile.reasoningPreserve} onChange={(e) => setProfile({ ...profile, reasoningPreserve: e.target.checked })} /> Preserve reasoning history</label>
                   <label className="wide">Custom chat template file<input value={profile.chatTemplateFile} onChange={(e) => setProfile({ ...profile, chatTemplateFile: e.target.value })} /></label>
                   <label className="wide">LoRA files<input value={profile.lora} onChange={(e) => setProfile({ ...profile, lora: e.target.value })} placeholder="comma-separated paths" /></label>
                   <label className="wide">Scaled LoRAs<input value={profile.loraScaled} onChange={(e) => setProfile({ ...profile, loraScaled: e.target.value })} placeholder="path:scale,..." /></label>
                   <label className="wide">Tensor overrides<input value={profile.overrideTensor} onChange={(e) => setProfile({ ...profile, overrideTensor: e.target.value })} /></label>
                   <label className="wide">Model metadata overrides<input value={profile.overrideKv} onChange={(e) => setProfile({ ...profile, overrideKv: e.target.value })} /></label>
-                  <label>Log verbosity<input {...numberInput("verbosity")} /></label>
+                  <label>Log verbosity<ProfileNumberInput field="verbosity" profile={profile} setProfile={setProfile} /></label>
                   <label className="toggle-line"><input type="checkbox" checked={profile.logTimestamps} onChange={(e) => setProfile({ ...profile, logTimestamps: e.target.checked })} /> Log timestamps</label>
                   <label className="wide">
                     Raw extra arguments
