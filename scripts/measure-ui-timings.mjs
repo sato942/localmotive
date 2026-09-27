@@ -158,6 +158,8 @@ try {
   }
   report.skipped["Benchmark start"] = "needs a downloaded model + running server fixture; not wired in Stage 2";
 } finally {
+  // Owned-PID tree kill only: this PID is the child this script spawned, so
+  // /T cannot reach an unrelated process. (No name/port kill, per repo rule.)
   try {
     execSync(`taskkill /pid ${child.pid} /T /F`, { stdio: "ignore" });
   } catch {}

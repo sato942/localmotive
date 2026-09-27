@@ -117,7 +117,7 @@ try {
     Stop-Process -Id $owned.Id -Force  # external kill, like prep() does
     Start-Sleep -Milliseconds 800
     $script:fixtureProcess = $owned  # adopted handle, already dead
-    $verifier = New-VerifierMock @(0, 0, 0, 0, 0) $t.ResolvedSha
+    $verifier = New-VerifierMock @(0, 0, 0, 0, 0, 0) $t.ResolvedSha
     $startCandidate = { param($port, $exe) return (Start-Sleeper) }.GetNewClosure()
     $startFixture = {
       param($d, $p, $a)
@@ -142,7 +142,7 @@ try {
     $probe = New-OutcomeProbe
     $owned = Start-Sleeper
     $script:fixtureProcess = $owned  # adopted handle, still alive
-    $verifier = New-VerifierMock @(0, 0, 0, 0, 0) $t.ResolvedSha
+    $verifier = New-VerifierMock @(0, 0, 0, 0, 0, 0) $t.ResolvedSha
     $startCandidate = { param($port, $exe) return (Start-Sleeper) }.GetNewClosure()
     $startFixture = {
       param($d, $p, $a)
@@ -190,7 +190,7 @@ try {
   Assert-Scenario "early candidate-startup failure still cleans up" {
     $t = New-TestAttempt "early-fail"
     $probe = New-OutcomeProbe
-    $verifier = New-VerifierMock @(0, 0, 0, 0, 0) $t.ResolvedSha
+    $verifier = New-VerifierMock @(0, 0, 0, 0, 0, 0) $t.ResolvedSha
     $startCandidate = { param($port, $exe) throw "Candidate WebView did not expose a page CDP target in 90s (port $port)" }.GetNewClosure()
     $startFixture = {
       param($d, $p, $a)
@@ -215,7 +215,7 @@ try {
   Assert-Scenario "unstoppable candidate fails the run" {
     $t = New-TestAttempt "candidate-alive"
     $probe = New-OutcomeProbe
-    $verifier = New-VerifierMock @(0, 0, 0, 0, 0) $t.ResolvedSha
+    $verifier = New-VerifierMock @(0, 0, 0, 0, 0, 0) $t.ResolvedSha
     $startCandidate = { param($port, $exe) return (Start-Sleeper) }.GetNewClosure()
     $startFixture = {
       param($d, $p, $a)
@@ -252,7 +252,7 @@ try {
   Assert-Scenario "unstoppable fixture fails the run" {
     $t = New-TestAttempt "fixture-alive"
     $probe = New-OutcomeProbe
-    $verifier = New-VerifierMock @(0, 0, 0, 0, 0) $t.ResolvedSha
+    $verifier = New-VerifierMock @(0, 0, 0, 0, 0, 0) $t.ResolvedSha
     $startCandidate = { param($port, $exe) return (Start-Sleeper) }.GetNewClosure()
     $startFixture = {
       param($d, $p, $a)
@@ -355,7 +355,7 @@ try {
   Assert-Scenario "fixture-init failure still runs outer cleanup" {
     $t = New-TestAttempt "init-fail"
     $probe = New-OutcomeProbe
-    $verifier = New-VerifierMock @(0, 0, 0, 0, 0) $t.ResolvedSha
+    $verifier = New-VerifierMock @(0, 0, 0, 0, 0, 0) $t.ResolvedSha
     $startFixture = { param($d, $p, $a) throw "The catalog fixture server did not initialize (exit 1): boom" }.GetNewClosure()
     $probe = @{ ran = $false }
     $stopFixture = { param($d) $probe.ran = $true; return "skipped-no-fixture" }.GetNewClosure()
@@ -367,6 +367,30 @@ try {
       if ($code -ne 1) { throw "expected exit 1, got $code" }
       if (-not $script:functionalError.Contains("did not initialize")) { throw "wrong error: [$script:functionalError]" }
       if (-not $probe.ran) { throw "outer cleanup did not run" }
+    } finally { Pop-Location }
+  }
+
+  # 13. UI timings breach: a failing measurement phase fails the run with
+  # the timings error (UI-speed Stage 5 gate wiring).
+  Assert-Scenario "ui timings breach fails the run" {
+    $t = New-TestAttempt "timings-breach"
+    $probe = New-OutcomeProbe
+    $verifier = New-VerifierMock @(0, 0, 0, 0, 1, 0) $t.ResolvedSha
+    $startCandidate = { param($port, $exe) return (Start-Sleeper) }.GetNewClosure()
+    $startFixture = {
+      param($d, $p, $a)
+      New-Item -ItemType Directory -Force -Path $d | Out-Null
+      return @{ fixture_url = "http://127.0.0.1:9/catalog.json"; fixture_pubkey = "00" * 32 }
+    }.GetNewClosure()
+    $stopCandidate = { param($proc) Stop-Candidate $proc }.GetNewClosure()
+    $stopFixture = { param($d) return "skipped-no-fixture" }.GetNewClosure()
+    $workDir = Join-Path ([System.IO.Path]::GetTempPath()) "localmotive-regression-work-$($t.AttemptId)"
+    New-Item -ItemType Directory -Force -Path $workDir | Out-Null
+    Push-Location $workDir
+    try {
+      $code = Invoke-PackagedMatrix -Portable $t.Portable -Version $t.Version -ResolvedSha $t.ResolvedSha -CdpPort 14719 -AttemptId $t.AttemptId -IsolatedRoot $t.IsolatedRoot -Profile $t.Profile -CatalogState $t.CatalogState -StartFixture $startFixture -StartCandidateFn $startCandidate -RunVerifier $verifier -StopCandidateFn $stopCandidate -StopFixtureFn $stopFixture -Outcome $probe
+      if ($code -ne 1) { throw "expected exit 1, got $code" }
+      if (-not $script:functionalError.Contains("UI timings phase failed")) { throw "wrong error: [$script:functionalError]" }
     } finally { Pop-Location }
   }
 
