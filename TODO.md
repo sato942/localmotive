@@ -983,10 +983,15 @@ Owner decision 2026-09-26: schedule Bounded UI input next (was unscheduled).
   - Stage 4 — optimize only cap breaches, one at a time, re-measuring after
     each change (virtualize long lists, defer non-critical IPC on view
     entry, memoize hot renders — pick by profile, not by taste).
-  - Stage 5 — gate the timings: CDP timing assertions join the packaged
-    matrix so a regression fails the release, and fold the 3-flow E2E smoke
-    (launch → profile save → server start; catalog → download → benchmark;
-    upgrade preserves data) into the same run.
+  - Stage 5 — gate the timings (DONE 2026-09-27 on `fix/ui-stage5-gate`):
+    `measure-ui-timings.mjs` enforces the Stage 3 caps and fails on any
+    page error (the app-shell E2E smoke: all 8 views driven, zero console/
+    page errors); `verify_packaged_impl.ps1` runs it as a matrix phase on a
+    derived port (`$CdpPort + 9`) with evidence
+    `artifacts/ui-timings-$Version.json`, retained by the release collect
+    step. Gate RED-proven live (1 ms cap → exit 1) and GREEN at pinned caps
+    (exit 0). Model-gated flows (profile save→server, download→benchmark)
+    still need fixtures — recorded, not claimed.
   - Exit: every stage recorded in the ledger; no stage skipped to reach an
     optimization.
 - Smarter tuning search without AI. Research the algorithms first.

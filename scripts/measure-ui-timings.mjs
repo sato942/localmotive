@@ -158,6 +158,8 @@ try {
   }
   report.skipped["Benchmark start"] = "needs a downloaded model + running server fixture; not wired in Stage 2";
 } finally {
+  // Owned-PID tree kill only: this PID is the child this script spawned, so
+  // /T cannot reach an unrelated process. (No name/port kill, per repo rule.)
   try {
     execSync(`taskkill /pid ${child.pid} /T /F`, { stdio: "ignore" });
   } catch {}
@@ -166,4 +168,28 @@ try {
   } catch {}
 }
 writeFileSync(outJson, JSON.stringify(report, null, 2));
-console.log(JSON.stringify(report, null, 2));
+
+// Stage 5 gate: pinned caps (TODO UI-speed Stage 3) and a page-error smoke.
+// Any breach fails the run so the packaged matrix blocks the release.
+const capSwitch = Number(process.env.TIMINGS_CAP_SWITCH_MS ?? 100);
+const capLaunch = Number(process.env.TIMINGS_CAP_LAUNCH_MS ?? 2000);
+const capTti = Number(process.env.TIMINGS_CAP_TTI_MS ?? 2500);
+const failures = [];
+if (report.launchToWindowMs !== null && report.launchToWindowMs > capLaunch) {
+  failures.push(`launch ${report.launchToWindowMs}ms > cap ${capLaunch}ms`);
+}
+if (report.timeToInteractiveMs !== null && report.timeToInteractiveMs > capTti) {
+  failures.push(`TTI ${report.timeToInteractiveMs}ms > cap ${capTti}ms`);
+}
+for (const [label, data] of Object.entries(report.views)) {
+  if (data.medianMs > capSwitch) failures.push(`${label} median ${data.medianMs}ms > cap ${capSwitch}ms`);
+}
+const pageErrors = client?.exceptions ?? [];
+if (pageErrors.length > 0) {
+  failures.push(`${pageErrors.length} page error(s): ${pageErrors.slice(0, 3).map((e) => e.text).join(" | ")}`);
+}
+if (failures.length > 0) {
+  console.error(`UI timings: FAIL\n${failures.join("\n")}`);
+  process.exit(1);
+}
+console.log(`UI timings: PASS (caps switch=${capSwitch}ms launch=${capLaunch}ms tti=${capTti}ms)`);

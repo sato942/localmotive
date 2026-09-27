@@ -1044,6 +1044,26 @@ test("release package job runs the catalog/SQLite packaged matrix (GH-05)", asyn
   assert.equal((script.match(/doStartCandidate \$CdpPort/g) ?? []).length, 2);
 });
 
+test("the packaged matrix gates pinned UI timings (UI-speed Stage 5)", async () => {
+  // The timings phase runs the measurement on a derived port with its own
+  // launch, fails the matrix on breach, and retains its JSON evidence.
+  const script = await readFile(join(process.cwd(), "scripts", "verify_packaged_impl.ps1"), "utf8");
+  for (const needle of [
+    "measure-ui-timings.mjs",
+    "$TimingPort = $CdpPort + 9",
+    "UI timings phase failed",
+    "artifacts/ui-timings-$Version.json",
+  ]) {
+    assert.ok(script.includes(needle), `orchestration impl is missing ${needle}`);
+  }
+  const measure = await readFile(join(process.cwd(), "scripts", "measure-ui-timings.mjs"), "utf8");
+  for (const needle of ["TIMINGS_CAP_SWITCH_MS", "TIMINGS_CAP_LAUNCH_MS", "TIMINGS_CAP_TTI_MS", "process.exit(1)", "exceptions"]) {
+    assert.ok(measure.includes(needle), `timing gate is missing ${needle}`);
+  }
+  const release = await readFile(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  assert.ok(release.includes('"ui-timings-${VERSION}.json"'), "collect step must retain the timings record");
+});
+
 test("rich catalog facets keep the backend camelCase contract (GH-05)", async () => {
   const app = await frontendSources();
   const model = await readFile(join(process.cwd(), "src", "model.ts"), "utf8");
