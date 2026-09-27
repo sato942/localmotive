@@ -28,12 +28,14 @@ Each release provides these Windows x64 files:
 - `packaged-verification-*.json` is the packaged behavior evidence; inspect its version and source fields.
 - `candidate-inventory-<version>.json` is the candidate size and digest evidence.
 
-For example, release 0.5.0 ships `Localmotive_0.5.0_x64-setup.exe`,
-`Localmotive_0.5.0_x64.msi`, `Localmotive_0.5.0_x64-portable.exe`,
-and `SHA256SUMS-0.5.0.txt`.
+For example, release 0.6.5 ships `Localmotive_0.6.5_x64-setup.exe`,
+`Localmotive_0.6.5_x64.msi`, `Localmotive_0.6.5_x64-portable.exe`,
+`SHA256SUMS-0.6.5.txt`, `packaged-verification-0.6.5.json`, and
+`candidate-inventory-0.6.5.json`.
 
-The 0.5.0 release retains the evidence filename `packaged-verification-0.4.1.json`.
-The filename alone does not establish which source or application bytes were verified.
+The versioned evidence filenames bind each record to its release.
+The filename alone does not establish which source bytes were verified;
+inspect the record's version and source fields.
 
 The application files do not have Authenticode signatures.
 Signing is deferred by owner order, so every ship is honestly unsigned:
@@ -45,8 +47,8 @@ Windows SmartScreen can show a warning when you start an unsigned file.
 Verify a downloaded file before use:
 
 ```powershell
-Get-FileHash .\Localmotive_0.5.0_x64-setup.exe -Algorithm SHA256
-Get-Content .\SHA256SUMS-0.5.0.txt
+Get-FileHash .\Localmotive_0.6.5_x64-setup.exe -Algorithm SHA256
+Get-Content .\SHA256SUMS-0.6.5.txt
 ```
 
 Compare the two SHA-256 values.
@@ -123,8 +125,6 @@ If the preferred port is unavailable, Localmotive scans a bounded port range.
 The approved release contains x64 CPU, CUDA, ROCm, SYCL, OpenVINO, and Vulkan assets.
 
 Localmotive shows only assets that match the running application architecture.
-
-The 0.5.0 ARM64 assets remain dormant and do not create install options.
 
 ### Model inventory and profiles
 
@@ -446,10 +446,10 @@ RUSTDOCFLAGS='-D warnings' cargo test --locked
 ```
 
 GitHub Actions builds the packaged application.
-The workflow starts the portable executable for a startup smoke test.
-
-The smoke test does not prove model or GPU compatibility.
-The smoke test does not test installer behavior or all Windows versions.
+The packaged matrix drives the staged portable over CDP: UI behavior checks,
+catalog first-fill and restart, pinned UI-timing caps with a page-error
+smoke, and the startup check. It does not prove model or GPU compatibility.
+It does not test installer behavior or all Windows versions.
 
 Release verification uses three jobs: resolve the tag on main, audit Rust
 dependencies, then check/build/qualify in one workspace. The native lifecycle
@@ -472,6 +472,8 @@ src-tauri/src/runtime.rs  Hardware and managed runtime installation
 src-tauri/src/catalog.rs  Signed catalog and Hugging Face token
 src-tauri/src/download.rs Resumable model downloader and path controls
 src-tauri/src/gguf.rs     Bounded GGUF metadata reader
+src-tauri/src/measurement.rs Measured benchmark loop and timing rules
+src-tauri/src/evidence.rs   Benchmark manifests and persistence rules
 src-tauri/src/tune.rs     Tuning whitelist and measured loop
 src-tauri/src/cloud.rs    Cloud providers, OAuth, and credentials
 src-tauri/src/proc.rs     Windows child-process construction
