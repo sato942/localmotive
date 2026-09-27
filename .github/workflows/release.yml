@@ -216,7 +216,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$STAGE_DIR/artifacts"
-          for record in "packaged-verification-${VERSION}.json" "packaged-verification-catalog-${VERSION}.json" "catalog-matrix-first-fill.json" "catalog-matrix-restart.json" "catalog-fixture-init.json"; do
+          for record in "packaged-verification-${VERSION}.json" "packaged-verification-catalog-${VERSION}.json" "catalog-matrix-first-fill.json" "catalog-matrix-restart.json" "catalog-fixture-init.json" "ui-timings-${VERSION}.json"; do
             if test -f "artifacts/$record"; then cp "artifacts/$record" "$STAGE_DIR/artifacts/$record"; fi
           done
 

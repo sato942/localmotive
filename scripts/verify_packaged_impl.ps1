@@ -333,6 +333,16 @@ function Invoke-PackagedMatrix(
       $candidate = $null
     }
 
+    # --- UI timings gate (TODO UI-speed Stage 5): own launch on a derived
+    # port with isolated data, pinned caps, and a page-error smoke. Any
+    # breach fails the matrix and blocks the release.
+    $TimingPort = $CdpPort + 9
+    Write-Phase "ui timings starting"
+    $timingsCode = & $doRunVerifier "ui timings" @(
+      "scripts/measure-ui-timings.mjs", "$TimingPort", $Portable, "artifacts/ui-timings-$Version.json"
+    ) $AttemptId
+    if ($timingsCode -ne 0) { throw "UI timings phase failed with code $timingsCode" }
+
     # --- Merge: bind the record to this run's revision ---------------------------
     $env:LOCALMOTIVE_SOURCE_REVISION = $ResolvedSha
     Write-Phase "catalog merge starting"
