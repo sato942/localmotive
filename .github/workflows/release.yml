@@ -283,7 +283,7 @@ jobs:
         run: node scripts/verify_release_promotion.mjs --qualified "$STAGE_DIR" --tag "v${VERSION}" --expect-source "$RESOLVED_SHA" --report "$STAGE_DIR/artifacts/promotion-check-${VERSION}.json"
 
       - name: Retain the qualified candidate bundle
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: localmotive-${{ needs.resolve.outputs.version }}-qualified
           path: ${{ env.STAGE_DIR }}/**
@@ -292,7 +292,7 @@ jobs:
 
       - name: Retain diagnostics after failure or cancellation
         if: failure() || cancelled()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: localmotive-${{ needs.resolve.outputs.version }}-verify-diagnostics
           path: |
