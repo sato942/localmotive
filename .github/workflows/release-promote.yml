@@ -131,7 +131,7 @@ jobs:
 
       - name: Retain the promotion decision record
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: promotion-decision-${{ inputs.tag }}-${{ inputs.verify_run_id }}
           path: |
@@ -267,7 +267,7 @@ jobs:
           (cd public-readback && sha256sum -c "SHA256SUMS-${VERSION}.txt")
 
       - name: Retain public release read-back evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: localmotive-${{ needs.gate.outputs.version }}-public-readback
           path: public-readback/*
@@ -276,7 +276,7 @@ jobs:
 
       - name: Retain publish diagnostics on failure
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: localmotive-${{ needs.gate.outputs.version }}-publish-diagnostics
           path: |
