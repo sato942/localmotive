@@ -57,7 +57,7 @@ tokio = { version = "1", default-features = false, features = ["sync"] }
 [target.'cfg(windows)'.dependencies]
 windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_System_Threading"] }
 windows-version = "=0.1.7"
-process-wrap = { version = "=10.0.0", default-features = false, features = ["std", "job-object", "creation-flags"] }
+process-wrap = { version = "=10.0.1", default-features = false, features = ["std", "job-object", "creation-flags"] }
 
 [dev-dependencies]
 # Test-only TLS fixture server for the centralized local client (audit
